@@ -303,8 +303,8 @@ async fn initialize_model(
     let pplx = matches!(decision_protocol, Some(DecisionProtocol::Pplx));
     let d3 = matches!(decision_protocol, Some(DecisionProtocol::D3));
     anyhow::ensure!(
-        !d3 || backend_kind == infinity_v3_backend::BackendKind::Libtorch,
-        "D3 requires --backend libtorch"
+        !d3 || supports_external_decision_backend(backend_kind),
+        "D3 requires --backend libtorch or oxide"
     );
     let vela_encoder = matches!(decision_protocol, Some(DecisionProtocol::Vela3));
     let vela_ultra = vela_encoder
@@ -336,9 +336,8 @@ async fn initialize_model(
         let metadata: serde_json::Value =
             serde_json::from_slice(&fs::read(model_root.join("decision_config.json"))?)?;
         anyhow::ensure!(
-            metadata["format_version"] != 2
-                || backend_kind == infinity_v3_backend::BackendKind::Libtorch,
-            "Perplexity joint readouts require --backend libtorch"
+            metadata["format_version"] != 2 || supports_external_decision_backend(backend_kind),
+            "Perplexity joint readouts require --backend libtorch or oxide"
         );
         anyhow::ensure!(
             (metadata["format_id"].as_str() == Some("d3-code-readout-v1")) == d3,
@@ -917,6 +916,16 @@ async fn initialize_model(
         backend_kind,
         systemone,
     })
+}
+
+/// External D3 and Perplexity joint decisions are implemented by both the
+/// LibTorch and Oxide Qwen3.5 backends. Other decision families keep their
+/// existing backend gates.
+fn supports_external_decision_backend(kind: infinity_v3_backend::BackendKind) -> bool {
+    matches!(
+        kind,
+        infinity_v3_backend::BackendKind::Libtorch | infinity_v3_backend::BackendKind::Oxide
+    )
 }
 
 /// Initialize all models before publishing one registry and starting one listener.
@@ -1652,6 +1661,16 @@ impl From<ResponseMetadata> for HeaderMap {
 #[cfg(test)]
 mod libtorch_auto_dtype_tests {
     use super::*;
+
+    #[test]
+    fn external_decision_backend_gate_permits_implemented_oxide_and_libtorch() {
+        assert!(supports_external_decision_backend(
+            infinity_v3_backend::BackendKind::Libtorch
+        ));
+        assert!(supports_external_decision_backend(
+            infinity_v3_backend::BackendKind::Oxide
+        ));
+    }
 
     #[test]
     fn oxide_dtype_policy_preserves_explicit_precision_and_reports_effective_default() {

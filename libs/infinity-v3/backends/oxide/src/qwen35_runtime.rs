@@ -1,8 +1,11 @@
 // Copyright Infinity Core Contributors. Licensed under the repository LICENSE.
 //! Experimental dense BF16 text route over the shared engine/I/O completion.
+use crate::clef_warm::{ClefQ35Head, ClefWarmPrepared};
 use crate::cublas::Blas;
+use crate::decision_external_gpu::ExternalGpuHead;
 use crate::decision_head::PackedDecisionBatch;
 use crate::decision_head_gpu::OneJevGpuHead;
+use crate::external_warm::{ExternalHeadCapacity, ExternalWarmMetadata, ExternalWarmPlan};
 use crate::fa4::{AttentionSpec, DType, Fa4, Scale, Window};
 use crate::gdn_prepared::GdnGeometry;
 use crate::lt::ShapeError;
@@ -13,7 +16,7 @@ use crate::qwen35_model::Qwen35Weights;
 use crate::qwen35_prepared::Qwen35Kernels;
 use crate::qwen35_tables::Qwen35Tables;
 use crate::qwen35_weights::Qwen35DeviceWeights;
-use crate::qwen35_work::{Payload, Qwen35Work};
+use crate::qwen35_work::{DecisionCapacity, Payload, Qwen35Work};
 use crate::warm_head::{WarmDecisionMetadata, WarmDecisionPlan, WarmHeadCapacity};
 use crate::{arg, blocks, infer, launch, product, staging, start, u32_size, WorkKey};
 use cuda_core::{Context, Function, Stream};
@@ -55,7 +58,82 @@ pub(crate) struct Qwen35Model {
     raw: Function,
     context: Arc<Context>,
     stream: Arc<Stream>,
-    decision: Option<OneJevGpuHead>,
+    decision: Option<Qwen35DecisionHead>,
+}
+
+pub(crate) enum Qwen35DecisionHead {
+    OneJev(OneJevGpuHead),
+    External(ExternalGpuHead),
+    Clef(Box<ClefQ35Head>),
+}
+
+impl Qwen35DecisionHead {
+    fn hidden_size(&self) -> usize {
+        match self {
+            Self::OneJev(head) => head.hidden_size(),
+            Self::External(head) => head.hidden_size(),
+            Self::Clef(head) => head.config().hidden,
+        }
+    }
+}
+
+pub(crate) enum WarmDecisionMetadataRoute {
+    OneJev(WarmDecisionMetadata),
+    External(ExternalWarmMetadata),
+    Clef {
+        prepared: ClefWarmPrepared,
+        layout_end: usize,
+    },
+}
+
+impl WarmDecisionMetadataRoute {
+    pub(crate) fn layout_end(&self) -> usize {
+        match self {
+            Self::OneJev(metadata) => metadata.layout().end(),
+            Self::External(metadata) => metadata.layout().end(),
+            Self::Clef { layout_end, .. } => *layout_end,
+        }
+    }
+
+    pub(crate) fn total_rows(&self) -> usize {
+        match self {
+            Self::OneJev(metadata) => metadata.total_rows(),
+            Self::External(metadata) => metadata.total_rows(),
+            Self::Clef { prepared, .. } => prepared.output_elements().unwrap_or(0),
+        }
+    }
+
+    fn key(&self) -> WorkKey {
+        match self {
+            Self::OneJev(metadata) => metadata.key(),
+            Self::External(metadata) => metadata.key(),
+            Self::Clef { .. } => (0, 0, 0),
+        }
+    }
+}
+
+pub(crate) enum WarmDecisionRoute {
+    OneJev(WarmDecisionPlan),
+    External(ExternalWarmPlan),
+    Clef(Box<ClefWarmPrepared>),
+}
+
+impl WarmDecisionRoute {
+    pub(crate) fn total_rows(&self) -> usize {
+        match self {
+            Self::OneJev(plan) => plan.total_rows(),
+            Self::External(plan) => plan.total_rows(),
+            Self::Clef(prepared) => prepared.output_elements().unwrap_or(0),
+        }
+    }
+
+    pub(crate) fn output_elements(&self) -> Result<usize, BackendError> {
+        match self {
+            Self::OneJev(plan) => Ok(plan.total_rows()),
+            Self::External(plan) => Ok(plan.total_rows()),
+            Self::Clef(prepared) => prepared.output_elements(),
+        }
+    }
 }
 fn ensure_warm_metadata_key(
     metadata: &WarmDecisionMetadata,
@@ -69,6 +147,73 @@ fn ensure_warm_metadata_key(
         ))
     }
 }
+fn ensure_warm_metadata_key_external(
+    metadata: &ExternalWarmMetadata,
+    key: WorkKey,
+) -> Result<(), BackendError> {
+    if metadata.key() == key {
+        Ok(())
+    } else {
+        Err(start(
+            "Qwen3.5 external metadata was prepared for a different Work key",
+        ))
+    }
+}
+
+fn validate_external_attention(
+    attention: crate::decision_external::ExternalAttention,
+    block: bool,
+) -> Result<(), BackendError> {
+    use crate::decision_external::ExternalAttention;
+    match (attention, block) {
+        (ExternalAttention::PrefixBidirectional, true)
+        | (ExternalAttention::Causal, false)
+        | (ExternalAttention::NoncausalFull, false) => Ok(()),
+        _ => Err(start(
+            "External decision attention_mode differs from the actual backbone mode",
+        )),
+    }
+}
+
+/// Native sidecar precedence for the Qwen3.5 Decision route. A decision
+/// config selects the external D3/Pplx head; the joint-head sidecar is Clef.
+/// Otherwise the checkpoint is OneJev.
+fn load_decision_head(
+    path: &Path,
+    context: &Arc<Context>,
+    stream: &Arc<Stream>,
+    block_mode: Option<Qwen35BlockMode>,
+    weights: &crate::qwen35_weights::Qwen35DeviceWeights,
+    fa4_root: &Path,
+) -> Result<Qwen35DecisionHead, BackendError> {
+    let decision = path.join("decision_config.json");
+    let joint = path.join("joint_head_config.json");
+    if crate::model::path_present(&decision).map_err(start)? {
+        let head = ExternalGpuHead::load(path, context, stream)
+            .map_err(|error| start(error.to_string()))?;
+        validate_external_attention(head.config().attention, block_mode.is_some())?;
+        return Ok(Qwen35DecisionHead::External(head));
+    }
+    if crate::model::path_present(&joint).map_err(start)? {
+        if block_mode.is_some() {
+            return Err(start("Clef does not support a block attention route"));
+        }
+        let head = ClefQ35Head::load(
+            path,
+            weights.config.hidden_size,
+            context,
+            stream,
+            fa4_root,
+            weights.lm_head.as_ref(),
+        )?;
+        return Ok(Qwen35DecisionHead::Clef(Box::new(head)));
+    }
+    let head =
+        OneJevGpuHead::load(path, context, stream).map_err(|error| start(error.to_string()))?;
+    crate::validate_decision_attention_mode(head.block_attention(), block_mode.is_some())?;
+    Ok(Qwen35DecisionHead::OneJev(head))
+}
+
 impl Qwen35Model {
     pub(crate) fn new(
         host: Qwen35Weights,
@@ -245,14 +390,17 @@ impl Qwen35Model {
         )?;
         let weights = Qwen35DeviceWeights::upload(host, stream)?;
         let decision = decision_path
-            .map(|path| OneJevGpuHead::load(path, context, stream))
-            .transpose()
-            .map_err(|error| start(error.to_string()))?;
-        if let Some(head) = decision.as_ref() {
-            // Revalidate the metadata read by the actual head loader, rather
-            // than trusting only the earlier pre-context config observation.
-            crate::validate_decision_attention_mode(head.block_attention(), block_mode.is_some())?;
-        }
+            .map(|path| {
+                load_decision_head(
+                    path,
+                    context,
+                    stream,
+                    block_mode,
+                    &weights,
+                    &options.fa4_root,
+                )
+            })
+            .transpose()?;
         Ok(Self {
             weights,
             options,
@@ -294,10 +442,23 @@ impl Qwen35Model {
         } else {
             0
         };
-        if self.decision.is_some() {
-            words = words
-                .checked_add(crate::warm_head::metadata_words(key.1)?)
-                .ok_or_else(|| infer("Qwen3.5 input staging overflow"))?;
+        match self.decision.as_ref() {
+            Some(Qwen35DecisionHead::OneJev(_)) => {
+                words = words
+                    .checked_add(crate::warm_head::metadata_words(key.1)?)
+                    .ok_or_else(|| infer("Qwen3.5 input staging overflow"))?;
+            }
+            Some(Qwen35DecisionHead::External(_)) => {
+                words = words
+                    .checked_add(crate::external_warm::external_metadata_words(key.1)?)
+                    .ok_or_else(|| infer("Qwen3.5 input staging overflow"))?;
+            }
+            Some(Qwen35DecisionHead::Clef(head)) => {
+                words = words
+                    .checked_add(crate::clef_warm::metadata_words(head.config(), key)?)
+                    .ok_or_else(|| infer("Qwen3.5 input staging overflow"))?;
+            }
+            None => {}
         }
         staging::input_capacity_with_tail(key, words)
     }
@@ -362,16 +523,39 @@ impl Qwen35Model {
     pub(crate) fn decision_capacity(
         &self,
         key: WorkKey,
-    ) -> Result<Option<WarmHeadCapacity>, BackendError> {
-        self.decision
-            .as_ref()
-            .map(|head| WarmHeadCapacity::new(key.1, head.hidden_size()))
-            .transpose()
+    ) -> Result<Option<DecisionCapacity>, BackendError> {
+        match self.decision.as_ref() {
+            Some(Qwen35DecisionHead::OneJev(head)) => Ok(Some(DecisionCapacity::OneJev(
+                WarmHeadCapacity::new(key.1, head.hidden_size())?,
+            ))),
+            Some(Qwen35DecisionHead::External(head)) => Ok(Some(DecisionCapacity::External(
+                ExternalHeadCapacity::new(head.family(), key.1, head.hidden_size(), head.rows())?,
+            ))),
+            Some(Qwen35DecisionHead::Clef(head)) => Ok(Some(DecisionCapacity::Clef(
+                crate::clef_warm::capacity(key, head.config())?,
+            ))),
+            None => Ok(None),
+        }
     }
-    pub(crate) fn decision_head(&self) -> Option<&OneJevGpuHead> {
-        self.decision.as_ref()
+    pub(crate) fn onejev_head(&self) -> Option<&OneJevGpuHead> {
+        match self.decision.as_ref() {
+            Some(Qwen35DecisionHead::OneJev(head)) => Some(head),
+            _ => None,
+        }
     }
-    /// Validate and plan one whole packed OneJev request against the actual
+    pub(crate) fn external_head(&self) -> Option<&ExternalGpuHead> {
+        match self.decision.as_ref() {
+            Some(Qwen35DecisionHead::External(head)) => Some(head),
+            _ => None,
+        }
+    }
+    pub(crate) fn clef_head(&self) -> Option<&ClefQ35Head> {
+        match self.decision.as_ref() {
+            Some(Qwen35DecisionHead::Clef(head)) => Some(head.as_ref()),
+            _ => None,
+        }
+    }
+    /// Validate and plan one whole packed request against the actual attached
     /// head, the capacity for `key`, and the central block metadata reservation.
     /// No Work arena, cache slot, context bind or device address is touched.
     pub(crate) fn prepare_warm_metadata(
@@ -379,65 +563,128 @@ impl Qwen35Model {
         key: WorkKey,
         tokens: usize,
         batch: &PackedDecisionBatch<'_>,
+        ids: &[u32],
         requests: &[DecisionInput],
-    ) -> Result<WarmDecisionMetadata, BackendError> {
-        let head = self
-            .decision_head()
-            .ok_or_else(|| start("Qwen3.5 warm OneJev head is not attached"))?;
-        let capacity = self
-            .decision_capacity(key)?
-            .ok_or_else(|| start("Qwen3.5 warm OneJev capacity is unavailable"))?;
+    ) -> Result<WarmDecisionMetadataRoute, BackendError> {
         let reserved_words = if self.block_mode.is_some() {
             BLOCK_METADATA_WORDS
         } else {
             0
         };
-        crate::warm_head::prepare_warm_decision_metadata(
-            head.vocab_rows(),
-            head.hidden_size(),
-            capacity,
-            key,
-            tokens,
-            batch,
-            requests,
-            reserved_words,
-        )
-        .map_err(|error| start(error.to_string()))
+        match self.decision.as_ref() {
+            Some(Qwen35DecisionHead::OneJev(head)) => {
+                let capacity = match self.decision_capacity(key)? {
+                    Some(DecisionCapacity::OneJev(capacity)) => capacity,
+                    _ => return Err(start("Qwen3.5 warm OneJev capacity is unavailable")),
+                };
+                crate::warm_head::prepare_warm_decision_metadata(
+                    head.vocab_rows(),
+                    head.hidden_size(),
+                    capacity,
+                    key,
+                    tokens,
+                    batch,
+                    requests,
+                    reserved_words,
+                )
+                .map(WarmDecisionMetadataRoute::OneJev)
+                .map_err(|error| start(error.to_string()))
+            }
+            Some(Qwen35DecisionHead::External(head)) => {
+                let capacity = match self.decision_capacity(key)? {
+                    Some(DecisionCapacity::External(capacity)) => capacity,
+                    _ => return Err(start("Qwen3.5 warm external capacity is unavailable")),
+                };
+                crate::external_warm::prepare_external_warm_metadata(
+                    head.family(),
+                    capacity,
+                    key,
+                    tokens,
+                    batch,
+                    requests,
+                    reserved_words,
+                )
+                .map(WarmDecisionMetadataRoute::External)
+            }
+            Some(Qwen35DecisionHead::Clef(head)) => {
+                let capacity = match self.decision_capacity(key)? {
+                    Some(DecisionCapacity::Clef(capacity)) => capacity,
+                    _ => return Err(start("Qwen3.5 warm Clef capacity is unavailable")),
+                };
+                let prepared = head.prepare(batch, ids, requests, &self.stream)?;
+                if prepared.metadata_words() > capacity.metadata_words() {
+                    return Err(infer(
+                        "Qwen3.5 Clef metadata exceeds the retained Work capacity",
+                    ));
+                }
+                let layout_end = crate::staging::input_capacity(key)?
+                    .checked_add(reserved_words)
+                    .and_then(|base| base.checked_add(capacity.metadata_words()))
+                    .ok_or_else(|| infer("Qwen3.5 Clef metadata tail overflow"))?;
+                Ok(WarmDecisionMetadataRoute::Clef {
+                    prepared,
+                    layout_end,
+                })
+            }
+            None => Err(start("Qwen3.5 warm decision head is not attached")),
+        }
     }
     /// Bind already validated metadata to this Work's actual retained scratch.
-    /// The key must still select the same Work; every owner and address is read
-    /// from the Work and no cache, arena or context state is changed.
+    /// Every owner and address is read from the Work; no cache, arena or
+    /// context state is changed.
     pub(crate) fn bind_warm_metadata(
         &self,
-        metadata: WarmDecisionMetadata,
+        metadata: WarmDecisionMetadataRoute,
         work: &Qwen35Work,
-    ) -> Result<WarmDecisionPlan, BackendError> {
-        let head = self
-            .decision_head()
-            .ok_or_else(|| start("Qwen3.5 warm OneJev head is not attached"))?;
-        ensure_warm_metadata_key(&metadata, work.key())?;
-        let capacity = self
-            .decision_capacity(metadata.key())?
-            .ok_or_else(|| start("Qwen3.5 warm OneJev capacity is unavailable"))?;
-        if metadata.total_rows() > capacity.rows() {
-            return Err(infer(
-                "Qwen3.5 warm metadata exceeds the actual Work row capacity",
-            ));
+    ) -> Result<WarmDecisionRoute, BackendError> {
+        match metadata {
+            WarmDecisionMetadataRoute::OneJev(metadata) => {
+                let head = self
+                    .onejev_head()
+                    .ok_or_else(|| start("Qwen3.5 warm OneJev head is not attached"))?;
+                ensure_warm_metadata_key(&metadata, work.key())?;
+                let capacity = match self.decision_capacity(metadata.key())? {
+                    Some(DecisionCapacity::OneJev(capacity)) => capacity,
+                    _ => return Err(start("Qwen3.5 warm OneJev capacity is unavailable")),
+                };
+                if metadata.total_rows() > capacity.rows() {
+                    return Err(infer(
+                        "Qwen3.5 warm metadata exceeds the actual Work row capacity",
+                    ));
+                }
+                let scratch = work
+                    .onejev_head()
+                    .ok_or_else(|| infer("Qwen3.5 Work has no warm OneJev scratch"))?;
+                let selected_rows = metadata
+                    .total_rows()
+                    .checked_mul(head.hidden_size())
+                    .ok_or_else(|| infer("Qwen3.5 warm selected scratch overflow"))?;
+                if scratch.logits_len() < metadata.total_rows()
+                    || scratch.selected_len() < selected_rows
+                {
+                    return Err(infer(
+                        "Qwen3.5 warm metadata exceeds the actual Work scratch",
+                    ));
+                }
+                crate::warm_head::bind_warm_decision_metadata(metadata, scratch.bases())
+                    .map(WarmDecisionRoute::OneJev)
+                    .map_err(|error| start(error.to_string()))
+            }
+            WarmDecisionMetadataRoute::External(metadata) => {
+                ensure_warm_metadata_key_external(&metadata, work.key())?;
+                if work.external_head().is_none() {
+                    return Err(infer("Qwen3.5 Work has no warm external scratch"));
+                }
+                crate::external_warm::bind_external_warm_metadata(metadata)
+                    .map(WarmDecisionRoute::External)
+            }
+            WarmDecisionMetadataRoute::Clef { prepared, .. } => {
+                if work.clef_head().is_none() {
+                    return Err(infer("Qwen3.5 Work has no warm Clef workspace"));
+                }
+                Ok(WarmDecisionRoute::Clef(Box::new(prepared)))
+            }
         }
-        let scratch = work
-            .head()
-            .ok_or_else(|| infer("Qwen3.5 Work has no warm OneJev scratch"))?;
-        let selected_rows = metadata
-            .total_rows()
-            .checked_mul(head.hidden_size())
-            .ok_or_else(|| infer("Qwen3.5 warm selected scratch overflow"))?;
-        if scratch.logits_len() < metadata.total_rows() || scratch.selected_len() < selected_rows {
-            return Err(infer(
-                "Qwen3.5 warm metadata exceeds the actual Work scratch",
-            ));
-        }
-        crate::warm_head::bind_warm_decision_metadata(metadata, scratch.bases())
-            .map_err(|error| start(error.to_string()))
     }
     pub(crate) fn context(&self) -> &Arc<Context> {
         &self.context
@@ -445,23 +692,18 @@ impl Qwen35Model {
     pub(crate) fn stream(&self) -> &Arc<Stream> {
         &self.stream
     }
-    /// Rebind one whole packed OneJev request against this Work's reusable
-    /// scratch. This is the private API integration point for the future
-    /// `Engine::decide` path; it allocates nothing and queries no device.
-    ///
-    /// The Work may be an oversized cached arena for this request, so the
-    /// scratch capacity and metadata tail are bound against the Work's actual
-    /// key, not the smaller requested key. The block tail is reserved ahead of
-    /// the warm metadata exactly when B1 block mode is active.
+    /// Rebind one whole packed request against this Work's reusable scratch.
+    /// This allocates nothing and queries no device.
     pub(crate) fn plan_warm(
         &self,
         _key: WorkKey,
         tokens: usize,
         batch: &PackedDecisionBatch<'_>,
+        ids: &[u32],
         requests: &[DecisionInput],
         work: &Qwen35Work,
-    ) -> Result<WarmDecisionPlan, BackendError> {
-        let metadata = self.prepare_warm_metadata(work.key(), tokens, batch, requests)?;
+    ) -> Result<WarmDecisionRoute, BackendError> {
+        let metadata = self.prepare_warm_metadata(work.key(), tokens, batch, ids, requests)?;
         self.bind_warm_metadata(metadata, work)
     }
     /// Crate-private enqueue from this Work's actual normalized BF16 activation.
@@ -474,15 +716,38 @@ impl Qwen35Model {
         work: &mut Qwen35Work,
         blas: &Blas,
         stream: &Stream,
-        plan: &WarmDecisionPlan,
+        plan: &mut WarmDecisionRoute,
         host_logits: &mut [f32],
     ) -> Result<(), BackendError> {
-        let head = self
-            .decision_head()
-            .ok_or_else(|| start("Qwen3.5 warm OneJev head is not attached"))?;
-        // SAFETY: the caller's outer engine ownership covers completion.
-        unsafe { work.enqueue_warm(head, blas, stream, plan, host_logits) }
-            .map_err(|error| start(error.to_string()))
+        match (plan, self.decision.as_ref()) {
+            (WarmDecisionRoute::OneJev(plan), Some(Qwen35DecisionHead::OneJev(head))) => {
+                // SAFETY: the caller's outer engine ownership covers completion.
+                unsafe { work.enqueue_warm(head, blas, stream, plan, host_logits) }
+                    .map_err(|error| start(error.to_string()))
+            }
+            (WarmDecisionRoute::External(plan), Some(Qwen35DecisionHead::External(head))) => {
+                // SAFETY: the caller's outer engine ownership covers completion.
+                unsafe { work.enqueue_external(head, blas, stream, plan, host_logits) }
+                    .map_err(|error| start(error.to_string()))
+            }
+            (WarmDecisionRoute::Clef(prepared), Some(Qwen35DecisionHead::Clef(head))) => {
+                // SAFETY: the caller's outer engine ownership covers completion.
+                unsafe {
+                    work.enqueue_clef(
+                        head,
+                        &self.weights.embed,
+                        blas,
+                        stream,
+                        prepared,
+                        host_logits,
+                    )
+                }
+                .map_err(|error| start(error.to_string()))
+            }
+            _ => Err(start(
+                "Qwen3.5 warm plan and attached decision head do not agree",
+            )),
+        }
     }
     pub(crate) fn workspace_bytes(&self, key: WorkKey) -> Result<usize, BackendError> {
         Qwen35Work::allocation_bytes(key, self)
@@ -1003,8 +1268,8 @@ mod warm_root_tests {
         let mut work = model.workspace(stream.clone(), key).unwrap();
         let packed = PackedDecisionBatch::new(&cumulative).unwrap();
         let requests = [option(&[2, 1, 2]), option(&[3, 4])];
-        let plan = model
-            .plan_warm(key, tokens, &packed, &requests, &work)
+        let mut route = model
+            .plan_warm(key, tokens, &packed, &input_ids, &requests, &work)
             .unwrap();
         let mut host_input = vec![
             0u32;
@@ -1028,7 +1293,10 @@ mod warm_root_tests {
             0,
         )
         .unwrap();
-        let upload = plan.pack_metadata(&mut host_input).unwrap();
+        let upload = match &route {
+            WarmDecisionRoute::OneJev(plan) => plan.pack_metadata(&mut host_input).unwrap(),
+            _ => panic!("fixture must attach OneJev"),
+        };
         work.upload(&host_input, upload).unwrap();
         model
             .enqueue(
@@ -1041,12 +1309,18 @@ mod warm_root_tests {
                 tokens,
             )
             .unwrap();
-        let mut host_logits = vec![0f32; plan.total_rows()];
+        let mut host_logits = vec![0f32; route.total_rows()];
         // SAFETY: this test owns the model, Work, head, uploads and stream.
-        unsafe { model.enqueue_warm(&mut work, &blas, &stream, &plan, &mut host_logits) }.unwrap();
+        unsafe { model.enqueue_warm(&mut work, &blas, &stream, &mut route, &mut host_logits) }
+            .unwrap();
         stream.synchronize().unwrap();
-        let warm = crate::warm_head::finish_warm_decision(&plan, &host_logits).unwrap();
-        let isolated = model.decision_head().unwrap();
+        let warm = match &route {
+            WarmDecisionRoute::OneJev(plan) => {
+                crate::warm_head::finish_warm_decision(plan, &host_logits).unwrap()
+            }
+            _ => panic!("fixture must attach OneJev"),
+        };
+        let isolated = model.onejev_head().unwrap();
         let mut prepared = isolated.prepare(&packed, &requests).unwrap();
         let reference = isolated
             .forward(

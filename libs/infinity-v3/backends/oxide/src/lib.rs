@@ -6,6 +6,50 @@ mod cache;
 mod classifier_head;
 #[cfg(test)]
 mod classifier_primitives;
+#[allow(dead_code)]
+mod clef_decision;
+#[allow(dead_code)]
+mod clef_decision_attention;
+#[allow(dead_code)]
+mod clef_decision_exec;
+#[allow(dead_code)]
+mod clef_decision_exec_decoder;
+#[allow(dead_code)]
+mod clef_decision_exec_inputs;
+#[allow(dead_code)]
+mod clef_decision_exec_routing;
+#[allow(dead_code)]
+mod clef_decision_exec_state;
+#[allow(dead_code)]
+mod clef_decision_exec_tail;
+#[allow(dead_code)]
+mod clef_decision_finish;
+#[cfg(test)]
+mod clef_decision_fixtures;
+#[allow(dead_code)]
+mod clef_decision_head;
+#[allow(dead_code)]
+mod clef_decision_kernels;
+#[allow(dead_code)]
+mod clef_decision_ops;
+#[allow(dead_code)]
+mod clef_decision_ops_attention;
+#[allow(dead_code)]
+mod clef_decision_ops_heads;
+#[allow(dead_code)]
+mod clef_decision_plan;
+#[allow(dead_code)]
+mod clef_decision_prepare;
+#[allow(dead_code)]
+mod clef_decision_prepared;
+#[allow(dead_code)]
+mod clef_decision_scalars;
+#[allow(dead_code)]
+mod clef_decision_weights;
+#[allow(dead_code)]
+mod clef_decision_workspace;
+#[allow(dead_code)]
+mod clef_warm;
 mod colbert;
 mod colbert_runtime;
 mod cublas;
@@ -13,9 +57,14 @@ mod deberta;
 mod deberta_embedding;
 mod deberta_encoder_model;
 #[allow(dead_code)]
+mod decision_external;
+#[allow(dead_code)]
+mod decision_external_gpu;
+#[allow(dead_code)]
 mod decision_head;
 #[allow(dead_code)]
 mod decision_head_gpu;
+mod decision_refinement;
 mod decoder;
 mod decoder_classifier;
 mod decoder_model;
@@ -27,6 +76,8 @@ pub mod encoder_activation_prepared;
 pub mod encoder_activation_reference;
 mod encoder_linear;
 mod encoder_policy;
+#[allow(dead_code)]
+mod external_warm;
 mod fa4;
 mod fa4_alibi;
 mod fa4_deberta;
@@ -68,6 +119,7 @@ mod jina_code_encoder_model;
 #[path = "jina_code_host_tests.rs"]
 mod jina_code_host_tests;
 mod jina_encoder_model;
+mod laya_decision;
 pub(crate) mod lt;
 pub mod math;
 mod model;
@@ -1550,7 +1602,7 @@ impl<E: UploadElement> IntermediatePlan<E> {
 /// Concrete executable selected once at load. Encoder and decoder share the
 /// Engine's context, ordered stream, provider, host I/O pool and admission.
 enum ExecutableModel {
-    Modern(Box<ModernEncoder>),
+    Modern(Box<ModernEncoder>, Option<Box<laya_decision::LayaHead>>),
     Encoder(Box<EncoderModel<Bf16>>),
     EncoderF16(Box<EncoderModel<F16>>),
     Decoder(Box<decoder::DecoderModel>),
@@ -1583,7 +1635,7 @@ impl ExecutableModel {
         match self {
             Self::Encoder(model) => model.kernels.raw_cast.is_some(),
             Self::EncoderF16(model) => model.kernels.raw_cast.is_some(),
-            Self::Modern(_)
+            Self::Modern(..)
             | Self::Decoder(_)
             | Self::Gemma(_)
             | Self::Gemma2(_)
@@ -1615,7 +1667,7 @@ impl ExecutableModel {
                 }
             }
             Self::EncoderF16(model) => model.plans.set_rows(provider, batch.input_ids.len()),
-            Self::Modern(model) => {
+            Self::Modern(model, _) => {
                 model.preflight(batch.input_ids.len())?;
                 match (readout_mode, &model.classifier) {
                     (Some(mode), Some(classifier)) => {
@@ -1657,13 +1709,19 @@ impl ExecutableModel {
         match self {
             Self::Encoder(model) => model.config.hidden_size,
             Self::EncoderF16(model) => model.config.hidden_size,
-            Self::Modern(model) => model.config.geometry.hidden_size,
+            Self::Modern(model, _) => model.config.geometry.hidden_size,
             Self::Decoder(model) => model.config.hidden_size,
             Self::Gemma(model) => model.config.hidden_size,
             Self::Gemma2(model) => model.config().embedding_dim,
             Self::UltraBert(model) => model.config().hidden_size,
             Self::Qwen35(model) => model.weights.config.hidden_size,
             Self::Gemma4(model) => model.hidden_size(),
+        }
+    }
+    fn laya_head(&self) -> Option<&laya_decision::LayaHead> {
+        match self {
+            Self::Modern(_, head) => head.as_deref(),
+            _ => None,
         }
     }
     /// # Safety
@@ -1735,7 +1793,7 @@ impl ExecutableModel {
                 .as_ref()
                 .map(|classifier| classifier.scratch_layout(key))
                 .transpose(),
-            Self::Modern(model) => model
+            Self::Modern(model, _) => model
                 .classifier
                 .as_ref()
                 .map(|classifier| classifier.scratch_layout(key))
@@ -1762,7 +1820,7 @@ impl ExecutableModel {
                     .map(|embedding| embedding.scratch_width()),
             ),
             Self::EncoderF16(model) => Work::<F16>::allocation_bytes(key, &model.config),
-            Self::Modern(model) => Work::<Bf16>::allocation_bytes_with_classifier(
+            Self::Modern(model, _) => Work::<Bf16>::allocation_bytes_with_classifier(
                 key,
                 &model.config.geometry,
                 self.classifier_layout(key)?,
@@ -1777,6 +1835,34 @@ impl ExecutableModel {
             )),
             Self::Qwen35(model) => model.workspace_bytes(key),
             Self::Gemma4(model) => model.workspace_bytes(key),
+        }
+    }
+    fn workspace_bytes_laya(
+        &self,
+        key: WorkKey,
+        layout: laya_decision::LayaScratchLayout,
+    ) -> Result<usize, BackendError> {
+        match self {
+            Self::Modern(model, _) => {
+                Work::<Bf16>::allocation_bytes_with_laya(key, &model.config.geometry, &layout)
+            }
+            _ => Err(infer("Laya scratch requires the ModernBERT backend")),
+        }
+    }
+    fn workspace_laya(
+        &self,
+        stream: Arc<Stream>,
+        key: WorkKey,
+        layout: laya_decision::LayaScratchLayout,
+    ) -> Result<Workspace, BackendError> {
+        match self {
+            Self::Modern(model, _) => Ok(Workspace::Encoder(Work::<Bf16>::new_with_laya(
+                stream,
+                &model.config.geometry,
+                key,
+                layout,
+            )?)),
+            _ => Err(infer("Laya scratch requires the ModernBERT backend")),
         }
     }
     fn workspace(&self, stream: Arc<Stream>, key: WorkKey) -> Result<Workspace, BackendError> {
@@ -1797,7 +1883,7 @@ impl ExecutableModel {
                 &model.config,
                 key,
             )?)),
-            Self::Modern(model) => Ok(Workspace::Encoder(Work::<Bf16>::new_with_classifier(
+            Self::Modern(model, _) => Ok(Workspace::Encoder(Work::<Bf16>::new_with_classifier(
                 stream,
                 &model.config.geometry,
                 key,
@@ -1818,7 +1904,7 @@ impl ExecutableModel {
     fn classifier_readout(&self) -> Option<ClassifierReadout> {
         match self {
             Self::Encoder(model) => model.classifier.as_ref().map(ClassifierHead::readout),
-            Self::Modern(model) => model.classifier.as_ref().map(ClassifierHead::readout),
+            Self::Modern(model, _) => model.classifier.as_ref().map(ClassifierHead::readout),
             Self::Decoder(model) => model.classifier_task().map(|task| ClassifierReadout {
                 task: match task {
                     DecoderClassifierTask::Sequence
@@ -1892,6 +1978,12 @@ impl Workspace {
             Self::Gemma2(work) => work.fits(key),
             Self::Qwen35(work) => work.fits(key),
             Self::Gemma4(work) => work.fits(key),
+        }
+    }
+    fn fits_laya(&self, key: WorkKey, layout: laya_decision::LayaScratchLayout) -> bool {
+        match self {
+            Self::Encoder(work) => work.fits_laya(key, layout),
+            _ => false,
         }
     }
     fn mark_last_use(&mut self, ticket: CompletionTicket) {
@@ -1993,6 +2085,20 @@ impl Workspace {
             Self::EncoderF16(_) | Self::Gemma2(_) | Self::Qwen35(_) | Self::Gemma4(_) => Err(
                 infer("Classifier staging requires a BF16 encoder workspace"),
             ),
+        }
+    }
+    fn stage_laya(
+        &self,
+        batch: &Batch,
+        geometry: output::OutputGeometry,
+        lease: &mut HostIoLease,
+        prepared: &laya_decision::LayaPrepared,
+    ) -> Result<(usize, usize), BackendError> {
+        match self {
+            Self::Encoder(work) => work.stage_laya(batch, geometry, lease, prepared),
+            _ => Err(infer(
+                "Laya staging requires the Modern BF16 encoder workspace",
+            )),
         }
     }
     fn upload(&mut self, host: &[u32], elements: usize) -> Result<(), BackendError> {
@@ -2280,12 +2386,34 @@ fn classifier_output<'a>(
 }
 /// Pure arena admission. Existing arenas already proved their capacity valid;
 /// only a new size class needs checked geometry before context or reservation.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct WorkspacePreflight {
     key: WorkKey,
     reuse_active: bool,
     requested_bytes: Option<usize>,
+    laya_layout: Option<laya_decision::LayaScratchLayout>,
+    laya_prepared: Option<laya_decision::LayaPrepared>,
 }
+impl std::fmt::Debug for WorkspacePreflight {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("WorkspacePreflight")
+            .field("key", &self.key)
+            .field("reuse_active", &self.reuse_active)
+            .field("requested_bytes", &self.requested_bytes)
+            .field("laya_layout", &self.laya_layout)
+            .field("has_laya_prepared", &self.laya_prepared.is_some())
+            .finish()
+    }
+}
+impl PartialEq for WorkspacePreflight {
+    fn eq(&self, other: &Self) -> bool {
+        self.key == other.key
+            && self.reuse_active == other.reuse_active
+            && self.requested_bytes == other.requested_bytes
+            && self.laya_layout == other.laya_layout
+            && self.laya_prepared.is_some() == other.laya_prepared.is_some()
+    }
+}
+impl Eq for WorkspacePreflight {}
 fn preflight_workspace<E: From<BackendError>>(
     batch: &Batch,
     active_fits: impl FnOnce(WorkKey) -> bool,
@@ -2302,6 +2430,30 @@ fn preflight_workspace<E: From<BackendError>>(
         key,
         reuse_active,
         requested_bytes,
+        laya_layout: None,
+        laya_prepared: None,
+    })
+}
+fn preflight_laya_workspace<E: From<BackendError>>(
+    batch: &Batch,
+    layout: laya_decision::LayaScratchLayout,
+    prepared: laya_decision::LayaPrepared,
+    active_fits: impl FnOnce(WorkKey) -> bool,
+    bytes_for: impl FnOnce(WorkKey) -> Result<usize, E>,
+) -> Result<WorkspacePreflight, E> {
+    let key = work_key(batch).map_err(E::from)?;
+    let reuse_active = active_fits(key);
+    let requested_bytes = if reuse_active {
+        None
+    } else {
+        Some(bytes_for(key)?)
+    };
+    Ok(WorkspacePreflight {
+        key,
+        reuse_active,
+        requested_bytes,
+        laya_layout: Some(layout),
+        laya_prepared: Some(prepared),
     })
 }
 /// Dense scratch follows pooled selection capacity only. A raw-only request
@@ -2480,6 +2632,50 @@ fn stage_batch_with_position_offset(
     Ok((elements, output))
 }
 
+fn stage_laya_batch(
+    b: &Batch,
+    geometry: output::OutputGeometry,
+    lease: &mut HostIoLease,
+    prepared: &laya_decision::LayaPrepared,
+) -> Result<(usize, usize), BackendError> {
+    let tail = prepared.metadata_words()?;
+    let layout = InputLayout::new(
+        b.input_ids.len(),
+        b.cumulative_seq_lengths.len(),
+        b.pooled_indices.len(),
+    )?
+    .with_trailer(tail)?;
+    let elements = layout.words();
+    let backbone = geometry.backbone_elements(b)?;
+    let output = geometry.host_elements(b)?;
+    u32_size(backbone)?;
+    u32_size(output)?;
+    let host = lease
+        .slot_mut()?
+        .input
+        .as_mut_slice()
+        .get_mut(..elements)
+        .ok_or_else(|| infer("Input exceeds retained host I/O arena"))?;
+    let (packed, trailer) = host
+        .split_at_mut_checked(layout.packed_words())
+        .ok_or_else(|| infer("Invalid Laya metadata tail layout"))?;
+    pack_input_with_position_offset(
+        packed,
+        b.input_ids.len(),
+        &b.input_ids,
+        &b.position_ids,
+        &b.token_type_ids,
+        &b.cumulative_seq_lengths,
+        &b.pooled_indices,
+        0,
+    )?;
+    prepared.write_metadata_tail(trailer)?;
+    if output > lease.slot()?.output.len() {
+        return Err(infer("Output exceeds retained host I/O arena"));
+    }
+    Ok((elements, output))
+}
+
 fn upload_input(
     stream: &Stream,
     buffer: &DeviceBuffer<u32>,
@@ -2595,6 +2791,7 @@ struct Work<E: UploadElement> {
     classifier: ManuallyDrop<Option<Box<ClassifierScratchBuffers>>>,
     deberta: ManuallyDrop<Option<deberta::Scratch>>,
     deberta_embedding: ManuallyDrop<Option<DeviceBuffer<E>>>,
+    laya: ManuallyDrop<Option<laya_decision::LayaScratch>>,
     last_completion: Option<CompletionTicket>,
     released: bool,
 }
@@ -2738,6 +2935,7 @@ impl<E: UploadElement> Work<E> {
             ManuallyDrop::drop(&mut self.classifier);
             ManuallyDrop::drop(&mut self.deberta);
             ManuallyDrop::drop(&mut self.deberta_embedding);
+            ManuallyDrop::drop(&mut self.laya);
         }
         LIVE_ARENA_BYTES.fetch_sub(self.bytes, Ordering::Relaxed);
         record_live_arena_bytes();
@@ -2767,6 +2965,32 @@ impl<E: UploadElement> Work<E> {
         span: Option<usize>,
         embedding_width: Option<usize>,
     ) -> Result<usize, BackendError> {
+        Self::allocation_bytes_full(key, c, classifier, span, embedding_width, None, None)
+    }
+    fn allocation_bytes_with_laya(
+        key: WorkKey,
+        c: &BertConfig,
+        laya: &laya_decision::LayaScratchLayout,
+    ) -> Result<usize, BackendError> {
+        Self::allocation_bytes_full(
+            key,
+            c,
+            None,
+            None,
+            None,
+            Some(laya),
+            Some(laya.metadata_words),
+        )
+    }
+    fn allocation_bytes_full(
+        key: WorkKey,
+        c: &BertConfig,
+        classifier: Option<ClassifierScratchLayout>,
+        span: Option<usize>,
+        embedding_width: Option<usize>,
+        laya: Option<&laya_decision::LayaScratchLayout>,
+        input_tail_words: Option<usize>,
+    ) -> Result<usize, BackendError> {
         let (tokens, _, _) = key;
         i32::try_from(tokens).map_err(infer)?;
         u32_size(product(tokens, c.hidden_size)?)?;
@@ -2774,7 +2998,7 @@ impl<E: UploadElement> Work<E> {
         // Device-only input/output and nine BF16 hidden-sized buffers
         // (including the packed QKV projection) plus the intermediate tensor.
         // The two pinned host slots are charged separately by `staging`.
-        let input = staging::input_capacity(key)?;
+        let input = staging::input_capacity_with_tail(key, input_tail_words.unwrap_or(0))?;
         let output = product(key.2, c.hidden_size)?;
         let hidden = product(product(tokens, c.hidden_size)?, 18)?;
         let mut intermediate = product(product(tokens, c.intermediate_size)?, 2)?;
@@ -2792,6 +3016,7 @@ impl<E: UploadElement> Work<E> {
         let deberta_embedding = embedding_width.map_or(Ok(0), |width| {
             product(product(tokens, width)?, size_of::<E>())
         })?;
+        let laya = laya.map_or(Ok(0), laya_decision::LayaScratchLayout::bytes)?;
         product(input, 4)?
             .checked_add(product(output, 4)?)
             .and_then(|n| n.checked_add(hidden))
@@ -2799,10 +3024,25 @@ impl<E: UploadElement> Work<E> {
             .and_then(|n| n.checked_add(classifier))
             .and_then(|n| n.checked_add(deberta))
             .and_then(|n| n.checked_add(deberta_embedding))
+            .and_then(|n| n.checked_add(laya))
             .ok_or_else(|| infer("Workspace arena overflow"))
     }
     fn fits(&self, key: WorkKey) -> bool {
         capacity_fits(self.key(), key, self.bytes)
+    }
+    fn fits_laya(&self, key: WorkKey, layout: laya_decision::LayaScratchLayout) -> bool {
+        let Some(scratch) = self.laya.as_ref() else {
+            return false;
+        };
+        let Ok(input) = staging::input_capacity_with_tail(key, layout.metadata_words) else {
+            return false;
+        };
+        capacity_fits(self.key(), key, self.bytes)
+            && scratch.fits(layout)
+            && self.input.len() >= input
+    }
+    fn laya(&self) -> Option<&laya_decision::LayaScratch> {
+        self.laya.as_ref()
     }
     fn new_with_classifier(
         s: Arc<Stream>,
@@ -2820,11 +3060,36 @@ impl<E: UploadElement> Work<E> {
         span: Option<usize>,
         embedding_width: Option<usize>,
     ) -> Result<Self, BackendError> {
-        let bytes =
-            Self::allocation_bytes_with_deberta(key, c, classifier_layout, span, embedding_width)?;
+        Self::new_full(s, c, key, classifier_layout, span, embedding_width, None)
+    }
+    fn new_with_laya(
+        s: Arc<Stream>,
+        c: &BertConfig,
+        key: WorkKey,
+        laya_layout: laya_decision::LayaScratchLayout,
+    ) -> Result<Self, BackendError> {
+        Self::new_full(s, c, key, None, None, None, Some(laya_layout))
+    }
+    fn new_full(
+        s: Arc<Stream>,
+        c: &BertConfig,
+        key: WorkKey,
+        classifier_layout: Option<ClassifierScratchLayout>,
+        span: Option<usize>,
+        embedding_width: Option<usize>,
+        laya_layout: Option<laya_decision::LayaScratchLayout>,
+    ) -> Result<Self, BackendError> {
+        let bytes = if let Some(laya) = laya_layout.as_ref() {
+            Self::allocation_bytes_with_laya(key, c, laya)?
+        } else {
+            Self::allocation_bytes_with_deberta(key, c, classifier_layout, span, embedding_width)?
+        };
         let (tokens, sequences, selections) = key;
         let hidden = product(tokens, c.hidden_size)?;
-        let input_len = staging::input_capacity(key)?;
+        let input_len = staging::input_capacity_with_tail(
+            key,
+            laya_layout.map_or(0, |layout| layout.metadata_words),
+        )?;
         let output = product(selections, c.hidden_size)?;
         let alloc = |len| {
             // Initialize scratch/padding once, without a host drain per buffer.
@@ -2875,6 +3140,9 @@ impl<E: UploadElement> Work<E> {
             Some(width) => Some(alloc(product(tokens, width)?)?),
             None => None,
         };
+        let laya = laya_layout
+            .map(|layout| laya_decision::LayaScratch::new(&s, layout))
+            .transpose()?;
         metrics::counter!("oxide_arena_allocations_total").increment(1);
         LIVE_ARENA_BYTES.fetch_add(bytes, Ordering::Relaxed);
         record_live_arena_bytes();
@@ -2897,6 +3165,7 @@ impl<E: UploadElement> Work<E> {
             classifier: ManuallyDrop::new(classifier),
             deberta: ManuallyDrop::new(deberta),
             deberta_embedding: ManuallyDrop::new(deberta_embedding),
+            laya: ManuallyDrop::new(laya),
             last_completion: None,
             released: false,
             stream: s,
@@ -2920,6 +3189,18 @@ impl<E: UploadElement> Work<E> {
             return Err(infer("Backbone output exceeds retained arena"));
         }
         stage_batch(b, geometry, lease)
+    }
+    fn stage_laya(
+        &self,
+        b: &Batch,
+        geometry: output::OutputGeometry,
+        lease: &mut HostIoLease,
+        prepared: &laya_decision::LayaPrepared,
+    ) -> Result<(usize, usize), BackendError> {
+        if geometry.backbone_elements(b)? > self.pooled.len() {
+            return Err(infer("Backbone output exceeds retained arena"));
+        }
+        stage_laya_batch(b, geometry, lease, prepared)
     }
     fn upload(&self, host: &[u32], elements: usize) -> Result<(), BackendError> {
         upload_input(&self.stream, &self.input, host, elements)
@@ -3292,13 +3573,41 @@ impl Engine {
         readout_mode: Option<ReadoutMode>,
         lease: &mut HostIoLease,
     ) -> Result<(), BackendError> {
+        self.enqueue_common(b, pool, max_length, readout_mode, None, lease)
+            .map(|_| ())
+    }
+
+    /// Modern Laya decision submission. Reuses the ordinary workspace,
+    /// staging, budget and completion machinery, then leaves the request-owned
+    /// Laya refinement owner with the deferred caller.
+    fn enqueue_laya_decision(
+        &mut self,
+        b: &Batch,
+        pool: &Pool,
+        max_length: usize,
+        requests: &[DecisionInput],
+        lease: &mut HostIoLease,
+    ) -> Result<laya_decision::LayaPrepared, BackendError> {
+        self.enqueue_common(b, pool, max_length, None, Some(requests), lease)?
+            .ok_or_else(|| infer("Modern Laya decision produced no prepared owner"))
+    }
+
+    fn enqueue_common(
+        &mut self,
+        b: &Batch,
+        pool: &Pool,
+        max_length: usize,
+        readout_mode: Option<ReadoutMode>,
+        decision: Option<&[DecisionInput]>,
+        lease: &mut HostIoLease,
+    ) -> Result<Option<laya_decision::LayaPrepared>, BackendError> {
         if self.failed || self.io.poisoned() {
             return Err(BackendError::Unhealthy);
         }
         #[cfg(test)]
         reset_request_counters();
-        match self.enqueue_request(b, pool, max_length, readout_mode, lease) {
-            Ok(()) => Ok(()),
+        match self.enqueue_request(b, pool, max_length, readout_mode, decision, lease) {
+            Ok(prepared) => Ok(prepared),
             Err(EnqueueError::PreflightRejected(error)) => Err(error),
             Err(EnqueueError::Admission(error)) => Err(error),
             Err(EnqueueError::Rejected(error)) => {
@@ -3327,23 +3636,54 @@ impl Engine {
         pool: &Pool,
         max_length: usize,
         readout_mode: Option<ReadoutMode>,
+        decision: Option<&[DecisionInput]>,
         lease: &mut HostIoLease,
-    ) -> Result<(), EnqueueError> {
+    ) -> Result<Option<laya_decision::LayaPrepared>, EnqueueError> {
         // Reject pure checked-size failures before descriptor changes, context
         // binding, arena initialization, or this request's lease.begin_tracked().
-        let workspace = preflight_workspace(
-            b,
-            |key| self.workspace.as_ref().is_some_and(|work| work.fits(key)),
-            |key| match &*self.model {
-                ExecutableModel::Decoder(model) => model
-                    .workspace_bytes_typed(key)
-                    .map_err(WorkspacePreflightError::from),
-                _ => self
-                    .model
-                    .workspace_bytes(key)
-                    .map_err(WorkspacePreflightError::from),
-            },
-        )
+        let laya = if let Some(requests) = decision {
+            let packed = decision_head::PackedDecisionBatch::new(&b.cumulative_seq_lengths)
+                .map_err(|error| EnqueueError::PreflightRejected(infer(error.to_string())))?;
+            let head = self.model.laya_head().ok_or_else(|| {
+                EnqueueError::PreflightRejected(infer("Modern Laya head is not attached"))
+            })?;
+            let prepared = head.prepare(&packed, requests)?;
+            let layout = head.scratch_layout(&prepared)?;
+            Some((prepared, layout))
+        } else {
+            None
+        };
+        let workspace = if let Some((prepared, layout)) = laya {
+            preflight_laya_workspace(
+                b,
+                layout,
+                prepared,
+                |key| {
+                    self.workspace
+                        .as_ref()
+                        .is_some_and(|work| work.fits_laya(key, layout))
+                },
+                |key| {
+                    self.model
+                        .workspace_bytes_laya(key, layout)
+                        .map_err(WorkspacePreflightError::from)
+                },
+            )
+        } else {
+            preflight_workspace(
+                b,
+                |key| self.workspace.as_ref().is_some_and(|work| work.fits(key)),
+                |key| match &*self.model {
+                    ExecutableModel::Decoder(model) => model
+                        .workspace_bytes_typed(key)
+                        .map_err(WorkspacePreflightError::from),
+                    _ => self
+                        .model
+                        .workspace_bytes(key)
+                        .map_err(WorkspacePreflightError::from),
+                },
+            )
+        }
         .map_err(|error| error.0)?;
         // Descriptor-only preflight precedes arena allocation/zeroing. The
         // actual-M down metadata is prepared later, after the reserved arena
@@ -3364,17 +3704,29 @@ impl Engine {
         bump_engine_context_bind();
         self.context.bind_to_thread().map_err(infer)?;
         self.collect_completed_retirees()?;
-        self.enqueue_inner(b, pool, max_length, readout_mode, lease, workspace)
+        self.enqueue_inner(
+            b,
+            pool,
+            max_length,
+            readout_mode,
+            decision,
+            lease,
+            workspace,
+        )
     }
+    #[allow(clippy::too_many_arguments)]
     fn enqueue_inner(
         &mut self,
         b: &Batch,
         pool: &Pool,
         max_length: usize,
         readout_mode: Option<ReadoutMode>,
+        decision: Option<&[DecisionInput]>,
         lease: &mut HostIoLease,
-        workspace: WorkspacePreflight,
-    ) -> Result<(), EnqueueError> {
+        mut workspace: WorkspacePreflight,
+    ) -> Result<Option<laya_decision::LayaPrepared>, EnqueueError> {
+        let laya_layout = workspace.laya_layout;
+        let laya_prepared = workspace.laya_prepared.take();
         metrics::counter!("oxide_arena_requests_total").increment(1);
         record_live_arena_bytes();
         let hidden = self.model.hidden_size();
@@ -3415,7 +3767,12 @@ impl Engine {
         };
         let pooled_rows = b.pooled_indices.len();
         let raw_rows = output::raw_rows(b)?;
-        let host_elements = geometry.host_elements(b)?;
+        let decision_elements = laya_prepared
+            .as_ref()
+            .map(laya_decision::LayaPrepared::output_elements);
+        let host_elements = geometry
+            .host_elements(b)?
+            .max(decision_elements.unwrap_or(0));
         let plan = workspace.key;
         let metadata_elements =
             splade_selection.map_or(0, |selection| selection.metadata_elements());
@@ -3441,11 +3798,14 @@ impl Engine {
             .2
             .checked_add(metadata_capacity)
             .ok_or_else(|| infer("SPLADE pinned metadata capacity overflow"))?;
-        let host_input_elements = match &*self.model {
-            ExecutableModel::Gemma4(_) => staging::input_capacity(host_plan)?
-                .checked_add(raw_rows)
-                .ok_or_else(|| infer("Gemma4 raw input staging overflow"))?,
-            _ => self.model.input_capacity(host_plan)?,
+        let host_input_elements = match laya_layout {
+            Some(layout) => staging::input_capacity_with_tail(host_plan, layout.metadata_words)?,
+            None => match &*self.model {
+                ExecutableModel::Gemma4(_) => staging::input_capacity(host_plan)?
+                    .checked_add(raw_rows)
+                    .ok_or_else(|| infer("Gemma4 raw input staging overflow"))?,
+                _ => self.model.input_capacity(host_plan)?,
+            },
         };
         let host_before = lease.bytes()?;
         let host_after = lease
@@ -3458,9 +3818,18 @@ impl Engine {
         let cached_fit = if reuse_active {
             None
         } else {
-            self.cached
-                .peek_best_fit(|key| capacity_fits(*key, plan, 0))
-                .map(Workspace::bytes)
+            match laya_layout {
+                Some(layout) => self
+                    .cached
+                    .peek_best_fit_with(|key, work| {
+                        capacity_fits(*key, plan, 0) && work.fits_laya(*key, layout)
+                    })
+                    .map(Workspace::bytes),
+                None => self
+                    .cached
+                    .peek_best_fit(|key| capacity_fits(*key, plan, 0))
+                    .map(Workspace::bytes),
+            }
         };
         let workspace_bytes = match (reuse_active, cached_fit) {
             (true, _) => self
@@ -3578,8 +3947,14 @@ impl Engine {
         // Select the exact peeked arena before the new reservation so that
         // reservation eviction cannot discard the reuse candidate.
         let mut next = if cached_fit.is_some() {
-            self.cached
-                .take_best_fit(|key| capacity_fits(*key, plan, 0))
+            match laya_layout {
+                Some(layout) => self.cached.take_best_fit_with(|key, work| {
+                    capacity_fits(*key, plan, 0) && work.fits_laya(*key, layout)
+                }),
+                None => self
+                    .cached
+                    .take_best_fit(|key| capacity_fits(*key, plan, 0)),
+            }
         } else {
             None
         };
@@ -3621,7 +3996,12 @@ impl Engine {
                     metrics::counter!("oxide_arena_cached_reuses_total").increment(1);
                     work
                 }
-                None => self.model.workspace(self.stream.clone(), plan)?,
+                None => match laya_layout {
+                    Some(layout) => self
+                        .model
+                        .workspace_laya(self.stream.clone(), plan, layout)?,
+                    None => self.model.workspace(self.stream.clone(), plan)?,
+                },
             });
         }
         if let Some(capacity) = dense_capacity {
@@ -3683,7 +4063,9 @@ impl Engine {
             }
             _ => 0,
         };
-        let (input_elements, _) = if readout_mode.is_some() {
+        let (input_elements, _) = if let Some(prepared) = laya_prepared.as_ref() {
+            w.stage_laya(b, geometry, lease, prepared)?
+        } else if readout_mode.is_some() {
             w.stage_classifier(b, geometry, lease)?
         } else if position_offset == 0 && colbert_selection.is_some() {
             // ColBERT writes its token matrix into the dedicated head work, so
@@ -3741,7 +4123,7 @@ impl Engine {
                 unsafe { head.prepare(lt, blas, b, mode, &stream, source, scratch)? };
             }
         }
-        if let (ExecutableModel::Modern(model), Workspace::Encoder(work)) =
+        if let (ExecutableModel::Modern(model, _), Workspace::Encoder(work)) =
             (&mut *self.model, &mut *w)
         {
             if let Some(head) = model.classifier.as_mut() {
@@ -3811,6 +4193,27 @@ impl Engine {
                 w,
             )?;
         }
+        let mut laya_biased = if let Some(prepared) = laya_prepared.as_ref() {
+            let blas = plain_blas.ok_or_else(|| infer("Laya decision requires plain cuBLAS"))?;
+            let (ExecutableModel::Modern(_, head), Workspace::Encoder(work)) =
+                (&mut *self.model, &mut *w)
+            else {
+                return Err(
+                    infer("Modern Laya decision requires the Modern Laya workspace").into(),
+                );
+            };
+            let head = head
+                .as_deref_mut()
+                .ok_or_else(|| infer("Modern Laya head is not attached"))?;
+            if prepared.tokens() != tokens || work.pooled.len() < product(b.len(), hidden)? {
+                return Err(EnqueueError::classify_backend(infer(
+                    "Laya cached Work/scratch shape does not match the request plan",
+                )));
+            }
+            Some(unsafe { head.prepare_biased(&self.lt, blas, &self.stream, work, prepared)? })
+        } else {
+            None
+        };
         // One pre-upload ticket covers this submission's backbone and Dense
         // last use. It is taken only after staging succeeded, immediately
         // before the first GPU upload, so a staging rejection keeps the prior
@@ -3851,7 +4254,7 @@ impl Engine {
             head.upload_selection(s, selection, scratch)?;
         }
         match (&mut *self.model, &mut *w) {
-            (ExecutableModel::Modern(model), Workspace::Encoder(work)) => {
+            (ExecutableModel::Modern(model, head_slot), Workspace::Encoder(work)) => {
                 model
                     .enqueue(
                         plain_blas.ok_or_else(|| infer("Modern requires plain cuBLAS"))?,
@@ -3863,6 +4266,43 @@ impl Engine {
                         tokens,
                     )
                     .map_err(EnqueueError::from)?;
+                if let (Some(head), Some(_requests), Some(prepared)) =
+                    (head_slot.as_deref_mut(), decision, laya_prepared.as_ref())
+                {
+                    let blas =
+                        plain_blas.ok_or_else(|| infer("Laya decision requires plain cuBLAS"))?;
+                    let layout = InputLayout::new(
+                        tokens,
+                        b.cumulative_seq_lengths.len(),
+                        b.pooled_indices.len(),
+                    )?
+                    .with_trailer(prepared.metadata_words()?)?;
+                    let boundaries = layout.boundaries().address(work.input.cu_deviceptr())?;
+                    let trailer = layout.trailer().address(work.input.cu_deviceptr())?;
+                    let metadata = prepared.device_metadata(trailer)?;
+                    let biased = laya_biased
+                        .as_mut()
+                        .ok_or_else(|| infer("Laya biased projections are not prepared"))?;
+                    // SAFETY: enqueue_request bound this context and fixed every
+                    // owner before the lease began; Work, its cached Laya scratch,
+                    // prepared biased selections and the pinned output are retained
+                    // until the single recorded event drains.
+                    unsafe {
+                        head.enqueue(
+                            work,
+                            prepared,
+                            biased,
+                            metadata,
+                            boundaries,
+                            &self.lt,
+                            blas,
+                            s,
+                            lease.slot_mut()?.output.as_mut_ptr(),
+                        )?;
+                    }
+                    lease.record()?;
+                    return Ok(laya_prepared);
+                }
                 if let Some(head) = model.classifier.as_mut() {
                     let blas = plain_blas
                         .ok_or_else(|| infer("ModernBERT classifier requires plain cuBLAS"))?;
@@ -3885,9 +4325,9 @@ impl Engine {
                     let host = lease.slot_mut()?.output.as_mut_slice();
                     download_output_range(s, scratch.logits(), 0, host, 0, elements)?;
                     lease.record()?;
-                    return Ok(());
+                    return Ok(None);
                 }
-                Ok(())
+                Ok(None::<laya_decision::LayaPrepared>)
             }
             (ExecutableModel::Decoder(model), Workspace::Decoder(work)) => {
                 model.enqueue(
@@ -3912,17 +4352,17 @@ impl Engine {
                     let host = lease.slot_mut()?.output.as_mut_slice();
                     download_output_range(s, scratch.f32_logits()?, 0, host, 0, elements)?;
                     lease.record()?;
-                    return Ok(());
+                    return Ok(None);
                 }
-                Ok(())
+                Ok(None)
             }
             (ExecutableModel::Gemma(model), Workspace::Decoder(work)) => {
                 model.enqueue(lt, plain_blas, s, work, b, pool, max_length, tokens)?;
-                Ok(())
+                Ok(None)
             }
             (ExecutableModel::Gemma2(model), Workspace::Gemma2(work)) => {
                 model.enqueue_multimodal(plain_blas, s, work, b, pool, max_length, tokens)?;
-                Ok(())
+                Ok(None)
             }
             (ExecutableModel::Qwen35(model), Workspace::Qwen35(work)) => model
                 .enqueue(
@@ -3934,6 +4374,7 @@ impl Engine {
                     max_length,
                     tokens,
                 )
+                .map(|_| None)
                 .map_err(EnqueueError::from),
             (ExecutableModel::Gemma4(model), Workspace::Gemma4(work)) => {
                 let result = (|| -> Result<(), BackendError> {
@@ -3965,7 +4406,7 @@ impl Engine {
                     work.cancel_text_after_failure();
                 }
                 result?;
-                return Ok(());
+                return Ok(None);
             }
             (ExecutableModel::Encoder(model), Workspace::Encoder(w)) => {
                 {
@@ -4005,7 +4446,7 @@ impl Engine {
                     let host = lease.slot_mut()?.output.as_mut_slice();
                     download_output_range(s, scratch.output(), 0, host, 0, elements)?;
                     lease.record()?;
-                    return Ok(());
+                    return Ok(None);
                 }
                 if let Some(head) = model.classifier.as_mut() {
                     let blas = plain_blas
@@ -4029,7 +4470,7 @@ impl Engine {
                     let host = lease.slot_mut()?.output.as_mut_slice();
                     download_output_range(s, scratch.logits(), 0, host, 0, elements)?;
                     lease.record()?;
-                    return Ok(());
+                    return Ok(None);
                 }
                 if let Some(head) = model.splade.as_mut() {
                     let selection =
@@ -4066,13 +4507,14 @@ impl Engine {
                         )?;
                     }
                     lease.record()?;
-                    return Ok(());
+                    return Ok(None);
                 }
-                Ok(())
+                Ok(None)
             }
             (ExecutableModel::EncoderF16(model), Workspace::EncoderF16(w)) => enqueue_encoder(
                 model, w, lt, plain_blas, s, b, pool, max_length, tokens, None,
-            ),
+            )
+            .map(|_| None),
             _ => Err(infer("Oxide model/workspace mismatch").into()),
         }?;
         let dense = match ((*self.dense).as_mut(), self.dense_workspace.as_mut()) {
@@ -4086,7 +4528,8 @@ impl Engine {
             (Some(_), None) => return Err(infer("Missing Dense workspace").into()),
             (None, _) => None,
         };
-        Ok(w.finish(dense, lt, plain_blas, pooled_rows, raw_rows, hidden, lease)?)
+        w.finish(dense, lt, plain_blas, pooled_rows, raw_rows, hidden, lease)?;
+        Ok(None)
     }
 
     /// Engine-bound OneJev decision submission. This is the private async entry
@@ -4101,7 +4544,7 @@ impl Engine {
         requests: &[DecisionInput],
         request_prefix: Option<usize>,
         lease: &mut HostIoLease,
-    ) -> Result<warm_head::WarmDecisionPlan, EnqueueError> {
+    ) -> Result<qwen35_runtime::WarmDecisionRoute, EnqueueError> {
         let workspace = preflight_workspace(
             b,
             |key| self.workspace.as_ref().is_some_and(|work| work.fits(key)),
@@ -4129,13 +4572,19 @@ impl Engine {
         }
         let output_elements = match &*self.model {
             ExecutableModel::Qwen35(model) => {
-                let head = model.decision_head().ok_or_else(|| {
-                    EnqueueError::PreflightRejected(infer(
-                        "Qwen3.5 warm OneJev head is not attached",
-                    ))
-                })?;
-                warm_decision_output_elements(head.vocab_rows(), requests)
-                    .map_err(EnqueueError::PreflightRejected)?
+                if let Some(head) = model.onejev_head() {
+                    warm_decision_output_elements(head.vocab_rows(), requests)
+                        .map_err(EnqueueError::PreflightRejected)?
+                } else if let Some(head) = model.external_head() {
+                    external_decision_output_elements(head, requests)
+                        .map_err(EnqueueError::PreflightRejected)?
+                } else if model.clef_head().is_some() {
+                    clef_warm::output_count(requests).map_err(EnqueueError::PreflightRejected)?
+                } else {
+                    return Err(EnqueueError::PreflightRejected(infer(
+                        "Qwen3.5 warm decision head is not attached",
+                    )));
+                }
             }
             _ => {
                 return Err(EnqueueError::PreflightRejected(infer(
@@ -4183,12 +4632,11 @@ impl Engine {
             };
             let input_elements = model.input_capacity(actual_key)?;
             let metadata = model
-                .prepare_warm_metadata(actual_key, tokens, &packed, requests)
+                .prepare_warm_metadata(actual_key, tokens, &packed, &b.input_ids, requests)
                 .map_err(EnqueueError::PreflightRejected)?;
-            if metadata.layout().end() != input_elements || metadata.total_rows() != output_elements
-            {
+            if metadata.layout_end() != input_elements || metadata.total_rows() != output_elements {
                 return Err(EnqueueError::classify_backend(infer(
-                    "Warm OneJev admission and prepared metadata disagree",
+                    "Warm decision admission and prepared metadata disagree",
                 )));
             }
             (metadata, input_elements)
@@ -4294,12 +4742,15 @@ impl Engine {
                 )))
             }
         };
-        if model.decision_head().is_none() {
+        if model.onejev_head().is_none()
+            && model.external_head().is_none()
+            && model.clef_head().is_none()
+        {
             return Err(EnqueueError::Fatal(infer(
-                "Qwen3.5 warm OneJev head is not attached",
+                "Qwen3.5 warm decision head is not attached",
             )));
         }
-        let plan = model
+        let mut plan = model
             .bind_warm_metadata(metadata, work)
             .map_err(EnqueueError::Fatal)?;
         lease
@@ -4313,9 +4764,18 @@ impl Engine {
             model.weights.config.hidden_size,
         )
         .map_err(EnqueueError::classify_backend)?;
-        let (upload_elements, _) = work
-            .stage_warm(b, geometry, &plan, lease, request_prefix)
-            .map_err(EnqueueError::Rejected)?;
+        let (upload_elements, _) = match &plan {
+            qwen35_runtime::WarmDecisionRoute::OneJev(plan) => {
+                work.stage_warm(b, geometry, plan, lease, request_prefix)
+            }
+            qwen35_runtime::WarmDecisionRoute::External(plan) => {
+                work.stage_external(b, geometry, plan, lease, request_prefix)
+            }
+            qwen35_runtime::WarmDecisionRoute::Clef(plan) => {
+                work.stage_clef(b, geometry, plan, lease, request_prefix)
+            }
+        }
+        .map_err(EnqueueError::Rejected)?;
         let ticket = lease.begin_tracked()?;
         work.mark_last_use(ticket);
         #[cfg(test)]
@@ -4329,7 +4789,7 @@ impl Engine {
         let host_logits = lease.slot_mut()?.output.as_mut_slice();
         // SAFETY: the outer Engine owns the bound stream, model, Work, head and
         // lease output through the lease event/drain boundary.
-        unsafe { model.enqueue_warm(work, blas, stream, &plan, host_logits) }
+        unsafe { model.enqueue_warm(work, blas, stream, &mut plan, host_logits) }
             .map_err(EnqueueError::classify_backend)?;
         lease.record().map_err(EnqueueError::classify_backend)?;
         Ok(plan)
@@ -5355,6 +5815,10 @@ impl OxideBackend {
     /// This reads configuration only and never initializes CUDA or opens tensor
     /// payloads. Actual constructors revalidate the loaded weight configuration.
     pub fn validate_decision_checkpoint(path: &Path, dtype: &str) -> Result<(), BackendError> {
+        if laya_decision::is_laya_checkpoint(path)? {
+            laya_decision::validate_laya_checkpoint(path, dtype)?;
+            return Ok(());
+        }
         let value: serde_json::Value = model::read_json(&path.join("config.json"))?;
         if matches!(
             value.get("model_type").and_then(serde_json::Value::as_str),
@@ -5380,7 +5844,18 @@ impl OxideBackend {
             return Err(start("Oxide decisions require a dense Qwen3.5 checkpoint"));
         }
         let attention = qwen35_serving::decision_attention(path)?;
-        let route = qwen35_serving::route(dtype, model_type, dense_paths, attention)?;
+        let external = if matches!(model_type, ModelType::Decision) {
+            qwen35_serving::external_decision_route(path)?
+        } else {
+            None
+        };
+        let route = qwen35_serving::route_with_external(
+            dtype,
+            model_type,
+            dense_paths,
+            attention,
+            external,
+        )?;
         if matches!(route, qwen35_serving::ServingRoute::Text { .. }) {
             qwen35_serving::text_causal(path)?;
         }
@@ -5404,6 +5879,9 @@ impl OxideBackend {
             return self.submit_ultrabert_decide(batch, inputs);
         }
         clear_decision_selectors(&mut batch);
+        if matches!(self.config, LoadedConfig::Modern(_)) {
+            return self.submit_modern_decision(batch, inputs);
+        }
         self.submit_warm_decision(batch, inputs)
     }
 
@@ -5452,6 +5930,10 @@ impl OxideBackend {
         if model_type == ModelType::Embedding(Pool::Splade) && precision != EncoderPrecision::Bf16 {
             return Err(start("Oxide SPLADE requires bfloat16"));
         }
+        let laya = model_type == ModelType::Decision && laya_decision::is_laya_checkpoint(path)?;
+        if laya {
+            laya_decision::validate_laya_checkpoint(path, dtype)?;
+        }
         if qwen35_serving::is_qwen35_checkpoint(path)? {
             return Self::new_qwen35_serving(path, dtype, model_type, device_id, dense_paths);
         }
@@ -5462,12 +5944,18 @@ impl OxideBackend {
         if early_architecture == CheckpointArchitecture::UltraBert {
             return Self::new_ultrabert(path, dtype, model_type, device_id, dense_paths);
         }
-        if model_type == ModelType::Decision {
-            return Err(start("Oxide decisions require a dense Qwen3.5 checkpoint"));
+        if model_type == ModelType::Decision && !laya {
+            return Err(start(
+                "Oxide decisions require a dense Qwen3.5 or Laya ModernBERT checkpoint",
+            ));
         }
         let admitted_model_type = model_type.clone();
         let mut deberta_host = None;
-        let early_architecture = detects_architecture(path)?;
+        let early_architecture = if laya {
+            CheckpointArchitecture::Modern
+        } else {
+            detects_architecture(path)?
+        };
         if early_architecture == CheckpointArchitecture::Gemma {
             if precision != EncoderPrecision::Bf16 {
                 return Err(start("Gemma3 is admitted only for the BF16 runtime"));
@@ -5563,9 +6051,10 @@ impl OxideBackend {
                 p
             }
             ModelType::Classifier => Pool::Cls,
+            ModelType::Decision if laya => Pool::LastToken,
             _ => {
                 return Err(start(
-                    "Oxide supports dense embeddings, BF16 BERT SPLADE and classifiers",
+                    "Oxide supports dense embeddings, BF16 BERT SPLADE, classifiers and typed decisions",
                 ))
             }
         };
@@ -5594,7 +6083,11 @@ impl OxideBackend {
         }
         let context = Context::new(device_id).map_err(start)?;
         let stream = context.new_stream().map_err(start)?;
-        let architecture = detects_architecture(path)?;
+        let architecture = if laya {
+            CheckpointArchitecture::Modern
+        } else {
+            detects_architecture(path)?
+        };
         if architecture == CheckpointArchitecture::JinaCode && dtype != "bfloat16" {
             return Err(start(
                 "JinaCode is admitted only for the BF16 runtime until F16 kernels are qualified",
@@ -5628,7 +6121,7 @@ impl OxideBackend {
                 let mut model = ModernEncoder::new(host, &context, &stream)?;
                 model.classifier = Some(ClassifierHead::new(head_host, &context, &stream, &lt)?);
                 (
-                    ExecutableModel::Modern(Box::new(model)),
+                    ExecutableModel::Modern(Box::new(model), None),
                     LoadedConfig::Modern(config),
                     Some(Blas::new(context.clone(), stream.clone())?),
                     None,
@@ -5851,20 +6344,44 @@ impl OxideBackend {
                         output_width,
                     )
                 } else if architecture == CheckpointArchitecture::Modern {
-                    let host = ModernWeights::load(path)?;
+                    let host = if laya {
+                        let config = laya_decision::laya_encoder_config(path)?;
+                        laya_decision::load_laya_modern(path, &config)?
+                    } else {
+                        ModernWeights::load(path)?
+                    };
                     let config = host.config.clone();
                     let hidden = config.geometry.hidden_size;
-                    let dense_host =
-                        DenseChainHost::load_with_paths(path, hidden, dense_paths.clone())?;
+                    let dense_host = if laya {
+                        if dense_paths.as_ref().is_some_and(|paths| !paths.is_empty())
+                            || DenseChainHost::load_with_paths(path, hidden, dense_paths.clone())?
+                                .is_some()
+                        {
+                            return Err(start(
+                                "Laya typed decisions do not accept Dense / Sentence-Transformers modules",
+                            ));
+                        }
+                        None
+                    } else {
+                        DenseChainHost::load_with_paths(path, hidden, dense_paths.clone())?
+                    };
                     let output_width = dense_host
                         .as_ref()
                         .map_or(hidden, DenseChainHost::output_width);
                     let model = ModernEncoder::new(host, &context, &stream)?;
+                    let decision = if laya {
+                        let config = laya_decision::LayaConfig::load(path)?;
+                        Some(Box::new(laya_decision::LayaHead::load(
+                            path, config, hidden, &context, &stream, &lt,
+                        )?))
+                    } else {
+                        None
+                    };
                     let dense = dense_host
                         .map(|host| DenseHead::new(host, &context, &stream, &lt))
                         .transpose()?;
                     (
-                        ExecutableModel::Modern(Box::new(model)),
+                        ExecutableModel::Modern(Box::new(model), decision),
                         LoadedConfig::Modern(config),
                         Some(Blas::new(context.clone(), stream.clone())?),
                         None,
@@ -6503,7 +7020,18 @@ impl OxideBackend {
         dense_paths: Option<Vec<String>>,
     ) -> Result<Self, BackendError> {
         let attention = qwen35_serving::decision_attention(path)?;
-        let route = qwen35_serving::route(dtype, &model_type, dense_paths.as_deref(), attention)?;
+        let external = if matches!(model_type, ModelType::Decision) {
+            qwen35_serving::external_decision_route(path)?
+        } else {
+            None
+        };
+        let route = qwen35_serving::route_with_external(
+            dtype,
+            &model_type,
+            dense_paths.as_deref(),
+            attention,
+            external,
+        )?;
         let resources = qwen35_serving::cold_resources()?;
         match route {
             qwen35_serving::ServingRoute::Text { pool, .. } => Self::new_qwen35_text_candidate(
@@ -6512,11 +7040,14 @@ impl OxideBackend {
                 device_id,
                 resources.into_options(qwen35_serving::text_causal(path)?),
             ),
-            qwen35_serving::ServingRoute::TextDecision => Self::new_qwen35_text_decision_candidate(
-                path,
-                device_id,
-                resources.into_options(true),
-            ),
+            qwen35_serving::ServingRoute::TextDecision => {
+                let decision_causal = qwen35_serving::decision_causal(path, attention)?;
+                Self::new_qwen35_text_decision_candidate(
+                    path,
+                    device_id,
+                    resources.into_options(decision_causal),
+                )
+            }
             qwen35_serving::ServingRoute::DynamicBlockDecision => {
                 Self::new_qwen35_dynamic_block_decision_candidate(
                     path,
@@ -6589,10 +7120,13 @@ impl OxideBackend {
         options: Qwen35TextOptions,
         block_mode: Option<Qwen35BlockMode>,
     ) -> Result<Self, BackendError> {
-        let declared_block =
-            infinity_v3_backend_core::block_attention_config::block_attention(path)
-                .map_err(start)?;
-        validate_decision_attention_mode(declared_block, block_mode.is_some())?;
+        let external = qwen35_serving::external_decision_route(path)?.is_some();
+        if !external {
+            let declared_block =
+                infinity_v3_backend_core::block_attention_config::block_attention(path)
+                    .map_err(start)?;
+            validate_decision_attention_mode(declared_block, block_mode.is_some())?;
+        }
         let host = qwen35_model::Qwen35Weights::load(path)?;
         host.config.validate_candidate()?;
         if block_mode.is_some() {
@@ -6830,11 +7364,14 @@ impl OxideBackend {
                 if requests.iter().any(|request| {
                     !matches!(
                         request,
-                        DecisionInput::OptionTokens { .. } | DecisionInput::Warmup
+                        DecisionInput::OptionTokens { .. }
+                            | DecisionInput::InlineOptions { .. }
+                            | DecisionInput::Clef { .. }
+                            | DecisionInput::Warmup
                     )
                 }) {
                     return Err(infer(
-                        "Ordinary OneJev head requests cannot carry block-prefix metadata",
+                        "Ordinary Qwen3.5 decisions cannot carry block-prefix metadata",
                     ));
                 }
                 None
@@ -6902,15 +7439,149 @@ impl OxideBackend {
                 }
             }
         };
-        let elements = plan.total_rows();
+        let elements = plan.output_elements()?;
+        Ok(Inference::Deferred(Box::new(move || {
+            lease.wait()?;
+            {
+                let output = lease.output(elements)?;
+                if output.iter().any(|value| !value.is_finite()) {
+                    lease.poison();
+                    return Err(infer("Invalid warm decision logits"));
+                }
+            }
+            match plan {
+                qwen35_runtime::WarmDecisionRoute::OneJev(plan) => {
+                    warm_head::finish_warm_decision(&plan, lease.output(elements)?)
+                        .map_err(|error| infer(error.to_string()))
+                }
+                qwen35_runtime::WarmDecisionRoute::External(plan) => {
+                    external_warm::finish_external_warm(&plan, lease.output(elements)?)
+                        .map_err(|error| infer(error.to_string()))
+                }
+                qwen35_runtime::WarmDecisionRoute::Clef(mut plan) => plan
+                    .finish(lease.output_mut(elements)?)
+                    .map_err(|error| infer(error.to_string())),
+            }
+        })))
+    }
+
+    /// ModernBERT + Laya typed decision. The backbone and Laya head share one
+    /// workspace, host lease and completion event. The output block is
+    /// `[packed option logits][one action probability per request]`; each
+    /// DecisionOutput receives the same payload reservation.
+    fn submit_modern_decision(
+        &self,
+        mut batch: Batch,
+        requests: Vec<DecisionInput>,
+    ) -> Result<Inference<Vec<DecisionOutput>>, BackendError> {
+        if !matches!(self.config, LoadedConfig::Modern(_)) {
+            return Err(infer("Modern Laya decisions require a ModernBERT backend"));
+        }
+        let sequences = batch
+            .cumulative_seq_lengths
+            .len()
+            .checked_sub(1)
+            .filter(|count| *count > 0)
+            .ok_or_else(|| infer("Laya decision batch must contain a sequence"))?;
+        if requests.len() != sequences {
+            return Err(infer(
+                "Laya request count does not match the packed decision batch",
+            ));
+        }
+        if batch.pooled_indices.len() != sequences
+            || batch
+                .pooled_indices
+                .iter()
+                .enumerate()
+                .any(|(index, &value)| usize::try_from(value) != Ok(index))
+        {
+            batch.pooled_indices = (0..sequences)
+                .map(|index| u32::try_from(index).map_err(|_| infer("Laya batch exceeds u32")))
+                .collect::<Result<Vec<_>, _>>()?;
+        }
+        batch.raw_indices.clear();
+        let max_length = validate_loaded(&batch, &self.config)?;
+        let packed = decision_head::PackedDecisionBatch::new(&batch.cumulative_seq_lengths)
+            .map_err(|error| infer(error.to_string()))?;
+        // Pure marker/type/row validation precedes the host lease, workspace
+        // reservation and any GPU dispatch. Action rows are the actual refined
+        // sequence starts, not the backbone's stale pooled selection.
+        let _ = laya_decision::plan_requests(&packed, &requests)?;
+        let _ = laya_decision::action_row_starts(&batch.cumulative_seq_lengths, requests.len())?;
+        let output_elements = laya_decision::output_elements(&requests)?;
+        let memory =
+            result_memory::global_pool()?.reserve(laya_decision::result_bytes(output_elements)?)?;
+        let slot = self.io.acquire()?;
+        let mut lease = HostIoLease::new(
+            slot,
+            self.io.clone(),
+            self.engine.clone(),
+            self.stream.clone(),
+        );
+        let prepared = {
+            let mut engine = match self.engine.lock() {
+                Ok(engine) => engine,
+                Err(_) => {
+                    self.io.close();
+                    return Err(BackendError::Unhealthy);
+                }
+            };
+            if engine.failed || self.io.poisoned() {
+                self.io.close();
+                return Err(BackendError::Unhealthy);
+            }
+            match engine.enqueue_laya_decision(
+                &batch,
+                &Pool::Cls,
+                max_length,
+                &requests,
+                &mut lease,
+            ) {
+                Ok(prepared) => prepared,
+                Err(error) => {
+                    if engine.stream.synchronize().is_err() {
+                        engine.fail_closed();
+                        return Err(BackendError::Unhealthy);
+                    }
+                    return Err(error);
+                }
+            }
+        };
+        let elements = prepared.output_elements();
+        let counts = prepared.counts().to_vec();
         Ok(Inference::Deferred(Box::new(move || {
             lease.wait()?;
             let output = lease.output(elements)?;
             if output.iter().any(|value| !value.is_finite()) {
                 lease.poison();
-                return Err(infer("Invalid warm OneJev logits"));
+                return Err(infer("Invalid Laya decision output"));
             }
-            warm_head::finish_warm_decision(&plan, output).map_err(|error| infer(error.to_string()))
+            let mut results = Vec::new();
+            results
+                .try_reserve_exact(counts.len())
+                .map_err(|error| BackendError::Inference(error.to_string()))?;
+            let mut offset = 0usize;
+            for (index, count) in counts.iter().enumerate() {
+                let end = offset
+                    .checked_add(*count)
+                    .ok_or_else(|| infer("Laya logit range overflow"))?;
+                let logits = output
+                    .get(offset..end)
+                    .ok_or_else(|| infer("Laya logits are incomplete"))?
+                    .to_vec();
+                let action_probability = output
+                    .get(elements - counts.len() + index)
+                    .copied()
+                    .ok_or_else(|| infer("Laya action probability is missing"))?;
+                results.push(DecisionOutput {
+                    logits,
+                    action_probability,
+                    memory: Some(memory.clone()),
+                });
+                offset = end;
+            }
+            drop(prepared);
+            Ok(results)
         })))
     }
 }
@@ -6943,6 +7614,33 @@ fn warm_decision_output_elements(
     if total == 0 || total > warm_head::MAX_TOTAL_ROWS {
         return Err(infer(
             "Warm OneJev total row count exceeds the qualified cap",
+        ));
+    }
+    Ok(total)
+}
+
+fn external_decision_output_elements(
+    head: &decision_external_gpu::ExternalGpuHead,
+    requests: &[DecisionInput],
+) -> Result<usize, BackendError> {
+    let total = requests
+        .iter()
+        .enumerate()
+        .try_fold(0usize, |sum, (index, request)| {
+            let count =
+                decision_external::request_output_count(head.family(), head.rows(), index, request)
+                    .map_err(|error| infer(error.to_string()))?;
+            if count == 0 || count > external_warm::MAX_EXTERNAL_ROWS {
+                return Err(infer(
+                    "Warm external option count exceeds the qualified cap",
+                ));
+            }
+            sum.checked_add(count)
+                .ok_or_else(|| infer("Warm external output count overflow"))
+        })?;
+    if total == 0 || total > external_warm::MAX_EXTERNAL_ROWS {
+        return Err(infer(
+            "Warm external total row count exceeds the qualified cap",
         ));
     }
     Ok(total)
@@ -6984,7 +7682,7 @@ fn clear_decision_selectors(batch: &mut Batch) {
 fn validate_block_single_sequence(cumulative_seq_lengths: &[u32]) -> Result<(), BackendError> {
     if cumulative_seq_lengths.len() != 2 {
         return Err(infer(
-            "Block OneJev supports exactly one packed B1 sequence",
+            "Block decisions support exactly one packed B1 sequence",
         ));
     }
     Ok(())
@@ -6998,7 +7696,7 @@ fn validate_fixed_block_decision_requests(
     match requests {
         [DecisionInput::BlockOptionTokens { prefix_length, .. }]
             if prefix != 0 && *prefix_length == prefix => Ok(()),
-        _ => Err(infer("B1 block OneJev requires one BlockOptionTokens request with the backend's exact fixed prefix")),
+        _ => Err(infer("B1 block decisions require one BlockOptionTokens request with the backend's exact fixed prefix")),
     }
 }
 
@@ -7023,7 +7721,7 @@ fn validate_dynamic_block_decision_requests(
             Ok(*prefix_length)
         }
         _ => Err(infer(
-            "B1 dynamic block OneJev requires exactly one BlockOptionTokens or Warmup request",
+            "B1 dynamic block decisions require exactly one BlockOptionTokens or Warmup request",
         )),
     }
 }
@@ -9311,7 +10009,7 @@ mod tests {
                     ExecutableModel::EncoderF16(_)
                     | ExecutableModel::Decoder(_)
                     | ExecutableModel::Gemma(_)
-                    | ExecutableModel::Modern(_)
+                    | ExecutableModel::Modern(..)
                     | ExecutableModel::Gemma2(_)
                     | ExecutableModel::UltraBert(_)
                     | ExecutableModel::Qwen35(_)
@@ -10563,7 +11261,7 @@ mod tests {
         let model = match &*engine.model {
             ExecutableModel::Encoder(model) => model,
             ExecutableModel::EncoderF16(_)
-            | ExecutableModel::Modern(_)
+            | ExecutableModel::Modern(..)
             | ExecutableModel::Decoder(_)
             | ExecutableModel::Gemma(_)
             | ExecutableModel::Gemma2(_)
@@ -11355,8 +12053,25 @@ mod qwen35_main_contract_tests {
     #[test]
     fn block_batches_are_single_sequence_before_admission() {
         assert!(validate_block_single_sequence(&[0, 7]).is_ok());
-        assert!(validate_block_single_sequence(&[0, 1, 7]).is_err());
-        assert!(validate_block_single_sequence(&[]).is_err());
+        for boundaries in [&[0u32, 1, 7][..], &[][..]] {
+            let error = validate_block_single_sequence(boundaries)
+                .expect_err("B>1 block batch must reject")
+                .to_string();
+            assert!(error.contains("B1"), "{error}");
+        }
+        let error = validate_dynamic_block_decision_requests(
+            7,
+            &[
+                DecisionInput::BlockOptionTokens {
+                    token_ids: vec![3],
+                    prefix_length: 5,
+                },
+                DecisionInput::Warmup,
+            ],
+        )
+        .expect_err("multi-question D3 prefix batch must reject")
+        .to_string();
+        assert!(error.contains("B1"), "{error}");
     }
 
     #[test]

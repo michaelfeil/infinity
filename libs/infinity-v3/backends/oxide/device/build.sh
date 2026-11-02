@@ -262,6 +262,23 @@ vela_head_exports = [
     if line.strip()
 ]
 symbols = sorted(symbols + vela_head_exports)
+
+# Additive Laya head-only exports.
+laya_exports = [
+    line.strip()
+    for line in (root / "laya_exports.txt").read_text().splitlines()
+    if line.strip()
+]
+symbols = sorted(symbols + laya_exports)
+
+# Additive Clef joint-head exports are source-only until the shared artifact is
+# composed; they are listed once so the scalar-prep entry cannot be duplicated.
+clef_decision_exports = [
+    line.strip()
+    for line in (root / "clef_decision_exports.txt").read_text().splitlines()
+    if line.strip()
+]
+symbols = sorted(symbols + clef_decision_exports)
 duplicates = sorted(name for name in set(symbols) if symbols.count(name) > 1)
 if duplicates:
     raise SystemExit("Duplicate kernel exports: " + ", ".join(duplicates))
@@ -318,6 +335,15 @@ manifest["sources"]["src/rms896_exact_vector.rs"] = digest(root / "src/rms896_ex
 manifest["sources"]["rms896_exports.txt"] = digest(root / "rms896_exports.txt")
 manifest["sources"]["src/vela_head.rs"] = digest(root / "src/vela_head.rs")
 manifest["sources"]["vela_head_exports.txt"] = digest(root / "vela_head_exports.txt")
+manifest["sources"]["laya_exports.txt"] = digest(root / "laya_exports.txt")
+manifest["sources"]["src/laya_decision.rs"] = digest(root / "src/laya_decision.rs")
+manifest["sources"]["clef_decision_exports.txt"] = digest(root / "clef_decision_exports.txt")
+for name in [
+    "src/clef_decision.rs",
+    "src/clef_decision_features.rs",
+    "src/clef_decision_scalars.rs",
+]:
+    manifest["sources"][name] = digest(root / name)
 for name in ["src/deberta_math.rs", "src/deberta_norm.rs", "src/gelu_exact.rs", "src/deberta_embedding.rs"]:
     manifest["sources"][name] = digest(root / name)
 manifest["sources"]["src/gemma2_media.rs"] = digest(root / "src/gemma2_media.rs")
@@ -402,7 +428,8 @@ def snapshot_arch(invocation_root, arch):
     shutil.copytree(root / "src", destination / "src")
     for name in ["Cargo.toml", "Cargo.lock", "rust-toolchain.toml",
                  "encoder_activation_exports.txt", "qwen35_exports.txt", "rms5120_aten_exports.txt", "rms896_exports.txt",
-                 "vela_head_exports.txt", "LICENSE-Candle-BSD3", "LICENSE-PyTorch-BSD3"]:
+                 "vela_head_exports.txt", "laya_exports.txt", "clef_decision_exports.txt",
+                 "LICENSE-Candle-BSD3", "LICENSE-PyTorch-BSD3"]:
         shutil.copy2(root / name, destination / name)
     notice = root.parent / "NOTICE"
     if notice.is_file():

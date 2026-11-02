@@ -26,6 +26,7 @@ mod gemma4;
 mod gemma2_media;
 mod gemma3;
 mod jina_code_qk;
+mod laya_decision;
 mod mpnet_norm;
 mod nomic_embedding;
 mod norm1024;
@@ -47,6 +48,9 @@ mod norm768_vector;
 mod plain_layer_norm_768;
 mod qk_norm_rope_128;
 mod readout;
+mod clef_decision;
+mod clef_decision_features;
+mod clef_decision_scalars;
 mod rms1536;
 mod rms1536_vector;
 mod rms4096_vector;
@@ -2169,6 +2173,85 @@ mod kernels {
         };
     }
 
+    /// Add each packed token's question-type embedding before Laya refinement.
+    /// Grid=ceil(tokens*hidden/256), block=256.
+    #[kernel]
+    pub unsafe fn infinity_laya_type_add_bf16(
+        hidden: *const u16,
+        types: *const u32,
+        type_emb: *const u16,
+        out: *mut u16,
+        tokens: u32,
+        width: u32,
+    ) {
+        unsafe { crate::laya_decision::type_add(hidden, types, type_emb, out, tokens, width) };
+    }
+
+    /// BF16 residual add with one activation-boundary rounding.
+    #[kernel]
+    pub unsafe fn infinity_laya_add_bf16(
+        a: *const u16,
+        b: *const u16,
+        out: *mut u16,
+        elements: u32,
+    ) {
+        unsafe { crate::laya_decision::add(a, b, out, elements) };
+    }
+
+    /// Packed option logits plus per-question cumulative counts to action features.
+    /// Grid=questions, block=256.
+    #[kernel]
+    pub unsafe fn infinity_laya_action_features_f32(
+        logits: *const f32,
+        counts: *const u32,
+        features: *mut f32,
+        questions: u32,
+    ) {
+        unsafe { crate::laya_decision::action_features(logits, counts, features, questions) };
+    }
+
+    /// Add a BF16 bias, apply exact erf GELU and write BF16.
+    #[kernel]
+    pub unsafe fn infinity_laya_gelu_exact_bias_bf16(
+        input: *const u16,
+        bias: *const u16,
+        out: *mut u16,
+        rows: u32,
+        width: u32,
+        input_stride: u32,
+        output_stride: u32,
+    ) {
+        unsafe {
+            crate::laya_decision::gelu_exact_bias(
+                input,
+                bias,
+                out,
+                rows,
+                width,
+                input_stride,
+                output_stride,
+            )
+        };
+    }
+
+    /// Concatenate F32 first-token rows and action features into BF16 input rows.
+    #[kernel]
+    pub unsafe fn infinity_laya_action_input_bf16(
+        pooled: *const f32,
+        features: *const f32,
+        out: *mut u16,
+        questions: u32,
+        hidden: u32,
+    ) {
+        unsafe { crate::laya_decision::action_input(pooled, features, out, questions, hidden) };
+    }
+
+    /// Softmax two F32 action classes and keep class zero.
+    #[kernel]
+    pub unsafe fn infinity_laya_softmax2_f32(input: *const f32, out: *mut f32, rows: u32) {
+        unsafe { crate::laya_decision::softmax_two(input, out, rows) };
+    }
+
     #[kernel]
     pub unsafe fn infinity_gelu_exact(input: *mut u16, elements: u32) {
         unsafe { crate::gelu_exact::gelu_exact(input, elements) };
@@ -2640,6 +2723,72 @@ mod kernels {
         eps: f32,
     ) {
         unsafe { crate::rms5120_aten::rms_norm_5120_aten(input, weight, out, rows, width, eps) };
+    }
+
+    /// Clef cold BF16 scalar preparation, grid=(1,1,1), block256.
+    #[kernel]
+    pub unsafe fn infinity_clef_scalar_prep_bf16(input: *const u16, out: *mut f32, count: u32) {
+        unsafe { crate::clef_decision_scalars::scalar_prep(input, out, count) };
+    }
+
+    /// Clef FP32 span mean with one BF16 output row; grid=(count,1,1).
+    #[kernel]
+    pub unsafe fn infinity_clef_span_mean_bf16(input: *const u16, boundaries: *const u32, selected: *const u32, out: *mut u16, count: u32, width: u32) {
+        unsafe { crate::clef_decision::span_mean(input, boundaries, selected, out, count, width) };
+    }
+
+    /// Clef BF16 residual add, grid=ceil(elements/256), block256.
+    #[kernel]
+    pub unsafe fn infinity_clef_residual_add_bf16(a: *const u16, b: *const u16, out: *mut u16, elements: u32) {
+        unsafe { crate::clef_decision::residual_add(a, b, out, elements) };
+    }
+
+    /// Clef option-query composition, grid=ceil(options*width/256), block256.
+    #[kernel]
+    pub unsafe fn infinity_clef_query_compose_bf16(question: *const u16, context: *const u16, lexical: *const u16, field_of_option: *const u32, out: *mut u16, options: u32, width: u32) {
+        unsafe { crate::clef_decision::query_compose(question, context, lexical, field_of_option, out, options, width) };
+    }
+
+    /// Clef per-option field route score; grid=(options,1,1), block256.
+    #[kernel]
+    pub unsafe fn infinity_clef_route_scores_bf16(option: *const u16, base: *const u16, field_of_option: *const u32, out: *mut u16, options: u32, width: u32, fields: u32, scale: f32) {
+        unsafe { crate::clef_decision::route_scores(option, base, field_of_option, out, options, width, fields, scale) };
+    }
+
+    /// Clef field softmax-weighted option summary; grid=(fields,1,1), block256.
+    #[kernel]
+    pub unsafe fn infinity_clef_softmax_sum_bf16(option: *const u16, scores: *const u16, field_option_offsets: *const u32, out: *mut u16, options: u32, width: u32, fields: u32) {
+        unsafe { crate::clef_decision::softmax_sum(option, scores, field_option_offsets, out, options, width, fields) };
+    }
+
+    /// Clef field composition, grid=ceil(fields*width/256), block256.
+    #[kernel]
+    pub unsafe fn infinity_clef_field_compose_bf16(base: *const u16, summary: *const u16, global: *const u16, types: *const u16, field_request: *const u32, field_kind: *const u32, out: *mut u16, fields: u32, width: u32) {
+        unsafe { crate::clef_decision_features::field_compose(base, summary, global, types, field_request, field_kind, out, fields, width) };
+    }
+
+    /// Clef normalized anchor; grid=(fields,1,1), block256.
+    #[kernel]
+    pub unsafe fn infinity_clef_anchor_bf16(question: *const u16, global: *const u16, field_request: *const u32, out: *mut u16, fields: u32, hidden: u32) {
+        unsafe { crate::clef_decision_features::anchor(question, global, field_request, out, fields, hidden) };
+    }
+
+    /// Clef normalized lexical prior; grid=(options,1,1), block256.
+    #[kernel]
+    pub unsafe fn infinity_clef_prior_bf16(lexical: *const u16, anchors: *const u16, field_of_option: *const u32, out: *mut u16, options: u32, hidden: u32, scale: f32) {
+        unsafe { crate::clef_decision_features::prior(lexical, anchors, field_of_option, out, options, hidden, scale) };
+    }
+
+    /// Clef cosine plus residual feature rows; grid=(options,1,1), block256.
+    #[kernel]
+    pub unsafe fn infinity_clef_features_bf16(field_rows: *const u16, option_rows: *const u16, field_of_option: *const u32, out: *mut u16, cosine: *mut u16, options: u32, width: u32) {
+        unsafe { crate::clef_decision_features::features(field_rows, option_rows, field_of_option, out, cosine, options, width) };
+    }
+
+    /// Clef final gated F32 logits, grid=ceil(options/256), block256.
+    #[kernel]
+    pub unsafe fn infinity_clef_logits_f32(prior: *const u16, cosine: *const u16, residual: *const u16, out: *mut f32, options: u32, joint_scale: f32, gate: f32) {
+        unsafe { crate::clef_decision_features::logits(prior, cosine, residual, out, options, joint_scale, gate) };
     }
 
 }

@@ -121,7 +121,7 @@ Elephant and Mammoth have separate native text and single-question Decision
 qualification; this does not establish every Qwen3.5 geometry or performance.
 The cold runtime dependencies are selected by `INFINITY_FA4_ROOT`,
 `INFINITY_OXIDE_GDN_RAW_KERNELS`, `INFINITY_OXIDE_GDN_PROVIDER`, and
-`INFINITY_OXIDE_GDN_AUX_KERNELS`. The current combined builder emits 163 Rust
+`INFINITY_OXIDE_GDN_AUX_KERNELS`. The current combined builder emits 180 Rust
 exports; Qwen3.5 requires its nine additive exports. Dense decoders require the
 90-export bundle or newer for Native BF16 mean pooling. Other existing families
 can retain their older qualified bundles. H5120 Qwen3 requires the additive
@@ -133,6 +133,12 @@ exactly on H100, including memory and initialization checks; this does not
 qualify a complete 14B/32B checkpoint or establish a performance gain.
 Stored `A_log` and `dt_bias` decay parameters retain native F32 precision;
 other parameters follow the selected BF16 weight conversion.
+
+D3 and Perplexity decision heads, Clef and Laya now have typed GPU execution
+through the ordinary factory, with owned request plans and deferred outputs.
+The current decision paths require one question per batch; full fanout remains
+a typed rejection. Trained-checkpoint, lifetime and performance qualification
+for these added heads is pending.
 
 Dense Qwen2/Qwen3/Llama sequence and token classifiers load their trained
 `score.weight` and optional bias directly. Sequence heads select the last

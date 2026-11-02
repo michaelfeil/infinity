@@ -1,0 +1,6 @@
+infinity_laya_type_add_bf16
+infinity_laya_add_bf16
+infinity_laya_action_features_f32
+infinity_laya_action_input_bf16
+infinity_laya_gelu_exact_bias_bf16
+infinity_laya_softmax2_f32

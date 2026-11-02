@@ -106,7 +106,8 @@ def source_digest(root):
         "build.sh", "Cargo.toml", "Cargo.lock", "rust-toolchain.toml",
         "encoder_activation_exports.txt", "colbert_exports.txt", "SPARSE_COLBERT_ABI.json",
         "qwen35_exports.txt", "rms5120_aten_exports.txt", "rms896_exports.txt",
-        "vela_head_exports.txt", "LICENSE-Candle-BSD3", "LICENSE-PyTorch-BSD3")]
+        "vela_head_exports.txt", "laya_exports.txt", "clef_decision_exports.txt",
+        "LICENSE-Candle-BSD3", "LICENSE-PyTorch-BSD3")]
     files += sorted((root / "src").rglob("*.rs"))
     files.append(root.parent / "NOTICE")
     files.append(root.parent / "NOTICE.qwen35")

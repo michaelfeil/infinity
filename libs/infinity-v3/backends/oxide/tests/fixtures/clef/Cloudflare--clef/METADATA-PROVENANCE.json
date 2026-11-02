@@ -1,0 +1,23 @@
+{
+  "model": "Cloudflare/clef",
+  "task": "Typed decisions",
+  "files": [
+    {
+      "file": "config.json",
+      "status": "saved",
+      "revision": "cfddda043dd190ef3b01cff449d5ee8cff1e8ec6",
+      "sha256": "c42e88892bd3fd84e8276b2ad90df58c1c3b797676ea161035006a72ad468c58",
+      "bytes": 3688,
+      "url": "https://huggingface.co/Cloudflare/clef/resolve/main/config.json"
+    },
+    {
+      "file": "modules.json",
+      "status": "http-404"
+    },
+    {
+      "file": "decision_config.json",
+      "status": "http-404"
+    }
+  ],
+  "weights_downloaded": false
+}

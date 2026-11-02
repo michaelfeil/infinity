@@ -118,6 +118,12 @@ pub(crate) struct DecisionReadoutKernels {
 }
 
 impl DecisionReadoutKernels {
+    pub(crate) fn cast_kernel(&self) -> &Function {
+        &self.cast
+    }
+}
+
+impl DecisionReadoutKernels {
     pub(crate) fn load(context: &Arc<Context>) -> Result<Self, DecisionGpuError> {
         let path = std::env::var_os(infinity_v3_config::infinity_env!("OXIDE_KERNEL_MODULE"))
             .ok_or_else(|| {
@@ -198,6 +204,10 @@ impl<'a> GpuHiddenRows<'a> {
     pub(crate) fn width(&self) -> usize {
         self.width
     }
+
+    pub(crate) fn buffer(&self) -> &'a DeviceBuffer<Bf16> {
+        self.buffer
+    }
 }
 
 /// One cold-prepared F32 projection. `arguments` already contains the exact
@@ -255,28 +265,28 @@ impl RetainedLease for AllocationLease {
 /// Owned hidden-source retention. The lease holds the allocation and its
 /// access-tracker entry, so the caller may drop its `DeviceBuffer` as soon as
 /// `forward`/`forward_pooled` returns, including on every error path.
-struct HiddenLeaseSlot<L: RetainedLease> {
+pub(crate) struct HiddenLeaseSlot<L: RetainedLease> {
     lease: Option<L>,
     bytes: usize,
 }
 
 impl<L: RetainedLease> HiddenLeaseSlot<L> {
-    fn empty() -> Self {
+    pub(crate) fn empty() -> Self {
         Self {
             lease: None,
             bytes: 0,
         }
     }
 
-    fn is_held(&self) -> bool {
+    pub(crate) fn is_held(&self) -> bool {
         self.lease.is_some()
     }
 
-    fn bytes(&self) -> usize {
+    pub(crate) fn bytes(&self) -> usize {
         self.bytes
     }
 
-    fn install(&mut self, lease: L, bytes: usize) -> Result<(), &'static str> {
+    pub(crate) fn install(&mut self, lease: L, bytes: usize) -> Result<(), &'static str> {
         if self.lease.is_some() {
             lease.release();
             return Err("hidden source lease is already held");
@@ -288,7 +298,7 @@ impl<L: RetainedLease> HiddenLeaseSlot<L> {
 
     /// The prepared stream has drained successfully, so the allocation and its
     /// read access may be released.
-    fn release_after_drain(&mut self) {
+    pub(crate) fn release_after_drain(&mut self) {
         if let Some(lease) = self.lease.take() {
             lease.release();
         }
@@ -297,13 +307,13 @@ impl<L: RetainedLease> HiddenLeaseSlot<L> {
 
     /// Completion is uncertain: leak the lease (which owns the allocation)
     /// instead of freeing storage that a failed stream may still read.
-    fn retain_after_uncertain_drain(&mut self) {
+    pub(crate) fn retain_after_uncertain_drain(&mut self) {
         if let Some(lease) = self.lease.take() {
             std::mem::forget(lease);
         }
     }
 
-    fn drop_with_drain(&mut self, drained: bool) {
+    pub(crate) fn drop_with_drain(&mut self, drained: bool) {
         if drained {
             self.release_after_drain();
         } else {

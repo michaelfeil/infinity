@@ -41,6 +41,24 @@ class Qwen35ExportRegistryTests(unittest.TestCase):
             with self.subTest(entry=entry):
                 self.assertIsNotNone(kernel_pattern(entry).search(main))
 
+    def test_device_module_declarations_are_unique(self):
+        declarations = re.findall(
+            r"(?m)^mod\s+([A-Za-z_][A-Za-z0-9_]*)\s*;",
+            MAIN.read_text(),
+        )
+        duplicates = sorted(
+            {name for name in declarations if declarations.count(name) > 1}
+        )
+        self.assertEqual(
+            duplicates, [], f"duplicate device module declarations: {duplicates}"
+        )
+        for module in ("laya_decision", "clef_decision",
+                       "clef_decision_features", "clef_decision_scalars"):
+            self.assertEqual(
+                declarations.count(module), 1,
+                f"missing or duplicate new device module {module}",
+            )
+
     def test_export_union_matches_kernel_definitions_and_is_unique(self):
         names = registered_exports()
         self.assertEqual(len(set(names)), len(names))

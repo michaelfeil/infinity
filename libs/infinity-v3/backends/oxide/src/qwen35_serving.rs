@@ -48,6 +48,13 @@ fn is_qwen35_type(value: &str) -> bool {
     value == "qwen3_5" || value.starts_with("qwen3_5_")
 }
 
+/// Resolve the actual Decision sidecar attention mode. External D3/Pplx
+/// sidecars are authoritative; OneJev checkpoints keep the existing model
+/// override behavior. `prefix_bidir` is always noncausal at the backbone.
+pub(crate) fn decision_causal(path: &Path, block: DecisionAttention) -> Result<bool, BackendError> {
+    Ok(external_decision_route(path)?.map_or_else(|| block.causal(), |external| external.causal()))
+}
+
 /// Whether `config.json` declares the Qwen3.5 family at the root or in
 /// `text_config`. Geometry and tensor validation stay in the explicit
 /// constructors, which reload the actual checkpoint metadata.
@@ -75,6 +82,48 @@ pub(crate) enum DecisionAttention {
 impl DecisionAttention {
     const fn causal(self) -> bool {
         matches!(self, Self::Causal)
+    }
+}
+
+/// External D3/Pplx routing from the authoritative decision_config sidecar.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum ExternalDecisionRoute {
+    Causal,
+    NoncausalFull,
+    PrefixBidirectional,
+}
+
+impl ExternalDecisionRoute {
+    pub(crate) const fn causal(self) -> bool {
+        matches!(self, Self::Causal)
+    }
+
+    pub(crate) const fn block(self) -> bool {
+        matches!(self, Self::PrefixBidirectional)
+    }
+}
+
+/// Read the external decision attention mode. `None` means the checkpoint has
+/// no external sidecar and keeps the OneJev/embedding model-override behavior.
+pub(crate) fn external_decision_route(
+    path: &Path,
+) -> Result<Option<ExternalDecisionRoute>, BackendError> {
+    let sidecar = path.join("decision_config.json");
+    if !crate::model::path_present(&sidecar).map_err(start)? {
+        return Ok(None);
+    }
+    let config: serde_json::Value = read_json(&sidecar).map_err(start)?;
+    let mode = config
+        .get("attention_mode")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or("causal");
+    match mode {
+        "causal" => Ok(Some(ExternalDecisionRoute::Causal)),
+        "noncausal_full_attention" => Ok(Some(ExternalDecisionRoute::NoncausalFull)),
+        "prefix_bidir" => Ok(Some(ExternalDecisionRoute::PrefixBidirectional)),
+        other => Err(start(format!(
+            "unsupported external decision attention_mode {other:?}"
+        ))),
     }
 }
 
@@ -201,6 +250,16 @@ pub(crate) fn route(
     dense_paths: Option<&[String]>,
     attention: DecisionAttention,
 ) -> Result<ServingRoute, BackendError> {
+    route_with_external(dtype, model_type, dense_paths, attention, None)
+}
+
+pub(crate) fn route_with_external(
+    dtype: &str,
+    model_type: &ModelType,
+    dense_paths: Option<&[String]>,
+    attention: DecisionAttention,
+    external: Option<ExternalDecisionRoute>,
+) -> Result<ServingRoute, BackendError> {
     if dtype != "bfloat16" {
         return Err(start(
             "Qwen3.5 serving requires --dtype bfloat16; FP16 and FP32 are unsupported",
@@ -228,9 +287,13 @@ pub(crate) fn route(
                 causal: attention.causal(),
             })
         }
-        ModelType::Decision => Ok(match attention {
-            DecisionAttention::BlockBidirectional => ServingRoute::DynamicBlockDecision,
-            DecisionAttention::Causal => ServingRoute::TextDecision,
+        ModelType::Decision => Ok(match external {
+            Some(external) if external.block() => ServingRoute::DynamicBlockDecision,
+            Some(_) => ServingRoute::TextDecision,
+            None => match attention {
+                DecisionAttention::BlockBidirectional => ServingRoute::DynamicBlockDecision,
+                DecisionAttention::Causal => ServingRoute::TextDecision,
+            },
         }),
         ModelType::Classifier => Err(start("Qwen3.5 classifier serving is unsupported")),
     }
@@ -506,5 +569,74 @@ mod tests {
                 .to_string();
             assert!(error.contains(diagnostic), "{error}");
         }
+    }
+
+    #[test]
+    fn external_sidecar_selects_block_route_without_modeling_override() {
+        assert_eq!(
+            route_with_external(
+                "bfloat16",
+                &ModelType::Decision,
+                None,
+                DecisionAttention::Causal,
+                Some(ExternalDecisionRoute::PrefixBidirectional),
+            )
+            .unwrap(),
+            ServingRoute::DynamicBlockDecision
+        );
+        assert_eq!(
+            route_with_external(
+                "bfloat16",
+                &ModelType::Decision,
+                None,
+                DecisionAttention::BlockBidirectional,
+                Some(ExternalDecisionRoute::NoncausalFull),
+            )
+            .unwrap(),
+            ServingRoute::TextDecision
+        );
+        assert_eq!(
+            route_with_external(
+                "bfloat16",
+                &ModelType::Decision,
+                None,
+                DecisionAttention::Causal,
+                Some(ExternalDecisionRoute::Causal),
+            )
+            .unwrap(),
+            ServingRoute::TextDecision
+        );
+    }
+
+    #[test]
+    fn external_decision_attention_uses_actual_sidecar_mode() {
+        let path = temp_dir();
+        marker(&path, br#"{"model_type":"qwen3_5"}"#);
+        assert!(decision_causal(&path, DecisionAttention::Causal).unwrap());
+        fs::write(
+            path.join("decision_config.json"),
+            br#"{"format_version":1,"format_id":"d3-code-readout-v1","attention_mode":"noncausal_full_attention"}"#,
+        )
+        .unwrap();
+        assert!(!decision_causal(&path, DecisionAttention::Causal).unwrap());
+        fs::write(
+            path.join("decision_config.json"),
+            br#"{"format_version":1,"format_id":"d3-code-readout-v1","attention_mode":"prefix_bidir"}"#,
+        )
+        .unwrap();
+        assert!(!decision_causal(&path, DecisionAttention::BlockBidirectional).unwrap());
+        fs::write(
+            path.join("decision_config.json"),
+            br#"{"format_version":2,"attention_mode":"causal"}"#,
+        )
+        .unwrap();
+        assert!(decision_causal(&path, DecisionAttention::Causal).unwrap());
+        fs::write(
+            path.join("decision_config.json"),
+            br#"{"format_version":2,"attention_mode":"bidirectional"}"#,
+        )
+        .unwrap();
+        assert!(decision_causal(&path, DecisionAttention::Causal).is_err());
+        let _ = fs::remove_dir_all(path);
     }
 }

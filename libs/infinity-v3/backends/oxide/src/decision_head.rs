@@ -518,7 +518,7 @@ impl<'a> HiddenRows<'a> {
         self.width
     }
 
-    fn dot(&self, row: usize, weights: &[f32]) -> Result<f32, DecisionHeadError> {
+    pub(crate) fn dot(&self, row: usize, weights: &[f32]) -> Result<f32, DecisionHeadError> {
         if weights.len() != self.width {
             return Err(DecisionHeadError::HiddenShape(
                 "readout row width does not match hidden width",

@@ -1,0 +1,35 @@
+{
+  "model": "michaelfeil/laya-typed-decisions",
+  "task": "Typed decisions",
+  "revision": "2741340228fc0c982ae9dd63b34dcd5a9e7ce3ce",
+  "weights_downloaded": false,
+  "files": [
+    {
+      "file": "config.json",
+      "status": "saved",
+      "revision": "2741340228fc0c982ae9dd63b34dcd5a9e7ce3ce",
+      "sha256": "5268d24ad3b77c8151de5dcb0762ba4391619aad9ab0bda33e36fb083cfeae6d",
+      "bytes": 2084,
+      "url": "https://huggingface.co/michaelfeil/laya-typed-decisions/resolve/2741340228fc0c982ae9dd63b34dcd5a9e7ce3ce/config.json",
+      "owned_test_copy": "tests/data/laya_typed_decisions_encoder_config.json"
+    },
+    {
+      "file": "rl_agent_config.json",
+      "status": "saved",
+      "revision": "2741340228fc0c982ae9dd63b34dcd5a9e7ce3ce",
+      "sha256": "ebf0cd524d92342a6be5e48e9fca3d7c2babfb5a56ccd79d2171ef5d8c7f7be8",
+      "bytes": 847,
+      "url": "https://huggingface.co/michaelfeil/laya-typed-decisions/resolve/2741340228fc0c982ae9dd63b34dcd5a9e7ce3ce/rl_agent_config.json",
+      "owned_test_copy": "tests/data/laya_typed_decisions_rl_agent_config.json"
+    },
+    {
+      "file": "encoder/config.json",
+      "status": "saved",
+      "revision": "2741340228fc0c982ae9dd63b34dcd5a9e7ce3ce",
+      "sha256": "5268d24ad3b77c8151de5dcb0762ba4391619aad9ab0bda33e36fb083cfeae6d",
+      "bytes": 2084,
+      "url": "https://huggingface.co/michaelfeil/laya-typed-decisions/resolve/2741340228fc0c982ae9dd63b34dcd5a9e7ce3ce/encoder/config.json",
+      "owned_test_copy": "tests/data/laya_typed_decisions_encoder_config.json"
+    }
+  ]
+}

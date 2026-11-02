@@ -112,6 +112,29 @@ impl<K, V> WorkspaceCache<K, V> {
         Some(entry.value)
     }
 
+    /// Peek the smallest retained capacity using both key and owner metadata.
+    pub(crate) fn peek_best_fit_with(&self, mut fits: impl FnMut(&K, &V) -> bool) -> Option<&V> {
+        self.entries
+            .iter()
+            .filter(|entry| fits(&entry.key, &entry.value))
+            .min_by_key(|entry| entry.bytes)
+            .map(|entry| &entry.value)
+    }
+
+    /// Reuse the smallest retained capacity using both key and owner metadata.
+    pub(crate) fn take_best_fit_with(&mut self, mut fits: impl FnMut(&K, &V) -> bool) -> Option<V> {
+        let pos = self
+            .entries
+            .iter()
+            .enumerate()
+            .filter(|(_, entry)| fits(&entry.key, &entry.value))
+            .min_by_key(|(_, entry)| entry.bytes)
+            .map(|(pos, _)| pos)?;
+        let entry = self.entries.remove(pos)?;
+        self.cached_bytes = self.cached_bytes.saturating_sub(entry.bytes);
+        Some(entry.value)
+    }
+
     /// Reuse the smallest retained allocation that can serve this request.
     /// The predicate concerns capacity, not an exact logical shape.
     pub(crate) fn take_best_fit(&mut self, mut fits: impl FnMut(&K) -> bool) -> Option<V> {

@@ -2030,6 +2030,34 @@ impl Checkpoint {
         Self::from_shards(files, index, shards)
     }
 
+    /// Open one explicit safetensors sidecar within its own directory.
+    ///
+    /// Native decision readouts live in `readout.safetensors` rather than the
+    /// backbone checkpoint. The sidecar must remain a regular file directly in
+    /// its canonical parent directory; this keeps the same no-escape rule as the
+    /// main checkpoint while avoiding a second safetensors parser.
+    pub(crate) fn open_file(path: &Path) -> Result<Self, BackendError> {
+        let resolved = path.canonicalize().map_err(start)?;
+        if !resolved.is_file() {
+            return Err(start("safetensors input must be a regular file"));
+        }
+        let root = resolved
+            .parent()
+            .ok_or_else(|| start("safetensors input has no parent directory"))?
+            .canonicalize()
+            .map_err(start)?;
+        if !permitted_weight(&root, &resolved) {
+            return Err(start("checkpoint shard escapes model directory"));
+        }
+        let file = resolved
+            .file_name()
+            .and_then(|name| name.to_str())
+            .ok_or_else(|| start("invalid safetensors filename"))?
+            .to_owned();
+        let shard = open_shard(&resolved)?;
+        Self::from_shards(vec![file], None, vec![shard])
+    }
+
     /// Open a nested module checkpoint while keeping the enclosing model root as
     /// the trusted Hub snapshot boundary.
     ///

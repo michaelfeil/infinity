@@ -688,6 +688,17 @@ impl HostIoLease {
             .get(..elements)
             .ok_or_else(|| infer("Output exceeds host I/O arena"))
     }
+
+    pub(crate) fn output_mut(&mut self, elements: usize) -> Result<&mut [f32], BackendError> {
+        if !self.drained {
+            return Err(infer("Host I/O output has not completed"));
+        }
+        self.slot_mut()?
+            .output
+            .as_mut_slice()
+            .get_mut(..elements)
+            .ok_or_else(|| infer("Output exceeds host I/O arena"))
+    }
     pub(crate) fn poison(&self) {
         self.pool.close();
     }

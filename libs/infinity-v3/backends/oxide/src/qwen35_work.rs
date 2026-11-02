@@ -1,13 +1,16 @@
 // Copyright Infinity Core Contributors. Licensed under the repository LICENSE.
 //! One arena owns three phase slabs and one recurrent scratch pipeline.
+use crate::clef_decision_workspace::{ClefCapacity, ClefWorkspace};
+use crate::clef_warm::{ClefQ35Head, ClefWarmPrepared};
 use crate::decision_head_gpu::{DecisionGpuError, OneJevGpuHead};
+use crate::external_warm::{ExternalHeadCapacity, ExternalScratch, ExternalWarmPlan};
 use crate::gdn_prepared::{GdnCapacity, GdnKernelSet, GdnPrepared};
 use crate::qwen35_block_work::BlockWork;
 use crate::qwen35_execute::{PreparedWork, Slabs};
 use crate::qwen35_layout::Qwen35Layout;
 use crate::qwen35_runtime::Qwen35Model;
 use crate::tensor::Bf16;
-use crate::warm_head::{WarmDecisionPlan, WarmHeadScratch};
+use crate::warm_head::{WarmDecisionPlan, WarmHeadCapacity, WarmHeadScratch};
 use crate::work_retirement::{CompletedTicket, CompletionTicket};
 use crate::{infer, product, HostIoLease, WorkKey};
 use cuda_core::{DeviceBuffer, Stream};
@@ -17,6 +20,29 @@ use std::{
     sync::{atomic::Ordering, Arc},
 };
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum DecisionCapacity {
+    OneJev(WarmHeadCapacity),
+    External(ExternalHeadCapacity),
+    Clef(ClefCapacity),
+}
+
+impl DecisionCapacity {
+    pub(crate) fn device_bytes(self) -> Result<usize, BackendError> {
+        match self {
+            Self::OneJev(capacity) => capacity.device_bytes(),
+            Self::External(capacity) => capacity.device_bytes(),
+            Self::Clef(capacity) => capacity.device_bytes(),
+        }
+    }
+}
+
+pub(crate) enum DecisionScratch {
+    OneJev(WarmHeadScratch),
+    External(ExternalScratch),
+    Clef(Box<ClefWorkspace>),
+}
+
 pub(crate) struct Payload {
     pub input: DeviceBuffer<u32>,
     pub residual: DeviceBuffer<Bf16>,
@@ -25,7 +51,7 @@ pub(crate) struct Payload {
     pub pooled: DeviceBuffer<f32>,
     pub gdn: GdnPrepared,
     pub block: Option<BlockWork>,
-    pub head: Option<WarmHeadScratch>,
+    pub head: Option<DecisionScratch>,
     pub prepared: Option<PreparedWork>,
     pub prepared_shape: Option<(usize, usize, usize)>,
     pub layout: Qwen35Layout,
@@ -48,7 +74,7 @@ struct BuildingData {
     pooled: Option<DeviceBuffer<f32>>,
     gdn: Option<GdnPrepared>,
     block: Option<BlockWork>,
-    head: Option<WarmHeadScratch>,
+    head: Option<DecisionScratch>,
 }
 struct Building {
     stream: Arc<Stream>,
@@ -109,7 +135,7 @@ impl Qwen35Work {
         )?;
         let head_bytes = model
             .decision_capacity(key)?
-            .map_or(Ok(0), |capacity| capacity.device_bytes())?;
+            .map_or(Ok(0), DecisionCapacity::device_bytes)?;
         layout
             .slab_bytes
             .checked_add(product(input, 4)?)
@@ -176,7 +202,15 @@ impl Qwen35Work {
             &model.options.gdn_aux_kernels,
         )?);
         d.head = match model.decision_capacity(key)? {
-            Some(capacity) => Some(WarmHeadScratch::new(&stream, capacity)?),
+            Some(DecisionCapacity::OneJev(capacity)) => Some(DecisionScratch::OneJev(
+                WarmHeadScratch::new(&stream, capacity)?,
+            )),
+            Some(DecisionCapacity::External(capacity)) => Some(DecisionScratch::External(
+                ExternalScratch::new(&stream, capacity)?,
+            )),
+            Some(DecisionCapacity::Clef(capacity)) => Some(DecisionScratch::Clef(Box::new(
+                ClefWorkspace::new(&stream, capacity)?,
+            ))),
             None => None,
         };
         // Cold construction publishes no owner until every initialization finished.
@@ -290,6 +324,11 @@ impl Qwen35Work {
             return;
         }
         self.payload_released = true;
+        if let Some(DecisionScratch::Clef(workspace)) = self.data.head.as_mut() {
+            // The outer Work proof/drain is the only authority for a warm Clef
+            // workspace; suppress the standalone leaf synchronize.
+            workspace.mark_drained();
+        }
         // SAFETY: exactly one owner drops the payload, and this method is
         // called only after a completion proof or an actual stream drain.
         unsafe { ManuallyDrop::drop(&mut self.data) };
@@ -348,8 +387,29 @@ impl Qwen35Work {
     pub(crate) fn upload(&self, host: &[u32], elements: usize) -> Result<(), BackendError> {
         crate::upload_input(&self.stream, &self.data.input, host, elements)
     }
-    pub(crate) fn head(&self) -> Option<&WarmHeadScratch> {
+    pub(crate) fn head(&self) -> Option<&DecisionScratch> {
         self.data.head.as_ref()
+    }
+
+    pub(crate) fn onejev_head(&self) -> Option<&WarmHeadScratch> {
+        match self.data.head.as_ref() {
+            Some(DecisionScratch::OneJev(scratch)) => Some(scratch),
+            _ => None,
+        }
+    }
+
+    pub(crate) fn external_head(&self) -> Option<&ExternalScratch> {
+        match self.data.head.as_ref() {
+            Some(DecisionScratch::External(scratch)) => Some(scratch),
+            _ => None,
+        }
+    }
+
+    pub(crate) fn clef_head(&self) -> Option<&ClefWorkspace> {
+        match self.data.head.as_ref() {
+            Some(DecisionScratch::Clef(workspace)) => Some(workspace.as_ref()),
+            _ => None,
+        }
     }
     pub(crate) fn activation(&self) -> &DeviceBuffer<Bf16> {
         &self.data.activation
@@ -370,6 +430,48 @@ impl Qwen35Work {
         let elements = plan.pack_metadata(host)?;
         Ok((elements, output))
     }
+    pub(crate) fn stage_external(
+        &self,
+        batch: &Batch,
+        geometry: crate::output::OutputGeometry,
+        plan: &ExternalWarmPlan,
+        lease: &mut HostIoLease,
+        request_prefix: Option<usize>,
+    ) -> Result<(usize, usize), BackendError> {
+        let (_, output) = self.stage_with_prefix(batch, geometry, lease, request_prefix)?;
+        let host = lease.slot_mut()?.input.as_mut_slice();
+        let elements = plan.pack_metadata(host)?;
+        Ok((elements, output))
+    }
+
+    pub(crate) fn stage_clef(
+        &self,
+        batch: &Batch,
+        geometry: crate::output::OutputGeometry,
+        prepared: &ClefWarmPrepared,
+        lease: &mut HostIoLease,
+        request_prefix: Option<usize>,
+    ) -> Result<(usize, usize), BackendError> {
+        let (_, output) = self.stage_with_prefix(batch, geometry, lease, request_prefix)?;
+        let reserved = if self.data.block.is_some() {
+            crate::qwen35_block_layout::BLOCK_TAIL_WORDS
+        } else {
+            0
+        };
+        let base = crate::staging::input_capacity(self.key)?
+            .checked_add(reserved)
+            .ok_or_else(|| infer("Qwen3.5 Clef metadata base overflow"))?;
+        let end = base
+            .checked_add(prepared.metadata_words())
+            .ok_or_else(|| infer("Qwen3.5 Clef metadata end overflow"))?;
+        let host = lease.slot_mut()?.input.as_mut_slice();
+        let slot = host
+            .get_mut(base..end)
+            .ok_or_else(|| infer("Qwen3.5 Clef metadata exceeds the input tail"))?;
+        slot.copy_from_slice(prepared.metadata());
+        Ok((end, output))
+    }
+
     /// Enqueue the warm readout from this Work's actual normalized BF16
     /// activation and the same input buffer that received the metadata tail.
     ///
@@ -386,12 +488,14 @@ impl Qwen35Work {
         host_logits: &mut [f32],
     ) -> Result<(), DecisionGpuError> {
         let data = &mut *self.data;
-        let scratch = data
-            .head
-            .as_mut()
-            .ok_or(DecisionGpuError::PreparedMismatch(
-                "this Work has no warm OneJev scratch",
-            ))?;
+        let scratch = match data.head.as_mut() {
+            Some(DecisionScratch::OneJev(scratch)) => scratch,
+            _ => {
+                return Err(DecisionGpuError::PreparedMismatch(
+                    "this Work has no warm OneJev scratch",
+                ))
+            }
+        };
         // SAFETY: the caller's outer Work/model ownership covers completion.
         unsafe {
             crate::warm_head::enqueue_warm_decision(
@@ -406,6 +510,90 @@ impl Qwen35Work {
             )
         }
     }
+    pub(crate) unsafe fn enqueue_external(
+        &mut self,
+        head: &crate::decision_external_gpu::ExternalGpuHead,
+        blas: &crate::Blas,
+        stream: &Stream,
+        plan: &ExternalWarmPlan,
+        host_logits: &mut [f32],
+    ) -> Result<(), crate::decision_external_gpu::ExternalGpuError> {
+        let data = &mut *self.data;
+        let scratch = match data.head.as_mut() {
+            Some(DecisionScratch::External(scratch)) => scratch,
+            _ => {
+                return Err(
+                    crate::decision_external_gpu::ExternalGpuError::PreparedMismatch(
+                        "this Work has no warm external scratch",
+                    ),
+                )
+            }
+        };
+        // SAFETY: the caller's outer Work/model ownership covers completion.
+        unsafe {
+            crate::external_warm::enqueue_external_warm(
+                head,
+                blas,
+                stream,
+                plan,
+                scratch,
+                &data.activation,
+                &data.input,
+                host_logits,
+            )
+        }
+    }
+
+    pub(crate) unsafe fn enqueue_clef(
+        &mut self,
+        head: &ClefQ35Head,
+        embed: &DeviceBuffer<Bf16>,
+        blas: &crate::Blas,
+        stream: &Stream,
+        prepared: &mut ClefWarmPrepared,
+        host_logits: &mut [f32],
+    ) -> Result<(), BackendError> {
+        let data = &mut *self.data;
+        let workspace = match data.head.as_mut() {
+            Some(DecisionScratch::Clef(workspace)) => workspace,
+            _ => return Err(infer("this Work has no warm Clef workspace")),
+        };
+        let reserved = if data.block.is_some() {
+            crate::qwen35_block_layout::BLOCK_TAIL_WORDS
+        } else {
+            0
+        };
+        let metadata_words = crate::staging::input_capacity(self.key)?
+            .checked_add(reserved)
+            .ok_or_else(|| infer("Qwen3.5 Clef metadata base overflow"))?;
+        let metadata_base = data
+            .input
+            .cu_deviceptr()
+            .checked_add(
+                u64::try_from(
+                    metadata_words
+                        .checked_mul(std::mem::size_of::<u32>())
+                        .ok_or_else(|| infer("Qwen3.5 Clef metadata byte offset overflow"))?,
+                )
+                .map_err(|_| infer("Qwen3.5 Clef metadata address overflow"))?,
+            )
+            .ok_or_else(|| infer("Qwen3.5 Clef metadata address overflow"))?;
+        // SAFETY: the caller's outer Work/model ownership covers completion.
+        unsafe {
+            crate::clef_warm::enqueue_bound(
+                head,
+                &data.activation,
+                embed,
+                workspace,
+                prepared,
+                blas,
+                stream,
+                host_logits.as_mut_ptr(),
+                metadata_base,
+            )
+        }
+    }
+
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn finish(
         &mut self,

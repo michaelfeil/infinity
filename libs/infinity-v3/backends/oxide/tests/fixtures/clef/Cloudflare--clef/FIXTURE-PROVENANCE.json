@@ -1,0 +1,10 @@
+{
+  "fixture": "Cloudflare--clef",
+  "source": "/tmp/oxide-docs-parity-20261102/model-metadata/Cloudflare--clef",
+  "files": {
+    "METADATA-PROVENANCE.json": "fcbef5d1486b8a676ab040915e9f22bf97510fa2cae88e948cd5336df88d46d5",
+    "config.json": "c42e88892bd3fd84e8276b2ad90df58c1c3b797676ea161035006a72ad468c58",
+    "joint_head_config.json": "890be585d75b981201eb96a35f98a9967afe37bc8d220cfdea2e72d56507534f"
+  },
+  "note": "Verbatim public metadata copied by Root; no weights payload."
+}
