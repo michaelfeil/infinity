@@ -10,6 +10,7 @@ infinity-v3-config = { workspace = true }
 infinity_v3-backend-core = { path = "../core" }
 cuda-core = { git = "https://github.com/NVIDIA/cuda-rust", rev = "999094fe568fc3080f80d49e9c44e3680ad1c968" }
 libloading = "0.8"
+libm = "0.2.16"
 pytorch-reader = { path = "vendor/pytorch-reader" }
 safetensors = "0.8"
 half = { workspace = true }

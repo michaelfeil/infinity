@@ -1911,6 +1911,7 @@ dependencies = [
  "infinity-v3-config",
  "infinity_v3-backend-core",
  "libloading",
+ "libm",
  "metrics",
  "pytorch-reader 0.22.0",
  "safetensors",

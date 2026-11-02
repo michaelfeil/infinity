@@ -13,6 +13,7 @@ mod deberta_math;
 mod deberta_norm;
 mod decoder;
 mod dense;
+mod encoder_activation;
 mod encoder_f16;
 mod encoder_prenorm;
 mod gated;
@@ -1863,6 +1864,102 @@ mod kernels {
     #[kernel]
     pub unsafe fn infinity_gelu_exact(input: *mut u16, elements: u32) {
         unsafe { crate::gelu_exact::gelu_exact(input, elements) };
+    }
+
+    /// Optional BF16 pointwise tanh-GELU; null bias activates the input as-is.
+    #[kernel]
+    pub unsafe fn infinity_encoder_activation_gelu_tanh_bf16(
+        input: *const u16,
+        bias: *const u16,
+        out: *mut u16,
+        rows: u32,
+        width: u32,
+        input_stride: u32,
+        output_stride: u32,
+    ) {
+        unsafe {
+            crate::encoder_activation::activate::<0>(
+                input,
+                bias,
+                out,
+                rows,
+                width,
+                input_stride,
+                output_stride,
+            )
+        };
+    }
+
+    /// Optional BF16 pointwise ReLU; null bias activates the input as-is.
+    #[kernel]
+    pub unsafe fn infinity_encoder_activation_relu_bf16(
+        input: *const u16,
+        bias: *const u16,
+        out: *mut u16,
+        rows: u32,
+        width: u32,
+        input_stride: u32,
+        output_stride: u32,
+    ) {
+        unsafe {
+            crate::encoder_activation::activate::<1>(
+                input,
+                bias,
+                out,
+                rows,
+                width,
+                input_stride,
+                output_stride,
+            )
+        };
+    }
+
+    /// Optional BF16 pointwise SiLU; null bias activates the input as-is.
+    #[kernel]
+    pub unsafe fn infinity_encoder_activation_silu_bf16(
+        input: *const u16,
+        bias: *const u16,
+        out: *mut u16,
+        rows: u32,
+        width: u32,
+        input_stride: u32,
+        output_stride: u32,
+    ) {
+        unsafe {
+            crate::encoder_activation::activate::<2>(
+                input,
+                bias,
+                out,
+                rows,
+                width,
+                input_stride,
+                output_stride,
+            )
+        };
+    }
+
+    /// Optional BF16 pointwise tanh; null bias activates the input as-is.
+    #[kernel]
+    pub unsafe fn infinity_encoder_activation_tanh_bf16(
+        input: *const u16,
+        bias: *const u16,
+        out: *mut u16,
+        rows: u32,
+        width: u32,
+        input_stride: u32,
+        output_stride: u32,
+    ) {
+        unsafe {
+            crate::encoder_activation::activate::<3>(
+                input,
+                bias,
+                out,
+                rows,
+                width,
+                input_stride,
+                output_stride,
+            )
+        };
     }
 
     /// EmbeddingGemma2 DivSqrt norm with F32 scale and no +1.

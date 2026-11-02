@@ -76,6 +76,16 @@ symbols = sorted(symbols + ["infinity_gemma2_norm_bf16_f32scale",
                             "infinity_gemma2_rope_tables_bf16",
                             "infinity_gemma2_mean_pool_bf16"])
 
+# Additive optional encoder-activation exports live in their own leaf file so
+# composing another additive leaf cannot overwrite this source. The original
+# 86-name list above remains unchanged.
+encoder_activation_exports = [
+    line.strip()
+    for line in (root / "encoder_activation_exports.txt").read_text().splitlines()
+    if line.strip()
+]
+symbols = sorted(symbols + encoder_activation_exports)
+
 def digest(path):
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
@@ -108,6 +118,8 @@ manifest["sources"]["src/jina_code_qk.rs"] = digest(root / "src/jina_code_qk.rs"
 manifest["sources"]["src/classifier.rs"] = digest(root / "src/classifier.rs")
 manifest["sources"]["src/classifier_norm384.rs"] = digest(root / "src/classifier_norm384.rs")
 manifest["sources"]["src/gemma2.rs"] = digest(root / "src/gemma2.rs")
+manifest["sources"]["src/encoder_activation.rs"] = digest(root / "src/encoder_activation.rs")
+manifest["sources"]["encoder_activation_exports.txt"] = digest(root / "encoder_activation_exports.txt")
 for name in ["src/deberta_math.rs", "src/deberta_norm.rs", "src/gelu_exact.rs"]:
     manifest["sources"][name] = digest(root / name)
 manifest["sources"] = dict(sorted(manifest["sources"].items()))
