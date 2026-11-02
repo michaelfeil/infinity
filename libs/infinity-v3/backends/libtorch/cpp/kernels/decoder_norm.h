@@ -12,11 +12,17 @@ namespace infinity {
 // use the unrounded FP32 residual sum; the returned residual rounds to the
 // input dtype. No input rows are padded.
 /// Return normalized rows plus rounded residual rows; without
-/// residual, the second tensor aliases input.
+/// residual, the second tensor aliases input. With scales requested, eligible
+/// rows are quantized directly to FP8; undefined scales retain the original dtype.
 std::pair<at::Tensor, at::Tensor> decoder_exact_rms_norm(const at::Tensor& input,
                                                          const at::Tensor& residual,
                                                          const at::Tensor& weight,
                                                          double epsilon);
+std::pair<at::Tensor, at::Tensor> decoder_exact_rms_norm(const at::Tensor& input,
+                                                         const at::Tensor& residual,
+                                                         const at::Tensor& weight,
+                                                         double epsilon,
+                                                         at::Tensor* scales);
 }
 
 namespace infinity {
