@@ -1,0 +1,418 @@
+{
+  "factory": [
+    {
+      "checkpoint": "/workspace/model-performance/michaelfeil/benchmark-overview/models/Qwen--Qwen3-VL-Embedding-8B",
+      "fixtures": [
+        {
+          "fixture": "single-cats",
+          "images": 1,
+          "merged_rows": true,
+          "raw": false,
+          "sequences": 1,
+          "tokens": 349
+        },
+        {
+          "fixture": "two-images",
+          "images": 2,
+          "merged_rows": true,
+          "raw": false,
+          "sequences": 1,
+          "tokens": 1380
+        },
+        {
+          "fixture": "varying-shapes",
+          "images": 4,
+          "merged_rows": true,
+          "raw": false,
+          "sequences": 1,
+          "tokens": 1522
+        },
+        {
+          "fixture": "single-qwen256",
+          "images": 1,
+          "merged_rows": true,
+          "raw": false,
+          "sequences": 1,
+          "tokens": 113
+        },
+        {
+          "fixture": "single-qwen1024",
+          "images": 1,
+          "merged_rows": true,
+          "raw": false,
+          "sequences": 1,
+          "tokens": 1073
+        },
+        {
+          "fixture": "empty-images",
+          "images": 0,
+          "merged_rows": true,
+          "raw": false,
+          "sequences": 1,
+          "tokens": 24
+        },
+        {
+          "fixture": "ragged-three-seq",
+          "images": 3,
+          "merged_rows": true,
+          "raw": false,
+          "sequences": 3,
+          "tokens": 1753
+        },
+        {
+          "fixture": "three-frame-cats",
+          "images": 1,
+          "merged_rows": true,
+          "raw": false,
+          "sequences": 1,
+          "tokens": 949
+        }
+      ],
+      "invalid_media": {
+        "kind": "Start(\"Oxide qwen3-vl checkpoint: sequence 0 image 0 payload has 3 values, expected 16\")",
+        "recoverable": true,
+        "valid_after_error": true
+      }
+    },
+    {
+      "checkpoint": "/workspace/model-performance/michaelfeil/torch215-comparison-20261029/models/TomoroAI--tomoro-colqwen3-embed-4b",
+      "fixtures": [
+        {
+          "fixture": "single-cats",
+          "images": 1,
+          "merged_rows": true,
+          "raw": true,
+          "sequences": 1,
+          "tokens": 349
+        },
+        {
+          "fixture": "two-images",
+          "images": 2,
+          "merged_rows": true,
+          "raw": true,
+          "sequences": 1,
+          "tokens": 1380
+        },
+        {
+          "fixture": "varying-shapes",
+          "images": 4,
+          "merged_rows": true,
+          "raw": true,
+          "sequences": 1,
+          "tokens": 1522
+        },
+        {
+          "fixture": "single-qwen256",
+          "images": 1,
+          "merged_rows": true,
+          "raw": true,
+          "sequences": 1,
+          "tokens": 113
+        },
+        {
+          "fixture": "single-qwen1024",
+          "images": 1,
+          "merged_rows": true,
+          "raw": true,
+          "sequences": 1,
+          "tokens": 1073
+        },
+        {
+          "fixture": "empty-images",
+          "images": 0,
+          "merged_rows": true,
+          "raw": true,
+          "sequences": 1,
+          "tokens": 24
+        },
+        {
+          "fixture": "ragged-three-seq",
+          "images": 3,
+          "merged_rows": true,
+          "raw": true,
+          "sequences": 3,
+          "tokens": 1753
+        },
+        {
+          "fixture": "three-frame-cats",
+          "images": 1,
+          "merged_rows": true,
+          "raw": true,
+          "sequences": 1,
+          "tokens": 949
+        }
+      ],
+      "invalid_media": {
+        "kind": "Start(\"Oxide qwen3-vl checkpoint: sequence 0 image 0 payload has 3 values, expected 16\")",
+        "recoverable": true,
+        "valid_after_error": true
+      }
+    },
+    {
+      "checkpoint": "/workspace/model-performance/michaelfeil/torch215-comparison-20261029/models/nvidia--nemotron-colembed-vl-4b-v2",
+      "fixtures": [
+        {
+          "fixture": "single-cats",
+          "images": 1,
+          "merged_rows": true,
+          "raw": true,
+          "sequences": 1,
+          "tokens": 349
+        },
+        {
+          "fixture": "two-images",
+          "images": 2,
+          "merged_rows": true,
+          "raw": true,
+          "sequences": 1,
+          "tokens": 1380
+        },
+        {
+          "fixture": "varying-shapes",
+          "images": 4,
+          "merged_rows": true,
+          "raw": true,
+          "sequences": 1,
+          "tokens": 1522
+        },
+        {
+          "fixture": "single-qwen256",
+          "images": 1,
+          "merged_rows": true,
+          "raw": true,
+          "sequences": 1,
+          "tokens": 113
+        },
+        {
+          "fixture": "single-qwen1024",
+          "images": 1,
+          "merged_rows": true,
+          "raw": true,
+          "sequences": 1,
+          "tokens": 1073
+        },
+        {
+          "fixture": "empty-images",
+          "images": 0,
+          "merged_rows": true,
+          "raw": true,
+          "sequences": 1,
+          "tokens": 24
+        },
+        {
+          "fixture": "ragged-three-seq",
+          "images": 3,
+          "merged_rows": true,
+          "raw": true,
+          "sequences": 3,
+          "tokens": 1753
+        },
+        {
+          "fixture": "three-frame-cats",
+          "images": 1,
+          "merged_rows": true,
+          "raw": true,
+          "sequences": 1,
+          "tokens": 949
+        }
+      ],
+      "invalid_media": {
+        "kind": "Start(\"Oxide qwen3-vl checkpoint: sequence 0 image 0 payload has 3 values, expected 16\")",
+        "recoverable": true,
+        "valid_after_error": true
+      }
+    },
+    {
+      "checkpoint": "/tmp/perplexity-embedding-audit/multivector-support/nvidia--nemotron-colembed-vl-8b-v2",
+      "fixtures": [
+        {
+          "fixture": "single-cats",
+          "images": 1,
+          "merged_rows": true,
+          "raw": true,
+          "sequences": 1,
+          "tokens": 349
+        },
+        {
+          "fixture": "two-images",
+          "images": 2,
+          "merged_rows": true,
+          "raw": true,
+          "sequences": 1,
+          "tokens": 1380
+        },
+        {
+          "fixture": "varying-shapes",
+          "images": 4,
+          "merged_rows": true,
+          "raw": true,
+          "sequences": 1,
+          "tokens": 1522
+        },
+        {
+          "fixture": "single-qwen256",
+          "images": 1,
+          "merged_rows": true,
+          "raw": true,
+          "sequences": 1,
+          "tokens": 113
+        },
+        {
+          "fixture": "single-qwen1024",
+          "images": 1,
+          "merged_rows": true,
+          "raw": true,
+          "sequences": 1,
+          "tokens": 1073
+        },
+        {
+          "fixture": "empty-images",
+          "images": 0,
+          "merged_rows": true,
+          "raw": true,
+          "sequences": 1,
+          "tokens": 24
+        },
+        {
+          "fixture": "ragged-three-seq",
+          "images": 3,
+          "merged_rows": true,
+          "raw": true,
+          "sequences": 3,
+          "tokens": 1753
+        },
+        {
+          "fixture": "three-frame-cats",
+          "images": 1,
+          "merged_rows": true,
+          "raw": true,
+          "sequences": 1,
+          "tokens": 949
+        }
+      ],
+      "invalid_media": {
+        "kind": "Start(\"Oxide qwen3-vl checkpoint: sequence 0 image 0 payload has 3 values, expected 16\")",
+        "recoverable": true,
+        "valid_after_error": true
+      }
+    }
+  ],
+  "lifecycle": {
+    "checkpoint_count": 4,
+    "elapsed_ms": 2462.704969,
+    "invalid_media_recoverable": true,
+    "rounds": [
+      {
+        "dropped": true,
+        "held": 8,
+        "round": 0
+      },
+      {
+        "dropped": true,
+        "held": 8,
+        "round": 1
+      },
+      {
+        "dropped": true,
+        "held": 8,
+        "round": 2
+      }
+    ]
+  },
+  "manifest": [
+    {
+      "alias": "qwen3_vl",
+      "checkpoint": "/workspace/model-performance/michaelfeil/benchmark-overview/models/Qwen--Qwen3-VL-Embedding-8B",
+      "config_sha256": "1eaa88d8d8824a47304e864c14101fe9efe3286607a7573f27eb723637f0d73d",
+      "deepstack": [
+        8,
+        16,
+        24
+      ],
+      "dtype": "bfloat16",
+      "elapsed_ms": 2.64584,
+      "model_type": "qwen3_vl",
+      "multi_vector": false,
+      "norm_eps": 1e-12,
+      "readout_kind": "Embedding",
+      "readout_tensors": 0,
+      "readout_width": null,
+      "tensor_count": 749,
+      "text_hidden": 4096,
+      "total_bytes": 16289587680,
+      "vision_depth": 27,
+      "vision_hidden": 1152
+    },
+    {
+      "alias": "colqwen3",
+      "checkpoint": "/workspace/model-performance/michaelfeil/torch215-comparison-20261029/models/TomoroAI--tomoro-colqwen3-embed-4b",
+      "config_sha256": "3084ed43dfbe16081839597916fd440ee6d29e283c2b48ed210adac2fd4245d8",
+      "deepstack": [
+        5,
+        11,
+        17
+      ],
+      "dtype": "bfloat16",
+      "elapsed_ms": 6.611792,
+      "model_type": "colqwen3",
+      "multi_vector": true,
+      "norm_eps": 0.0078125,
+      "readout_kind": "ColQwen3",
+      "readout_tensors": 2,
+      "readout_width": 320,
+      "tensor_count": 715,
+      "text_hidden": 2560,
+      "total_bytes": 8877270656,
+      "vision_depth": 24,
+      "vision_hidden": 1024
+    },
+    {
+      "alias": "qwen3_vl_nemotron_embed",
+      "checkpoint": "/workspace/model-performance/michaelfeil/torch215-comparison-20261029/models/nvidia--nemotron-colembed-vl-4b-v2",
+      "config_sha256": "eb531e7f4069d4362cefd0f5a553c7ec9209a825ff118c54704f3e037bf2b3e8",
+      "deepstack": [
+        5,
+        11,
+        17
+      ],
+      "dtype": "bfloat16",
+      "elapsed_ms": 2.109391,
+      "model_type": "qwen3_vl_nemotron_embed",
+      "multi_vector": true,
+      "norm_eps": 0.0078125,
+      "readout_kind": "NemotronColEmbed",
+      "readout_tensors": 0,
+      "readout_width": 2560,
+      "tensor_count": 714,
+      "text_hidden": 2560,
+      "total_bytes": 9653543936,
+      "vision_depth": 24,
+      "vision_hidden": 1024
+    },
+    {
+      "alias": "qwen3_vl_nemotron_embed",
+      "checkpoint": "/tmp/perplexity-embedding-audit/multivector-support/nvidia--nemotron-colembed-vl-8b-v2",
+      "config_sha256": "6bfd341440b901e83503cceae2f8dfd2e0bfa4646f9214b57b13bbbcc6601492",
+      "deepstack": [
+        8,
+        16,
+        24
+      ],
+      "dtype": "bfloat16",
+      "elapsed_ms": 2.3200830000000003,
+      "model_type": "qwen3_vl_nemotron_embed",
+      "multi_vector": true,
+      "norm_eps": 0.0078125,
+      "readout_kind": "NemotronColEmbed",
+      "readout_tensors": 0,
+      "readout_width": 4096,
+      "tensor_count": 750,
+      "text_hidden": 4096,
+      "total_bytes": 17534247392,
+      "vision_depth": 27,
+      "vision_hidden": 1152
+    }
+  ],
+  "mode": "all",
+  "schema": "qwen3-vl-host-consumer/v1"
+}

@@ -1,0 +1,13 @@
+{
+  "schema": "oxide-qwen35-moe-factory-service-blocking-v2-pins/v1",
+  "freeze_sha256": "e3bc2c0111aa3d0febf7b045a5c7099d328e933e9a401d65a29044167b11be8d",
+  "patch_sha256": "3e9af8c7586b26b5c9693526ffe6cfca35e0b3f7ccee687e8d26cd4b3818face",
+  "product_pins_match": true,
+  "tests": {
+    "focused": "72 passed, 0 failed",
+    "clippy": "-D warnings pass",
+    "fmt": "pass"
+  },
+  "review_required": true,
+  "optimized_build_authorized": false
+}

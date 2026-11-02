@@ -1,0 +1,68 @@
+{
+  "schema": "oxide-qwen35vl-runtime-paths/v3",
+  "purpose": "V3 replaces only the old union124 kernel module with the Root-actual device130 artifact. FA4 canonical26 and GDN raw/provider/aux are staged per run and checked by actual file names, file hashes and manifests before GPU.",
+  "legacy_param_note": "The inside preflight keeps the legacy --union124 argument label, but its expected manifest SHA/count/architectures come from this V3 runtime pin role. No 56863d52/124 prefix is hardcoded.",
+  "components": {
+    "device130": {
+      "host_path": "/tmp/oxide-device130-compose-source-v1/kernels",
+      "remote_rel": "runtime/kernels",
+      "manifest_rel": "manifest.json",
+      "manifest_sha256": "1d0b59dda1cef92c0e752553872e645adbdc07e93d40245817e82246f58b982d",
+      "file_count": 13,
+      "kernel_count": 130,
+      "architectures": [
+        "sm_90"
+      ],
+      "freeze_compiled": {
+        "path": "/tmp/oxide-device130-compose-source-v1/freeze-compiled.json",
+        "sha256": "ea0fb11484f1d684f32896b608496c29bdcf266a6d0a8472f2138757f17e4024"
+      },
+      "sm_90_cubin_sha256": "695e72ffbcd1f7a7ac7648e2b4cf5d146516c7100820dd6f73c41181271f9d0e",
+      "role": "qv35_corrected_pos_interp_abi_same",
+      "requested_architectures": [
+        "sm_90"
+      ],
+      "architecture_scope": [
+        "sm_90"
+      ],
+      "complete_target_set": false,
+      "old124_all3_compile_proof_preserved_separate": true
+    },
+    "fa4": {
+      "host_path": "/tmp/oxide-fa4-canonical26-derived-v4/bundle",
+      "remote_rel": "runtime/fa4",
+      "manifest_rel": "sm_90/manifest.json",
+      "manifest_sha256": "0e4af6e1fd40714300649dd98e6eb31a0c59e9e3cb493b377de07d57d63916a9",
+      "file_count": 213,
+      "architecture_manifests": {
+        "sm_90": "0e4af6e1fd40714300649dd98e6eb31a0c59e9e3cb493b377de07d57d63916a9",
+        "sm_100": "634de7ce55310205e96b09e424b4e307e0bba1aeb53686111958bbf56c603c9a",
+        "sm_120": "3780acd14bedd2356abe08f56c805e710663996742352a5b8ed9a3b3c4695187"
+      },
+      "note": "Qwen3.5 original bounded controller uses this canonical26 bundle for FA4; the Qwen3-VL /tmp/fa4-root staging copy is not assumed to cover Qwen3.5-VL."
+    },
+    "gdn_raw": {
+      "host_path": "/tmp/infinity-oxide-parity-20261101/qwen35-gdn-foundation-v1/kernels",
+      "remote_rel": "runtime/gdn-raw",
+      "manifest_rel": "manifest.json",
+      "manifest_sha256": "f0b2a18d14c80eec9e1e881d87bff80c27408c77a07eb9a1039ed57548b74a7b",
+      "file_count": 6
+    },
+    "gdn_provider": {
+      "host_path": "/tmp/infinity-oxide-parity-20261101/qwen35-gdn-aot-compiled-root-v2",
+      "remote_rel": "runtime/gdn-provider",
+      "manifest_rel": "manifest.json",
+      "manifest_sha256": "79b9e8e10d2214d88374254d113917b44dcc5bc326e91c82a115f0c047b5beeb",
+      "file_count": 74
+    },
+    "gdn_aux": {
+      "host_path": "/tmp/oxide-qwen35-gdn-aot-pack-v1/kernels",
+      "remote_rel": "runtime/gdn-aux",
+      "manifest_rel": "manifest.json",
+      "manifest_sha256": "d1cd7aab5324ad3f1cc8e961ee33f016caa5a344e440661ec332d089ba904be8",
+      "file_count": 9
+    }
+  },
+  "non_assumption": "The Qwen3-VL /tmp/fa4-root 24-file proof is not assumed to cover the Qwen3.5-VL canonical26 bundle. The canonical26 bundle is staged and content-checked per run.",
+  "qualification_scope": "Root H100 sm_90 only; SM100/120 are not part of this device130 runtime qualification."
+}

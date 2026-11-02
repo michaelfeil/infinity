@@ -1,0 +1,403 @@
+{
+  "base_commit": "e582ce90eb1544fcff081a495cb8fd4f3c17b112",
+  "cached_tuples": 4,
+  "central_fa4_owner_packet": {
+    "note": "Absent profiles are reported; no existing profile is borrowed or relabelled.",
+    "profiles": [
+      {
+        "missing": {
+          "causal": true,
+          "dtype": "bf16",
+          "head_dim": 128,
+          "heads": 40,
+          "kind": "text",
+          "kv_heads": 8,
+          "reason": "grouping ratio 5 is absent from canonical26",
+          "role": "Qwen3-VL-14B/other Q40/KV8 d128 causal global",
+          "scale": "rsqrt_head_dim",
+          "window": "global"
+        },
+        "tuple": "Qwen3-VL-14B (derived profile-only request)"
+      },
+      {
+        "missing": {
+          "causal": false,
+          "dtype": "bf16",
+          "head_dim": 128,
+          "heads": 40,
+          "kind": "text",
+          "kv_heads": 8,
+          "reason": "grouping ratio 5 is absent from canonical26",
+          "role": "Qwen3-VL-14B/other Q40/KV8 d128 noncausal global",
+          "scale": "rsqrt_head_dim",
+          "window": "global"
+        },
+        "tuple": "Qwen3-VL-14B (derived profile-only request)"
+      }
+    ],
+    "purpose": "Profiles required for Native-accepted Qwen3-VL tuples that are not in canonical26."
+  },
+  "derived_tuples": 3,
+  "dtypes": {
+    "bf16": {
+      "cached_tuples": [
+        "Qwen3-VL-8B-Embedding",
+        "TomoroAI-ColQwen3-4B",
+        "Nemotron-ColEmbed-VL-4B-v2",
+        "Nemotron-ColEmbed-VL-8B-v2"
+      ],
+      "config": "admitted; effective dtype is the top-level checkpoint dtype",
+      "device": "concrete Qwen3-VL tower and dense decoder use BF16",
+      "readout": "BF16 weights are widened exactly on the host"
+    },
+    "f16": {
+      "action": "report to central shader owner; do not admit F16 at the backend",
+      "config": "admitted structurally by the config/contract",
+      "device": "not implemented: the additive Qwen3-VL kernels are BF16; F16 needs its own shader/exports",
+      "readout": "F16 weights are widened exactly on the host"
+    },
+    "f32": {
+      "config": "rejected for the GPU adapter; Native CPU reference only",
+      "device": "not supported",
+      "readout": "F32 host projection supported for tests/CPU readouts"
+    }
+  },
+  "non_claims": [
+    "Derived 2B/32B tuples must be verified against the real config before admission.",
+    "No GPU execution or profile qualification is claimed.",
+    "30B-A3B MoE text is outside the dense Qwen3-VL foundation."
+  ],
+  "schema": "oxide-qwen3-vl-geometry/v1",
+  "structural_envelope": "Native accepts dense Qwen3-VL text with head_dim 128, square vision position tables, temporal_patch_size 2, in_channels 3 and text hidden equal to vision out_hidden_size. The Oxide generic Qwen3 recipe covers arbitrary dense head_dim-128 hidden widths with the existing generic norm/RoPE/QK exports. FA4 selection uses the grouping ratio, head_dim, dtype, causal bit and mask family, not absolute Q/KV heads: Q64/KV8 d128 reuses mode 22/5, Q12/KV12 d64 global reuses mode 0, and only the ratio-5 Q40/KV8 d128 combination is genuinely new.",
+  "tuples": [
+    {
+      "alias": "qwen3_vl",
+      "config_path": "/workspace/model-performance/michaelfeil/benchmark-overview/models/Qwen--Qwen3-VL-Embedding-8B/config.json",
+      "config_sha256": "1eaa88d8d8824a47304e864c14101fe9efe3286607a7573f27eb723637f0d73d",
+      "dense_text": true,
+      "name": "Qwen3-VL-8B-Embedding",
+      "source": "actual cached checkpoint",
+      "support": {
+        "dense_decoder": true,
+        "shell_only": false,
+        "status": "ready",
+        "structural": true,
+        "text_fa4": true,
+        "text_profile": "qwen",
+        "vision_fa4": true,
+        "vision_profile": "media72"
+      },
+      "text": {
+        "head_dim": 128,
+        "heads": 32,
+        "hidden_size": 4096,
+        "intermediate_size": 12288,
+        "kv_heads": 8,
+        "layers": 36,
+        "mrope": [
+          24,
+          20,
+          20
+        ],
+        "theta": 5000000.0,
+        "vocab": 151936
+      },
+      "vision": {
+        "deepstack": [
+          8,
+          16,
+          24
+        ],
+        "depth": 27,
+        "head_dim": 72,
+        "heads": 16,
+        "hidden_size": 1152,
+        "intermediate_size": 4304,
+        "out_hidden_size": 4096,
+        "positions": 2304
+      }
+    },
+    {
+      "alias": "colqwen3",
+      "config_path": "/workspace/model-performance/michaelfeil/torch215-comparison-20261029/models/TomoroAI--tomoro-colqwen3-embed-4b/config.json",
+      "config_sha256": "3084ed43dfbe16081839597916fd440ee6d29e283c2b48ed210adac2fd4245d8",
+      "dense_text": true,
+      "name": "TomoroAI-ColQwen3-4B",
+      "source": "actual cached checkpoint",
+      "support": {
+        "dense_decoder": true,
+        "shell_only": false,
+        "status": "ready",
+        "structural": true,
+        "text_fa4": true,
+        "text_profile": "qwen",
+        "vision_fa4": true,
+        "vision_profile": "bert"
+      },
+      "text": {
+        "head_dim": 128,
+        "heads": 32,
+        "hidden_size": 2560,
+        "intermediate_size": 9728,
+        "kv_heads": 8,
+        "layers": 36,
+        "mrope": [
+          24,
+          20,
+          20
+        ],
+        "theta": 5000000.0,
+        "vocab": 151936
+      },
+      "vision": {
+        "deepstack": [
+          5,
+          11,
+          17
+        ],
+        "depth": 24,
+        "head_dim": 64,
+        "heads": 16,
+        "hidden_size": 1024,
+        "intermediate_size": 4096,
+        "out_hidden_size": 2560,
+        "positions": 2304
+      }
+    },
+    {
+      "alias": "qwen3_vl_nemotron_embed",
+      "config_path": "/workspace/model-performance/michaelfeil/torch215-comparison-20261029/models/nvidia--nemotron-colembed-vl-4b-v2/config.json",
+      "config_sha256": "eb531e7f4069d4362cefd0f5a553c7ec9209a825ff118c54704f3e037bf2b3e8",
+      "dense_text": true,
+      "name": "Nemotron-ColEmbed-VL-4B-v2",
+      "source": "actual cached checkpoint",
+      "support": {
+        "dense_decoder": true,
+        "shell_only": false,
+        "status": "ready",
+        "structural": true,
+        "text_fa4": true,
+        "text_profile": "gqa4",
+        "vision_fa4": true,
+        "vision_profile": "bert"
+      },
+      "text": {
+        "head_dim": 128,
+        "heads": 32,
+        "hidden_size": 2560,
+        "intermediate_size": 9728,
+        "kv_heads": 8,
+        "layers": 36,
+        "mrope": [
+          24,
+          20,
+          20
+        ],
+        "theta": 5000000.0,
+        "vocab": 151936
+      },
+      "vision": {
+        "deepstack": [
+          5,
+          11,
+          17
+        ],
+        "depth": 24,
+        "head_dim": 64,
+        "heads": 16,
+        "hidden_size": 1024,
+        "intermediate_size": 4096,
+        "out_hidden_size": 2560,
+        "positions": 2304
+      }
+    },
+    {
+      "alias": "qwen3_vl_nemotron_embed",
+      "config_path": "/tmp/perplexity-embedding-audit/multivector-support/nvidia--nemotron-colembed-vl-8b-v2/config.json",
+      "config_sha256": "6bfd341440b901e83503cceae2f8dfd2e0bfa4646f9214b57b13bbbcc6601492",
+      "dense_text": true,
+      "name": "Nemotron-ColEmbed-VL-8B-v2",
+      "source": "actual cached checkpoint",
+      "support": {
+        "dense_decoder": true,
+        "shell_only": false,
+        "status": "ready",
+        "structural": true,
+        "text_fa4": true,
+        "text_profile": "gqa4",
+        "vision_fa4": true,
+        "vision_profile": "media72"
+      },
+      "text": {
+        "head_dim": 128,
+        "heads": 32,
+        "hidden_size": 4096,
+        "intermediate_size": 12288,
+        "kv_heads": 8,
+        "layers": 36,
+        "mrope": [
+          24,
+          20,
+          20
+        ],
+        "theta": 5000000.0,
+        "vocab": 151936
+      },
+      "vision": {
+        "deepstack": [
+          8,
+          16,
+          24
+        ],
+        "depth": 27,
+        "head_dim": 72,
+        "heads": 16,
+        "hidden_size": 1152,
+        "intermediate_size": 4304,
+        "out_hidden_size": 4096,
+        "positions": 2304
+      }
+    },
+    {
+      "alias": "qwen3_vl",
+      "config_path": null,
+      "config_sha256": null,
+      "dense_text": true,
+      "name": "Qwen3-VL-2B",
+      "source": "derived public family tuple; verify config before admission",
+      "support": {
+        "dense_decoder": true,
+        "shell_only": false,
+        "status": "ready",
+        "structural": true,
+        "text_fa4": true,
+        "text_profile": "causal_gqa2",
+        "vision_fa4": true,
+        "vision_profile": "bert"
+      },
+      "text": {
+        "head_dim": 128,
+        "heads": 16,
+        "hidden_size": 2048,
+        "intermediate_size": 6144,
+        "kv_heads": 8,
+        "layers": 28,
+        "mrope": [
+          24,
+          20,
+          20
+        ],
+        "theta": 5000000.0,
+        "vocab": 151936
+      },
+      "vision": {
+        "deepstack": [
+          5,
+          11,
+          17
+        ],
+        "depth": 24,
+        "head_dim": 64,
+        "heads": 16,
+        "hidden_size": 1024,
+        "intermediate_size": 4096,
+        "out_hidden_size": 2048,
+        "positions": 2304
+      }
+    },
+    {
+      "alias": "qwen3_vl",
+      "config_path": null,
+      "config_sha256": null,
+      "dense_text": true,
+      "name": "Qwen3-VL-32B",
+      "source": "derived public family tuple; verify config before admission",
+      "support": {
+        "dense_decoder": true,
+        "shell_only": false,
+        "status": "ready",
+        "structural": true,
+        "text_fa4": true,
+        "text_profile": "causal_gqa8",
+        "vision_fa4": true,
+        "vision_profile": "media72"
+      },
+      "text": {
+        "head_dim": 128,
+        "heads": 64,
+        "hidden_size": 5120,
+        "intermediate_size": 25600,
+        "kv_heads": 8,
+        "layers": 64,
+        "mrope": [
+          24,
+          20,
+          20
+        ],
+        "theta": 5000000.0,
+        "vocab": 151936
+      },
+      "vision": {
+        "deepstack": [
+          8,
+          16,
+          24
+        ],
+        "depth": 27,
+        "head_dim": 72,
+        "heads": 16,
+        "hidden_size": 1152,
+        "intermediate_size": 4304,
+        "out_hidden_size": 5120,
+        "positions": 2304
+      }
+    },
+    {
+      "alias": "qwen3_vl",
+      "config_path": null,
+      "config_sha256": null,
+      "dense_text": false,
+      "name": "Qwen3-VL-30B-A3B",
+      "source": "derived public family tuple; MoE text is outside the dense VL foundation",
+      "support": {
+        "dense_decoder": false,
+        "shell_only": false,
+        "status": "missing_decoder",
+        "structural": true,
+        "text_fa4": true,
+        "text_profile": "causal_gqa8",
+        "vision_fa4": true,
+        "vision_profile": "media72"
+      },
+      "text": {
+        "head_dim": 128,
+        "heads": 32,
+        "hidden_size": 2048,
+        "intermediate_size": 0,
+        "kv_heads": 4,
+        "layers": 48,
+        "mrope": [
+          24,
+          20,
+          20
+        ],
+        "theta": 5000000.0,
+        "vocab": 151936
+      },
+      "vision": {
+        "deepstack": [
+          8,
+          16,
+          24
+        ],
+        "depth": 27,
+        "head_dim": 72,
+        "heads": 16,
+        "hidden_size": 1152,
+        "intermediate_size": 4304,
+        "out_hidden_size": 2048,
+        "positions": 2304
+      }
+    }
+  ]
+}

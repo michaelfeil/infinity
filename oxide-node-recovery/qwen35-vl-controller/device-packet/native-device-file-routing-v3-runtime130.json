@@ -1,0 +1,199 @@
+{
+  "schema": "oxide-qwen35vl-native-device-file-routing/v3",
+  "predecessor_seal": {
+    "path": "device-packet/native-device-file-routing-v2-taskset.json",
+    "sha256": "54c484989a58a0f55a58cd2f3eb9261fa92738754eff3024f06e50a5f415db5a",
+    "preserved": true
+  },
+  "taskset_fix": {
+    "failure_run": "cpu-1793638200711671722",
+    "failure": "rc=126 taskset: Permission denied on remote/sdk/sdk_map_preflight.py",
+    "cause": "run_container execs helper argv directly; three Python helper builders started with a 0644 .py path and no interpreter",
+    "fix": "prefix explicit SDK interpreter /opt/torch-sdk/bin/python3.12 to sdk_preflight_argv, native_plan_argv, native_whole_argv only",
+    "consumer_argv_unchanged": true,
+    "chmod_used": false,
+    "ambient_python_used": false,
+    "shebang_execution_relied_on": false
+  },
+  "device_argument": "cuda:0",
+  "file_routing": {
+    "config": {
+      "path": "config.json",
+      "validation": "sha256 must equal expected host record"
+    },
+    "index_present": {
+      "path": "model.safetensors.index.json",
+      "validation": "sha256 must equal expected host record",
+      "weights": "sorted unique index weight_map shard paths"
+    },
+    "index_absent": {
+      "path": "model.safetensors",
+      "validation": "exact file must exist",
+      "weights": "exact model.safetensors only"
+    },
+    "no_scan": true,
+    "no_fake_index": true,
+    "load_shard_math_unchanged": true,
+    "single_model": "Elephant-Qwen3.5-VL",
+    "index_models": [
+      "Qwen3.5-0.8B",
+      "Qwen3.5-2B",
+      "Qwen3.5-4B",
+      "Mammoth-Qwen3.5-VL"
+    ]
+  },
+  "runtime130": {
+    "replaces": "old union124 124-export module for QV35 pos_interp",
+    "host_path": "/tmp/oxide-device130-compose-source-v1/kernels",
+    "manifest_sha256": "1d0b59dda1cef92c0e752553872e645adbdc07e93d40245817e82246f58b982d",
+    "kernel_count": 130,
+    "architecture_scope": [
+      "sm_90"
+    ],
+    "requested_architectures": [
+      "sm_90"
+    ],
+    "complete_target_set": false,
+    "sm_90_cubin_sha256": "695e72ffbcd1f7a7ac7648e2b4cf5d146516c7100820dd6f73c41181271f9d0e",
+    "freeze_compiled": {
+      "path": "/tmp/oxide-device130-compose-source-v1/freeze-compiled.json",
+      "sha256": "ea0fb11484f1d684f32896b608496c29bdcf266a6d0a8472f2138757f17e4024"
+    },
+    "old124_all3_compile_proof_preserved_separate": true,
+    "note": "Root H100 sm_90 only; no SM100/120 claim and no new compile."
+  },
+  "runtime_inventory": {
+    "path": "device-packet/runtime-inventory-v3.json",
+    "sha256": "e7e1b295d05a717a3a0077ac035e77eed0af78c09f83605a7446cda28bdce547",
+    "fa4": {
+      "host_path": "/tmp/oxide-fa4-canonical26-derived-v4/bundle",
+      "manifest_sha256": "0e4af6e1fd40714300649dd98e6eb31a0c59e9e3cb493b377de07d57d63916a9",
+      "file_count": 213
+    },
+    "gdn_raw": {
+      "manifest_sha256": "f0b2a18d14c80eec9e1e881d87bff80c27408c77a07eb9a1039ed57548b74a7b",
+      "file_count": 6,
+      "architectures": [
+        "sm_90",
+        "sm_100",
+        "sm_120"
+      ]
+    },
+    "gdn_aux": {
+      "manifest_sha256": "d1cd7aab5324ad3f1cc8e961ee33f016caa5a344e440661ec332d089ba904be8",
+      "file_count": 9,
+      "architectures": [
+        "sm_90",
+        "sm_100",
+        "sm_120"
+      ]
+    },
+    "gdn_provider": {
+      "manifest_sha256": "79b9e8e10d2214d88374254d113917b44dcc5bc326e91c82a115f0c047b5beeb",
+      "file_count": 74,
+      "abi_version": 2,
+      "architectures": [
+        "sm_90a",
+        "sm_100f",
+        "sm_120f"
+      ],
+      "libraries": [
+        "libcute_dsl_runtime.so",
+        "libinfinitygdn.so",
+        "libtvm_ffi.so"
+      ],
+      "elf_needed": {
+        "libcute_dsl_runtime.so": [
+          "librt.so.1",
+          "libdl.so.2",
+          "libpthread.so.0",
+          "libm.so.6",
+          "libc.so.6",
+          "ld-linux-x86-64.so.2"
+        ],
+        "libinfinitygdn.so": [
+          "libtvm_ffi.so",
+          "libcute_dsl_runtime.so",
+          "libstdc++.so.6",
+          "libgcc_s.so.1",
+          "libc.so.6",
+          "ld-linux-x86-64.so.2"
+        ],
+        "libtvm_ffi.so": [
+          "libdl.so.2",
+          "libpthread.so.0",
+          "libstdc++.so.6",
+          "libm.so.6",
+          "libgcc_s.so.1",
+          "libc.so.6",
+          "ld-linux-x86-64.so.2"
+        ]
+      }
+    }
+  },
+  "native_cuda_graph_policy": {
+    "_cuda_graphs": "true",
+    "_cuda_graph_entries": "4",
+    "_cuda_graph_reuse": "3",
+    "_cuda_graph_max_bytes": "536870912",
+    "_cuda_graph_max_captures": "8",
+    "_cuda_graph_max_tokens": "4096",
+    "_media_cuda_graphs": "false"
+  },
+  "oxide_cuda_graphs": false,
+  "thresholds_unchanged": {
+    "decision_max_abs": 0.015,
+    "embedding_max_abs_base": 0.015,
+    "embedding_max_abs_relative": 0.015
+  },
+  "eight_rust_production_pins": {
+    "consumer/src/main.rs": "5d7a75d681a882be7149d4e543b9b861bcd5c674b0e416fd301a7d648f8d2a2b",
+    "libs/infinity-v3/backends/oxide/src/lib.rs": "aeea32e693ea2d5120841fe4c28ae8527b8c1adcb09b008beab2815dde950721",
+    "libs/infinity-v3/backends/oxide/src/qwen35_vl_device.rs": "1910837d81bdb0abc73a34c73c1879219b5baca7fe44bcb81fdb234d904ea5fb",
+    "libs/infinity-v3/backends/oxide/src/qwen35_vl_engine.rs": "83fd2c8b3e233cbb6b42e2442900f809bacdc86d58b6f52932d363c54bb99b00",
+    "libs/infinity-v3/backends/oxide/src/qwen35_vl_tests.rs": "c1f31d1622bdc548c512163a54802a47fe2bea8cd2f444090be32fe471ce5d0b",
+    "libs/infinity-v3/backends/oxide/src/qwen35_vl_vision.rs": "b12143546b1ff7738cce854c060f33d4fb5db86a57cdfa9759c215d346a4b42e",
+    "libs/infinity-v3/backends/oxide/device/src/main.rs": "c19ae20ff2ec668f1983b65f32992c7912ccca52d27b2c18d84b72503d71f6ae",
+    "libs/infinity-v3/backends/oxide/device/src/qwen35vl.rs": "f7fd1a0165c15a8bc043d2c6010951449b17d2100a147e6fb305a89f034a477e"
+  },
+  "binaries_unchanged": {
+    "paired": {
+      "path": "/tmp/oxide-all-model-feature-matrix-v1/qwen35-vl-lifecycle-fix-v1/target-opt3-noLTO/release/qwen35-vl-consumer",
+      "sha256": "3780facf61529822f33a4cf1416bc6c8723acc1fa2cd2c778f7bc54f2140d83b"
+    },
+    "owning_life": {
+      "path": "/tmp/oxide-all-model-feature-matrix-v1/qwen35-vl-lifecycle-fix-v1/target-opt3-noLTO-harness/release/qwen35-vl-consumer",
+      "sha256": "21c5603ee6e9eff06dae5a4344d83fba43ee8bd0ed9a31d462417970c0bf297a"
+    }
+  },
+  "controller_v2": {
+    "path": "qwen35_vl_map_policy_controller_v2.py",
+    "sha256": "bef456a206b82900ebf0d70cdb83993ca15e00526a5e9357a49552599f2f574c",
+    "preserved": true
+  },
+  "controller_v3": {
+    "path": "qwen35_vl_map_policy_controller_v3.py",
+    "sha256": "08b58cfa4c858690135c5f57c9ac3fd4b3aab1240b975438df77cd41c9a7f981"
+  },
+  "ready_v2": {
+    "path": "READY-v2.json",
+    "sha256": "26f12d046a3e02fe2d2be227762da77e6246dcb0a2731b8a1e9bc19a4462f6ad",
+    "preserved": true
+  },
+  "ready_v1": {
+    "path": "READY.json",
+    "sha256": "6cf117fe82fee0a5d434a2d6025dbf87526a750de88bafa0efbb93c86f0d0995",
+    "preserved": true
+  },
+  "failed_snapshot": {
+    "path": "evidence/failed-cpu-0.8B-single-v1/report.json",
+    "sha256": "bd08521a2cb5b53fc46ccdb61c79a465a9f36806fea24e3d2f0016ba2610c228",
+    "log_sha256": "f2186fcb3a2f0902ee3e2054e18c6ca389609e243a2485e7535fbd97040d2e56"
+  },
+  "non_claims": [
+    "author did not run Docker/GPU/Torch/engine",
+    "no new compile",
+    "no SM100/120 claim",
+    "old124 all3 compile proof preserved separately"
+  ]
+}

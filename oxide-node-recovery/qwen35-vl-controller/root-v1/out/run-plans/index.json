@@ -1,0 +1,284 @@
+{
+  "Qwen3.5-0.8B": {
+    "dtype": "bfloat16",
+    "factory_proof": {
+      "dtype_accepted": true,
+      "gaps": [],
+      "is_qwen35_checkpoint": true,
+      "run_plan_ready": true,
+      "serving_route": "Text(causal=true)"
+    },
+    "family": "dense",
+    "fp16_supported": false,
+    "gaps": [],
+    "modes": [
+      {
+        "causal": false,
+        "component": "vision",
+        "expected_mode": 0,
+        "head_dim": 64,
+        "heads": 12,
+        "kv_heads": 12,
+        "note": "central mode present",
+        "present": true,
+        "registry_mode": 0
+      },
+      {
+        "causal": true,
+        "component": "text.full.causal",
+        "expected_mode": 18,
+        "head_dim": 256,
+        "heads": 8,
+        "kv_heads": 2,
+        "note": "central mode present",
+        "present": true,
+        "registry_mode": 18
+      }
+    ],
+    "moe_owner_required": false,
+    "normal_factory_ready": true,
+    "path": "/workspace/model-performance/michaelfeil/onejev-perf/backbone-comparison-20261023/models/Qwen3.5-0.8B",
+    "projection_score_route": "OxideBackend pooled/raw output + warm OneJev Decision score; no Dense text projection stand-in",
+    "text_admission": "dense text candidate admitted",
+    "text_causal": true,
+    "text_hidden": 1024,
+    "text_layers": 24,
+    "vision_tensors": 153
+  },
+  "Qwen3.5-2B": {
+    "dtype": "bfloat16",
+    "factory_proof": {
+      "dtype_accepted": true,
+      "gaps": [],
+      "is_qwen35_checkpoint": true,
+      "run_plan_ready": true,
+      "serving_route": "Text(causal=true)"
+    },
+    "family": "dense",
+    "fp16_supported": false,
+    "gaps": [],
+    "modes": [
+      {
+        "causal": false,
+        "component": "vision",
+        "expected_mode": 0,
+        "head_dim": 64,
+        "heads": 16,
+        "kv_heads": 16,
+        "note": "central mode present",
+        "present": true,
+        "registry_mode": 0
+      },
+      {
+        "causal": true,
+        "component": "text.full.causal",
+        "expected_mode": 18,
+        "head_dim": 256,
+        "heads": 8,
+        "kv_heads": 2,
+        "note": "central mode present",
+        "present": true,
+        "registry_mode": 18
+      }
+    ],
+    "moe_owner_required": false,
+    "normal_factory_ready": true,
+    "path": "/workspace/model-performance/michaelfeil/onejev-perf/backbone-comparison-20261023/models/Qwen3.5-2B",
+    "projection_score_route": "OxideBackend pooled/raw output + warm OneJev Decision score; no Dense text projection stand-in",
+    "text_admission": "dense text candidate admitted",
+    "text_causal": true,
+    "text_hidden": 2048,
+    "text_layers": 24,
+    "vision_tensors": 297
+  },
+  "Qwen3.5-4B": {
+    "dtype": "bfloat16",
+    "factory_proof": {
+      "dtype_accepted": true,
+      "gaps": [],
+      "is_qwen35_checkpoint": true,
+      "run_plan_ready": true,
+      "serving_route": "Text(causal=true)"
+    },
+    "family": "dense",
+    "fp16_supported": false,
+    "gaps": [],
+    "modes": [
+      {
+        "causal": false,
+        "component": "vision",
+        "expected_mode": 0,
+        "head_dim": 64,
+        "heads": 16,
+        "kv_heads": 16,
+        "note": "central mode present",
+        "present": true,
+        "registry_mode": 0
+      },
+      {
+        "causal": true,
+        "component": "text.full.causal",
+        "expected_mode": 18,
+        "head_dim": 256,
+        "heads": 16,
+        "kv_heads": 4,
+        "note": "central mode present",
+        "present": true,
+        "registry_mode": 18
+      }
+    ],
+    "moe_owner_required": false,
+    "normal_factory_ready": true,
+    "path": "/workspace/model-performance/michaelfeil/onejev-perf/backbone-comparison-20261023/models/Qwen3.5-4B",
+    "projection_score_route": "OxideBackend pooled/raw output + warm OneJev Decision score; no Dense text projection stand-in",
+    "text_admission": "dense text candidate admitted",
+    "text_causal": true,
+    "text_hidden": 2560,
+    "text_layers": 32,
+    "vision_tensors": 297
+  },
+  "Qwen3.5-35B-A3B": {
+    "dtype": "bfloat16",
+    "factory_proof": {
+      "dtype_accepted": true,
+      "gaps": [
+        "text.full.causal: central append-only mode 26 is not in this branch registry",
+        "MoE Qwen3.5 text execution must be supplied by the owning MoE engine"
+      ],
+      "is_qwen35_checkpoint": true,
+      "run_plan_ready": false,
+      "serving_route": "Text(causal=true)"
+    },
+    "family": "moe",
+    "fp16_supported": false,
+    "gaps": [
+      "text.full.causal: central append-only mode 26 is not in this branch registry",
+      "MoE Qwen3.5 text execution must be supplied by the owning MoE engine"
+    ],
+    "modes": [
+      {
+        "causal": false,
+        "component": "vision",
+        "expected_mode": 8,
+        "head_dim": 72,
+        "heads": 16,
+        "kv_heads": 16,
+        "note": "central mode present",
+        "present": true,
+        "registry_mode": 8
+      },
+      {
+        "causal": true,
+        "component": "text.full.causal",
+        "expected_mode": 26,
+        "head_dim": 256,
+        "heads": 16,
+        "kv_heads": 2,
+        "note": "central append-only mode 26 is not in this branch registry",
+        "present": false,
+        "registry_mode": null
+      }
+    ],
+    "moe_owner_required": true,
+    "normal_factory_ready": false,
+    "path": "/workspace/model-performance/michaelfeil/onejev-perf/models/qwen35-35b-a3b",
+    "projection_score_route": "OxideBackend pooled/raw output + warm OneJev Decision score; no Dense text projection stand-in",
+    "text_admission": "MoE owner required",
+    "text_causal": true,
+    "text_hidden": 2048,
+    "text_layers": 40,
+    "vision_tensors": 333
+  },
+  "Elephant-Qwen3.5-VL": {
+    "dtype": "bfloat16",
+    "factory_proof": {
+      "dtype_accepted": true,
+      "gaps": [],
+      "is_qwen35_checkpoint": true,
+      "run_plan_ready": true,
+      "serving_route": "DynamicBlockDecision"
+    },
+    "family": "dense",
+    "fp16_supported": false,
+    "gaps": [],
+    "modes": [
+      {
+        "causal": false,
+        "component": "vision",
+        "expected_mode": 8,
+        "head_dim": 72,
+        "heads": 16,
+        "kv_heads": 16,
+        "note": "central mode present",
+        "present": true,
+        "registry_mode": 8
+      },
+      {
+        "causal": false,
+        "component": "text.full.noncausal",
+        "expected_mode": 6,
+        "head_dim": 256,
+        "heads": 16,
+        "kv_heads": 4,
+        "note": "central mode present",
+        "present": true,
+        "registry_mode": 6
+      }
+    ],
+    "moe_owner_required": false,
+    "normal_factory_ready": true,
+    "path": "/workspace/model-performance/michaelfeil/elephant-1",
+    "projection_score_route": "OxideBackend pooled/raw output + warm OneJev Decision score; no Dense text projection stand-in",
+    "text_admission": "dense text candidate admitted",
+    "text_causal": false,
+    "text_hidden": 4096,
+    "text_layers": 32,
+    "vision_tensors": 333
+  },
+  "Mammoth-Qwen3.5-VL": {
+    "dtype": "bfloat16",
+    "factory_proof": {
+      "dtype_accepted": true,
+      "gaps": [],
+      "is_qwen35_checkpoint": true,
+      "run_plan_ready": true,
+      "serving_route": "DynamicBlockDecision"
+    },
+    "family": "dense",
+    "fp16_supported": false,
+    "gaps": [],
+    "modes": [
+      {
+        "causal": false,
+        "component": "vision",
+        "expected_mode": 8,
+        "head_dim": 72,
+        "heads": 16,
+        "kv_heads": 16,
+        "note": "central mode present",
+        "present": true,
+        "registry_mode": 8
+      },
+      {
+        "causal": false,
+        "component": "text.full.noncausal",
+        "expected_mode": 16,
+        "head_dim": 256,
+        "heads": 24,
+        "kv_heads": 4,
+        "note": "central mode present",
+        "present": true,
+        "registry_mode": 16
+      }
+    ],
+    "moe_owner_required": false,
+    "normal_factory_ready": true,
+    "path": "/workspace/model-performance/michaelfeil/onejev-perf/models/mammoth-1",
+    "projection_score_route": "OxideBackend pooled/raw output + warm OneJev Decision score; no Dense text projection stand-in",
+    "text_admission": "dense text candidate admitted",
+    "text_causal": false,
+    "text_hidden": 5120,
+    "text_layers": 64,
+    "vision_tensors": 333
+  }
+}

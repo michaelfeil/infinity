@@ -1,0 +1,10 @@
+date_utc=2026-11-02T00:00:00Z
+cpu_affinity_requested=136-143
+job_limit=4
+cuda_visible_devices=''
+cargo_net_offline=true
+hf_hub_offline=1
+base_head=55380b7
+base_overlay=625DenseV5+Qwen35+MeanV6 six files from /tmp/infinity-plain-cuda
+patch=selective.patch
+note=debug/default tests only; no release/fat-LTO all-target build; no GPU/Docker/Torch/network/device compile

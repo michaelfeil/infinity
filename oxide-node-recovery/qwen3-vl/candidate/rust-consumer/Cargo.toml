@@ -1,0 +1,12 @@
+[package]
+name = "qwen3-vl-b66-consumer"
+version = "0.1.0"
+edition = "2021"
+publish = false
+license-file = "../LICENSE"
+
+[dependencies]
+libloading = "0.8"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+sha2 = "0.10"

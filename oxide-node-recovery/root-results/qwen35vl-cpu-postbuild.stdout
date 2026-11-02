@@ -1,0 +1,11 @@
+Traceback (most recent call last):
+  File "/tmp/oxide-all-model-feature-matrix-v1/qwen35-vl-lifecycle-fix-v1/root-v1/qwen35_vl_sdk_controller_v2.py", line 250, in <module>
+    main()
+  File "/tmp/oxide-all-model-feature-matrix-v1/qwen35-vl-lifecycle-fix-v1/root-v1/qwen35_vl_sdk_controller_v2.py", line 247, in main
+    run(args)
+  File "/tmp/oxide-all-model-feature-matrix-v1/qwen35-vl-lifecycle-fix-v1/root-v1/qwen35_vl_sdk_controller_v2.py", line 209, in run
+    guarded(remote, "cpu", label + "-sdk", argv, output)
+  File "/tmp/oxide-all-model-feature-matrix-v1/qwen35-vl-lifecycle-fix-v1/root-v1/qwen35_vl_sdk_controller_v2.py", line 153, in guarded
+    if primary: raise primary
+                ^^^^^^^^^^^^^
+RuntimeError: cpu-Qwen3.5-0.8B-single-cats-sdk failed rc=1; see /tmp/oxide-qwen35vl-sdk-output/cpu-postbuild/cpu-Qwen3.5-0.8B-single-cats-sdk.log

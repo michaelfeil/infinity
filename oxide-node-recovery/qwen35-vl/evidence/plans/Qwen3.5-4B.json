@@ -1,0 +1,46 @@
+{
+  "dtype": "bfloat16",
+  "factory_proof": {
+    "dtype_accepted": true,
+    "gaps": [],
+    "is_qwen35_checkpoint": true,
+    "run_plan_ready": true,
+    "serving_route": "Text(causal=true)"
+  },
+  "family": "dense",
+  "fp16_supported": false,
+  "gaps": [],
+  "modes": [
+    {
+      "causal": false,
+      "component": "vision",
+      "expected_mode": 0,
+      "head_dim": 64,
+      "heads": 16,
+      "kv_heads": 16,
+      "note": "central mode present",
+      "present": true,
+      "registry_mode": 0
+    },
+    {
+      "causal": true,
+      "component": "text.full.causal",
+      "expected_mode": 18,
+      "head_dim": 256,
+      "heads": 16,
+      "kv_heads": 4,
+      "note": "central mode present",
+      "present": true,
+      "registry_mode": 18
+    }
+  ],
+  "moe_owner_required": false,
+  "normal_factory_ready": true,
+  "path": "/workspace/model-performance/michaelfeil/onejev-perf/backbone-comparison-20261023/models/Qwen3.5-4B",
+  "projection_score_route": "OxideBackend pooled/raw output + warm OneJev Decision score; no Dense text projection stand-in",
+  "text_admission": "dense text candidate admitted",
+  "text_causal": true,
+  "text_hidden": 2560,
+  "text_layers": 32,
+  "vision_tensors": 297
+}

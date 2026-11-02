@@ -1,0 +1,74 @@
+{
+  "schema": "oxide-qwen35vl-sdk-controller-pins/v1",
+  "pins_sha256": "1cf984892e0aef7c7bbd9d54123db915119d2f8b319ba82ca57a8dbd03313ea1",
+  "container": "infinity-torch214-compare-sdk",
+  "b66": {
+    "path": "/tmp/native214-fa4-mode20/install/lib/libtei_torch.so",
+    "sha256": "b66d70b61b39e1bf0d565aca33bac7c5e21849677396ce5216f5baf73027d37e"
+  },
+  "torch": {
+    "python": "/opt/torch-sdk/bin/python3.12",
+    "version": "2.14.1+cu130",
+    "git": "5c4886908584029761b579af026dcfb627c84070"
+  },
+  "vendor": {
+    "path": "/tmp/oxide-host-cublas-130200",
+    "cublaslt": 130200
+  },
+  "union124": {
+    "path": "/tmp/infinity-oxide-parity-20261101/device-union124-all3-v1/kernels",
+    "manifest_sha256": "56863d52270f04e2a72c07f0213295cb78cd003ec111239bef1f78e75ea720c5",
+    "architectures": {
+      "sm_90": 124,
+      "sm_100": 124,
+      "sm_120": 124
+    }
+  },
+  "consumer": {
+    "schema": "oxide-qwen35vl-consumer-pin/v1",
+    "path": "/tmp/oxide-all-model-feature-matrix-v1/qwen35-vl-lifecycle-fix-v1/target-opt3-noLTO/release/qwen35-vl-consumer",
+    "sha256": "3780facf61529822f33a4cf1416bc6c8723acc1fa2cd2c778f7bc54f2140d83b",
+    "profile": "release opt-level=3, lto=false, debug=0",
+    "build_env": {
+      "CARGO_BUILD_JOBS": "4",
+      "CUDA_VISIBLE_DEVICES": "",
+      "CARGO_PROFILE_RELEASE_OPT_LEVEL": "3",
+      "CARGO_PROFILE_RELEASE_LTO": "false",
+      "offline": true,
+      "cpus": "88-95"
+    },
+    "commands": [
+      "inventory",
+      "plan-full",
+      "whole-factory",
+      "native-whole/oxide-whole/pair-whole",
+      "tower-cpu",
+      "tower-device",
+      "lifetime",
+      "perf"
+    ],
+    "build_record": "device-packet/CONSUMER-BUILD.json",
+    "note": "incremental opt3/noLTO rebuild from frozen source 72659d63; build record device-packet/CONSUMER-BUILD.json; old predecessor binary preserved"
+  },
+  "files": {
+    "native/native_whole_model.py": "7ebde88a44f26d4cd1de2d3f959464b0575825069df8131dbbf39500076bd338",
+    "native/sdk/sdk_stage.py": "8644417163668bf7c83502d4f5462ef56e120d3ccdbcff8358ba103b54d1f3a3",
+    "native/sdk/remote_guard.py": "a11cf9ee05b971c8a427bf671ae2b16b776c06a447644d6d94b7cf1754f627b1",
+    "root-v1/qwen35_vl_sdk_controller.py": "e6abd02f6089418415d7372da9a73927e12c9f8249503ced0b11ba7844c0e4ce",
+    "root-v1/ROOT-INVOCATIONS.md": "9bbd003ecf5a1705e2b0ccbe80c7356a873b0702068e027f23f91cbcae5f5f04"
+  },
+  "host_metadata_check": {
+    "checked_on_host": true,
+    "container_paths_verified_on_host": false,
+    "note": "b66 and vendor are container paths absent on this host; controller CPU phase validates them inside the existing SDK container."
+  },
+  "sdk_controller_v2": {
+    "path": "root-v1/qwen35_vl_sdk_controller_v2.py",
+    "sha256": "9d0abf838cefab5adc1c753309ded37d183fae6803d79f43ac3384a6125dc441"
+  },
+  "owning_life_binary": {
+    "path": "/tmp/oxide-all-model-feature-matrix-v1/qwen35-vl-lifecycle-fix-v1/target-opt3-noLTO-harness/release/qwen35-vl-consumer",
+    "sha256": "21c5603ee6e9eff06dae5a4344d83fba43ee8bd0ed9a31d462417970c0bf297a",
+    "profile": "release opt-level=3, lto=false, debug=0"
+  }
+}

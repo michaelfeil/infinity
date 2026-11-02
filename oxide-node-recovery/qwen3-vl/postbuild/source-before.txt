@@ -1,0 +1,11 @@
+date_utc=2026-11-02T17:21:44Z
+candidate=/tmp/oxide-qwen3vl-rope-budget-fix-v1/candidate
+source_freeze_manifest_sha256=0adca4bee57bc38b3b4f76579b96acef0dec66ee3e60d864a753dc46ab461370
+28d022df0bd22181a8187bd7329588ae3c9c7453602e0b38c67b1dca4bc5644d  /tmp/oxide-qwen3vl-rope-budget-fix-v1/candidate/libs/infinity-v3/backends/oxide/src/decoder.rs
+5ac97a7e119ece22f84a34b692162b1306e1850338c026d555489103817d910a  /tmp/oxide-qwen3vl-rope-budget-fix-v1/candidate/libs/infinity-v3/backends/oxide/src/rotary.rs
+921a0e56bdadce4d2c9c921fccf612483d80b4e87964e8b10a9feceb28464aa2  /tmp/oxide-qwen3vl-rope-budget-fix-v1/candidate/libs/infinity-v3/backends/oxide/examples/qwen3_vl_host_consumer.rs
+63b6c34e9ec5697e5f17a5be4e2804a425f9980a2e745f2048d898ea75623b14  /tmp/oxide-qwen3vl-rope-budget-fix-v1/patches/decoder-rope-budget-public.patch
+8f0fbd782ad5c81db131d33ec85b7a5d4adcd3eb9b4591af8a235c5bf29cac96  /tmp/oxide-qwen3vl-rope-budget-fix-v1/patches/decoder-rope-budget-private.patch
+8fa61be422ec4afd31d8a04ac2eae18e8305c8820dfcf5f6d0d0f5a9cfba15e4  /tmp/oxide-qwen3vl-rope-budget-fix-v1/patches/qwen3_vl_host_consumer-owning-life.patch
+a7953d82d1371edbfbf8619a144c79d0b81cd38509ef88966929b0c5b8c2e224  /tmp/oxide-qwen3vl-rope-budget-fix-v1/SOURCE-READY.json
+f9c6a6beae114b65e153b3af3d9f561d3de4f20141ccf5061f296eda91b205c8  /tmp/oxide-qwen3vl-rope-budget-fix-v1/SOURCE-FREEZE.json

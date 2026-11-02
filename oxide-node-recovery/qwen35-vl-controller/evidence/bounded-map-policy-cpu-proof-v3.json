@@ -1,0 +1,146 @@
+{
+  "schema": "oxide-qwen35vl-map-policy-cpu-proof/v3",
+  "status": "passed",
+  "checks": [
+    {
+      "name": "argparse_help",
+      "passed": true
+    },
+    {
+      "name": "argparse_rejects_bad_phase",
+      "passed": true
+    },
+    {
+      "name": "argparse_requires_run",
+      "passed": true
+    },
+    {
+      "name": "argparse_requires_output",
+      "passed": true
+    },
+    {
+      "name": "pins_real_models_assets_runtime_source_and_native_policy",
+      "passed": true
+    },
+    {
+      "name": "plan_all_five_models_uses_container_paths_only_inside",
+      "passed": true
+    },
+    {
+      "name": "remote_env_roles_and_no_oxide_graph_env",
+      "passed": true
+    },
+    {
+      "name": "comparator_real_fixture_pixels",
+      "passed": true
+    },
+    {
+      "name": "comparator_rejects_invalid_fields",
+      "passed": true
+    },
+    {
+      "name": "checked_cp_actual_argv_and_failure",
+      "passed": true
+    },
+    {
+      "name": "run_container_actual_argv_and_failure",
+      "passed": true
+    },
+    {
+      "name": "retrieve_actual_argv_and_failure",
+      "passed": true
+    },
+    {
+      "name": "stage_uses_named_assets_and_remote_media_paths",
+      "passed": true
+    },
+    {
+      "name": "case_filter_light_retry_uses_named_single_case",
+      "passed": true
+    },
+    {
+      "name": "sdk_preflight_argv_uses_typed_container_path_and_expected_hash",
+      "passed": true
+    },
+    {
+      "name": "native_create_handle_device_cstring_is_cuda_index0",
+      "passed": true
+    },
+    {
+      "name": "native_weight_file_routing_actual_single_and_index_and_missing_reject",
+      "passed": true
+    },
+    {
+      "name": "native_argv_explicit_policy_and_oxide_argv_no_graphs",
+      "passed": true
+    },
+    {
+      "name": "native_policy_exact_seven_keys_and_untouched_config",
+      "passed": true
+    },
+    {
+      "name": "native_apply_options_passes_all_seven_policy_keys",
+      "passed": true
+    },
+    {
+      "name": "native_plan_only_real_config_emits_policy",
+      "passed": true
+    },
+    {
+      "name": "native_gpu_path_requires_explicit_production_flag",
+      "passed": true
+    },
+    {
+      "name": "sdk_preflight_rejects_host_path_before_torch",
+      "passed": true
+    },
+    {
+      "name": "sdk_preflight_actual_host_config_index_hashes_all_five",
+      "passed": true
+    },
+    {
+      "name": "source_eight_rust_production_pins_unchanged",
+      "passed": true
+    },
+    {
+      "name": "existing_binaries_3780_and_21c_unchanged",
+      "passed": true
+    },
+    {
+      "name": "native_policy_helper_pin_and_all_seven_keys",
+      "passed": true
+    },
+    {
+      "name": "v1_and_v2_preserved_snapshot_checks",
+      "passed": true
+    },
+    {
+      "name": "helper_argv_nonexecutable_script_via_sys_executable_and_sdk_python_prefix",
+      "passed": true
+    },
+    {
+      "name": "runtime_v3_device130_manifest_count_arch_files_and_freeze",
+      "passed": true
+    },
+    {
+      "name": "runtime_v3_builders_pass_130_expectations_and_not_to_native_plan",
+      "passed": true
+    },
+    {
+      "name": "runtime_inventory_v3_gdn_names_elfdeps_fa4_canonical26",
+      "passed": true
+    },
+    {
+      "name": "runtime_v3_mock_stage_copies_device130_and_checks_actual_files",
+      "passed": true
+    },
+    {
+      "name": "gate_pins_match_actual_new_files",
+      "passed": true
+    }
+  ],
+  "check_count": 34,
+  "controller_sha256": "08b58cfa4c858690135c5f57c9ac3fd4b3aab1240b975438df77cd41c9a7f981",
+  "preflight_sha256": "7bd6546f4c694214fcef871101f26c2ea6cfe3a183fe7dc70ae2022a9a5624ad",
+  "native_policy_helper_sha256": "a2a49d25560e0d8d989617fd4215cfeb2ba013839390f6b0ffd7cb82d149079e"
+}

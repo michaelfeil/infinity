@@ -1,0 +1,78 @@
+{
+  "schema": "oxide-qwen35vl-bounded-cpu-proof/v2",
+  "status": "passed",
+  "checks": [
+    {
+      "name": "argparse_help",
+      "passed": true
+    },
+    {
+      "name": "argparse_rejects_bad_phase",
+      "passed": true
+    },
+    {
+      "name": "argparse_requires_run",
+      "passed": true
+    },
+    {
+      "name": "argparse_requires_output",
+      "passed": true
+    },
+    {
+      "name": "argparse_requires_media",
+      "passed": true
+    },
+    {
+      "name": "pins_real_fixture",
+      "passed": true
+    },
+    {
+      "name": "plan_matches_gate_argv",
+      "passed": true
+    },
+    {
+      "name": "remote_env_roles",
+      "passed": true
+    },
+    {
+      "name": "comparator_real_fixture_pixels",
+      "passed": true
+    },
+    {
+      "name": "comparator_rejects_invalid_fields",
+      "passed": true
+    },
+    {
+      "name": "checked_cp_actual_argv_and_failure",
+      "passed": true
+    },
+    {
+      "name": "run_container_actual_argv_and_failure",
+      "passed": true
+    },
+    {
+      "name": "retrieve_actual_argv_and_failure",
+      "passed": true
+    },
+    {
+      "name": "phase_cpu_uses_checked_v2",
+      "passed": true
+    },
+    {
+      "name": "sdk_v2_retrieval_nonzero_fails",
+      "passed": true
+    },
+    {
+      "name": "gate_controller_pin_matches_actual",
+      "passed": true
+    },
+    {
+      "name": "harness_metadata",
+      "passed": true
+    }
+  ],
+  "check_count": 17,
+  "controller_sha256": "5542a8317154a2164df24a8a6090b3a3885056576378b5b868b24cc631444d54",
+  "sdk_v2_sha256": "9d0abf838cefab5adc1c753309ded37d183fae6803d79f43ac3384a6125dc441",
+  "fixtures_sha256": "0190631e9389cf65a398534bdce0f4f457b4522dbcd3d192ef7c456321f24374"
+}

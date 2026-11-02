@@ -1,0 +1,63 @@
+========= COMPUTE-SANITIZER
+
+running 1 test
+test qwen3_moe_all_pools_ordinary_serving_positive_lifetime ... [qwen3-moe-serving-v1] test_begin model=/tmp/infinity-oxide-bench/models/Qwen--Qwen3-30B-A3B-ad44e777
+[qwen3-moe-serving-v1] pre_driver_rejection_start
+[qwen3-moe-serving-v1] pre_driver_rejection_done elapsed_ms=0
+[qwen3-moe-serving-v1] mode_begin pool=Cls elapsed_ms=0
+[qwen3-moe-serving-v1] run_pool_begin pool=Cls
+[qwen3-moe-serving-v1] backend_new_start pool=Cls
+[qwen3-moe-serving-v1] backend_new_done pool=Cls elapsed_ms=33402
+[qwen3-moe-serving-v1] baseline_references_start pool=Cls
+[qwen3-moe-serving-v1] baseline_references_done pool=Cls elapsed_ms=37212
+[qwen3-moe-serving-v1] coexisting_deferred_start pool=Cls
+[qwen3-moe-serving-v1] coexisting_deferred_done pool=Cls elapsed_ms=37716
+[qwen3-moe-serving-v1] drop_temporary_deferred_start pool=Cls
+[qwen3-moe-serving-v1] drop_temporary_deferred_done pool=Cls elapsed_ms=38829
+[qwen3-moe-serving-v1] reject_while_held_start pool=Cls
+[qwen3-moe-serving-v1] reject_while_held_done pool=Cls elapsed_ms=40657
+[qwen3-moe-serving-v1] empty_request_start pool=Cls
+[qwen3-moe-serving-v1] empty_request_done pool=Cls elapsed_ms=40772
+[qwen3-moe-serving-v1] drop_owner_with_two_deferred_start pool=Cls
+[qwen3-moe-serving-v1] run_pool_done pool=Cls elapsed_ms=41422
+[qwen3-moe-serving-v1] mode_done pool=Cls elapsed_ms=41423
+[qwen3-moe-serving-v1] mode_begin pool=Mean elapsed_ms=41423
+[qwen3-moe-serving-v1] run_pool_begin pool=Mean
+[qwen3-moe-serving-v1] backend_new_start pool=Mean
+[qwen3-moe-serving-v1] backend_new_done pool=Mean elapsed_ms=32254
+[qwen3-moe-serving-v1] baseline_references_start pool=Mean
+[qwen3-moe-serving-v1] baseline_references_done pool=Mean elapsed_ms=35962
+[qwen3-moe-serving-v1] coexisting_deferred_start pool=Mean
+[qwen3-moe-serving-v1] coexisting_deferred_done pool=Mean elapsed_ms=36469
+[qwen3-moe-serving-v1] drop_temporary_deferred_start pool=Mean
+[qwen3-moe-serving-v1] drop_temporary_deferred_done pool=Mean elapsed_ms=37573
+[qwen3-moe-serving-v1] reject_while_held_start pool=Mean
+[qwen3-moe-serving-v1] reject_while_held_done pool=Mean elapsed_ms=39440
+[qwen3-moe-serving-v1] empty_request_start pool=Mean
+[qwen3-moe-serving-v1] empty_request_done pool=Mean elapsed_ms=39555
+[qwen3-moe-serving-v1] drop_owner_with_two_deferred_start pool=Mean
+[qwen3-moe-serving-v1] run_pool_done pool=Mean elapsed_ms=40192
+[qwen3-moe-serving-v1] mode_done pool=Mean elapsed_ms=81616
+[qwen3-moe-serving-v1] mode_begin pool=LastToken elapsed_ms=81616
+[qwen3-moe-serving-v1] run_pool_begin pool=LastToken
+[qwen3-moe-serving-v1] backend_new_start pool=LastToken
+[qwen3-moe-serving-v1] backend_new_done pool=LastToken elapsed_ms=32929
+[qwen3-moe-serving-v1] baseline_references_start pool=LastToken
+[qwen3-moe-serving-v1] baseline_references_done pool=LastToken elapsed_ms=36628
+[qwen3-moe-serving-v1] coexisting_deferred_start pool=LastToken
+[qwen3-moe-serving-v1] coexisting_deferred_done pool=LastToken elapsed_ms=37135
+[qwen3-moe-serving-v1] drop_temporary_deferred_start pool=LastToken
+[qwen3-moe-serving-v1] drop_temporary_deferred_done pool=LastToken elapsed_ms=38241
+[qwen3-moe-serving-v1] reject_while_held_start pool=LastToken
+[qwen3-moe-serving-v1] reject_while_held_done pool=LastToken elapsed_ms=40106
+[qwen3-moe-serving-v1] empty_request_start pool=LastToken
+[qwen3-moe-serving-v1] empty_request_done pool=LastToken elapsed_ms=40221
+[qwen3-moe-serving-v1] drop_owner_with_two_deferred_start pool=LastToken
+[qwen3-moe-serving-v1] run_pool_done pool=LastToken elapsed_ms=40892
+[qwen3-moe-serving-v1] mode_done pool=LastToken elapsed_ms=122509
+[qwen3-moe-serving-v1] test_done elapsed_ms=122509
+ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1 filtered out; finished in 122.52s
+
+========= ERROR SUMMARY: 0 errors

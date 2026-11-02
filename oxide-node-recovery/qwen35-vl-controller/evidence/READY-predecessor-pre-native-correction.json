@@ -1,0 +1,240 @@
+{
+  "schema": "oxide-qwen35vl-map-policy-ready/v1",
+  "status": "author-cpu-tests-passed-root-sdk-cpu-pending",
+  "roles": {
+    "source_root_readonly": "/tmp/oxide-all-model-feature-matrix-v1/qwen35-vl-lifecycle-fix-v1",
+    "owned_controller_root": "/tmp/oxide-qwen35vl-sdk-map-policy-v1",
+    "source_root_writes": false,
+    "old_files_preserved": true
+  },
+  "changes": [
+    "explicit five named host/container model-location records",
+    "explicit seven-key Native production CUDA-graph policy helper",
+    "explicit QV35 canonical26 FA4 + GDN runtime staging and file checks"
+  ],
+  "unchanged": {
+    "eight_rust_production_pins": {
+      "consumer/src/main.rs": "5d7a75d681a882be7149d4e543b9b861bcd5c674b0e416fd301a7d648f8d2a2b",
+      "libs/infinity-v3/backends/oxide/src/lib.rs": "aeea32e693ea2d5120841fe4c28ae8527b8c1adcb09b008beab2815dde950721",
+      "libs/infinity-v3/backends/oxide/src/qwen35_vl_device.rs": "1910837d81bdb0abc73a34c73c1879219b5baca7fe44bcb81fdb234d904ea5fb",
+      "libs/infinity-v3/backends/oxide/src/qwen35_vl_engine.rs": "83fd2c8b3e233cbb6b42e2442900f809bacdc86d58b6f52932d363c54bb99b00",
+      "libs/infinity-v3/backends/oxide/src/qwen35_vl_tests.rs": "c1f31d1622bdc548c512163a54802a47fe2bea8cd2f444090be32fe471ce5d0b",
+      "libs/infinity-v3/backends/oxide/src/qwen35_vl_vision.rs": "b12143546b1ff7738cce854c060f33d4fb5db86a57cdfa9759c215d346a4b42e",
+      "libs/infinity-v3/backends/oxide/device/src/main.rs": "c19ae20ff2ec668f1983b65f32992c7912ccca52d27b2c18d84b72503d71f6ae",
+      "libs/infinity-v3/backends/oxide/device/src/qwen35vl.rs": "f7fd1a0165c15a8bc043d2c6010951449b17d2100a147e6fb305a89f034a477e"
+    },
+    "source8_count": 8,
+    "source8_unchanged": true,
+    "diagnostic_source_pins_checked": 51,
+    "paired_binary_sha256": "3780facf61529822f33a4cf1416bc6c8723acc1fa2cd2c778f7bc54f2140d83b",
+    "owning_life_binary_sha256": "21c5603ee6e9eff06dae5a4344d83fba43ee8bd0ed9a31d462417970c0bf297a",
+    "binaries_unchanged": true
+  },
+  "actual_cpu_tests": {
+    "command": [
+      "env",
+      "CUDA_VISIBLE_DEVICES=",
+      "OMP_NUM_THREADS=4",
+      "MKL_NUM_THREADS=4",
+      "taskset",
+      "-c",
+      "88-95",
+      "python3",
+      "tests/test_map_policy_packet.py"
+    ],
+    "checks": 26,
+    "status": "passed",
+    "report": "evidence/bounded-map-policy-cpu-proof.json",
+    "report_sha256": "2d7e4c61605eed76b811ffa12c4d3756f4b6c6946b18b38b5b29be185414312f"
+  },
+  "author_cold_cpu": {
+    "script": "run_cold_cpu.sh",
+    "script_sha256": "9093099d0e7678766b66f6f44bd4cfc23f6793b66196e983d439d74f1c96eb7e",
+    "fresh_output": "/tmp/oxide-qwen35vl-sdk-map-policy-author-cpu-v3",
+    "files": [
+      "tests.stdout.json",
+      "bounded-map-policy-cpu-proof.json",
+      "pins-0.8B.json",
+      "plan.json"
+    ],
+    "command": [
+      "./run_cold_cpu.sh",
+      "/tmp/oxide-qwen35vl-sdk-map-policy-author-cpu-v3"
+    ],
+    "status": "passed",
+    "docker": false,
+    "gpu": false,
+    "torch": false,
+    "network": false
+  },
+  "model_locations": {
+    "file": "device-packet/model-locations-v1.json",
+    "sha256": "38e08589615f080d28b8ec054207ce275339af57ee128e410bdb9d628a636b85",
+    "manifest": "device-packet/model-manifest-v1.json",
+    "manifest_sha256": "920237b2f74abe544f024cf0ead30789ab923c944938a117431d477c68ec6d9a",
+    "checkpoints": {
+      "Qwen3.5-0.8B": {
+        "host_path": "/workspace/model-performance/michaelfeil/onejev-perf/backbone-comparison-20261023/models/Qwen3.5-0.8B",
+        "container_path": "/bench/michaelfeil/onejev-perf/backbone-comparison-20261023/models/Qwen3.5-0.8B",
+        "config_sha256": "b90b86f35c8e6925ef74ee04d0e758f0a845c83a42089ad82bbaa948de9b4204",
+        "index_sha256": "d8a08838a613b025eb7952ed9db11696213e57e76a375661ef5c12f9dd5dcf4e",
+        "format": "index"
+      },
+      "Qwen3.5-2B": {
+        "host_path": "/workspace/model-performance/michaelfeil/onejev-perf/backbone-comparison-20261023/models/Qwen3.5-2B",
+        "container_path": "/bench/michaelfeil/onejev-perf/backbone-comparison-20261023/models/Qwen3.5-2B",
+        "config_sha256": "ed1c1723241f23f7f4e23430759cbd7dcfb4103cbdfe052bfe7626b57c2615b4",
+        "index_sha256": "aca8afed9da75b0f050b408d270766fd77627f1af401e240f61c3b47d0db02f9",
+        "format": "index"
+      },
+      "Qwen3.5-4B": {
+        "host_path": "/workspace/model-performance/michaelfeil/onejev-perf/backbone-comparison-20261023/models/Qwen3.5-4B",
+        "container_path": "/bench/michaelfeil/onejev-perf/backbone-comparison-20261023/models/Qwen3.5-4B",
+        "config_sha256": "ddc63e1c717afa86c865bb5e01313d89d72bb53b97ad4a8a03ba8510c0621670",
+        "index_sha256": "cf3f798ee02ba45f9622aa8892a47369ab667d0afbf154ee7c2212de42e6302d",
+        "format": "index"
+      },
+      "Elephant-Qwen3.5-VL": {
+        "host_path": "/workspace/model-performance/michaelfeil/elephant-1",
+        "container_path": "/bench/michaelfeil/elephant-1",
+        "config_sha256": "f26324589d15932e2742dbb13dbc7c561865ce4f80990af3b7dff05efe4dadab",
+        "index_sha256": null,
+        "format": "single"
+      },
+      "Mammoth-Qwen3.5-VL": {
+        "host_path": "/workspace/model-performance/michaelfeil/onejev-perf/models/mammoth-1",
+        "container_path": "/bench/michaelfeil/onejev-perf/models/mammoth-1",
+        "config_sha256": "bab5a8ceb73fd6a8f191afaf23afbf689d931da5b3c7c9d5153cf1e4b5024502",
+        "index_sha256": "0424520f63f04816eee4d229a4487dc9744866ceb46513e591dd987e401b1663",
+        "format": "index"
+      }
+    }
+  },
+  "native_policy": {
+    "helper": "native/native_whole_model_policy.py",
+    "helper_sha256": "b73cda86e45a5cb1a062459c8b33a0455453929ea73951589413db75c6cf1cd5",
+    "seven_keys": {
+      "_cuda_graphs": "true",
+      "_cuda_graph_entries": "4",
+      "_cuda_graph_reuse": "3",
+      "_cuda_graph_max_bytes": "536870912",
+      "_cuda_graph_max_captures": "8",
+      "_cuda_graph_max_tokens": "4096",
+      "_media_cuda_graphs": "false"
+    },
+    "oxide_cuda_graphs": false
+  },
+  "runtime_pins": {
+    "file": "device-packet/successor-pins-v1.json",
+    "sha256": "dff8963d94bb4e37d263c76777fd466f5be29ad37038defeb2d934333e2e4d1f",
+    "fa4_bundle": "/tmp/oxide-fa4-canonical26-derived-v4/bundle",
+    "fa4_sm_90_manifest_sha256": "0e4af6e1fd40714300649dd98e6eb31a0c59e9e3cb493b377de07d57d63916a9",
+    "runtime_file_pins": 322,
+    "components": {
+      "union124": {
+        "file_count": 20,
+        "manifest_sha256": "56863d52270f04e2a72c07f0213295cb78cd003ec111239bef1f78e75ea720c5"
+      },
+      "fa4": {
+        "file_count": 213,
+        "manifest_sha256": "0e4af6e1fd40714300649dd98e6eb31a0c59e9e3cb493b377de07d57d63916a9"
+      },
+      "gdn_raw": {
+        "file_count": 6,
+        "manifest_sha256": "f0b2a18d14c80eec9e1e881d87bff80c27408c77a07eb9a1039ed57548b74a7b"
+      },
+      "gdn_provider": {
+        "file_count": 74,
+        "manifest_sha256": "79b9e8e10d2214d88374254d113917b44dcc5bc326e91c82a115f0c047b5beeb"
+      },
+      "gdn_aux": {
+        "file_count": 9,
+        "manifest_sha256": "d1cd7aab5324ad3f1cc8e961ee33f016caa5a344e440661ec332d089ba904be8"
+      }
+    }
+  },
+  "pins": {
+    "gate": "root-v1/ROOT-GATE-MAP-POLICY-V1.json",
+    "gate_sha256": "6d9dd1bf3e169728b8e3c3a7c1f4b3d098227441c57cebe8a4e8debe7463af9d",
+    "controller_sha256": "b887709e43ea17e47880e0a155a2a37998b3bb7b825eb9fa17bf06400aed5f7d",
+    "preflight_sha256": "dcbedc7fe309b7b037553c89ccfd73edfaea403ac86f623e1590bf1807a91b58"
+  },
+  "exact_root_argv": {
+    "cpu": [
+      "env",
+      "CUDA_VISIBLE_DEVICES=",
+      "taskset",
+      "-c",
+      "88-95",
+      "python3",
+      "qwen35_vl_map_policy_controller.py",
+      "--phase",
+      "cpu",
+      "--run",
+      "--output",
+      "/tmp/oxide-qwen35vl-sdk-map-policy-output/cpu-v1"
+    ],
+    "paired": [
+      "env",
+      "CUDA_VISIBLE_DEVICES=",
+      "taskset",
+      "-c",
+      "88-95",
+      "python3",
+      "qwen35_vl_map_policy_controller.py",
+      "--phase",
+      "paired",
+      "--run",
+      "--consumer",
+      "/tmp/oxide-all-model-feature-matrix-v1/qwen35-vl-lifecycle-fix-v1/target-opt3-noLTO/release/qwen35-vl-consumer",
+      "--output",
+      "/tmp/oxide-qwen35vl-sdk-map-policy-output/paired-v1"
+    ],
+    "life": [
+      "env",
+      "CUDA_VISIBLE_DEVICES=",
+      "taskset",
+      "-c",
+      "88-95",
+      "python3",
+      "qwen35_vl_map_policy_controller.py",
+      "--phase",
+      "life",
+      "--run",
+      "--life-consumer",
+      "/tmp/oxide-all-model-feature-matrix-v1/qwen35-vl-lifecycle-fix-v1/target-opt3-noLTO-harness/release/qwen35-vl-consumer",
+      "--output",
+      "/tmp/oxide-qwen35vl-sdk-map-policy-output/life-v1"
+    ],
+    "cpu_light": [
+      "env",
+      "CUDA_VISIBLE_DEVICES=",
+      "taskset",
+      "-c",
+      "88-95",
+      "python3",
+      "qwen35_vl_map_policy_controller.py",
+      "--phase",
+      "cpu",
+      "--run",
+      "--model-name",
+      "Qwen3.5-0.8B",
+      "--case",
+      "single-cats",
+      "--output",
+      "/tmp/oxide-qwen35vl-sdk-map-policy-output/cpu-light-v1"
+    ]
+  },
+  "root_status": {
+    "sdk_cpu": "pending-root-execution",
+    "sdk_cpu_light": "pending-root-execution",
+    "paired": "pending-root-execution",
+    "owning_life": "pending-root-execution"
+  },
+  "non_claims": [
+    "author did not run Docker, GPU, Torch CUDA, NVCC, network, or a device compile",
+    "author did not run a whole-model CPU forward",
+    "Root SDK CPU preflight is pending and must not be claimed closed before the actual retry",
+    "no runtime quality, fence, canary, lifetime, or performance result is claimed"
+  ]
+}

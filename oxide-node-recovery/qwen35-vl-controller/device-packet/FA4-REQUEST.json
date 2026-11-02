@@ -1,0 +1,93 @@
+{
+  "schema": "oxide-qwen35vl-fa4-request/v1",
+  "source_evidence": "evidence/run-plans.json",
+  "abi": "published FA4 bakes ratio + head_dim + dtype + causal/local; absolute q/kv are runtime DLTensor shapes with unchanged Rust shape/stride validation",
+  "policy": "match exact Q/KV ratio, head_dim, causal bit and global mask; never borrow a local or different-ratio profile",
+  "reuse_modes": {
+    "vision_ratio1_d64_global": 0,
+    "vision_ratio1_d72_global": 8,
+    "text_ratio4_d256_causal": 18,
+    "text_ratio4_d256_noncausal": 6,
+    "text_ratio6_d256_causal": 17,
+    "text_ratio6_d256_noncausal": 16
+  },
+  "new_tail": {
+    "text_ratio8_d256_causal": 26,
+    "scope": "only Qwen3.5-35B-A3B Q16/KV2/d256 global"
+  },
+  "noncausal_runtime_evidence": "No 0.8B/2B/4B/35B config declares use_bidirectional_attention or a noncausal decision mode; only the causal text mask is required. Elephant/Mammoth declare block_bidirectional and use their noncausal modes.",
+  "requests": [
+    {
+      "component": "vision",
+      "heads": 12,
+      "kv_heads": 12,
+      "head_dim": 64,
+      "ratio": 1,
+      "causal": false,
+      "expected_central_mode": 0,
+      "registry_mode": 0,
+      "present": true,
+      "note": "central mode present"
+    },
+    {
+      "component": "text.full.causal",
+      "heads": 8,
+      "kv_heads": 2,
+      "head_dim": 256,
+      "ratio": 4,
+      "causal": true,
+      "expected_central_mode": 18,
+      "registry_mode": 18,
+      "present": true,
+      "note": "central mode present"
+    },
+    {
+      "component": "vision",
+      "heads": 16,
+      "kv_heads": 16,
+      "head_dim": 72,
+      "ratio": 1,
+      "causal": false,
+      "expected_central_mode": 8,
+      "registry_mode": 8,
+      "present": true,
+      "note": "central mode present"
+    },
+    {
+      "component": "text.full.causal",
+      "heads": 16,
+      "kv_heads": 2,
+      "head_dim": 256,
+      "ratio": 8,
+      "causal": true,
+      "expected_central_mode": 26,
+      "registry_mode": null,
+      "present": false,
+      "note": "central append-only mode 26 is not in this branch registry"
+    },
+    {
+      "component": "text.full.noncausal",
+      "heads": 16,
+      "kv_heads": 4,
+      "head_dim": 256,
+      "ratio": 4,
+      "causal": false,
+      "expected_central_mode": 6,
+      "registry_mode": 6,
+      "present": true,
+      "note": "central mode present"
+    },
+    {
+      "component": "text.full.noncausal",
+      "heads": 24,
+      "kv_heads": 4,
+      "head_dim": 256,
+      "ratio": 6,
+      "causal": false,
+      "expected_central_mode": 16,
+      "registry_mode": 16,
+      "present": true,
+      "note": "central mode present"
+    }
+  ]
+}

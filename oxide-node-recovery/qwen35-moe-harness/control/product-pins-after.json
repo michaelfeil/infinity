@@ -1,0 +1,37 @@
+{
+  "libs/infinity-v3/backends/src/lib.rs": {
+    "expected": "45288b236ef2e875c4499aa5e3a25e2d76dcba6f51b0b14f8d31e5ed4ebcf1c4",
+    "actual": "45288b236ef2e875c4499aa5e3a25e2d76dcba6f51b0b14f8d31e5ed4ebcf1c4",
+    "match": true
+  },
+  "libs/infinity-v3/backends/oxide/src/lib.rs": {
+    "expected": "7c7b9962e4e4d224963be53155de2807422f2d843c309a126c2f6f5a8f5e1b80",
+    "actual": "7c7b9962e4e4d224963be53155de2807422f2d843c309a126c2f6f5a8f5e1b80",
+    "match": true
+  },
+  "libs/infinity-v3/backends/oxide/src/qwen35_moe_factory.rs": {
+    "expected": "9434db8c2463b4b5e3e78df3cee7f0ee83e878d825ff5d3186004ac66d2bd63e",
+    "actual": "9434db8c2463b4b5e3e78df3cee7f0ee83e878d825ff5d3186004ac66d2bd63e",
+    "match": true
+  },
+  "libs/infinity-v3/backends/oxide/src/qwen35_moe_engine.rs": {
+    "expected": "bf2d3e34a391a75fcb9d1f8ed24c2e4c8d9ee79c603cf03588909629f91fbe86",
+    "actual": "bf2d3e34a391a75fcb9d1f8ed24c2e4c8d9ee79c603cf03588909629f91fbe86",
+    "match": true
+  },
+  "libs/infinity-v3/backends/oxide/src/work_retirement.rs": {
+    "expected": "6c65a1946e7cbc4480ab98afb95344626e441203367d11218aee27915f372a65",
+    "actual": "6c65a1946e7cbc4480ab98afb95344626e441203367d11218aee27915f372a65",
+    "match": true
+  },
+  "libs/infinity-v3/backends/oxide/src/staging.rs": {
+    "expected": "a9f28855a1d32a57de76ddc842a8b2ddd14c9b24e52d99ce0182f981f7ccabff",
+    "actual": "a9f28855a1d32a57de76ddc842a8b2ddd14c9b24e52d99ce0182f981f7ccabff",
+    "match": true
+  },
+  "FACTORY-POISON-CHECKOUT.patch": {
+    "expected": "85334aa2fecf2831c9aba8daa3f0d71e7dd105dddc12ab125916bf96b80232e0",
+    "actual": "85334aa2fecf2831c9aba8daa3f0d71e7dd105dddc12ab125916bf96b80232e0",
+    "match": true
+  }
+}

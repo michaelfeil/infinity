@@ -1,0 +1,109 @@
+{
+  "schema": "oxide-qwen3-vl-v3-sdk-cpu-failure/v1",
+  "failed_report": {
+    "path": "/tmp/oxide-qwen3vl-root-cpu-v3/report.json",
+    "sha256": "7c676b24bc9def225576aa45b5e441b8ea106af30b1411f79caa81f792411a9f"
+  },
+  "root_reported_pins_sha256": "b5237535dd64c88aa47946fb30a679488ea195777eef0217240b5057695b1250",
+  "old_controller_pins_file_sha256": "7c91d3f5f18902b28ddac603c21b7c5c8039e40564a07c38e7e7699d6aebb9e6",
+  "cause": "verify_b66.py captured /proc/self/maps before C.CDLL(B66), so the self-owned B66 object could not satisfy the mapped-object guard.",
+  "fix": "controller_v4 + load_probe.load_shared uses C.CDLL(path, mode=os.RTLD_NOW|C.RTLD_GLOBAL) before maps capture; per-symbol GOT guard retained.",
+  "v3_files_preserved": true,
+  "v3_snapshot_pins": {
+    "path": "/tmp/oxide-all-model-feature-matrix-v1/qwen-vl-current-v1/native-b66-cpu-stage/V3-PINS-RUN.json",
+    "sha256": "7c91d3f5f18902b28ddac603c21b7c5c8039e40564a07c38e7e7699d6aebb9e6"
+  },
+  "v3_controller": {
+    "path": "native-b66-cpu-stage/controller_v3.py",
+    "sha256": "969c97706e6741c6de95f7ac127cfa845c8169ea02737e0992dc11098e9a3778"
+  },
+  "v3_verify_b66": {
+    "path": "native-b66-cpu-stage/verify_b66.py",
+    "sha256": "fe7fe933cac7861081f73805b42c94db18d7db25ff59870a9b1d7513c8ba1cdc"
+  },
+  "v4_verify_helper": {
+    "path": "native-b66-cpu-stage/verify_b66_v4.py",
+    "sha256": "5ff4e8a3fc452fe5be434face2f05fbb07d6fc3380b3729b739665a934baa773"
+  },
+  "v3_observed_helper": {
+    "path": "/tmp/oxide-all-model-feature-matrix-v1/qwen-vl-current-v1/native-b66-cpu-stage/verify_b66-v3-observed.py",
+    "sha256": "fe7fe933cac7861081f73805b42c94db18d7db25ff59870a9b1d7513c8ba1cdc",
+    "bytes": 3746
+  },
+  "v3_old_helper": {
+    "path": "/tmp/oxide-all-model-feature-matrix-v1/qwen-vl-current-v1/native-b66-cpu-stage/verify_b66.py",
+    "sha256": "fe7fe933cac7861081f73805b42c94db18d7db25ff59870a9b1d7513c8ba1cdc",
+    "bytes": 3746
+  },
+  "v3_old_pins": {
+    "path": "/tmp/oxide-all-model-feature-matrix-v1/qwen-vl-current-v1/native-b66-cpu-stage/CONTROLLER-PINS.json",
+    "sha256": "7c91d3f5f18902b28ddac603c21b7c5c8039e40564a07c38e7e7699d6aebb9e6",
+    "bytes": 8167
+  },
+  "v3_old_plan_cpu": {
+    "path": "/tmp/oxide-all-model-feature-matrix-v1/qwen-vl-current-v1/native-b66-cpu-stage/CONTROLLER-PLAN-CPU.json",
+    "sha256": "9d4d76f9ffca7f0a7cf6cd5dd2975a0b59be7e506b2cda1afd0bfdbd1ac32eb5",
+    "bytes": 11336
+  },
+  "v3_old_plan_quality": {
+    "path": "/tmp/oxide-all-model-feature-matrix-v1/qwen-vl-current-v1/native-b66-cpu-stage/CONTROLLER-PLAN-QUALITY.json",
+    "sha256": "25cc7a9944e25b31eb402a8c0b81a6d25de5c190847153b2b2f2c12a7864140c",
+    "bytes": 14010
+  },
+  "v3_observed_hash_matches_old": true,
+  "preservation_classes": {
+    "class_a_exact_frozen_v3": {
+      "controller_v3": {
+        "path": "/tmp/oxide-all-model-feature-matrix-v1/qwen-vl-current-v1/native-b66-cpu-stage/controller_v3.py",
+        "sha256": "969c97706e6741c6de95f7ac127cfa845c8169ea02737e0992dc11098e9a3778",
+        "bytes": 19294
+      },
+      "verify_b66_old": {
+        "path": "/tmp/oxide-all-model-feature-matrix-v1/qwen-vl-current-v1/native-b66-cpu-stage/verify_b66.py",
+        "sha256": "fe7fe933cac7861081f73805b42c94db18d7db25ff59870a9b1d7513c8ba1cdc",
+        "bytes": 3746
+      },
+      "verify_b66_observed": {
+        "path": "/tmp/oxide-all-model-feature-matrix-v1/qwen-vl-current-v1/native-b66-cpu-stage/verify_b66-v3-observed.py",
+        "sha256": "fe7fe933cac7861081f73805b42c94db18d7db25ff59870a9b1d7513c8ba1cdc",
+        "bytes": 3746
+      },
+      "pins_run": {
+        "path": "/tmp/oxide-all-model-feature-matrix-v1/qwen-vl-current-v1/native-b66-cpu-stage/V3-PINS-RUN.json",
+        "sha256": "7c91d3f5f18902b28ddac603c21b7c5c8039e40564a07c38e7e7699d6aebb9e6",
+        "bytes": 8167
+      },
+      "old_pins_path": {
+        "path": "/tmp/oxide-all-model-feature-matrix-v1/qwen-vl-current-v1/native-b66-cpu-stage/CONTROLLER-PINS.json",
+        "sha256": "7c91d3f5f18902b28ddac603c21b7c5c8039e40564a07c38e7e7699d6aebb9e6",
+        "bytes": 8167
+      },
+      "failed_report": {
+        "path": "/tmp/oxide-qwen3vl-root-cpu-v3/report.json",
+        "sha256": "7c676b24bc9def225576aa45b5e441b8ea106af30b1411f79caa81f792411a9f",
+        "bytes": 1087
+      },
+      "note": "byte-exact V3 controller/helper/pins/report preservation; canonical pins b523 matches Root report"
+    },
+    "class_b_restored_v8_runtime_plans": {
+      "cpu": {
+        "path": "/tmp/oxide-all-model-feature-matrix-v1/qwen-vl-current-v1/native-b66-cpu-stage/CONTROLLER-PLAN-CPU.json",
+        "sha256": "9d4d76f9ffca7f0a7cf6cd5dd2975a0b59be7e506b2cda1afd0bfdbd1ac32eb5",
+        "bytes": 11336
+      },
+      "quality": {
+        "path": "/tmp/oxide-all-model-feature-matrix-v1/qwen-vl-current-v1/native-b66-cpu-stage/CONTROLLER-PLAN-QUALITY.json",
+        "sha256": "25cc7a9944e25b31eb402a8c0b81a6d25de5c190847153b2b2f2c12a7864140c",
+        "bytes": 14010
+      },
+      "source": "reviewer /tmp/oxide-vl-review-successors-qv3-v1/v8-final plan outputs from the final V8 run IDs",
+      "original_frozen_v3_plan_sha256_trace": {
+        "cpu": "739b2c449287e80d04d1900b2e972bc036e6d696947bb38d5d02134dc5d74c81",
+        "quality": "4246c5b9be0429450d1c3c59b6b0e02d8f347aa188ac0dea5c7efa5ec7a48aff"
+      },
+      "claim": "restored runtime plan outputs, NOT byte-exact original frozen V3 plan files"
+    }
+  },
+  "plan_caveat": "V3 plan paths hold reviewer V8 runtime plan outputs (9d4d76f9/25cc7a99) with final-V8 run IDs; original frozen V3 plan hashes 739b2c44/4246c5b9 are retained only as trace, not as byte-exact preserved plans.",
+  "root_notice": "Root notified: V3 controller/helper/pins exact; V3 plans are restored runtime outputs, not original frozen bytes. V4 is the only command path."
+}

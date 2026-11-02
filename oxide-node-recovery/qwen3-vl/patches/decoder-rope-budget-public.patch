@@ -1,0 +1,117 @@
+--- a/libs/infinity-v3/backends/oxide/src/decoder.rs
++++ b/libs/infinity-v3/backends/oxide/src/decoder.rs
+@@ -51,6 +51,20 @@
+ /// for the immutable tables without silently growing at inference.
+ const ROPE_TABLE_BYTE_LIMIT: usize = 128 * 1024 * 1024;
+ 
++/// The table cap above covers only the immutable cosine/sine payload. The
++/// constructor also creates one inverse-frequency `f32` per rotary pair; that
++/// exact, checked scratch rides on top of the table cap. A legal
++/// 262,144-position d128 table is therefore exactly 128 MiB of tables plus
++/// its 256-byte inverse metadata, rather than an over-budget construction.
++fn rope_construction_budget(head_dim: usize) -> Result<usize, BackendError> {
++    let inverse_bytes = (head_dim / 2)
++        .checked_mul(std::mem::size_of::<f32>())
++        .ok_or_else(|| start("decoder RoPE inverse metadata size overflowed usize"))?;
++    ROPE_TABLE_BYTE_LIMIT
++        .checked_add(inverse_bytes)
++        .ok_or_else(|| start("decoder RoPE construction budget overflowed usize"))
++}
++
+ /// Mistral H4096 binds the current public 90-export Gemma2 BF16 rotary export.
+ /// Every standard BF16 dense math recipe binds the shared public Gemma2 BF16
+ /// mean-pool export for `Pool::Mean` with at most 65535 selections. The old
+@@ -988,7 +1002,7 @@
+                 config.head_dim,
+                 config.rope_theta,
+                 config.max_position_embeddings,
+-                ROPE_TABLE_BYTE_LIMIT,
++                rope_construction_budget(config.head_dim)?,
+             )
+             .map_err(start)?;
+             if tables.head_dim() != config.head_dim
+@@ -2675,6 +2689,84 @@
+         assert!(tables.validate_positions(&[131072]).is_err());
+     }
+ 
++    #[test]
++    fn rope_construction_budget_accepts_exact_128mib_table_plus_d128_metadata() {
++        let head_dim = 128usize;
++        let positions = 262_144usize;
++        let table_bytes = positions * (head_dim / 2) * 2 * std::mem::size_of::<f32>();
++        assert_eq!(table_bytes, ROPE_TABLE_BYTE_LIMIT);
++        let inverse_bytes = (head_dim / 2) * std::mem::size_of::<f32>();
++        assert_eq!(inverse_bytes, 256);
++        let budget = rope_construction_budget(head_dim).unwrap();
++        assert_eq!(budget, ROPE_TABLE_BYTE_LIMIT + inverse_bytes);
++        // The unchanged table cap still rejects the same legal table when the
++        // constructor's exact inverse metadata is not accounted for.
++        assert!(matches!(
++            BaseRopeTables::new(head_dim, 1_000_000.0, positions, ROPE_TABLE_BYTE_LIMIT),
++            Err(crate::rotary::RotaryError::ByteBudgetExceeded {
++                required,
++                limit
++            }) if required == budget && limit == ROPE_TABLE_BYTE_LIMIT
++        ));
++        let tables = BaseRopeTables::new(head_dim, 1_000_000.0, positions, budget)
++            .expect("legal 128 MiB table plus exact d128 inverse metadata");
++        assert_eq!(tables.table_bytes(), table_bytes);
++        assert_eq!(tables.position_capacity(), positions);
++        assert_eq!(tables.table_stride(), head_dim / 2);
++        assert_eq!(tables.cosine().len(), positions * (head_dim / 2));
++        assert_eq!(tables.sine().len(), positions * (head_dim / 2));
++        // One more position exceeds the table cap, not merely the metadata.
++        assert!(matches!(
++            BaseRopeTables::new(head_dim, 1_000_000.0, positions + 1, budget),
++            Err(crate::rotary::RotaryError::ByteBudgetExceeded { .. })
++        ));
++        // The allowance is exactly the checked metadata, never extra slack.
++        assert!(matches!(
++            BaseRopeTables::new(head_dim, 1_000_000.0, positions, budget - 1),
++            Err(crate::rotary::RotaryError::ByteBudgetExceeded { .. })
++        ));
++    }
++
++    #[test]
++    fn rope_construction_budget_rejects_multiplication_and_add_overflow() {
++        if usize::BITS < 64 {
++            return;
++        }
++        // The table byte multiplication overflows usize before any allocation.
++        let multiply_budget = rope_construction_budget(u32::MAX as usize - 1).unwrap();
++        assert!(matches!(
++            BaseRopeTables::new(
++                u32::MAX as usize - 1,
++                16.0,
++                u32::MAX as usize,
++                multiply_budget
++            ),
++            Err(crate::rotary::RotaryError::SizeOverflow)
++        ));
++        // The table fits but adding its exact inverse metadata overflows usize.
++        let add_head_dim = 1_073_741_826usize;
++        let add_budget = rope_construction_budget(add_head_dim).unwrap();
++        assert!(matches!(
++            BaseRopeTables::new(add_head_dim, 16.0, 4_294_967_288, add_budget),
++            Err(crate::rotary::RotaryError::SizeOverflow)
++        ));
++        // The production budget helper itself never wraps the metadata term.
++        assert!(rope_construction_budget(usize::MAX).is_err());
++    }
++
++    #[test]
++    fn rope_construction_budget_keeps_ordinary_tiny_geometry_unchanged() {
++        let budget = rope_construction_budget(8).unwrap();
++        assert_eq!(budget, ROPE_TABLE_BYTE_LIMIT + 16);
++        let tables = BaseRopeTables::new(8, 16.0, 10, budget).unwrap();
++        let legacy = BaseRopeTables::new(8, 16.0, 10, 336).unwrap();
++        assert_eq!(tables.table_bytes(), 320);
++        assert_eq!(tables.position_capacity(), 10);
++        assert_eq!(tables.table_stride(), 4);
++        assert_eq!(tables.cosine(), legacy.cosine());
++        assert_eq!(tables.sine(), legacy.sine());
++    }
++
+     fn tinyllama_config() -> &'static str {
+         // Mirrors decoder-loader-fixtures/tinyllama-config.json without a
+         // machine-specific or /workspace path.

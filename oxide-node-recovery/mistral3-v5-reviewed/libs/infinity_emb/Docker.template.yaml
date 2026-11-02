@@ -1,0 +1,101 @@
+# run all commands here via: `make template_docker`
+
+# 1. Guide: pip install jinja2 jinja2-cli
+nvidia:
+  # 2 .command: jinja2 Dockerfile.jinja2 Docker.template.yaml --format=yaml -s nvidia > Dockerfile.nvidia_auto
+  base_image: "nvidia/cuda:12.9.0-base-ubuntu22.04"
+  main_install: 'RUN poetry install --no-interaction --no-ansi --no-root --extras "${EXTRAS}" --without lint,test && poetry cache clear pypi --all'
+  python_version: python3.10
+  extra_installs_main: |
+    # nvcc is not installed -> the following might break if the torch version or python version changes.
+    RUN poetry run $PYTHON -m pip install --no-cache-dir https://github.com/Dao-AILab/flash-attention/releases/download/v2.8.3/flash_attn-2.8.3+cu12torch2.8cxx11abiFALSE-cp310-cp310-linux_x86_64.whl
+  extra_env_variables: |
+    RUN rm -rf /usr/local/cuda-12.9/compat
+    ENV NVIDIA_DISABLE_REQUIRE=true
+cpu:
+  # 2. command: jinja2 Dockerfile.jinja2 Docker.template.yaml --format=yaml -s cpu > Dockerfile.cpu_auto
+  base_image: "ubuntu:22.04"
+  # pyproject_sed: |
+  #   RUN sed -i 's|torch = "2.4.1"|torch = "2.5.0"|' pyproject.toml
+  #   RUN sed -i 's|"pypi"|"pytorch_cpu"|' pyproject.toml
+  #   RUN poetry lock --no-update
+  poetry_extras: "all"
+  main_install: |
+    # "RUN poetry install --no-interaction --no-ansi --no-root --extras \"${EXTRAS}\" --without lint,test && poetry cache clear pypi --all"
+    COPY requirements_install_from_poetry.sh requirements_install_from_poetry.sh
+    RUN ./requirements_install_from_poetry.sh --no-root --without lint,test "https://download.pytorch.org/whl/cpu"
+    RUN poetry run python -m pip install --no-cache-dir onnxruntime-openvino
+  extra_env_variables: |
+    # Sets default to onnx
+    ENV INFINITY_ENGINE="optimum"
+
+amd:
+  # 2 . command: jinja2 Dockerfile.jinja2 Docker.template.yaml --format=yaml -s amd > Dockerfile.amd_auto
+  base_image: "rocm/pytorch:rocm6.2.3_ubuntu22.04_py3.10_pytorch_release_2.3.0"
+  # pyproject_sed: |
+  #   RUN sed -i 's|"pypi"|"pytorch_rocm"|' pyproject.toml
+  #   RUN sed -i 's|torch = "2.4.1"|torch = "2.4.1"|' pyproject.toml
+  #   RUN sed -i 's|torchvision = {version = "\*"|torchvision = {version = "0.19.1"|' pyproject.toml
+  #   RUN poetry lock --no-update
+  main_install: |
+    # "RUN poetry install --no-interaction --no-ansi --no-root --extras \"${EXTRAS}\" --without lint,test && poetry cache clear pypi --all"
+    COPY requirements_install_from_poetry.sh requirements_install_from_poetry.sh
+    RUN ./requirements_install_from_poetry.sh --no-root --without lint,test "https://download.pytorch.org/whl/rocm6.2"
+  extra_installs_main: |
+    ARG GPU_ARCH
+    ENV GPU_ARCH=${GPU_ARCH}
+    # GPU architecture specific installations
+    RUN cd /opt/rocm/share/amd_smi && python -m pip wheel . --wheel-dir=/install
+    RUN apt update -y && apt install migraphx -y
+    RUN if [ "$GPU_ARCH" = "gfx90a" ] || [ "$GPU_ARCH" = "gfx942" ]; then \
+        # OPTION1: Follow the steps here to install onnxruntime-rocm 
+        # https://huggingface.co/docs/optimum/onnxruntime/usage_guides/amdgpu
+        . .venv/bin/activate && python -m pip uninstall onnxruntime -y \
+        && python -m pip install /install/*.whl \
+        && python -m pip install cmake onnx \
+        && (curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y) \
+        && (. $HOME/.cargo/env) \
+        && git clone --single-branch --branch main --recursive https://github.com/Microsoft/onnxruntime onnxruntime \
+        && cd onnxruntime \
+        && (./build.sh --config Release --build_wheel --allow_running_as_root --update --build --parallel --cmake_extra_defines CMAKE_HIP_ARCHITECTURES=${GPU_ARCH} ONNXRUNTIME_VERSION=$(cat ./VERSION_NUMBER) --use_rocm --use_migraphx --rocm_home=/opt/rocm) \
+        && python -m pip uninstall onnxruntime -y \
+        && python -m pip install build/Linux/Release/dist/* \
+        && cp -r /app/onnxruntime/build/Linux/Release/*.so /usr/local/lib/ \
+        && cp -r /app/onnxruntime/build/Linux/Release/*.so.* /usr/local/lib/ \
+        && git clone https://github.com/huggingface/optimum-amd.git \
+        && cd optimum-amd \
+        && python -m pip install -e .; \
+    elif [ "$GPU_ARCH" = "gfx1100" ]; then \
+        # OPTION2: Install onnxruntime-rocm from the wheel
+        . .venv/bin/activate && python -m pip uninstall onnxruntime onnxruntime-rocm -y && python -m pip install "numpy<2" https://repo.radeon.com/rocm/manylinux/rocm-rel-6.2.3/onnxruntime_rocm-1.18.0-cp310-cp310-linux_x86_64.whl \
+        && python -m pip install /install/*.whl \
+        && git clone https://github.com/huggingface/optimum-amd.git /tmp-optimum \
+        && cd /tmp-optimum \
+        && python -m pip install .; \
+    else \
+        echo "NO GPU_ARCH, skip optium: ${GPU_ARCH}"; \
+    fi
+  poetry_extras: "all"
+  python_version: python3.10
+  extra_env_variables: |
+    # RUN conda init --reverse --all
+    # RUN rm -rf /opt/conda && rm -rf /var/lib/jenkins
+    # Bettertransformer is not supported on AMD
+    ENV INFINITY_BETTERTRANSFORMER="0"
+
+trt:
+  base_image: nvidia/cuda:12.9.0-cudnn-devel-ubuntu22.04
+  poetry_extras: "all onnxruntime-gpu"
+  extra_installs_main: |
+    # Install utils for tensorrt
+    RUN apt-get install -y --no-install-recommends openmpi-bin libopenmpi-dev git git-lfs python3-pip
+    RUN poetry run $PYTHON -m pip install --no-cache-dir flash-attn --no-build-isolation
+    RUN poetry run $PYTHON -m pip install --no-cache-dir "tensorrt==10.3.0" "tensorrt_lean==10.3.0" "tensorrt_dispatch==10.3.0"
+  extra_env_variables: |
+    # Set default to tensorrt
+    ENV LD_LIBRARY_PATH=/app/.venv/lib/${PYTHON}/site-packages/tensorrt:/usr/lib/x86_64-linux-gnu:/app/.venv/lib/${PYTHON}/site-packages/tensorrt_libs:${LD_LIBRARY_PATH}
+    ENV PATH=/app/.venv/lib/${PYTHON}/site-packages/tensorrt/bin:${PATH}
+    RUN rm -rf /usr/local/cuda-12.9/compat
+    ENV NVIDIA_DISABLE_REQUIRE=true
+  python_version: python3.10
+  main_install: 'RUN poetry install --no-interaction --no-ansi --no-root --extras "${EXTRAS}" --without lint,test && poetry cache clear pypi --all'    

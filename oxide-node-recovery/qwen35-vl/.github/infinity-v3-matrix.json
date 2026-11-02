@@ -1,0 +1,12 @@
+[
+  {
+    "name": "nvidia",
+    "imageNamePrefix": "nvidia-",
+    "dockerfile": "libs/infinity-v3/Dockerfile-libtorch"
+  },
+  {
+    "name": "cpu",
+    "imageNamePrefix": "cpu-",
+    "dockerfile": "libs/infinity-v3/Dockerfile"
+  }
+]

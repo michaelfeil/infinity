@@ -1,0 +1,144 @@
+{
+  "schema": "oxide-qwen3-vl-native-b66-cpu-stage/v7",
+  "source_commit": "027b359c6e0c5378cd07398b07b4435af3ee492d",
+  "source_patch_sha256": "94965637d760dbfd642a41d36efe3142ad892933f795b37f3c8c80e5630e14ea",
+  "controller": {
+    "path": "native-b66-cpu-stage/controller_v4.py",
+    "sha256": "52188ae5b19eb6ce94ceb849f00dd315f33721b04baeb74ab9adbd1a39f43cc8"
+  },
+  "old_controllers_immutable": [
+    {
+      "path": "native-b66-cpu-stage/controller.py",
+      "sha256": "3e3867a0d065bb8f57bfeebcadb2c42b87ff294dfde4db44fd56e1771a152d68"
+    },
+    {
+      "path": "native-b66-cpu-stage/controller_v2.py",
+      "sha256": "210e97498d50da7cc3ed75535238dcab3da18ffd62667616a4753bf873b15bc8"
+    },
+    {
+      "path": "native-b66-cpu-stage/controller_v3.py",
+      "sha256": "969c97706e6741c6de95f7ac127cfa845c8169ea02737e0992dc11098e9a3778"
+    }
+  ],
+  "controller_pins": {
+    "path": "native-b66-cpu-stage/CONTROLLER-PINS-v4.json",
+    "sha256": "e6ed2d7c2f9e783260e61234fbe0067b6e9dcb30e3dd99c6213cad92299b0a16"
+  },
+  "controller_plans": {
+    "cpu": {
+      "path": "native-b66-cpu-stage/CONTROLLER-PLAN-CPU-v4.json",
+      "sha256": "514c071ba33492d4ec8e3543065394c7c1a301090231114acb52963e2c21b80f"
+    },
+    "quality": {
+      "path": "native-b66-cpu-stage/CONTROLLER-PLAN-QUALITY-v4.json",
+      "sha256": "a260c882c0b9a5a2d04cfea0255930e17de1f0cb71c03e1648683ecab71869bf"
+    }
+  },
+  "controller_tests": {
+    "path": "native-b66-cpu-stage/test_controller_v4.py",
+    "sha256": "a18b178d0ebba929befade5f516780fda07215e901d8dee5e2f2b0af19138b03",
+    "result": "4 passed"
+  },
+  "compare_tests": {
+    "path": "root-gate/test_compare_quality.py",
+    "sha256": "e25bba9df6bdfae57eede50be88a1817c4d4d10bc7980f0d3b00e20f0f3f862f",
+    "result": "8 passed"
+  },
+  "controller_contract": {
+    "fixtures_manifest": "native-baseline/fixtures/fixtures.json",
+    "fixture_asset_root": "native-baseline/fixtures",
+    "cpu_env": "CUDA_VISIBLE_DEVICES=",
+    "quality_env": "CUDA_VISIBLE_DEVICES=0; INFINITY_FA4_ROOT=/tmp/fa4-root; INFINITY_OXIDE_KERNEL_MODULE=/tmp/infinity-oxide-parity-20261101/device-union124-all3-v1/kernels",
+    "remote_consumers": {
+      "host": "remote/host-consumer",
+      "native": "remote/native-consumer",
+      "quality": "remote/quality-consumer"
+    },
+    "artifact_retrieval": true,
+    "b66_sha_enforced": true,
+    "no_weight_copy": true,
+    "read_only_models": true,
+    "native_packets_present": [
+      "qwen3-vl-8b"
+    ],
+    "native_packets_missing": [
+      "colqwen3-4b",
+      "nemotron-4b"
+    ],
+    "nemotron8b_no_bench_mapping": true,
+    "lifecycle": "quality-lifecycle-smoke only"
+  },
+  "quality_consumer": {
+    "path": "/tmp/opencode/qwen-vl-host-consumer-quality-target/release/examples/qwen3_vl_host_consumer",
+    "sha256": "13c66c8477b2b894d2416d123d5fbc818a502c1d9895f3efff909952b9d731ce",
+    "pending_build": false,
+    "wall_seconds": 42,
+    "profile": "opt3/lto=false/debug1/cgu16/debug-assertions=false/strip=none"
+  },
+  "historical_host_consumer": {
+    "path": "/tmp/opencode/qwen-vl-host-consumer-e7baa-target/release/examples/qwen3_vl_host_consumer",
+    "sha256": "01516290d5dc97960121a6da086d81e1ad6be0a800eed2c941fe1a3b4e51107f",
+    "stripped": true
+  },
+  "commands": [
+    "python3 native-b66-cpu-stage/controller_v3.py --pins",
+    "python3 native-b66-cpu-stage/controller_v3.py --phase cpu --plan",
+    "python3 native-b66-cpu-stage/controller_v3.py --phase cpu --run --output <fresh-outside-source>",
+    "python3 native-b66-cpu-stage/controller_v3.py --phase quality --run --output <fresh-outside-source>"
+  ],
+  "no_weight_copy": true,
+  "compare_quality": {
+    "path": "root-gate/compare_quality.py",
+    "sha256": "8e57c14db58cd9ed41a0cac017afdddd239b27fc3eafc94351ee12e4f4c3506c"
+  },
+  "load_probe": {
+    "path": "native-b66-cpu-stage/load_probe.py",
+    "sha256": "06110710dba5d21239e6d399e753453f0339b595e9a99c50348bbf2480c1e7d4"
+  },
+  "load_probe_tests": {
+    "path": "native-b66-cpu-stage/test_load_probe.py",
+    "sha256": "1d52f3b17aefcd289ce25b415ce875274f1cb57d865e039268ef602edc044f7a",
+    "result": "2 passed"
+  },
+  "v3_failure_preserved": {
+    "path": "native-b66-cpu-stage/V3-FAILURE-PRESERVED.json",
+    "sha256": "158c3dd688fc6ee51ac0eef95ed91495fc8a2a2ffac6924821909890a759885e"
+  },
+  "pin_semantics": {
+    "v3_pins_file_sha256": "7c91d3f5f18902b28ddac603c21b7c5c8039e40564a07c38e7e7699d6aebb9e6",
+    "v3_canonical_sha256": "b5237535dd64c88aa47946fb30a679488ea195777eef0217240b5057695b1250",
+    "v4_pins_file_sha256": "e6ed2d7c2f9e783260e61234fbe0067b6e9dcb30e3dd99c6213cad92299b0a16",
+    "v4_canonical_sha256": "ffa79d5b7619f434a24a759068e0a0bf2ec71394b20df1c45da090da7614a1f9",
+    "note": "V3 old paths restored to exact snapshot; V4 uses append-only -v4 filenames."
+  },
+  "verify_b66_v3_immutable": {
+    "path": "native-b66-cpu-stage/verify_b66.py",
+    "sha256": "fe7fe933cac7861081f73805b42c94db18d7db25ff59870a9b1d7513c8ba1cdc"
+  },
+  "verify_b66_v4": {
+    "path": "native-b66-cpu-stage/verify_b66_v4.py",
+    "sha256": "5ff4e8a3fc452fe5be434face2f05fbb07d6fc3380b3729b739665a934baa773"
+  },
+  "v3_snapshot": {
+    "path": "native-b66-cpu-stage/V3-PINS-RUN.json",
+    "sha256": "7c91d3f5f18902b28ddac603c21b7c5c8039e40564a07c38e7e7699d6aebb9e6"
+  },
+  "verify_b66_v3_observed": {
+    "path": "native-b66-cpu-stage/verify_b66-v3-observed.py",
+    "sha256": "fe7fe933cac7861081f73805b42c94db18d7db25ff59870a9b1d7513c8ba1cdc"
+  },
+  "v3_pins_old_path": {
+    "path": "native-b66-cpu-stage/CONTROLLER-PINS.json",
+    "sha256": "7c91d3f5f18902b28ddac603c21b7c5c8039e40564a07c38e7e7699d6aebb9e6"
+  },
+  "v3_plans_old_paths": {
+    "cpu": {
+      "path": "native-b66-cpu-stage/CONTROLLER-PLAN-CPU.json",
+      "sha256": "9d4d76f9ffca7f0a7cf6cd5dd2975a0b59be7e506b2cda1afd0bfdbd1ac32eb5"
+    },
+    "quality": {
+      "path": "native-b66-cpu-stage/CONTROLLER-PLAN-QUALITY.json",
+      "sha256": "25cc7a9944e25b31eb402a8c0b81a6d25de5c190847153b2b2f2c12a7864140c"
+    }
+  }
+}

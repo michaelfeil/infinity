@@ -1,0 +1,7 @@
+[virtualenvs]
+create = true
+in-project = true
+
+[installer]
+modern-installation = true
+max-workers = 10

@@ -1,0 +1,46 @@
+{
+  "dtype": "bfloat16",
+  "factory_proof": {
+    "dtype_accepted": true,
+    "gaps": [],
+    "is_qwen35_checkpoint": true,
+    "run_plan_ready": true,
+    "serving_route": "DynamicBlockDecision"
+  },
+  "family": "dense",
+  "fp16_supported": false,
+  "gaps": [],
+  "modes": [
+    {
+      "causal": false,
+      "component": "vision",
+      "expected_mode": 8,
+      "head_dim": 72,
+      "heads": 16,
+      "kv_heads": 16,
+      "note": "central mode present",
+      "present": true,
+      "registry_mode": 8
+    },
+    {
+      "causal": false,
+      "component": "text.full.noncausal",
+      "expected_mode": 6,
+      "head_dim": 256,
+      "heads": 16,
+      "kv_heads": 4,
+      "note": "central mode present",
+      "present": true,
+      "registry_mode": 6
+    }
+  ],
+  "moe_owner_required": false,
+  "normal_factory_ready": true,
+  "path": "/workspace/model-performance/michaelfeil/elephant-1",
+  "projection_score_route": "OxideBackend pooled/raw output + warm OneJev Decision score; no Dense text projection stand-in",
+  "text_admission": "dense text candidate admitted",
+  "text_causal": false,
+  "text_hidden": 4096,
+  "text_layers": 32,
+  "vision_tensors": 333
+}

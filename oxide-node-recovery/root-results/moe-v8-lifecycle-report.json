@@ -1,0 +1,46 @@
+{
+  "schema": "root-qwen3-moe-v8-lifecycle/v1",
+  "status": "passed",
+  "binary": "/tmp/oxide-all-model-feature-matrix-v1/qwen3-moe-root629-v8-lifecycle-v1/bin/qwen3_moe_lifecycle",
+  "binary_sha256": "4dfeefe1031e10d51ede7f19c67cf4ccda41cd6a1ad0195428f2a22f2226a2fd",
+  "production_source_sha256": "eadbf30a5ecfce458b3ed7ff8f3780108c26bb75f76f085bc7519009fd72307d",
+  "scope": "Actual normal factory held2, outoforder completion, dropped pending/cancel, shapeABA, invalidrequest recovery and facadedrop; no actualthirdbackend saturation or forcedretirement pressure claim",
+  "modes": {
+    "plain": {
+      "status": "passed",
+      "pools": [
+        "Cls",
+        "Mean",
+        "LastToken"
+      ],
+      "elapsed_ms": 82563,
+      "sanitizer_zero_errors": false,
+      "log": "/root/infinity-oxide-results/2026-11-02-requested-model-families/moe-v8-lifecycle-plain.stdout",
+      "sha256": "d35ba307dcddc8e30e1c14076a5466521b82a551a4fc82be36db333d4afe47ec"
+    },
+    "mem": {
+      "status": "passed",
+      "pools": [
+        "Cls",
+        "Mean",
+        "LastToken"
+      ],
+      "elapsed_ms": 122509,
+      "sanitizer_zero_errors": true,
+      "log": "/root/infinity-oxide-results/2026-11-02-requested-model-families/moe-v8-lifecycle-mem.stdout",
+      "sha256": "3a45a9491ed51aa8e2bc5891bdbab05fd54a6fc08ca5f4c0474ef78af4c80fe3"
+    },
+    "init": {
+      "status": "passed",
+      "pools": [
+        "Cls",
+        "Mean",
+        "LastToken"
+      ],
+      "elapsed_ms": 108785,
+      "sanitizer_zero_errors": true,
+      "log": "/root/infinity-oxide-results/2026-11-02-requested-model-families/moe-v8-lifecycle-init.stdout",
+      "sha256": "ba9bf09aad50a4d81a693792e0e8b2fdb41dcfce9d63ece52ac0fffc02fff392"
+    }
+  }
+}

@@ -1,0 +1,17 @@
+[package]
+name = "infinity-oxide-kernels"
+version = "0.1.0"
+edition = "2024"
+license-file = "../../../LICENSE"
+publish = false
+
+[workspace]
+resolver = "2"
+
+[dependencies]
+cuda-device = { git = "https://github.com/NVIDIA/cuda-rust", rev = "999094fe568fc3080f80d49e9c44e3680ad1c968" }
+libm = "0.2.16"
+
+[profile.release]
+opt-level = 3
+

@@ -1,0 +1,73 @@
+{
+  "schema": "oxide-qwen3-vl-root-ready-commands/v1",
+  "working_directory": "/tmp/oxide-all-model-feature-matrix-v1/qwen-vl-current-v1",
+  "source_commit": "027b359c6e0c5378cd07398b07b4435af3ee492d",
+  "quality_binary": {
+    "path": "/tmp/opencode/qwen-vl-host-consumer-quality-target/release/examples/qwen3_vl_host_consumer",
+    "sha256": "13c66c8477b2b894d2416d123d5fbc818a502c1d9895f3efff909952b9d731ce",
+    "profile": "opt3/lto=false/debug1/cgu16/debug-assertions=false/strip=none",
+    "wall_seconds": 42
+  },
+  "cold_sdk_cpu_first": {
+    "working_directory": "/tmp/oxide-all-model-feature-matrix-v1/qwen-vl-current-v1",
+    "argv": [
+      "python3",
+      "native-b66-cpu-stage/controller_v4.py",
+      "--phase",
+      "cpu",
+      "--run",
+      "--output",
+      "/tmp/qv3-root-cpu"
+    ],
+    "expected_artifacts": [
+      "/tmp/qv3-root-cpu/b66-binding-proof.json",
+      "/tmp/qv3-root-cpu/native-cpu/qwen3-vl-8b.json",
+      "/tmp/qv3-root-cpu/oxide-cpu/qwen3-vl-8b/host-consumer.json"
+    ]
+  },
+  "native_8b_whole_quality_life_smoke": {
+    "working_directory": "/tmp/oxide-all-model-feature-matrix-v1/qwen-vl-current-v1",
+    "argv": [
+      "python3",
+      "native-b66-cpu-stage/controller_v4.py",
+      "--phase",
+      "quality",
+      "--run",
+      "--output",
+      "/tmp/qv3-root-quality"
+    ],
+    "note": "Native quality runs only for qwen3-vl-8b (packet present); ColQwen3-4B/Nemotron-4B native packets are explicitly missing. Oxide quality-vectors and lifecycle-smoke run for all /bench-mapped cases; quality-compare runs for 8B.",
+    "expected_artifacts": [
+      "/tmp/qv3-root-quality/native-quality/qwen3-vl-8b/results.json",
+      "/tmp/qv3-root-quality/oxide-quality-vectors/qwen3-vl-8b/pool0/oxide-consumer.json",
+      "/tmp/qv3-root-quality/oxide-quality-vectors/qwen3-vl-8b/pool1/oxide-consumer.json",
+      "/tmp/qv3-root-quality/oxide-quality-vectors/qwen3-vl-8b/pool2/oxide-consumer.json",
+      "/tmp/qv3-root-quality/oxide-quality-vectors/qwen3-vl-8b/raw/oxide-consumer.json",
+      "/tmp/qv3-root-quality/quality/qwen3-vl-8b.json"
+    ]
+  },
+  "pins": {
+    "controller_pins": "native-b66-cpu-stage/CONTROLLER-PINS-v4.json",
+    "cpu_plan": "native-b66-cpu-stage/CONTROLLER-PLAN-CPU-v4.json",
+    "quality_plan": "native-b66-cpu-stage/CONTROLLER-PLAN-QUALITY-v4.json",
+    "stage": "native-b66-cpu-stage/STAGE.json",
+    "patch": "selective.patch"
+  },
+  "missing_native_packets": [
+    "colqwen3-4b",
+    "nemotron-4b"
+  ],
+  "skipped_no_bench_mapping": [
+    "nemotron-8b-optional"
+  ],
+  "non_claims": [
+    "No GPU/runtime/quality/performance claim by author; Root executes the container phases."
+  ],
+  "controller": "native-b66-cpu-stage/controller_v4.py",
+  "pin_semantics": {
+    "v3_pins_file_sha256": "7c91d3f5f18902b28ddac603c21b7c5c8039e40564a07c38e7e7699d6aebb9e6",
+    "v3_canonical_sha256": "b5237535dd64c88aa47946fb30a679488ea195777eef0217240b5057695b1250",
+    "v4_pins_file_sha256": "e6ed2d7c2f9e783260e61234fbe0067b6e9dcb30e3dd99c6213cad92299b0a16",
+    "v4_canonical_sha256": "ffa79d5b7619f434a24a759068e0a0bf2ec71394b20df1c45da090da7614a1f9"
+  }
+}

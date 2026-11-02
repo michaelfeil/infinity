@@ -1,0 +1,23 @@
+[package]
+name = "dense-probe"
+version = "0.2.0"
+edition = "2021"
+publish = false
+
+[[bin]]
+name = "dense_probe"
+path = "src/main.rs"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"
+tokio = { version = "1", features = ["rt"] }
+infinity_v3-backend = { path = "/tmp/infinity-oxide-qwen3-h5120-public252-v1-worktree/libs/infinity-v3/backends", default-features = false, features = ["oxide"] }
+infinity-backend-oxide = { path = "/tmp/infinity-oxide-qwen3-h5120-public252-v1-worktree/libs/infinity-v3/backends/oxide" }
+infinity_v3-backend-core = { path = "/tmp/infinity-oxide-qwen3-h5120-public252-v1-worktree/libs/infinity-v3/backends/core" }
+
+[profile.release]
+opt-level = 3
+lto = false
+codegen-units = 16

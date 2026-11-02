@@ -1,0 +1,30 @@
+{
+  "schema": "oxide-qwen3vl-rope-budget-source-freeze/v1",
+  "manifest": "/tmp/oxide-qwen3vl-rope-budget-fix-v1/source-freeze.sha256",
+  "manifest_sha256": "0adca4bee57bc38b3b4f76579b96acef0dec66ee3e60d864a753dc46ab461370",
+  "file_count": 1079,
+  "candidate": "/tmp/oxide-qwen3vl-rope-budget-fix-v1/candidate",
+  "frozen_snapshot": "/tmp/oxide-all-model-feature-matrix-v1/qwen-vl-current-v1",
+  "public_head": "/tmp/infinity-plain-cuda",
+  "changed_source": {
+    "libs/infinity-v3/backends/oxide/src/decoder.rs": {
+      "old_sha256": "6850cbb961ae75c672eea2820cb8e2f5b3726bb71a56b0007b36cf47a898efe5",
+      "new_sha256": "28d022df0bd22181a8187bd7329588ae3c9c7453602e0b38c67b1dca4bc5644d"
+    },
+    "libs/infinity-v3/backends/oxide/examples/qwen3_vl_host_consumer.rs": {
+      "old_sha256": "bfcd6a0ceda7eaed2111f1f3f415ef9ef7c467b0d1de37b521cba7285600cf92",
+      "new_sha256": "921a0e56bdadce4d2c9c921fccf612483d80b4e87964e8b10a9feceb28464aa2"
+    }
+  },
+  "patches": {
+    "decoder-rope-budget-private.patch": "8f0fbd782ad5c81db131d33ec85b7a5d4adcd3eb9b4591af8a235c5bf29cac96",
+    "decoder-rope-budget-public.patch": "63b6c34e9ec5697e5f17a5be4e2804a425f9980a2e745f2048d898ea75623b14",
+    "qwen3_vl_host_consumer-owning-life.patch": "8fa61be422ec4afd31d8a04ac2eae18e8305c8820dfcf5f6d0d0f5a9cfba15e4"
+  },
+  "diff_vs_frozen": [
+    "Files /tmp/oxide-all-model-feature-matrix-v1/qwen-vl-current-v1/libs/infinity-v3/backends/oxide/examples/qwen3_vl_host_consumer.rs and /tmp/oxide-qwen3vl-rope-budget-fix-v1/candidate/libs/infinity-v3/backends/oxide/examples/qwen3_vl_host_consumer.rs differ",
+    "Files /tmp/oxide-all-model-feature-matrix-v1/qwen-vl-current-v1/libs/infinity-v3/backends/oxide/src/decoder.rs and /tmp/oxide-qwen3vl-rope-budget-fix-v1/candidate/libs/infinity-v3/backends/oxide/src/decoder.rs differ"
+  ],
+  "only_intended_files_differ": true,
+  "rotary_rs_unchanged": true
+}

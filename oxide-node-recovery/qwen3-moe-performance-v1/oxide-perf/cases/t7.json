@@ -1,0 +1,41 @@
+{
+  "input_ids": [
+    20,
+    33,
+    46,
+    59,
+    72,
+    85,
+    98
+  ],
+  "position_ids": [
+    0,
+    1,
+    2,
+    0,
+    1,
+    2,
+    3
+  ],
+  "token_type_ids": [
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0
+  ],
+  "cumulative_seq_lengths": [
+    0,
+    3,
+    7
+  ],
+  "max_length": 4,
+  "pooled_indices": [
+    1,
+    0,
+    1
+  ],
+  "raw_indices": []
+}

@@ -1,0 +1,27 @@
+{
+  "schema": "oxide-q35-cold-zero-focused-cpu/v1",
+  "status": "six-focused-CPU-pass-production-lib-Clippy-fmt-pass",
+  "base": "55380b768cc843c0c21207112dca0c7f678b6344",
+  "source_root": "/tmp/infinity-oxide-q35-cold-zero-cpu-v2-worktree",
+  "source_freeze_v2": "/tmp/infinity-oxide-parity-20261101/qwen35-cold-zero-batch-source-v2/freeze.json",
+  "final_formatted_source": "/tmp/infinity-oxide-parity-20261101/qwen35-cold-zero-batch-source-v3-formatted",
+  "test_count": 6,
+  "test_wall_seconds": 21.226018336135894,
+  "clippy_wall_seconds": 19.439974287059158,
+  "CPU": "44-47",
+  "jobs": 2,
+  "CUDA_VISIBLE_DEVICES": "",
+  "GPU": false,
+  "optimized_host_build": false,
+  "device_build": false,
+  "focused_tests_only": true,
+  "source_provenance_new_owned_tree_verified": true,
+  "format_after_tests": "rustfmt1.93.1, whitespace/optionaltrailingcomma-only; exactbefore/afterpins in format-only.json",
+  "source_files": {
+    "qwen35_work.rs": "fd2abd2a7dfb0ac209f6add667cb322491a09c034e2e29f0ba0bc839b3df578a",
+    "gdn_prepared.rs": "efed0e7e612dbda74bdbd02c72f96ea1b273e047bc60ac68bdef8665dd7cd3ff",
+    "qwen35_block_work.rs": "5f869642b9bd20788520519e7d9bbe54d3eed92e038ebaebb300a15648f6c48c",
+    "warm_head.rs": "5ec63be968da8cb939c1a5a393823189cfa1ff972dc623203361692ea9dc7255"
+  },
+  "next": "No optimized build or GPU grant used. Root may review source and schedule later one-variable existing-harness cold-churn comparison; numerical/performance not qualified."
+}

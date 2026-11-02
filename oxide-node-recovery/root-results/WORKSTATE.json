@@ -1,0 +1,350 @@
+{
+  "updated_utc": "2026-11-02T17:17:20.394230+00:00",
+  "user_priority": "Add all Qwen3, Qwen3.5, Qwen3/Qwen3.5 VL, Mistral and Ministral supported models/features in Oxide; original all-model/faster-than-LibTorch goal remains active.",
+  "public_head": "252789b",
+  "public_repo": "/tmp/infinity-plain-cuda",
+  "public_pr": "https://github.com/michaelfeil/infinity/pull/876",
+  "new_model_support_published_this_turn": true,
+  "root_ownership": "Root sole public mutation/push and GPU0 executor. All workers CPU-only isolated sources. Preserve frozen historical failures/evidence.",
+  "official_agents": {
+    "remaining_latency_audit": {
+      "scope": "Qwen35 BF16 normal factory/OneJevDecision/current shared lifecycle integration",
+      "worktree": "/tmp/infinity-oxide-qwen35-serving-e582-v1-worktree",
+      "state": "PublishedQwen35+builder done. New SOURCEONLYnorm64candidate on55380 preservingqualified2exports/coremath,micro+549proofs reused. Performanceharnessold2KNativeN,O,C,C,O,N+dynamic-P/Ttimingprep no build yet."
+    },
+    "parity_catalog": {
+      "scope": "DenseQwen3 widths/aliases+reranker heads+plain Mistral/Ministral common math",
+      "worktree": "/tmp/infinity-oxide-dense-families-e582-worktree",
+      "state": "backbone and head authors parallel; needs exact new attention geometry profiles; QK256 Native arithmetic differs from fused d128."
+    },
+    "deberta_qualification": {
+      "scope": "Unrelated prior H384 failure held",
+      "packet": "/tmp/oxide-deberta-h384-abi-audit-v13",
+      "state": "Confirmed 19 vs18 arg H6 bridge ABI; one-line patch source-only; no GPU/build grant, deferred behind requested families."
+    }
+  },
+  "opencode_project": "/tmp/oxide-all-model-feature-matrix-v1",
+  "opencode_provider": "baseten",
+  "opencode_model": "deepseek-ai/DeepSeek-V4.1-Flash-1017-Fast",
+  "workers": {
+    "qwen3_vl": {
+      "session": "ses_e63a54159ffegs4gFarSen4hiT",
+      "job": "job_1757b0d0b39b45b78ce6319acc168866",
+      "scope": "Compose concrete Qwen3VL V3 onto current public/factory + Root actual gate, not Qwen35VL"
+    },
+    "qwen35_vl": {
+      "session": "ses_e63a363a0ffenyhCC0xyE8OD71",
+      "job": "job_a469030977664cb382bc454e8f59e668",
+      "packet": "/tmp/oxide-all-model-feature-matrix-v1/qwen35-vl-v1",
+      "scope": "Leaf618CPU + real0.8B CPU tower done; continue FULL owning text+vision forward, do not stop at tower/plan. 7newexports106 total."
+    },
+    "qwen35_moe_central_fa4": {
+      "session": "ses_e63a53671ffeyzDQiZORKjyTWe",
+      "job": "job_6cbcd95a513947719e8b0c41ee3545fc",
+      "scope": "Qwen35MoEV6 current owning engine + central append-only FA4 registry extension for all requested missing geometries; no profile borrowing."
+    },
+    "mistral3_pixtral": {
+      "session": "ses_e63a1a8a5ffezyeZVcMkqcZVYN",
+      "job": "job_921b18f6356e43c79936d4b1d83ab7f9",
+      "scope": "Fresh current Mistral3/Pixtral integration from existing complete engine, actual Nemotron3.5 YARN/llama4/bidirectional/vision/score."
+    },
+    "qwen3_moe_factory": {
+      "session": "ses_e639a83ffffeZcywRKLtb3w3RJ",
+      "job": "job_f85cc20f2ab84eb6b418af9bf8547a96",
+      "scope": "Integrate actual45-passed private Qwen3MoE into current normal factory/InputLayout/retirement, fresh candidate vs saved Native gold."
+    },
+    "qwen3_moe_lifecycle": {
+      "session": "ses_e63a52b91ffe7MyauC5ddOi8nE",
+      "job": "job_1204ff32f28d4299afbb7704dd588624",
+      "scope": "V5 controller/parser only: derive actual V4b plain success; run ONLY mem/init next with same optimized binary; no plain rerun."
+    },
+    "qwen35_fanout_warmup": {
+      "session": "ses_e639e9b02ffewDCOz6DNjGLjF3",
+      "job": "job_3768646ba5374e95bce111e508a3d4b6",
+      "scope": "Fix only Elephant Warmup 2F32word remaining mismatch; cachedRAW cause isolated and all real/synthB2/B4/B8 both models exact. No guard waiver."
+    }
+  },
+  "gpu_state": {
+    "lock": "/tmp/infinity-oxide-root-gpu0.lock",
+    "active": "QV3Oxidequality13c8B/ColQwen4B/Nemotron4Ballpools/raw+lifesmoke currentV6controllerRootnewOxideout",
+    "exec_sessions_finished": {
+      "19638": "olddebugMoE failed after RootSIGTERM only verifiedpid3390019;45functional passed kept",
+      "84973": "H384V12 failed FA4 H6 host ABI mismatch",
+      "8812": "cachedRAW fanout completed; failed only Elephant warmup exactwords",
+      "31062": "newoptimizedMoE V4b TESTPASSED89.63s/all3pools, controllerfailedfirstphase parser"
+    },
+    "moe_v4b_plain": "/tmp/infinity-oxide-parity-20261101/qwen3-moe-root-lifecycle-v4b/plain",
+    "moe_v4b_actual": "returncode0/testsuccess/all3pooldone1, firstlibtestprefix causes ^anchor test_begin missed. Source+binary unchanged. Need strict CPU-derived proof and immutable historical report.",
+    "cuda_executor": "Use require_escalated for actual host CUDA runs; restricted executor returned DriverError304 immediately before load. Do not change driver or touch GPU1-7.",
+    "optimized_model_load": "Qwen3MoE61GB ~30sec per pool (89.63sec all3) vs oldO0test64min busy; actualplainoutput proves held/drop/empty/recovery allpools.",
+    "qwen3_moe_lifecycle_v5": {
+      "memcheck": "passed117.091sec",
+      "initcheck": "failed realBF16toF32uninitializedreads;exactcallsite/rootcause notproven",
+      "stop_record": "/tmp/infinity-oxide-parity-20261101/qwen3-moe-initcheck-stop-v2.json",
+      "process_exited": true,
+      "cold_initialization_candidate": "prepared,currentnormalfactoryoptimizedhost+fresh45gategrantedCPUonly"
+    },
+    "moe_current_normal_cls_init": {
+      "report": "/tmp/oxide-all-model-feature-matrix-v1/qwen3-moe-serving-v1/root-initcheck-v2/report.json",
+      "process_exit": 0,
+      "sanitizer_summary": "0errors",
+      "cases": 15,
+      "newsourcecomparisons": "pendingCPUcomparatorpathfix; noGPUrerunCLS"
+    }
+  },
+  "attention_registry_missing": {
+    "central_owner": "qwen35_moe_central_fa4",
+    "append_preserve": "Preserve original26mode IDs/helpers/old60object bodies and source evidence. New canonicalN accurately derives approved tail; fullproduction builder remains strict.",
+    "tuples": [
+      "ratio8/d256 causalglobal forQwen35MoE; noncausalifNativeadmitted",
+      "ratio5/d128 causal+noncausal forQwen3-14B",
+      "Mistralnoncausalleft4096/right-1 normalizedasymmetricmask"
+    ],
+    "verified_configs": [
+      "https://huggingface.co/Qwen/Qwen3-14B/raw/main/config.json",
+      "https://huggingface.co/Qwen/Qwen3-32B/raw/main/config.json",
+      "https://huggingface.co/Qwen/Qwen3.5-35B-A3B/raw/main/config.json"
+    ],
+    "qk256_recipe": "Native fusedCandleQK is onlyd128; d256 uses ordinaryATen RMS + separate BF16rounded rotary products. Do not widen d128HFMA. Parity agent owns newmethod.",
+    "dynamic_head_audit": {
+      "report": "/tmp/oxide-fa4-dynamic-heads-audit-v1/report.md",
+      "verified_contract": "Absoluteheadsdynamic; exactratio/headdim/dtype/maskfamily compiled. BERT12/12alreadyusesbert16/16mode0.",
+      "correction": "Rootearlierexactabsoluteheadinstructionoverrestricted; workerinstructedpruneunpublishedredundantprofiles32/64Q headsandvision12heads; retainold26publishedIDs"
+    },
+    "active_minimal_candidate": {
+      "packet": "/tmp/oxide-all-model-feature-matrix-v1/qwen35-moe-v6/fa4-packet31",
+      "profiles": 31,
+      "tail": "26ratio8d256causal,27ratio5d128causal,28ratio5d128noncausal,29asymMistralnoncausal,30ratio8d256noncausal",
+      "sm90_provider": "/tmp/oxide-fa4-canonical31-sm90-provider-v1",
+      "sm90_compile_seconds": 28.66,
+      "old60_objects_byteexact": true,
+      "new10objects": true,
+      "SM100_120": "allcompiled PASS old60eachbyteexact70total,canonical31/u32mask7fffffff/portablehost1 CPUqueried",
+      "runtime_qualification": false,
+      "main_applied": false,
+      "sm100": "/tmp/oxide-fa4-canonical31-sm100-provider-v1",
+      "sm120": "/tmp/oxide-fa4-canonical31-sm120-provider-v1",
+      "future": "GENUINEratio16d128Qwen3-235BA22B andratio16d256Qwen35-122BA10B need4newprofiles+u64v2ABI; sourceONLYfuture35, keepqualified31immutable"
+    }
+  },
+  "constraints": [
+    "No CUDA graphs in Oxide; preserve Native graph defaults",
+    "FA4 preferred, no FA2 substitution",
+    "MinSM90H100/SM100B200/SM120RTXPRO6000Blackwell build support; onlyH100 runtime locally qualified",
+    "Use new fast CPU/default tests and selectedSM/probe builds for iteration; production performance and huge-model lifetime optimized release only",
+    "Actual all-feature parity/speed target remains unmet; do not mark original goal complete or infer support from CPU configuration tests."
+  ],
+  "main_working_state": {
+    "qwen35_foundation_applied": true,
+    "files": 51,
+    "frozen_consumed_files_exact": 108,
+    "freeze_source": "/tmp/infinity-oxide-parity-20261101/qwen35-serving-e582-unified-v1/freeze-source.json",
+    "freeze_sha256": "e3c38a48a74ff0f40b0fe37fcfad1f7899951cb2c1abecf0a1fb3fc204a7c604",
+    "cpu_make_oxide_tests": "passed",
+    "optimized_host_build_seconds": 39.194897174835205,
+    "gpu_controller_preflight": "passed391pins",
+    "new_model_support_pushed": true,
+    "cpu_clippy": "passed all-targets -Dwarnings",
+    "fmt": "passed",
+    "qwen35_text": {
+      "status": "passed",
+      "report": "/tmp/infinity-oxide-parity-20261101/qwen35-serving-e582-unified-v1/root-text-v1/report.json",
+      "cases": 42,
+      "vectors": 7443,
+      "F32_values": 19054080,
+      "differing_F32_values": 0
+    },
+    "qwen35_decision": {
+      "status": "passed all10strictNativecomparisons",
+      "report": "/tmp/infinity-oxide-parity-20261101/qwen35-serving-e582-unified-v1/root-qualified-v1/report.json"
+    },
+    "qwen35_legacy": {
+      "status": "passed",
+      "report": "/tmp/infinity-oxide-parity-20261101/qwen35-serving-e582-unified-v1/root-legacy-v1/report.json"
+    },
+    "qwen35_life": "V1heldgrowthcorrectlyOverloaded physical309871128byteB lowerbound>256MiB; awaitingV2life including expectedexactOverloaded/recovery andacceptedT7->T460growth, prodsourceunchanged",
+    "qwen3_moe_current_private": {
+      "source": "2a5d0a40d9dd0443618bfaba7563e2fd546331446729b8aa94e68a93012039ea",
+      "init45": "passed,V2CLSCPUderived+V3freshmeanlast",
+      "plain45": "passed107.748s",
+      "mem45": "passed134.783s",
+      "normal_factory": true,
+      "public_main_applied": false
+    },
+    "current_uncommitted": "Noneafter252789bcommit"
+  },
+  "composition": {
+    "qwen35_dense": {
+      "patch": "/tmp/oxide-dense-qwen35-compose-e582-v1/composed-dense-v5-on-qwen35-e582.patch",
+      "sha256": "409ed4400ecb5cf82cdc541c01a53a874f204e099a8e422fff9e1138d97c778d",
+      "CPU": "625 + strictClippy/fmt",
+      "main_applied": false
+    },
+    "qwen35_dense_qwen3moe": {
+      "source": "/tmp/oxide-all-model-feature-matrix-v1/qwen3-moe-qwen35-dense-compose-v1/worktree",
+      "patch": "moe-on-composed-selective.patch",
+      "CPU": "690 + strictClippy/fmt",
+      "main_applied": false
+    },
+    "device_union124": {
+      "packet": "/tmp/oxide-all-model-feature-matrix-v1/device-union-main-v2",
+      "freeze_sha256": "f30a44d129a94037243a8abe801e04a7bb2897bf3480ec4f2c6074741cc62408",
+      "SM90_CPUcompile": "granted104\u2013111jobs4offline,workeractive",
+      "main_applied": false,
+      "all3bundle": "/tmp/infinity-oxide-parity-20261101/device-union124-all3-v1/kernels",
+      "manifest_sha256": "56863d52270f04e2a72c07f0213295cb78cd003ec111239bef1f78e75ea720c5",
+      "proof": "old99 ELF+normalizedPTX exact each3arch (297);new25ABIexact each3arch75",
+      "compile_seconds": {
+        "sm90": 47.328,
+        "sm100_sm120": 51.7156
+      }
+    }
+  },
+  "native_dense_CPU": {
+    "initial2": "/tmp/oxide-dense-native-root-cpu-v2/report.json passedactualSDK",
+    "rest3": "/tmp/oxide-dense-native-root-cpu-rest-v2/report.json passedactualSDK",
+    "all5cases": [
+      "qwen3-4b",
+      "qwen3-reranker-4b",
+      "qwen3-embedding-0.6b",
+      "qwen3-embedding-8b",
+      "mistral-7b"
+    ]
+  },
+  "published": {
+    "b495396f12a47bb244459523fd4a6fb4adfb3327": "Qwen35normaltext+Decision 51files allqualified",
+    "55380b7": "3file publicGDNcoldbuilder/docs17tests in standarddevice/tests, actual6cubinsallbyteexact4.29sec",
+    "05cb010": "DenseQwen3/Mistral/classifier/sharedNativeBF16mean 7files629CPU9life5models+8longMistralpairs40960F32words exact",
+    "252789b": "Qwen3MoE26files runtime+publicsidecarBuild all3matchedSASS+GPUpublicrepro45+native135exact+life9+publicregression+RootCPU696+23factory/Clippy/fmt"
+  },
+  "dense_quality": {
+    "native_initial2": "/tmp/oxide-dense-native-root-quality-v2/report.json passed",
+    "native_rest3": "/tmp/oxide-dense-native-root-quality-rest-v2/report.json passed",
+    "Rust_initial4": "/tmp/oxide-dense-root-paired-initial-v1/report.json passed",
+    "Rust_rest9": "/tmp/oxide-dense-root-paired-rest-v1/report.json passed",
+    "MeanV4five_matched": "/tmp/oxide-dense-root-paired-mean-v2/report.json passed,176652F32words exact, allmaxabs0",
+    "current_source_patch": "/tmp/oxide-dense-native-mean-e582-v6/native-mean-e582-v6.patch",
+    "artifact": "/tmp/oxide-dense-unified-probe-e582-v4/artifacts/dense_probe",
+    "artifact_sha256": "0a7470c721156abea18c9720b359d5c9fd31dbf099762d7f4193da17bc183d39",
+    "Root_CPU": "629alltargets +Clippy/fmt pass",
+    "pending": "RootCorelifesanitizers samebinary, officialparityworkerpreparing9runcontroller no rebuild",
+    "union124compat": "/tmp/oxide-dense-root-union124-v1/report.json PASS againstactualNative4Bmean",
+    "saved4lifecycle": "/tmp/oxide-dense-lifecycle-saved-proof-v6/report.json PASS exactrerankerplain/mem/init+Qwen3meanplain; canonicalvsphysicalcountcontrolbugfixed, savedproofpreservesoriginalfailedv5",
+    "resume5controller": "/tmp/oxide-dense-mean-lifecycle-v6/run_root.py",
+    "resume5session": 32708,
+    "resume5output": "/tmp/oxide-dense-mean-lifecycle-root-v6",
+    "longMistral": "PASS actual Native4/Rust8/strictv6:8pairs10vectors40960F32words exact, sourceenforcedGPUbeforeGOTcheckedrawbeforeNOTarchived; CPUbeforeafter+GPUafterarchived",
+    "resume5result": "all-nine-qualified-for-recorded-scope: exactsaved4+fresh5, noactualthirdbackendsubmit"
+  },
+  "H5120_operators": {
+    "CPUactualSDK": "/tmp/h5120-root-cpu-v4/report.json passed",
+    "Native20gold": "/tmp/h5120-root-native-gpu-v4/gold complete, V4report failedcollect-sdk-image path",
+    "pending": "FixordinaryRMS5120NativeATenreductionrare1ULP beforemodeladmission, no tolerance waiver; agentparitynotifiedneeded",
+    "large_source_delta": "/tmp/oxide-qwen3-h5120-e582-v1/qwen3-h5120-v1-delta.patch CPU477 only notRootadopted",
+    "consumer_v6": "/tmp/oxide-h5120-consumer-control-v6/artifacts/h5120-consumer",
+    "consumer_sha": "da3692277302222e8ac5686e98333282b03165de6ea79f19ef028e4d579145e2",
+    "actual_v6_report": "/tmp/h5120-root-gpu-v6.json",
+    "v6result": "20executed, alladdRMS/QK128/SiLU20bitexact; ordinaryRMS16/20exact,4cases33BF16words1ULP mismatch. AllACTUALguards/readbacksfinite/repeatsPASS.",
+    "v5_control_bug": "allnonQKinputpointersincorrectbaseomitted16Bprefix; fakecanariestrue. FixedinV6 actualtypedviews+guards. Original20goldunchanged; V5failurespreserved.",
+    "root_v8_actual": {
+      "status": "all20exact plain/mem/init; zero sanitizer errors",
+      "report": "/root/infinity-oxide-results/2026-11-02-requested-model-families/h5120-kernel-v8-qualification.json",
+      "scope": "four kernel controls only, full model serving pending"
+    }
+  },
+  "VL_current": {
+    "Qwen3": "NativeV6a26fixedcuda:0 GPU8Breference actualPASS8observationssync/deferred equal, alloutputsfetched. Source027+Oxide13c nowGPUrunning. NewNativeproof separateRoot/tmp/oxide-qwen3vl-root-quality-v6; laterCPUstrictcomparetakesseparateRootOxideout",
+    "Qwen35": "LightCPUfailedworkspacevsbenchmodelpath, mapping/runtime/defaultgraphtrue4096freshworkerfixing noRustrebuild; owninglife21csource+paired3780accepted butnoGPUscope",
+    "Mistral3": "V4selectivecomposerontoRoot629+55380 ready371d186... +BASEPINS; preservesMeanV6/positiveMistralWindows/Llamaearlyreject; newmodelmetadata/download/routerparamsfallback sourcependingRootfeatureoxide checks; rawMistralcommonweightkeys typedunsupported. ActualNemotron531SDKCPUstagecommandpendingRootreview.",
+    "review_report": "/tmp/oxide-vl-lifecycle-review-v1/REVIEW.md",
+    "new_findings": [
+      "QV35validmedia rejectedbytextvalidate_loadedbeforefusion (P1)",
+      "QV35leafemptyselectorsskipvalidation (P2)",
+      "QV35DeviceBuffer.from_hostimplicitlystreamsyncperrequest (P2)"
+    ],
+    "policy_correction": "SharedSlotPool.acquireblocking isINTENTIONALservicebackpressure becausebackends deliver immediatelyschedulesDeferredonCompletionThread. DO NOTblanketchangetoservicetry/429. Directsame-threadhold2callercontractcanwait; no proddeadlockclaim. try_acquire optionalsourceonlyNOTmain, no newtry_submitAPI.",
+    "QV35_latest_review": "5ddf13e pre-ownerpinnedH2DandropeasyncfailuregapsremainP1, buildwithhelduntilactualnewfixindependentPASS",
+    "Q35MoE_factory_review": "737/744CPUselfreviews unreliable actualtransientH2D+syncD2H/rawtrailer/preenqueueRAIIbugs found; correctedPendingFrame stillinsideclosure c36a662; latencycoordinatorownsfullreview/fixloop. Nooptimizedbuildgrantedyet",
+    "QV35_root_actual_v4": {
+      "CPU": "PASS /tmp/oxide-qwen35vl-sdk-map-policy-output/cpu-0.8B-single-v4",
+      "paired": "FAILED /tmp/oxide-qwen35vl-sdk-map-policy-output/paired-0.8B-single-v4/report.json",
+      "source_consumer": "3780facf runtime130",
+      "diagnosis": "Native/Rustsameindexraw precedence needs canonicalcomparator; actualraw357376wordsmeanabs.23519/max29.75 genuinelywrong; rawrows0..10exact, nozero rows. Authorinvestigatingbefore anynewGPU."
+    }
+  },
+  "norm64": {
+    "packet": "/tmp/infinity-oxide-parity-20261101/qwen35-norm64-public-v1",
+    "v2freeze": "a6e99d8335a7d73fa2c2e695283e0ef52d9ad5767e1b14a08ac3bdb1dffebb02",
+    "scope": "SOURCE126union124+2normexports compiledSM9047.546s old124+new2donorELF/PTXexact, no101build",
+    "buildproof": "/tmp/infinity-oxide-parity-20261101/qwen35-norm64-public-build-v2",
+    "hostbuilds": "2opt3/noLTOsameharnessdone baseline36.66s/candidate14.95s,6geometry+27control+22admission+5controllerpassed",
+    "wholequality/perf": "actualqualityPASSED:42text+10strictDecision+6life+2legacy pairs. Performancepending",
+    "root_quality_session": 68302,
+    "root_quality_output": "/tmp/infinity-oxide-parity-20261101/qwen35-norm64-public-build-v2/root-quality-v1",
+    "smokeMammoth": {
+      "report": "/tmp/infinity-oxide-parity-20261101/qwen35-norm64-public-build-v2/root-smoke-v1/report.json",
+      "status": "controls-passed",
+      "old_p50_us": 162168.50925,
+      "new_p50_us": 161606.70125,
+      "p50_change_pct": -0.3464347070823326,
+      "p99_change_pct": 0.28275205298968764,
+      "scope": "200samples20warm O,C,C,O fixedT1795P1697; no Native or 5%claim; skip2000x6onthissmallgain"
+    },
+    "churn": "notrun yet; sourceaudit proves arena churn realloc notallocationfree (512->2048 capacities exceed256MiB); no full2KNativeperf on0.35%gain"
+  },
+  "host_vendor_verified": {
+    "CUDA_VISIBLE_DEVICES": "",
+    "query": "cublasLtGetVersion130200",
+    "path": "/usr/local/cuda-13.1/lib64/libcublasLt.so.13",
+    "resolved": "/usr/local/cuda-13.1/targets/x86_64-linux/lib/libcublasLt.so.13.2.0.9",
+    "no_GPU_query": true
+  },
+  "qwen3_moe_current_v8": {
+    "packet": "/tmp/oxide-all-model-feature-matrix-v1/qwen3-moe-root629-v8",
+    "binary_sha256": "a2d3e2a12840d088e6b7b7f8eeed6a40cbd119543e6ccfbd4bc30d2425212029",
+    "CPUstage": "/tmp/oxide-moe-root629-v8-root-cpu-v1/report.json passed",
+    "root_actual": "/tmp/oxide-moe-root629-v8-root-all-v1/report.json",
+    "bundle": "/tmp/oxide-moe-root629-v8-public126-bundle-v1",
+    "lifecycle": "PASSall3pools\u00d7plain/mem/init finalrootreport; publicreproall3CPUbuildpending",
+    "actual45": "PASS135cases (45eachplain/mem/init),2142vectorsallbitsExacteach; report6412cff7d166f4b3577b93bc986fb3480bbf0c0b886ce5599581c028f4b6b971",
+    "public_repro": "CorrectiveV3all3buildSASS/encoding/resources/symbols equalold afterpathsalt normalization; hashesdifferenthonest; RootnewpublicDSO45plainall3poolsPASSED2142vectorsexact /tmp/oxide-moe-root629-v8-public-repro-plain-v1/report.json"
+  },
+  "device_next130": {
+    "owner": "parity_catalog",
+    "base126": "/tmp/infinity-oxide-parity-20261101/qwen35-norm64-public-build-v2/kernels",
+    "new": "RMS5120one+Mistral3Yarnone+3072normpair, deliberateQ35VLposinterpfix+licenses",
+    "status": "SM90 compiled/frozen; Root H5120actual20exact in all3modes. Corrected Q35VLposinterp pending fullmodelGPU; SM100/120 CPUcompile delegated.",
+    "compiled_freeze": "/tmp/oxide-device130-compose-source-v1/freeze-compiled.json",
+    "all3freeze": "/tmp/oxide-device130-all3-v1/freeze.json",
+    "all3status": "CPUCOMPILEPASS all3,375old125kernelmachine/text/control/resourcespreserved; noSM100/120runtime"
+  },
+  "mistral_native_controller_v5": {
+    "session": "ses_e631134e8ffe7pXzLPj3EyEg9N",
+    "job": "job_6803cf87f6944ca784e2e478dd43de9b",
+    "packet": "/tmp/oxide-mistral3-native-b66-controller-v5",
+    "scope": "newactualSDKDockerCPU/goldcontroller replacingwrongV4, noGPUyet",
+    "current": "V8actualCPU/GOLDokTRUE11Nativevectors+SDKgraphcountersstatus0(all0), max4096/8/4/reuse3/512MiBgraphenabled. NoOxideMistralnewadapterqualityyet"
+  },
+  "source_reviews": {
+    "Mistral3_serving": {
+      "session": "ses_e6309b39cffeovfMEsq7W3QA9d",
+      "job": "job_ef6efac6571e417cb45322f915c0d351",
+      "output": "/tmp/oxide-mistral3-serving-independent-review-v1"
+    },
+    "Mistral3_serving_v2": {
+      "packet": "/tmp/oxide-all-model-feature-matrix-v1/mistral3-v5",
+      "session": "ses_e6309b39cffeovfMEsq7W3QA9d",
+      "job": "job_fcf837415b654d19bd3c8794ed728e51",
+      "status": "actual source closure independent review active; no new optimized host build"
+    }
+  },
+  "qwen3_moe_performance": {
+    "session": "ses_e639a83ffffeZcywRKLtb3w3RJ",
+    "job": "job_55d137fe4afb4580a9b0a35c39edbfdb",
+    "scope": "source-only paired Native/Oxide timing harness, public252789; no new GPU claim"
+  },
+  "q35moe_native_light_actual_v2": {
+    "status": "PASS actualSDK/GOT1811tensors14shards noengine/payload",
+    "report": "/tmp/infinity-oxide-parity-20261101/q35moe-runtime-handoff-v1/root-native-light-v2.report.json"
+  }
+}

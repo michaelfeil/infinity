@@ -1,0 +1,2 @@
+{"starting": {"model": "qwen3-reranker4b", "mode": "plain", "output": "/tmp/oxide-dense-mean-lifecycle-root-v4/qwen3-reranker4b/plain"}}
+run_root_lifecycle: qwen3-reranker4b/plain: process exit 2

@@ -1,0 +1,119 @@
+{
+  "schema": "oxide-qwen3-vl-e582-root-gate/v1",
+  "base_commit": "e582ce90eb1544fcff081a495cb8fd4f3c17b112",
+  "container": "infinity-torch214-compare-sdk",
+  "docker": [
+    "docker",
+    "--host=unix:///var/run/docker.sock"
+  ],
+  "b66": {
+    "path": "/tmp/native214-fa4-mode20/install/lib/libtei_torch.so",
+    "sha256": "b66d70b61b39e1bf0d565aca33bac7c5e21849677396ce5216f5baf73027d37e",
+    "cublaslt_version": 130200,
+    "torch": {
+      "python": "/opt/torch-sdk/bin/python3.12",
+      "version": "2.14.1+cu130",
+      "git_version": "5c4886908584029761b579af026dcfb627c84070",
+      "root": "/opt/torch-sdk/lib/python3.12/site-packages/torch",
+      "include": "/opt/torch-sdk/lib/python3.12/site-packages/torch/include",
+      "lib": "/opt/torch-sdk/lib/python3.12/site-packages/torch/lib"
+    },
+    "vendor": {
+      "path": "/tmp/oxide-host-cublas-130200",
+      "version": 130200,
+      "libcublas": "libcublas.so.13",
+      "libcublasLt": "libcublasLt.so.13"
+    }
+  },
+  "checkpoint": {
+    "path": "/workspace/model-performance/michaelfeil/benchmark-overview/models/Qwen--Qwen3-VL-Embedding-8B",
+    "tensor_count": 749,
+    "total_bytes": 16289587680,
+    "hashes": "checkpoint-sha256.json"
+  },
+  "fixtures": {
+    "path": "root-gate/native/fixtures.json",
+    "count": 8,
+    "sha256": "750a1440cf096f1b1c1101fa74116f2dc0adf934c3c9a2e96aed5a5322e8e5b2"
+  },
+  "native_binaries": {
+    "release_consumer": {
+      "path": "/tmp/opencode/qwen-vl-native-release-target/release/qwen3-vl-b66-consumer",
+      "sha256": "89bd6274a26c62fa719ad442d8c2dfeb06e195cb0731117cb005437127c1b671",
+      "profile": "release"
+    },
+    "debug_consumer": {
+      "path": "/tmp/opencode/qwen-vl-native-consumer-target/debug/qwen3-vl-b66-consumer",
+      "sha256": "4c0b79d64004027292051fa30919b19342b273e3848437a1e922f43d6527ca2b",
+      "profile": "debug"
+    }
+  },
+  "oxide_binaries": {
+    "release_consumer": {
+      "path": "/tmp/opencode/qwen-vl-release-target/release/examples/qwen3_vl_oxide_consumer",
+      "sha256": "bd223911f59b29288c7a7e3f49ad2422ddc107d1b15202339dd4aaa6a82c6023",
+      "profile": "release"
+    },
+    "debug_consumer": {
+      "path": "/tmp/opencode/qwen-vl-current-checks/target/debug/examples/qwen3_vl_oxide_consumer",
+      "sha256": "bcf884d0969038994eb4dc4201c00bec9715cbd98e336be6ffc689d6953ec98e",
+      "profile": "debug"
+    }
+  },
+  "source_pins": {
+    "backends/oxide/device/src/qwen3vl.rs": "8af729dd7cf90cbea7d716eb604ff10fb08f340fb3510db29df3ca6b5b142e3f",
+    "backends/oxide/device/build.sh": "af7d3ec38e5ef68f666f0d0ad60aa6351ee44cfec19840f7b838122eff1bcb00",
+    "backends/oxide/device/src/main.rs": "9ea9de42da00eba0ff9d64767440477f6d56335086ae969b8b0e082ebe4c1627",
+    "backends/oxide/src/qwen3_vl_config.rs": "90b12365c524e93f7691df98d4f81d3c8abe307928eb600c403a9e75106df6d4",
+    "backends/oxide/src/qwen3_vl_vision.rs": "13278fd00c17da95f9aa8456b220b582987f457a76773867664132c719584c59",
+    "backends/oxide/src/qwen3_vl_device.rs": "9ce73fa9ca0ecfc59448bc7430066222fcc8c226f78db1e356326c51ea5ddf45",
+    "backends/oxide/src/qwen3_vl_text.rs": "cdcf20b68df1b0a6794fee846389114734ee9b24ff73cf485434511a678d1229",
+    "backends/oxide/src/qwen3_vl_contract.rs": "7bc5a50fd756626de5ab6464d896f41dc631e2ae07556f6de601fa2087898de0",
+    "backends/oxide/src/qwen3_vl_batch.rs": "23a224d2b88a6e2310c5937b22f4f7a2a509f18d4694012cbc6ade5b5339a973",
+    "backends/oxide/src/qwen3_vl_readout.rs": "0eaf770fe46444b593edf334c4aa56b210b0efef2a8874f80d6e3df3015d5735",
+    "backends/oxide/src/qwen3_vl_service.rs": "ad50426ea145b7d66e5d9d4ddd3430fb1aa450dd89b84d86e0d98c239963fc25",
+    "backends/oxide/src/qwen3_vl_fixtures.rs": "973e76383bc9b707a75eaa80a79641e0836000b38028d5c5f55cd9038ccce0f5",
+    "backends/oxide/src/decoder.rs": "6850cbb961ae75c672eea2820cb8e2f5b3726bb71a56b0007b36cf47a898efe5",
+    "backends/oxide/src/decoder_model.rs": "52f7ef48e9624745347fdc818eebc3f32796115e6c375b24591f0d6be18d54a4",
+    "backends/oxide/src/model.rs": "2b7854084372199b5f071fce9c9077eda8f9cd15ba1ee1de905aed71ae68f473",
+    "backends/oxide/src/lib.rs": "fe32739d598fc2f77dc5b9774b5a6b01f4ea917062b25d5471e963026c53d65a"
+  },
+  "aot": {
+    "arches": [
+      "sm_90",
+      "sm_100",
+      "sm_120"
+    ],
+    "old_exports": 90,
+    "new_exports": 96,
+    "additive_qwen3vl_exports": [
+      "infinity_decoder_rows_bf16",
+      "infinity_qwen3vl_add_bf16",
+      "infinity_qwen3vl_pos_interp",
+      "infinity_qwen3vl_rope2d_bf16",
+      "infinity_qwen3vl_gelu_tanh_bf16",
+      "infinity_qwen3vl_silu_bf16"
+    ],
+    "canonical26": true,
+    "profile_index_collision": false,
+    "old90_bundle_env": "OLD90_BUNDLE",
+    "old90_preservation_required": true,
+    "old90_preservation_executed": false,
+    "old90_preservation": "required; Root supplies the published old90 bundle and runs the device build; this packet is source-only"
+  },
+  "author_limits": [
+    "no Docker",
+    "no GPU",
+    "no CUDA context",
+    "no NVCC",
+    "no device compile",
+    "no Torch execution",
+    "no network"
+  ],
+  "oxide_host_consumer": {
+    "path": "/tmp/opencode/qwen-vl-host-consumer-e7baa-target/release/examples/qwen3_vl_host_consumer",
+    "sha256": "01516290d5dc97960121a6da086d81e1ad6be0a800eed2c941fe1a3b4e51107f",
+    "profile": "opt3/lto=false successor3",
+    "run": "manifest/factory/lifecycle"
+  }
+}

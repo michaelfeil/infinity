@@ -1,0 +1,84 @@
+{
+  "schema": "oxide-qwen35vl-model-manifest/v1",
+  "purpose": "Actual host config/index hashes and weight-entry sizes; weights are never copied or read in full.",
+  "models": {
+    "Qwen3.5-0.8B": {
+      "host_path": "/workspace/model-performance/michaelfeil/onejev-perf/backbone-comparison-20261023/models/Qwen3.5-0.8B",
+      "container_path": "/bench/michaelfeil/onejev-perf/backbone-comparison-20261023/models/Qwen3.5-0.8B",
+      "format": "index",
+      "config_sha256": "b90b86f35c8e6925ef74ee04d0e758f0a845c83a42089ad82bbaa948de9b4204",
+      "index_sha256": "d8a08838a613b025eb7952ed9db11696213e57e76a375661ef5c12f9dd5dcf4e",
+      "weights": [
+        {
+          "rel": "model.safetensors-00001-of-00001.safetensors",
+          "size_bytes": 1746942600
+        }
+      ],
+      "weights_manifest_sha256": "2be9e692e063fd383357b293bb728803f217bebb49b1a375fab9e38b0e109587"
+    },
+    "Qwen3.5-2B": {
+      "host_path": "/workspace/model-performance/michaelfeil/onejev-perf/backbone-comparison-20261023/models/Qwen3.5-2B",
+      "container_path": "/bench/michaelfeil/onejev-perf/backbone-comparison-20261023/models/Qwen3.5-2B",
+      "format": "index",
+      "config_sha256": "ed1c1723241f23f7f4e23430759cbd7dcfb4103cbdfe052bfe7626b57c2615b4",
+      "index_sha256": "aca8afed9da75b0f050b408d270766fd77627f1af401e240f61c3b47d0db02f9",
+      "weights": [
+        {
+          "rel": "model.safetensors-00001-of-00001.safetensors",
+          "size_bytes": 4548221488
+        }
+      ],
+      "weights_manifest_sha256": "fe3556a66bf7395512f764adb4a05e41e28f7ba2b3ba7e946f96d762de957e16"
+    },
+    "Qwen3.5-4B": {
+      "host_path": "/workspace/model-performance/michaelfeil/onejev-perf/backbone-comparison-20261023/models/Qwen3.5-4B",
+      "container_path": "/bench/michaelfeil/onejev-perf/backbone-comparison-20261023/models/Qwen3.5-4B",
+      "format": "index",
+      "config_sha256": "ddc63e1c717afa86c865bb5e01313d89d72bb53b97ad4a8a03ba8510c0621670",
+      "index_sha256": "cf3f798ee02ba45f9622aa8892a47369ab667d0afbf154ee7c2212de42e6302d",
+      "weights": [
+        {
+          "rel": "model.safetensors-00001-of-00002.safetensors",
+          "size_bytes": 5329398688
+        },
+        {
+          "rel": "model.safetensors-00002-of-00002.safetensors",
+          "size_bytes": 3990429408
+        }
+      ],
+      "weights_manifest_sha256": "b082893a75af56877e4fde369d1bf37482899e6d7fa6ffdd127f88aeae6feb12"
+    },
+    "Elephant-Qwen3.5-VL": {
+      "host_path": "/workspace/model-performance/michaelfeil/elephant-1",
+      "container_path": "/bench/michaelfeil/elephant-1",
+      "format": "single",
+      "config_sha256": "f26324589d15932e2742dbb13dbc7c561865ce4f80990af3b7dff05efe4dadab",
+      "index_sha256": null,
+      "weights": [
+        {
+          "rel": "model.safetensors",
+          "size_bytes": 18819722392
+        }
+      ],
+      "weights_manifest_sha256": "151a0f4a30a4ed6d04f32497aa6308fb073441ef24e9c8148472c452abef2d18"
+    },
+    "Mammoth-Qwen3.5-VL": {
+      "host_path": "/workspace/model-performance/michaelfeil/onejev-perf/models/mammoth-1",
+      "container_path": "/bench/michaelfeil/onejev-perf/models/mammoth-1",
+      "format": "index",
+      "config_sha256": "bab5a8ceb73fd6a8f191afaf23afbf689d931da5b3c7c9d5153cf1e4b5024502",
+      "index_sha256": "0424520f63f04816eee4d229a4487dc9744866ceb46513e591dd987e401b1663",
+      "weights": [
+        {
+          "rel": "model-00001-of-00002.safetensors",
+          "size_bytes": 49825162976
+        },
+        {
+          "rel": "model-00002-of-00002.safetensors",
+          "size_bytes": 4888445168
+        }
+      ],
+      "weights_manifest_sha256": "abf8ec335a4ef3e525465578276f275fbc411ba6a7078a3692079bb527abf85e"
+    }
+  }
+}

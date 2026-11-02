@@ -1,0 +1,264 @@
+diff -ruN a/infinity-v3/backends/oxide/src/qwen35_moe_engine.rs b/infinity-v3/backends/oxide/src/qwen35_moe_engine.rs
+--- a/infinity-v3/backends/oxide/src/qwen35_moe_engine.rs	2026-11-02 08:02:27.993769438 -0800
++++ b/infinity-v3/backends/oxide/src/qwen35_moe_engine.rs	2026-11-02 08:04:50.753245900 -0800
+@@ -1381,6 +1381,11 @@
+             },
+         }
+     }
++    pub fn validate_completion(&self, proof: &CompletedTicket) -> bool {
++        self.last_completion.as_ref().is_some_and(|ticket| {
++            proof.matches(ticket) && proof.stream_identity() == Arc::as_ptr(&self.stream) as usize
++        })
++    }
+     /// Release this Work after an exact same-stream completion proof.
+     ///
+     /// # Safety
+@@ -1389,11 +1394,7 @@
+         &mut self,
+         proof: &CompletedTicket,
+     ) -> Result<(), BackendError> {
+-        let ticket = self
+-            .last_completion
+-            .as_ref()
+-            .ok_or_else(|| infer("MoE Work has no completion ticket"))?;
+-        if !proof.matches(ticket) || proof.stream_identity() != Arc::as_ptr(&self.stream) as usize {
++        if !self.validate_completion(proof) {
+             return Err(infer("completion proof does not match this MoE Work"));
+         }
+         if !self.payload_released {
+diff -ruN a/infinity-v3/backends/oxide/src/qwen35_moe_factory.rs b/infinity-v3/backends/oxide/src/qwen35_moe_factory.rs
+--- a/infinity-v3/backends/oxide/src/qwen35_moe_factory.rs	2026-11-02 08:03:08.843762833 -0800
++++ b/infinity-v3/backends/oxide/src/qwen35_moe_factory.rs	2026-11-02 08:05:47.103845940 -0800
+@@ -78,8 +78,34 @@
+     }
+ }
+ 
+-fn cache_eligible(started: bool, proven: bool) -> bool {
+-    !started || proven
++enum WorkSettlement<W> {
++    Cached,
++    Released(W),
++    Quarantined(W),
++}
++
++fn settle_work<W>(
++    cache: &mut WorkCache<W>,
++    key: (usize, usize, usize),
++    started: bool,
++    proof_state: Option<bool>,
++    work: W,
++    mut release: impl FnMut(&mut W) -> Result<(), BackendError>,
++) -> WorkSettlement<W> {
++    if started && proof_state != Some(true) {
++        return WorkSettlement::Quarantined(work);
++    }
++    match cache.return_slot(key, work) {
++        Ok(()) => WorkSettlement::Cached,
++        Err(mut work) if proof_state == Some(true) => {
++            if release(&mut work).is_err() {
++                WorkSettlement::Quarantined(work)
++            } else {
++                WorkSettlement::Released(work)
++            }
++        }
++        Err(work) => WorkSettlement::Quarantined(work),
++    }
+ }
+ 
+ struct PendingFrame {
+@@ -163,33 +189,35 @@
+         let lease = self.lease.as_deref().ok_or(BackendError::Unhealthy)?;
+         let started = lease.started();
+         let proof = engine.completion_proof(lease);
+-        if !cache_eligible(started, proof.is_some()) {
+-            self.quarantine();
+-            return Err(BackendError::Unhealthy);
+-        }
+         let work = self
+             .work
+             .take()
+             .map(ManuallyDrop::into_inner)
+             .ok_or(BackendError::Unhealthy)?;
+-        let mut work = work;
+-        if let Some(proof) = proof.as_ref() {
+-            if unsafe { work.release_after_completion(proof) }.is_err() {
++        let proof_state = proof.as_ref().map(|proof| work.validate_completion(proof));
++        let settlement = match self.cache.lock() {
++            Ok(mut cache) => settle_work(
++                &mut cache,
++                self.key,
++                started,
++                proof_state,
++                work,
++                |work| match proof.as_ref() {
++                    Some(proof) => unsafe { work.release_after_completion(proof) },
++                    None => Err(BackendError::Unhealthy),
++                },
++            ),
++            Err(_) => WorkSettlement::Quarantined(work),
++        };
++        match settlement {
++            WorkSettlement::Cached => {}
++            WorkSettlement::Released(work) => drop(work),
++            WorkSettlement::Quarantined(work) => {
+                 std::mem::forget(work);
+                 self.quarantine();
+                 return Err(BackendError::Unhealthy);
+             }
+         }
+-        let retained = if let Ok(mut cache) = self.cache.lock() {
+-            cache.return_slot(self.key, work).err()
+-        } else {
+-            Some(work)
+-        };
+-        if let Some(work) = retained {
+-            std::mem::forget(work);
+-            self.quarantine();
+-            return Err(BackendError::Unhealthy);
+-        }
+         if let Some(lease) = self.lease.take() {
+             drop(ManuallyDrop::into_inner(lease));
+         }
+@@ -434,6 +462,8 @@
+ mod tests {
+     use super::*;
+     use serde_json::json;
++    use std::cell::Cell;
++    use std::rc::Rc;
+ 
+     fn fixture(value: serde_json::Value) -> PathBuf {
+         use std::sync::atomic::{AtomicUsize, Ordering};
+@@ -481,12 +511,128 @@
+         assert_eq!(cache.take_slot(), Some(10));
+     }
+ 
++    #[derive(Clone)]
++    struct FakeWork {
++        live: bool,
++        releases: Rc<Cell<usize>>,
++        drops: Rc<Cell<usize>>,
++    }
++
++    impl FakeWork {
++        fn new() -> (Self, Rc<Cell<usize>>, Rc<Cell<usize>>) {
++            let releases = Rc::new(Cell::new(0));
++            let drops = Rc::new(Cell::new(0));
++            (
++                Self {
++                    live: true,
++                    releases: Rc::clone(&releases),
++                    drops: Rc::clone(&drops),
++                },
++                releases,
++                drops,
++            )
++        }
++
++        fn release(&mut self) -> Result<(), BackendError> {
++            assert!(self.live);
++            self.live = false;
++            self.releases.set(self.releases.get() + 1);
++            Ok(())
++        }
++    }
++
++    impl Drop for FakeWork {
++        fn drop(&mut self) {
++            self.drops.set(self.drops.get() + 1);
++        }
++    }
++
++    #[test]
++    fn cached_completed_work_keeps_payload_live_and_is_reusable() {
++        let key = (1, 1, 1);
++        let (first, first_releases, first_drops) = FakeWork::new();
++        let (second, _, _) = FakeWork::new();
++        let mut cache: WorkCache<FakeWork> = WorkCache::default();
++        cache.reset(key, first, second);
++        let work = cache.take_slot().unwrap();
++        let first_releases = Rc::clone(&first_releases);
++        let outcome = settle_work(&mut cache, key, true, Some(true), work, FakeWork::release);
++        assert!(matches!(outcome, WorkSettlement::Cached));
++        let reused = cache.take_slot().unwrap();
++        assert!(reused.live);
++        assert_eq!(first_releases.get(), 0);
++        assert_eq!(first_drops.get(), 0);
++    }
++
++    #[test]
++    fn completed_work_releases_once_only_when_cache_rejects_discard() {
++        let (work, releases, drops) = FakeWork::new();
++        let mut cache: WorkCache<FakeWork> = WorkCache::default();
++        let outcome = settle_work(
++            &mut cache,
++            (1, 1, 1),
++            true,
++            Some(true),
++            work,
++            FakeWork::release,
++        );
++        let released = match outcome {
++            WorkSettlement::Released(work) => work,
++            _ => panic!("expected release branch"),
++        };
++        assert!(!released.live);
++        assert_eq!(releases.get(), 1);
++        assert_eq!(drops.get(), 0);
++        drop(released);
++        assert_eq!(drops.get(), 1);
++    }
++
++    #[test]
++    fn mismatch_and_started_unproven_quarantine_without_release_or_cache() {
++        let key = (1, 1, 1);
++        let (mismatch, mismatch_releases, mismatch_drops) = FakeWork::new();
++        let mut cache: WorkCache<FakeWork> = WorkCache::default();
++        let outcome = settle_work(
++            &mut cache,
++            key,
++            true,
++            Some(false),
++            mismatch,
++            FakeWork::release,
++        );
++        let mismatch = match outcome {
++            WorkSettlement::Quarantined(work) => work,
++            _ => panic!("expected mismatch quarantine"),
++        };
++        assert!(mismatch.live);
++        assert_eq!(mismatch_releases.get(), 0);
++        assert!(cache.take_slot().is_none());
++        std::mem::forget(mismatch);
++        assert_eq!(mismatch_drops.get(), 0);
++
++        let (unproven, unproven_releases, unproven_drops) = FakeWork::new();
++        let outcome = settle_work(&mut cache, key, true, None, unproven, FakeWork::release);
++        let unproven = match outcome {
++            WorkSettlement::Quarantined(work) => work,
++            _ => panic!("expected unproven quarantine"),
++        };
++        assert!(unproven.live);
++        assert_eq!(unproven_releases.get(), 0);
++        std::mem::forget(unproven);
++        assert_eq!(unproven_drops.get(), 0);
++    }
++
+     #[test]
+-    fn cache_accepts_never_queued_or_proven_and_rejects_started_unproven() {
+-        assert!(cache_eligible(false, false));
+-        assert!(cache_eligible(false, true));
+-        assert!(cache_eligible(true, true));
+-        assert!(!cache_eligible(true, false));
++    fn never_queued_work_is_cached_without_release() {
++        let key = (1, 1, 1);
++        let (work, releases, _) = FakeWork::new();
++        let mut cache: WorkCache<FakeWork> = WorkCache::default();
++        cache.reset(key, work, FakeWork::new().0);
++        let work = cache.take_slot().unwrap();
++        let outcome = settle_work(&mut cache, key, false, None, work, FakeWork::release);
++        assert!(matches!(outcome, WorkSettlement::Cached));
++        assert!(cache.take_slot().unwrap().live);
++        assert_eq!(releases.get(), 0);
+     }
+     #[test]
+     fn factory_error_classification_preserves_backend_overloaded_and_unhealthy() {

@@ -1,0 +1,23 @@
+{
+  "model": "laya",
+  "state": "I was billed twice. Please refund the extra charge.",
+  "questions": {
+    "team": {
+      "type": "choice",
+      "instructions": "Which team?",
+      "criteria": {
+        "billing": "billing and payments",
+        "support": "technical support"
+      }
+    },
+    "urgency": {
+      "type": "score",
+      "instructions": "How urgent is this request?",
+      "criteria": ["low", "medium", "high"]
+    },
+    "refund": {
+      "type": "noul",
+      "instructions": "The customer requests a refund."
+    }
+  }
+}

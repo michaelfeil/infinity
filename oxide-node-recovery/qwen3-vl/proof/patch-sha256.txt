@@ -1,0 +1,3 @@
+8f0fbd782ad5c81db131d33ec85b7a5d4adcd3eb9b4591af8a235c5bf29cac96  /tmp/oxide-qwen3vl-rope-budget-fix-v1/patches/decoder-rope-budget-private.patch
+63b6c34e9ec5697e5f17a5be4e2804a425f9980a2e745f2048d898ea75623b14  /tmp/oxide-qwen3vl-rope-budget-fix-v1/patches/decoder-rope-budget-public.patch
+8fa61be422ec4afd31d8a04ac2eae18e8305c8820dfcf5f6d0d0f5a9cfba15e4  /tmp/oxide-qwen3vl-rope-budget-fix-v1/patches/qwen3_vl_host_consumer-owning-life.patch

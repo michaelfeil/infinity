@@ -1,0 +1,97 @@
+{
+  "schema": "oxide-qwen3-vl-native-profiles/v1",
+  "v1_source": "/tmp/oxide-all-model-feature-matrix-v1/qwen3-vl-v1/native-baseline/Root-control-packet.json",
+  "sdk": {
+    "expected_prefix": "b66",
+    "candidate_paths": [
+      "/tmp/infinity-fast-weight-reader/libs/infinity-v3/target/debug/build/infinity-backend-libtorch-0ee14ee2449a0322/out/build/libtei_torch.so",
+      "/tmp/native214-fa4-mode20/install/lib/libtei_torch.so"
+    ],
+    "sha256": "b66d70b61b39e1bf0d565aca33bac7c5e21849677396ce5216f5baf73027d37e",
+    "matches_expected_prefix": true,
+    "cublaslt_expected": 130200,
+    "library_loaded": false,
+    "expected_sha256_full": "b66d70b61b39e1bf0d565aca33bac7c5e21849677396ce5216f5baf73027d37e",
+    "matches_expected_full": true,
+    "location": "container infinity-torch214-compare-sdk",
+    "path": "/tmp/native214-fa4-mode20/install/lib/libtei_torch.so",
+    "torch": {
+      "python": "/opt/torch-sdk/bin/python3.12",
+      "version": "2.14.1+cu130",
+      "git_version": "5c4886908584029761b579af026dcfb627c84070",
+      "root": "/opt/torch-sdk/lib/python3.12/site-packages/torch",
+      "include": "/opt/torch-sdk/lib/python3.12/site-packages/torch/include",
+      "lib": "/opt/torch-sdk/lib/python3.12/site-packages/torch/lib"
+    },
+    "vendor": {
+      "path": "/tmp/oxide-host-cublas-130200",
+      "version": 130200,
+      "libcublas": "libcublas.so.13",
+      "libcublasLt": "libcublasLt.so.13"
+    },
+    "candidate_audit": {
+      "host_cpu_candidate_rejected": {
+        "path": "/tmp/infinity-fast-weight-reader/libs/infinity-v3/target/debug/build/infinity-backend-libtorch-0ee14ee2449a0322/out/build/libtei_torch.so",
+        "sha256": "b6607c0025b1bc65d7a2e56951ab28d0c25871da8e7620565f54b9da15d92bd4",
+        "usable": false,
+        "reason": "host CPU build; the actual production b66 is the container CUDA library above"
+      }
+    },
+    "required_exports": [
+      "tei_create",
+      "tei_option",
+      "tei_load_safetensors",
+      "tei_ready",
+      "tei_forward",
+      "tei_forward_submit",
+      "tei_output_wait",
+      "tei_output_destroy",
+      "tei_graph_count",
+      "tei_graph_stats",
+      "tei_prefix_cache_stats",
+      "tei_destroy"
+    ]
+  },
+  "profiles": {
+    "native_production": {
+      "path": "/tmp/oxide-all-model-feature-matrix-v1/qwen3-vl-v3/native-baseline/Root-control-packet.native.json",
+      "sha256": "78990b436182bf7d7235a4830874c7c05e061eca0c70814d0a648567e8195351",
+      "runtime_profile": "native_production",
+      "weights": 749
+    },
+    "native_graph_evidence": {
+      "path": "/tmp/oxide-all-model-feature-matrix-v1/qwen3-vl-v3/native-baseline/Root-control-packet.native-graphs.json",
+      "sha256": "1c5d0781238295f1e33378d6b3890cd104deca74ec3cd08412183e695cbb7d41",
+      "runtime_profile": "native_graph_evidence",
+      "weights": 749
+    },
+    "oxide_low_overhead": {
+      "path": "/tmp/oxide-all-model-feature-matrix-v1/qwen3-vl-v3/native-baseline/Root-control-packet.oxide-low-overhead.json",
+      "sha256": "24dba2d1f6c7fb79d477318067631261b1c38db42a54f2dd65a5c1b5ae1f8044",
+      "runtime_profile": "oxide_low_overhead",
+      "weights": 749
+    }
+  },
+  "graph_plan": {
+    "native_production": {
+      "cuda_graphs": true,
+      "media_cuda_graphs": false,
+      "expected_observation": "HEAD bridge gates qwen3_vl graph construction on _media_cuda_graphs; tei_graph_count is expected to stay 0 in the recorded production command",
+      "observed": "not_run_no_gpu",
+      "do_not_claim": "Do not claim Native graph replay for the production arm unless _media_cuda_graphs is also enabled."
+    },
+    "native_graph_evidence": {
+      "cuda_graphs": true,
+      "media_cuda_graphs": true,
+      "expected_observation": "Run the same image fixture 5 times; tei_graph_count>0, captures>0, attempts>0 and on the 5th call hits>0",
+      "observed": "not_run_no_gpu",
+      "note": "This is a separate labeled evidence arm, not a replacement for the production baseline."
+    },
+    "oxide_low_overhead": {
+      "cuda_graphs": false,
+      "media_cuda_graphs": false,
+      "reason": "Oxide-only policy; never used for Native parity."
+    }
+  },
+  "base_commit": "e582ce90eb1544fcff081a495cb8fd4f3c17b112"
+}

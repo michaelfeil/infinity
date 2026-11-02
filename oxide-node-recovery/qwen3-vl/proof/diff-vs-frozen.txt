@@ -1,0 +1,2 @@
+Files /tmp/oxide-all-model-feature-matrix-v1/qwen-vl-current-v1/libs/infinity-v3/backends/oxide/examples/qwen3_vl_host_consumer.rs and /tmp/oxide-qwen3vl-rope-budget-fix-v1/candidate/libs/infinity-v3/backends/oxide/examples/qwen3_vl_host_consumer.rs differ
+Files /tmp/oxide-all-model-feature-matrix-v1/qwen-vl-current-v1/libs/infinity-v3/backends/oxide/src/decoder.rs and /tmp/oxide-qwen3vl-rope-budget-fix-v1/candidate/libs/infinity-v3/backends/oxide/src/decoder.rs differ

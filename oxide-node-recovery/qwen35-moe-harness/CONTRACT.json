@@ -1,0 +1,335 @@
+{
+  "schema": "oxide-q35moe-unified-runtime-contract/v1",
+  "status": "v4b-harness-source-updated-unbuilt-no-cpu-build-no-gpu-product-freeze-unbound",
+  "product_source": {
+    "path": "/tmp/oxide-all-model-feature-matrix-v1/qwen35-moe-factory-service-blocking-v2",
+    "freeze_sha256": "UNBOUND",
+    "freeze_sha256_policy": "explicit UNBOUND placeholder; Codex must bind the final product sha256 before any build",
+    "unsealed": true,
+    "sealed": false,
+    "immutable": false,
+    "read_or_compiled_by_this_source_update": false,
+    "normal_factory_source": "/tmp/oxide-all-model-feature-matrix-v1/qwen35-moe-factory-service-blocking-v2/libs/infinity-v3/backends/src/lib.rs"
+  },
+  "canonical31_provider": "/tmp/oxide-all-model-feature-matrix-v1/qwen35-moe-v6/aot/canonical31-provider",
+  "default_checkpoint": "/workspace/model-performance/michaelfeil/onejev-perf/models/qwen35-35b-a3b",
+  "consumer": {
+    "path": "consumer",
+    "binary": "q35moe-unified-runtime",
+    "build_profile": {
+      "name": "release",
+      "opt-level": 3,
+      "lto": false,
+      "debug": 1,
+      "codegen-units": 16,
+      "debug-assertions": false,
+      "panic": "abort"
+    },
+    "optimized_build_authorized": false,
+    "dependencies": {
+      "infinity_v3-backend": "/tmp/oxide-all-model-feature-matrix-v1/qwen35-moe-factory-service-blocking-v2/libs/infinity-v3/backends, default-features=false, features=[oxide]",
+      "infinity_v3-backend-core": "/tmp/oxide-all-model-feature-matrix-v1/qwen35-moe-factory-service-blocking-v2/libs/infinity-v3/backends/core",
+      "infinity-backend-oxide": "/tmp/oxide-all-model-feature-matrix-v1/qwen35-moe-factory-service-blocking-v2/libs/infinity-v3/backends/oxide",
+      "serde": "1.0 cached",
+      "serde_json": "1.0 cached",
+      "sha2": "0.10 cached",
+      "tokio": "1.25 cached"
+    }
+  },
+  "cli": {
+    "usage": "q35moe-unified-runtime <quality|life-service|life-core|metadata|validate-only> --cases MANIFEST [--report FILE | --output-dir DIR] [--model DIR] [--pool cls|mean|last-token] [--limit N] [--validate-only]",
+    "first_argument_must_be_mode": true,
+    "unknown_or_duplicate_arguments_rejected": true,
+    "validate_only_requires_no_model": true,
+    "validate_only_takes_no_gpu_path": true,
+    "no_device_count_or_auto_device_query": true,
+    "quality_pool_invocations": [
+      "cls",
+      "mean",
+      "last-token"
+    ],
+    "normal_factory_call": "infinity_v3_backend::Backend::new_selected(model, None, DType::Bfloat16, ModelType::Embedding(pool), None, 0, false, BackendKind::Oxide, TorchDevice::Cuda).await",
+    "submission": "Backend::submit_embed(batch).await -> Submission; Submission::complete().await -> (Embeddings, Duration)",
+    "core_life_constructor": "infinity_backend_oxide::Qwen35MoeBackend::new(model, \"bfloat16\", ModelType::Embedding(pool), 0)",
+    "core_life_label": "adapter-lifecycle; not normal-service-factory quality"
+  },
+  "report": {
+    "schema": "oxide-q35moe-unified-runtime-report/v1",
+    "path": "--report, or --output-dir/harness-report.json",
+    "atomic_write": true,
+    "top_level": [
+      "schema",
+      "mode",
+      "status",
+      "started_unix_seconds",
+      "model",
+      "pool",
+      "product_source",
+      "product_freeze_sha256",
+      "normal_factory_source",
+      "canonical31_provider",
+      "root_checkpoint",
+      "engine_count",
+      "normal_factory_route",
+      "submission_type",
+      "phases",
+      "quality",
+      "life",
+      "metadata",
+      "errors",
+      "typed_errors"
+    ],
+    "quality_case": [
+      "name",
+      "valid",
+      "status",
+      "batch_file",
+      "batch_sha256",
+      "batch_fingerprint_sha256",
+      "submission_type",
+      "backend_duration_ns",
+      "wall_duration_ns",
+      "shape",
+      "requested",
+      "output"
+    ],
+    "canonical_entry": [
+      "index",
+      "kind",
+      "shape",
+      "values (real F32 JSON)",
+      "bits_u32 (to_bits)"
+    ],
+    "invalid_case": [
+      "name",
+      "valid=false",
+      "status",
+      "expected_error_variant",
+      "actual_error_variant",
+      "error",
+      "requested"
+    ],
+    "life_phases": [
+      "constructor",
+      "baselines",
+      "warmheld",
+      "drop",
+      "growth",
+      "invalid-preenqueue",
+      "recover",
+      "modeldrop"
+    ],
+    "no_large_stdout": "all cases and vectors live in the report; stdout is not the data channel",
+    "typed_errors": {
+      "fields": [
+        "stage",
+        "variant",
+        "message",
+        "runtime_failed_fence_qualification",
+        "source_cpu_failed_fence_proof"
+      ],
+      "policy": "actual BackendError keeps typed variant and stage; pure CPU envelope test is not runtime failed-fence qualification"
+    },
+    "checkpoints": "atomic report write after each phase and after unexpected typed error; status may be running before final ok/error"
+  },
+  "fixtures": {
+    "manifest": "fixtures/manifest.json",
+    "exact_seven_fields": [
+      "input_ids",
+      "position_ids",
+      "token_type_ids",
+      "cumulative_seq_lengths",
+      "pooled_indices",
+      "raw_indices",
+      "max_length"
+    ],
+    "ids_rule": "20 + (i*13) % 20000; t9 uses i=0..8 (20..124); t7_b uses +101 token-index offset",
+    "positions": "per-sequence 0..len-1",
+    "token_type_ids": "all zero",
+    "t9": {
+      "input_ids": [20, 33, 46, 59, 72, 85, 98, 111, 124],
+      "position_ids": [0, 1, 2, 3, 4, 5, 6, 7, 8],
+      "token_type_ids": [0, 0, 0, 0, 0, 0, 0, 0, 0],
+      "cumulative_seq_lengths": [0, 9],
+      "max_length": 9,
+      "pooled_indices": [0],
+      "raw_indices": []
+    },
+    "valid": [
+      "t7_a",
+      "t1",
+      "t7_b",
+      "t8",
+      "t9",
+      "t7_no_selection",
+      "ragged_3_4",
+      "raw_t7",
+      "mixed_ragged",
+      "subset_ragged",
+      "duplicate_t7",
+      "duplicate_pooled_t7",
+      "bounded_duplicate_ragged",
+      "rawoverride_t7",
+      "duplicate_raw_t7"
+    ],
+    "invalid": [
+      "empty",
+      "invalid_token_id",
+      "invalid_position",
+      "invalid_cumulative",
+      "invalid_selection",
+      "invalid_token_nosel",
+      "invalid_media",
+      "invalid_media_nosel",
+      "invalid_compact",
+      "invalid_compact_nosel"
+    ],
+    "invalid_expectation": "actual submit must return exact BackendError variant named in manifest; strings alone are insufficient",
+    "native_gold": "not present; native quality skips invalid fixtures rather than treating them as gold",
+    "first_case": "t7_a",
+    "semantic_ready_zero": "t7_no_selection has pooled/raw [] and must return actual normal-factory Submission::Ready with canonical entry_count 0",
+    "selection_canonicalization": "no arbitrary selected_rows <= tokens + sequences hard limit is applied by the harness; production canonicalization resolves duplicate pooled/raw indices and raw overrides before Work selection, result reservation and launch",
+    "valid_duplicates": [
+      "duplicate_t7 is valid normal metadata; canonicalizes to one raw index",
+      "duplicate_raw_t7 is valid normal metadata; canonicalizes to one raw index",
+      "duplicate_pooled_t7 is valid normal metadata; canonicalizes to one pooled index",
+      "bounded_duplicate_ragged is valid normal metadata; canonicalizes to one raw index",
+      "rawoverride_t7 is valid normal metadata; raw overrides pooled at index 0"
+    ],
+    "generator_owned_sha256": "the t9 manifest sha256 is emitted by control/generate_fixtures.py; the checked-in sentinel GENERATE-WITH-control/generate_fixtures.py is replaced before freeze/build"
+  },
+  "metadata_mode": {
+    "reads": [
+      "config.json",
+      "safetensors headers only",
+      "safetensors index",
+      "small module/tokenizer identity JSON"
+    ],
+    "does_not_read": [
+      "tensor payload",
+      "engine",
+      "CUDA context"
+    ],
+    "reports": [
+      "config_sha256",
+      "config geometry",
+      "header_sha256/tensor_count/dtypes",
+      "index_sha256/weight_map shards",
+      "provider/source identities"
+    ],
+    "tensor_payload_read_bytes": 0,
+    "before_after": "quality and both lifecycle modes collect config/header/index/source/class/layer order/provider envs before and after; mismatch is failure",
+    "envs": [
+      "QWEN35_GDN_KERNELS",
+      "QWEN35_GDN_PROVIDER",
+      "QWEN35_GDN_AUX",
+      "INFINITY_MOE_AOT_ROOT",
+      "INFINITY_FA4_ROOT",
+      "INFINITY_OXIDE_KERNEL_MODULE"
+    ],
+    "config_geometry": [
+      "hidden_size",
+      "num_hidden_layers",
+      "vocab_size",
+      "max_position_embeddings",
+      "q_heads",
+      "kv_heads",
+      "head_dim",
+      "layer_types",
+      "layer_order_sha256"
+    ]
+  },
+  "lifecycle_requirements": {
+    "service": [
+      "baseline A/B distinct T7",
+      "three-burst actual normal Backend::submit_embed A/B/C=A; all three Submission::Deferred",
+      "CompletionThread is independent of the harness caller",
+      "complete C then B then A with exact baseline entry identity and F32 words",
+      "held results drop",
+      "health before/after",
+      "recovery submit",
+      "drop A while B handle held, complete B, retry A"
+    ],
+    "core": [
+      "two genuine Inference::Deferred held A/B",
+      "third C=A submitted from an owned std worker thread; it must block on the common slot pool while both A and B are held",
+      "the receiver must not yield or await while both are held; poll the worker result for 50ms and require timeout",
+      "complete B, receive C with a bounded 5s receive, join the worker, require C Deferred, then complete C and A with exact baseline F32 words",
+      "never issue the third held submit synchronously on the caller that holds both results",
+      "drop A while B held; submit C=A AFTER dropping A and BEFORE completing B; require C Deferred; complete C/B exact baseline",
+      "T7 held then T9 different geometry must be Deferred under the two-slot/two-independent-key budget; complete T9 then A; retry T9 exact; no healthy Busy/Overloaded expected",
+      "invalid IDs/positions/CU/selection/media/compact/empty actual typed rejection, including no-selection variants",
+      "adapter drop with A/B Deferred held then B completes"
+    ],
+    "thread_control_helper": "the actual core lifecycle uses the same owned-thread blocking/wakeup helper covered by a pure CPU unit test; source only, no execution in this update",
+    "result_budget": "pure CPU actual ResultPool tests cover retain/exhausted Overloaded/drop/recover; no fake fault injection",
+    "isolation": "one engine per process; controller runs separate fresh processes; never two 72GB engines",
+    "timeout_process_groups": "control/controller.py owns external timeout and killpg; controller/comparator unchanged",
+    "fatal_scope": "No public poison API and no unsafe GPU fault injection; actual unexpected BackendError is reported typed by stage; CPU envelope test is explicitly not runtime failed-fence qualification; product source CPU failed-fence proof remains separate",
+    "unbound_freeze": "product source is unsealed and the product freeze sha256 is explicitly UNBOUND until Codex binds the final value before any build"
+  },
+  "control": {
+    "fixture_generator": "control/generate_fixtures.py",
+    "controller": "control/controller.py",
+    "comparator": "control/comparator.py",
+    "comparator_policy": "exact F32 bits, zero tolerance, exact index/kind/shape/error variant",
+    "python_only_separate_worker": true,
+    "native_controller_comparator_edited": false
+  },
+  "source_update": {
+    "mode": "source-only",
+    "cpu_build_run": false,
+    "tests_run": false,
+    "gpu_run": false,
+    "engine_loaded": false,
+    "network_used": false,
+    "weights_read": false,
+    "product_freeze_sha256": "UNBOUND",
+    "fixture_generator_run": false,
+    "t9_sha256_owner": "control/generate_fixtures.py; run it before freeze/build"
+  },
+  "cpu_evidence": {
+    "dev_tests": "not run for this v4b source update",
+    "dev_clippy": "not run for this v4b source update",
+    "validate_only_report": "reports/validate-only.json is historical v2 evidence; not regenerated",
+    "metadata_report": "reports/metadata-cpu.json is historical v2 evidence; not regenerated",
+    "product_pins_before": "control/product-pins-before.json is historical v1 product evidence",
+    "product_pins_after": "control/product-pins-after.json is historical v1 product evidence",
+    "no_gpu": true,
+    "no_engine": true,
+    "no_optimized_build": true,
+    "no_cpu_build": true,
+    "no_test_run": true
+  },
+  "prohibited": [
+    "GPU/context/device query",
+    "Docker",
+    "Torch",
+    "network",
+    "device compile",
+    "optimized build without fresh Codex review",
+    "editing product/source",
+    "reading weights in metadata/validate-only",
+    "invented public poison API",
+    "unsafe GPU fault injection",
+    "arbitrary selected_rows <= tokens + sequences hard rejection",
+    "synchronous third core held submit on the caller holding both results",
+    "fake synchronous facade",
+    "ExperimentalEngine as the normal quality route",
+    "reading or compiling the unsealed v2 product root before final sha256 binding",
+    "claiming a CPU build or GPU run for this source-only update"
+  ],
+  "preserves_v1_harness_freeze": "HARNESS-FREEZE-v1.json",
+  "native_handoff": {
+    "path": "/tmp/oxide-q35moe-native-runtime-control-v2",
+    "source_only": true,
+    "writer": "separate Native author; not duplicated here",
+    "normalized_schema": "NATIVE-HANDOFF.json",
+    "normalization": [
+      "quality valid case -> name,batch_sha256,shape,outputs[index,kind,shape,values,bits_u32]",
+      "quality invalid case -> name,expected_error_variant,actual_error_variant,status",
+      "lifecycle phases -> separate non-Native evidence; not used as Native quality gold",
+      "no flattened-only bits: entry identity and words stay together"
+    ]
+  }
+}

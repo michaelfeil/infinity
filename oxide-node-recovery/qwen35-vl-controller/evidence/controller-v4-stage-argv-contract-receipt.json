@@ -1,0 +1,163 @@
+{
+  "schema": "oxide-qwen35vl-controller-v4-stage-argv-contract/v1",
+  "status": "passed",
+  "test": "tests/test_controller_v4_stage_argv_contract.py",
+  "test_sha256": "19e87d9df9d422c03b659cca162c0ac3ceaa8958900ce5c8610da406b7f67e4d",
+  "v4_controller": {
+    "path": "/tmp/oxide-qwen35vl-sdk-map-policy-v1/qwen35_vl_map_policy_controller_v4.py",
+    "sha256": "5ce7b5f184ab2cf4e1fff42fd80bc5477c149d42b39d71cf42630c641210181b",
+    "expected": "5ce7b5f184ab2cf4e1fff42fd80bc5477c149d42b39d71cf42630c641210181b"
+  },
+  "checks": [
+    {
+      "name": "v4_sha_stable_before",
+      "passed": true
+    },
+    {
+      "name": "stage_records_real_cp_argv_and_sdk_helper_path_matches_staged",
+      "passed": true
+    },
+    {
+      "name": "native_plan_and_whole_python_helper_filename_matches_staged",
+      "passed": true
+    },
+    {
+      "name": "elf_consumer_staged_path_is_used_by_consumer_argv_without_python",
+      "passed": true
+    },
+    {
+      "name": "v4_sha_stable_after",
+      "passed": true
+    },
+    {
+      "name": "source8_and_binaries_stable",
+      "passed": true
+    }
+  ],
+  "check_count": 6,
+  "contract_evidence": {
+    "sdk": {
+      "source": "/tmp/oxide-qwen35vl-sdk-map-policy-v1/native/sdk/sdk_map_preflight_v3.py",
+      "staged": "/tmp/oxide-qwen35vl-map-policy-v4/stage-argv-contract/sdk/sdk_map_preflight_v3.py",
+      "argv": [
+        "/opt/torch-sdk/bin/python3.12",
+        "/tmp/oxide-qwen35vl-map-policy-v4/stage-argv-contract/sdk/sdk_map_preflight_v3.py",
+        "--library",
+        "/tmp/native214-fa4-mode20/install/lib/libtei_torch.so",
+        "--torch-python",
+        "/opt/torch-sdk/bin/python3.12",
+        "--vendor",
+        "/tmp/oxide-host-cublas-130200",
+        "--union124",
+        "/tmp/oxide-qwen35vl-map-policy-v4/stage-argv-contract/runtime/kernels",
+        "--model-container",
+        "/bench/michaelfeil/onejev-perf/backbone-comparison-20261023/models/Qwen3.5-0.8B",
+        "--host-model-path",
+        "/workspace/model-performance/michaelfeil/onejev-perf/backbone-comparison-20261023/models/Qwen3.5-0.8B",
+        "--model-name",
+        "Qwen3.5-0.8B",
+        "--model-format",
+        "index",
+        "--expected-config-sha256",
+        "b90b86f35c8e6925ef74ee04d0e758f0a845c83a42089ad82bbaa948de9b4204",
+        "--runtime-manifest-sha256",
+        "1d0b59dda1cef92c0e752553872e645adbdc07e93d40245817e82246f58b982d",
+        "--runtime-kernel-count",
+        "130",
+        "--runtime-architectures",
+        "sm_90",
+        "--stage-expected",
+        "/tmp/oxide-qwen35vl-map-policy-v4/stage-argv-contract/stage-expected.json",
+        "--media",
+        "/tmp/oxide-qwen35vl-map-policy-v4/stage-argv-contract/cases/single-cats.media.json",
+        "--out",
+        "/tmp/oxide-qwen35vl-map-policy-v4/stage-argv-contract/preflight",
+        "--expected-index-sha256",
+        "d8a08838a613b025eb7952ed9db11696213e57e76a375661ef5c12f9dd5dcf4e"
+      ]
+    },
+    "native": {
+      "source": "/tmp/oxide-qwen35vl-sdk-map-policy-v1/native/native_whole_model_policy.py",
+      "staged": "/tmp/oxide-qwen35vl-map-policy-v4/stage-argv-contract/native/native_whole_model_policy.py",
+      "plan_argv": [
+        "/opt/torch-sdk/bin/python3.12",
+        "/tmp/oxide-qwen35vl-map-policy-v4/stage-argv-contract/native/native_whole_model_policy.py",
+        "--plan-only",
+        "--library",
+        "/tmp/native214-fa4-mode20/install/lib/libtei_torch.so",
+        "--model",
+        "/bench/michaelfeil/onejev-perf/backbone-comparison-20261023/models/Qwen3.5-0.8B",
+        "--expected-config-sha256",
+        "b90b86f35c8e6925ef74ee04d0e758f0a845c83a42089ad82bbaa948de9b4204",
+        "--media",
+        "/tmp/oxide-qwen35vl-map-policy-v4/stage-argv-contract/cases/single-cats.media.json",
+        "--out",
+        "/tmp/oxide-qwen35vl-map-policy-v4/stage-argv-contract/plan",
+        "--expected-index-sha256",
+        "d8a08838a613b025eb7952ed9db11696213e57e76a375661ef5c12f9dd5dcf4e"
+      ],
+      "whole_argv": [
+        "/opt/torch-sdk/bin/python3.12",
+        "/tmp/oxide-qwen35vl-map-policy-v4/stage-argv-contract/native/native_whole_model_policy.py",
+        "--allow-gpu",
+        "--production-cuda-graphs",
+        "--library",
+        "/tmp/native214-fa4-mode20/install/lib/libtei_torch.so",
+        "--model",
+        "/bench/michaelfeil/onejev-perf/backbone-comparison-20261023/models/Qwen3.5-0.8B",
+        "--expected-config-sha256",
+        "b90b86f35c8e6925ef74ee04d0e758f0a845c83a42089ad82bbaa948de9b4204",
+        "--media",
+        "/tmp/oxide-qwen35vl-map-policy-v4/stage-argv-contract/cases/single-cats.media.json",
+        "--out",
+        "/tmp/oxide-qwen35vl-map-policy-v4/stage-argv-contract/native",
+        "--pool",
+        "mean",
+        "--expected-index-sha256",
+        "d8a08838a613b025eb7952ed9db11696213e57e76a375661ef5c12f9dd5dcf4e"
+      ]
+    },
+    "consumer": {
+      "source": "/tmp/oxide-all-model-feature-matrix-v1/qwen35-vl-lifecycle-fix-v1/target-opt3-noLTO/release/qwen35-vl-consumer",
+      "staged": "/tmp/oxide-qwen35vl-map-policy-v4/stage-argv-contract/bin/qwen35-vl-consumer",
+      "whole_argv": [
+        "/tmp/oxide-qwen35vl-map-policy-v4/stage-argv-contract/bin/qwen35-vl-consumer",
+        "whole-factory",
+        "--model",
+        "/bench/michaelfeil/onejev-perf/backbone-comparison-20261023/models/Qwen3.5-0.8B",
+        "--media",
+        "/tmp/oxide-qwen35vl-map-policy-v4/stage-argv-contract/cases/single-cats.media.json",
+        "--device",
+        "0",
+        "--pool",
+        "mean",
+        "--out",
+        "/tmp/oxide-qwen35vl-map-policy-v4/stage-argv-contract/oxide.json"
+      ],
+      "life_argv": [
+        "/tmp/oxide-qwen35vl-map-policy-v4/stage-argv-contract/bin/qwen35-vl-consumer",
+        "owning-lifecycle",
+        "--model",
+        "/bench/michaelfeil/onejev-perf/backbone-comparison-20261023/models/Qwen3.5-0.8B",
+        "--media",
+        "/tmp/oxide-qwen35vl-map-policy-v4/stage-argv-contract/cases/single-cats.media.json",
+        "--device",
+        "0",
+        "--iterations",
+        "4",
+        "--out",
+        "/tmp/oxide-qwen35vl-map-policy-v4/stage-argv-contract/life.json"
+      ]
+    }
+  },
+  "contract": {
+    "sdk_preflight_name": "sdk_map_preflight_v3.py",
+    "native_helper_name": "native_whole_model_policy.py",
+    "sdk_python": "/opt/torch-sdk/bin/python3.12",
+    "elf_consumer": "qwen35-vl-consumer"
+  },
+  "non_claims": [
+    "no Docker/GPU/Torch/network/compile",
+    "no V4/controller/helper/runtime/model/binary edits"
+  ]
+}

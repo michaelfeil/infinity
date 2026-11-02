@@ -1,0 +1,84 @@
+{
+  "schema": "root-dense-serving-qualification/v1",
+  "updated_utc": "2026-11-02T15:46:06.701711+00:00",
+  "status": "qualified-for-recorded-BF16-checkpoint-scope",
+  "models": [
+    "Qwen3-Embedding-0.6B",
+    "Qwen3-Embedding-4B",
+    "Qwen3-Embedding-8B",
+    "Qwen3-Reranker-4B",
+    "Mistral-7B-v0.1"
+  ],
+  "dtype": "BF16",
+  "references": {
+    "initial_pair": {
+      "path": "/tmp/oxide-dense-root-paired-initial-v1/report.json",
+      "sha256": "a570ebc22e36a764193b27646f9f87f7a43f7c4ea29ce5ba276ae4ea351e1d0a",
+      "status": "passed"
+    },
+    "rest_pair": {
+      "path": "/tmp/oxide-dense-root-paired-rest-v1/report.json",
+      "sha256": "c8f9b0b76ab87e140c8294062a481fcd1c90b4e0c2385f74827d8f00578a4c6f",
+      "status": "passed"
+    },
+    "mean_successor_pair": {
+      "path": "/tmp/oxide-dense-root-paired-mean-v2/report.json",
+      "sha256": "833e82430992c989a3789031717c7d1db7c5eb6bd9046040be6a00aef7291ed1",
+      "status": "passed"
+    },
+    "union124_compatibility": {
+      "path": "/tmp/oxide-dense-root-union124-v1/report.json",
+      "sha256": "8ea59e5b08454c47fea4920ce3b345015b2365aa25a3d8d3b7d501ee6a612ff7",
+      "status": "passed"
+    },
+    "lifecycle": {
+      "path": "/tmp/oxide-dense-mean-lifecycle-root-v6/report.json",
+      "sha256": "7260ad3f3f6d9a1b274e7cfa000efffc53d230e4cbbf94c71325016501206517",
+      "status": "all-nine-qualified-for-recorded-scope"
+    },
+    "lifecycle_saved4": {
+      "path": "/tmp/oxide-dense-lifecycle-saved-proof-v6/report.json",
+      "sha256": "5806cd34b5337433581e663c73154cf4a577a1ba86aaf841af071095126f5d29",
+      "status": "passed-recorded-four-jobs-with-scope-limit"
+    },
+    "native_initial2": {
+      "path": "/tmp/oxide-dense-native-root-quality-v2/report.json",
+      "sha256": "e1451c68f649e09ffb0fc572a7779f7f9fb2575f25980b7e1b51074bf73c3757",
+      "status": "root-native-quality-complete-paired-control-pending"
+    },
+    "native_rest3": {
+      "path": "/tmp/oxide-dense-native-root-quality-rest-v2/report.json",
+      "sha256": "d299b9bd44bc0334d46a516d1eaddba8bccbd77fb7d8625969c5a60a5984f091",
+      "status": "root-native-quality-complete-paired-control-pending"
+    },
+    "long_mistral_numeric": {
+      "path": "/tmp/oxide-mistral-long-boundary-root-compare-v6/comparison.json",
+      "sha256": "3a9c320b5167c95c1d37c328c9c7c6b3f5144a957e460f5038d4ce8369e298f5"
+    },
+    "long_mistral_strict_phase": {
+      "path": "/tmp/oxide-mistral-long-boundary-root-compare-v6/phase-proof.json",
+      "sha256": "420f1b5b221e4523470cd9c2eddb1f7f5de49cb544cd7116b2854dd00c273ab7"
+    }
+  },
+  "actual_third_backend_submission_tested": false,
+  "gpu_runtime_architecture": "SM90",
+  "performance_qualified": false,
+  "artifact": {
+    "path": "/tmp/oxide-dense-unified-probe-e582-v4/artifacts/dense_probe",
+    "sha256": "0a7470c721156abea18c9720b359d5c9fd31dbf099762d7f4193da17bc183d39"
+  },
+  "CPU": {
+    "lib_all_targets": 629,
+    "clippy_deny_warnings": "passed",
+    "fmt": "passed"
+  },
+  "source": {
+    "cublas.rs": "a397c445ae9b80f525e901649e79bd67b8e64197cb89b486bb1255672e412f5c",
+    "decoder.rs": "6ec12338e7f48a5745aad5bb7ff3792d9fadd3088992e9eb81ae60b14858c669",
+    "decoder_classifier.rs": "22d68ca72825ce1046fa2453d996aaf72c196a13767a42157fba3cdc0fafd6d7",
+    "decoder_model.rs": "4e1a203166759a534e1abc9c278d8bda8d62990e001c0d520cc48e2cb58a67fd",
+    "lib.rs": "4c2d019c6c466eefa3ba4c87df9b541024855fee1d650c60cc8a4505be6ac607",
+    "native_rope_tables.rs": "3e9555784045218416f828491fd5513754fe73eeb031fc7ef09664d9289e12a3"
+  },
+  "commit": "05cb010"
+}

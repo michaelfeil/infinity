@@ -1,0 +1,57 @@
+{
+  "schema": "oxide-qwen35-moe-factory-service-blocking-v2-freeze/v1",
+  "base_v1": "/tmp/oxide-all-model-feature-matrix-v1/qwen35-moe-factory-service-blocking-v1",
+  "base_product": "/tmp/oxide-all-model-feature-matrix-v1/qwen35-moe-factory-poisoncheckout-successor-v1",
+  "product_pins_match": true,
+  "changed_files": [
+    "libs/infinity-v3/backends/oxide/src/qwen35_moe_factory.rs",
+    "libs/infinity-v3/backends/oxide/src/qwen35_moe_engine.rs",
+    "libs/infinity-v3/backends/oxide/src/qwen35_moe_full.rs"
+  ],
+  "files": {
+    "libs/infinity-v3/backends/oxide/src/qwen35_moe_factory.rs": {
+      "bytes": 45543,
+      "sha256": "de671f8dba5562f99fbcfaed133d103d1bf99cb814cd31debb802b6961c25812"
+    },
+    "libs/infinity-v3/backends/oxide/src/qwen35_moe_engine.rs": {
+      "bytes": 82667,
+      "sha256": "4b6c343b1dbae54dc87e838bd17df39a2e2119cca9c40952bb5c1f3b7aca7fb8"
+    },
+    "libs/infinity-v3/backends/oxide/src/qwen35_moe_full.rs": {
+      "bytes": 38480,
+      "sha256": "7fc72c2df8d0755de2ccaf61f6532dd7090880aa903407122c7f93873902425d"
+    },
+    "SERVICE-BLOCKING-BUDGET.patch": {
+      "bytes": 27170,
+      "sha256": "3e9af8c7586b26b5c9693526ffe6cfca35e0b3f7ccee687e8d26cd4b3818face"
+    },
+    "FOCUSED-TESTS.log": {
+      "bytes": 7136,
+      "sha256": "3800e482ab9fc67328bc31c5ff2823fb18451cb9a55ec07c03bf42ab934e8f55"
+    },
+    "CLIPPY.log": {
+      "bytes": 234,
+      "sha256": "f8ff4b425d53be7f98fb3ba9ccaddc469f9999d1a10c6f69de9e875b52828176"
+    },
+    "REPORT.md": {
+      "bytes": 2687,
+      "sha256": "27de7a340ea60a78b0c6c214028ada7a92704a135d7db4640c8a8929289b4ff0"
+    },
+    "COMMANDS.txt": {
+      "bytes": 510,
+      "sha256": "482b3555af54d1919b03666ebc267630193180feaec39b856e41bad4e56da5cc"
+    },
+    "PRODUCT-PINS.json": {
+      "bytes": 1702,
+      "sha256": "09258c364dbc4ebeb36a9cd59293bb0a9fae489971ed4742cc51ad0caf9a6759"
+    }
+  },
+  "tests": {
+    "focused": "72 passed, 0 failed",
+    "clippy": "-D warnings pass",
+    "fmt": "pass"
+  },
+  "optimized_build_run": false,
+  "gpu_run": false,
+  "harness_edited": false
+}

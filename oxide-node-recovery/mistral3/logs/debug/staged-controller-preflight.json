@@ -1,0 +1,26 @@
+{
+  "preflight": {
+    "ok": true,
+    "errors": [],
+    "checkpoint": "/workspace/model-performance/michaelfeil/benchmark-overview/models/nvidia--Nemotron-3.5-Rerank-8B-BF16",
+    "tensor_count": 531,
+    "shards": 4,
+    "categories": {
+      "vision": 218,
+      "projector": 4,
+      "language": 308,
+      "score": 1
+    }
+  },
+  "allowlist": [
+    "src/mistral3_runner.cpp",
+    "include/mistral3_b66.h",
+    "include/bridge.h",
+    "native_b66_control.py",
+    "container_sdk_got.py",
+    "remote_guard.py",
+    "root_native_cpu_stage.py"
+  ],
+  "container_python": "/opt/torch-sdk/bin/python3.12",
+  "docker_host": "unix:///var/run/docker.sock"
+}

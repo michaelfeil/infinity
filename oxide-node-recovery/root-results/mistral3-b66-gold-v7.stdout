@@ -1,0 +1,401 @@
+{
+  "schema": "oxide-mistral3-native-b66-v7-report/v1",
+  "stage": "gold",
+  "ok": false,
+  "errors": [
+    "native graph_count_after_ready is not a nonnegative integer",
+    "native graph_count is not a nonnegative integer",
+    "native graph_stats_after_ready is not an actual graph counter object",
+    "native graph_stats is not an actual graph counter object"
+  ],
+  "host_out": "/tmp/oxide-mistral3-native-b66-root-gold-v7",
+  "container": "infinity-torch214-compare-sdk",
+  "container_python": "/opt/torch-sdk/bin/python3.12",
+  "docker_host": "unix:///var/run/docker.sock",
+  "bench_mount": {
+    "bench_mounts": [
+      {
+        "destination": "/bench",
+        "source": "/workspace/model-performance",
+        "rw": false,
+        "type": "bind"
+      }
+    ],
+    "model_mount_read_only": true
+  },
+  "host_model": "/workspace/model-performance/michaelfeil/benchmark-overview/models/nvidia--Nemotron-3.5-Rerank-8B-BF16",
+  "container_model": "/bench/michaelfeil/benchmark-overview/models/nvidia--Nemotron-3.5-Rerank-8B-BF16",
+  "remote_work": "/tmp/mistral3-native-b66-v7-561813-709db960388e",
+  "cpu_report": "/tmp/oxide-mistral3-native-b66-root-cpu-v7/report.json",
+  "cpu_report_sha256": "3ffc1803eb96f07d09106e212711593028cde2383773d7436174d501204b165e",
+  "cpu_report_stage": "cpu",
+  "source_pins_before": {
+    "src/mistral3_runner.cpp": "ed3f554fd579fc84e87fda63e530c1cd2ecd4f8530f38079a7d29edce74373e3",
+    "include/mistral3_b66.h": "ac8b2e45e2058f4f9a5440e8af02cb983999861582cbb780329cca17d620d238",
+    "include/bridge.h": "ed5cd44f735cbe21160f43fbdec0f4e003acd477497ab4141e2625c37c5b3b69",
+    "native_b66_control.py": "34163bf5a0740e42093b2fc3302fcc8418b3953bf401b67e77c66dc4b3980116",
+    "container_sdk_got.py": "4b39fe00bded39c5a10fdbc4e28c10a5bbcccf0fc34c38da8ef5878d5258f8a9",
+    "remote_guard.py": "a11cf9ee05b971c8a427bf671ae2b16b776c06a447644d6d94b7cf1754f627b1",
+    "native_controller.py": "424694f029f783b995239c7fb14e9f1f0d4557cd58dbf555b7862edcad650149"
+  },
+  "source_pins_after": {
+    "src/mistral3_runner.cpp": "ed3f554fd579fc84e87fda63e530c1cd2ecd4f8530f38079a7d29edce74373e3",
+    "include/mistral3_b66.h": "ac8b2e45e2058f4f9a5440e8af02cb983999861582cbb780329cca17d620d238",
+    "include/bridge.h": "ed5cd44f735cbe21160f43fbdec0f4e003acd477497ab4141e2625c37c5b3b69",
+    "native_b66_control.py": "34163bf5a0740e42093b2fc3302fcc8418b3953bf401b67e77c66dc4b3980116",
+    "container_sdk_got.py": "4b39fe00bded39c5a10fdbc4e28c10a5bbcccf0fc34c38da8ef5878d5258f8a9",
+    "remote_guard.py": "a11cf9ee05b971c8a427bf671ae2b16b776c06a447644d6d94b7cf1754f627b1",
+    "native_controller.py": "424694f029f783b995239c7fb14e9f1f0d4557cd58dbf555b7862edcad650149"
+  },
+  "staged_files": {
+    "src/mistral3_runner.cpp": "ed3f554fd579fc84e87fda63e530c1cd2ecd4f8530f38079a7d29edce74373e3",
+    "include/mistral3_b66.h": "ac8b2e45e2058f4f9a5440e8af02cb983999861582cbb780329cca17d620d238",
+    "include/bridge.h": "ed5cd44f735cbe21160f43fbdec0f4e003acd477497ab4141e2625c37c5b3b69",
+    "native_b66_control.py": "34163bf5a0740e42093b2fc3302fcc8418b3953bf401b67e77c66dc4b3980116",
+    "container_sdk_got.py": "4b39fe00bded39c5a10fdbc4e28c10a5bbcccf0fc34c38da8ef5878d5258f8a9",
+    "remote_guard.py": "a11cf9ee05b971c8a427bf671ae2b16b776c06a447644d6d94b7cf1754f627b1"
+  },
+  "staged_pins_before": {
+    "src/mistral3_runner.cpp": "ed3f554fd579fc84e87fda63e530c1cd2ecd4f8530f38079a7d29edce74373e3",
+    "include/mistral3_b66.h": "ac8b2e45e2058f4f9a5440e8af02cb983999861582cbb780329cca17d620d238",
+    "include/bridge.h": "ed5cd44f735cbe21160f43fbdec0f4e003acd477497ab4141e2625c37c5b3b69",
+    "native_b66_control.py": "34163bf5a0740e42093b2fc3302fcc8418b3953bf401b67e77c66dc4b3980116",
+    "container_sdk_got.py": "4b39fe00bded39c5a10fdbc4e28c10a5bbcccf0fc34c38da8ef5878d5258f8a9",
+    "remote_guard.py": "a11cf9ee05b971c8a427bf671ae2b16b776c06a447644d6d94b7cf1754f627b1"
+  },
+  "staged_pins_after": {
+    "src/mistral3_runner.cpp": "ed3f554fd579fc84e87fda63e530c1cd2ecd4f8530f38079a7d29edce74373e3",
+    "include/mistral3_b66.h": "ac8b2e45e2058f4f9a5440e8af02cb983999861582cbb780329cca17d620d238",
+    "include/bridge.h": "ed5cd44f735cbe21160f43fbdec0f4e003acd477497ab4141e2625c37c5b3b69",
+    "native_b66_control.py": "34163bf5a0740e42093b2fc3302fcc8418b3953bf401b67e77c66dc4b3980116",
+    "container_sdk_got.py": "4b39fe00bded39c5a10fdbc4e28c10a5bbcccf0fc34c38da8ef5878d5258f8a9",
+    "remote_guard.py": "a11cf9ee05b971c8a427bf671ae2b16b776c06a447644d6d94b7cf1754f627b1"
+  },
+  "pins_before": {
+    "/bench/michaelfeil/benchmark-overview/models/nvidia--Nemotron-3.5-Rerank-8B-BF16/config.json": "e1f442a21c464cf54259e7ca2ab09f6777f50a61fbf017efed8e6044894b4303",
+    "/bench/michaelfeil/benchmark-overview/models/nvidia--Nemotron-3.5-Rerank-8B-BF16/model.safetensors.index.json": "e393acf4755990784568ec2bc8de5d67f94f36b86d056c370b090084e80ea51e",
+    "/tmp/native214-fa4-mode20/install/lib/libtei_torch.so": "b66d70b61b39e1bf0d565aca33bac7c5e21849677396ce5216f5baf73027d37e",
+    "/tmp/oxide-host-cublas-130200/libcublasLt.so.13": "5cd9d979d72807f61cd22a5583659a3a0e7988a50e9b051416c46d1d8be31cc8",
+    "/tmp/oxide-host-cublas-130200/libcublas.so.13": "416a07324bf28948db370fa5c547cb2f7e896ac1bbc0038bc3211ccd49b6e88e"
+  },
+  "pins_after": {
+    "/bench/michaelfeil/benchmark-overview/models/nvidia--Nemotron-3.5-Rerank-8B-BF16/config.json": "e1f442a21c464cf54259e7ca2ab09f6777f50a61fbf017efed8e6044894b4303",
+    "/bench/michaelfeil/benchmark-overview/models/nvidia--Nemotron-3.5-Rerank-8B-BF16/model.safetensors.index.json": "e393acf4755990784568ec2bc8de5d67f94f36b86d056c370b090084e80ea51e",
+    "/tmp/native214-fa4-mode20/install/lib/libtei_torch.so": "b66d70b61b39e1bf0d565aca33bac7c5e21849677396ce5216f5baf73027d37e",
+    "/tmp/oxide-host-cublas-130200/libcublasLt.so.13": "5cd9d979d72807f61cd22a5583659a3a0e7988a50e9b051416c46d1d8be31cc8",
+    "/tmp/oxide-host-cublas-130200/libcublas.so.13": "416a07324bf28948db370fa5c547cb2f7e896ac1bbc0038bc3211ccd49b6e88e",
+    "/tmp/mistral3-native-b66-v7-561813-709db960388e/mistral3-b66-runner": "00529ed6b93e12a61f29deb34d713274fbadcf58d133ecd1c6515774550a5edf"
+  },
+  "sdk": "/tmp/native214-fa4-mode20/install/lib/libtei_torch.so",
+  "sdk_sha256": "b66d70b61b39e1bf0d565aca33bac7c5e21849677396ce5216f5baf73027d37e",
+  "vendor": "/tmp/oxide-host-cublas-130200",
+  "graph_policy": {
+    "max_captures": 8,
+    "entries": 4,
+    "reuse": 3,
+    "max_tokens": 4096,
+    "max_bytes": 536870912
+  },
+  "native": {
+    "native_b66_runner": "actual frozen b66 C ABI runner; Native implementation is not recompiled",
+    "checkpoint": "/bench/michaelfeil/benchmark-overview/models/nvidia--Nemotron-3.5-Rerank-8B-BF16",
+    "device": "cuda:0",
+    "cuda_visible_devices": "0",
+    "cpu_stage": false,
+    "graphs": true,
+    "graph_options_applied": true,
+    "graph_policy": {
+      "max_captures": 8,
+      "entries": 4,
+      "reuse": 3,
+      "max_tokens": 4096,
+      "max_bytes": 536870912
+    },
+    "graph_count_after_ready": -1,
+    "graph_stats_after_ready": {
+      "status": -1,
+      "hits": 0,
+      "misses": 0,
+      "captures": 0,
+      "attempts": 0,
+      "evictions": 0,
+      "live_bytes": 0,
+      "admitted_bytes": 0
+    },
+    "tensors": 531,
+    "shards": 4,
+    "reference_cases": [
+      {
+        "name": "text-mean-16",
+        "ok": true,
+        "elements": 4096,
+        "elapsed_ns": 188867688,
+        "checksum": 75.67356872558594
+      },
+      {
+        "name": "text-mean-128",
+        "ok": true,
+        "elements": 4096,
+        "elapsed_ns": 32630702,
+        "checksum": 78.0840334892273
+      },
+      {
+        "name": "text-score-32",
+        "ok": true,
+        "elements": 1,
+        "elapsed_ns": 63123358,
+        "checksum": -2.398770809173584
+      },
+      {
+        "name": "image-mean-1x4x6",
+        "ok": true,
+        "elements": 4096,
+        "elapsed_ns": 170522226,
+        "checksum": 78.94383557140827
+      },
+      {
+        "name": "image-score-1x8x8",
+        "ok": true,
+        "elements": 1,
+        "elapsed_ns": 23789991,
+        "checksum": -2.282923698425293
+      },
+      {
+        "name": "text-yarn-16384",
+        "ok": true,
+        "elements": 4096,
+        "elapsed_ns": 9347237,
+        "checksum": 78.41524124145508
+      },
+      {
+        "name": "text-yarn-32768",
+        "ok": true,
+        "elements": 4096,
+        "elapsed_ns": 6790312,
+        "checksum": 78.41524124145508
+      },
+      {
+        "name": "text-yarn-262140",
+        "ok": true,
+        "elements": 4096,
+        "elapsed_ns": 6762634,
+        "checksum": 78.41524124145508
+      },
+      {
+        "name": "image-yarn-16384",
+        "ok": true,
+        "elements": 4096,
+        "elapsed_ns": 9589483,
+        "checksum": 78.69863000512123
+      },
+      {
+        "name": "image-mean-1x4x6-deferred",
+        "ok": true,
+        "elements": 4096,
+        "elapsed_ns": 9560432,
+        "checksum": 78.94383557140827
+      }
+    ],
+    "perf": {
+      "synchronous_image_mean": {
+        "iterations": 20,
+        "min_ns": 9317507,
+        "max_ns": 11940607,
+        "mean_ns": 9768159.45,
+        "p50_ns": 9487224,
+        "elements": 4096,
+        "checksum": 78.94383557140827
+      },
+      "deferred_image_mean": {
+        "iterations": 20,
+        "min_ns": 9335129,
+        "max_ns": 11236796,
+        "mean_ns": 9808058.9,
+        "p50_ns": 9559698,
+        "elements": 4096,
+        "checksum": 78.94383557140827
+      },
+      "synchronous_text_mean_16": {
+        "iterations": 20,
+        "min_ns": 6848346,
+        "max_ns": 8432651,
+        "mean_ns": 6959191.55,
+        "p50_ns": 6876079,
+        "elements": 4096,
+        "checksum": 75.67356872558594
+      },
+      "deferred_text_mean_16": {
+        "iterations": 20,
+        "min_ns": 6829695,
+        "max_ns": 6887545,
+        "mean_ns": 6856563.2,
+        "p50_ns": 6854222,
+        "elements": 4096,
+        "checksum": 75.67356872558594
+      }
+    },
+    "graph_count": -1,
+    "graph_stats": {
+      "status": -1,
+      "hits": 0,
+      "misses": 0,
+      "captures": 0,
+      "attempts": 0,
+      "evictions": 0,
+      "live_bytes": 0,
+      "admitted_bytes": 0
+    },
+    "perf_counters": {
+      "create_ns": 19150,
+      "option_ns": 29883,
+      "load_ns": 0,
+      "ready_ns": 105423680,
+      "forward_sync_ns": 895145284,
+      "forward_submit_ns": 221475108,
+      "output_wait_ns": 170152328,
+      "output_destroy_ns": 275980,
+      "destroy_ns": 0,
+      "forward_calls": 55,
+      "deferred_calls": 47,
+      "last_output_elements": 4096,
+      "last_output_checksum": 76,
+      "min_forward_ns": 6758902,
+      "max_forward_ns": 188863570,
+      "total_forward_ns": 895145284
+    }
+  },
+  "native_counters": {
+    "graph_after_ready": {
+      "count": -1,
+      "stats": {
+        "status": -1,
+        "hits": 0,
+        "misses": 0,
+        "captures": 0,
+        "attempts": 0,
+        "evictions": 0,
+        "live_bytes": 0,
+        "admitted_bytes": 0
+      }
+    },
+    "graph_final": {
+      "count": -1,
+      "stats": {
+        "status": -1,
+        "hits": 0,
+        "misses": 0,
+        "captures": 0,
+        "attempts": 0,
+        "evictions": 0,
+        "live_bytes": 0,
+        "admitted_bytes": 0
+      }
+    },
+    "numeric": {
+      "create_ns": 19150,
+      "option_ns": 29883,
+      "load_ns": 0,
+      "ready_ns": 105423680,
+      "forward_sync_ns": 895145284,
+      "forward_submit_ns": 221475108,
+      "output_wait_ns": 170152328,
+      "output_destroy_ns": 275980,
+      "destroy_ns": 0,
+      "forward_calls": 55,
+      "deferred_calls": 47,
+      "last_output_elements": 4096,
+      "last_output_checksum": 76,
+      "min_forward_ns": 6758902,
+      "max_forward_ns": 188863570,
+      "total_forward_ns": 895145284
+    },
+    "numeric_windows": {
+      "synchronous_image_mean": {
+        "iterations": 20,
+        "min_ns": 9317507,
+        "max_ns": 11940607,
+        "mean_ns": 9768159.45,
+        "p50_ns": 9487224,
+        "elements": 4096,
+        "checksum": 78.94383557140827
+      },
+      "deferred_image_mean": {
+        "iterations": 20,
+        "min_ns": 9335129,
+        "max_ns": 11236796,
+        "mean_ns": 9808058.9,
+        "p50_ns": 9559698,
+        "elements": 4096,
+        "checksum": 78.94383557140827
+      },
+      "synchronous_text_mean_16": {
+        "iterations": 20,
+        "min_ns": 6848346,
+        "max_ns": 8432651,
+        "mean_ns": 6959191.55,
+        "p50_ns": 6876079,
+        "elements": 4096,
+        "checksum": 75.67356872558594
+      },
+      "deferred_text_mean_16": {
+        "iterations": 20,
+        "min_ns": 6829695,
+        "max_ns": 6887545,
+        "mean_ns": 6856563.2,
+        "p50_ns": 6854222,
+        "elements": 4096,
+        "checksum": 75.67356872558594
+      }
+    }
+  },
+  "cuda_visible_devices": "0",
+  "metadata_payload_read": false,
+  "payload_read": true,
+  "weight_payload_read_by_native": true,
+  "engine_created": true,
+  "cuda_context_created": true,
+  "gpu_execution": true,
+  "native_graphs_disabled": false,
+  "runner_sha256": "00529ed6b93e12a61f29deb34d713274fbadcf58d133ecd1c6515774550a5edf",
+  "runner_command": [
+    "/tmp/mistral3-native-b66-v7-561813-709db960388e/mistral3-b66-runner",
+    "--checkpoint",
+    "/bench/michaelfeil/benchmark-overview/models/nvidia--Nemotron-3.5-Rerank-8B-BF16",
+    "--device",
+    "cuda:0",
+    "--iterations",
+    "20",
+    "--warmup",
+    "3",
+    "--emit-vectors",
+    "/tmp/mistral3-native-b66-v7-561813-709db960388e/native-gpu-vectors"
+  ],
+  "build_command": [
+    "g++",
+    "-std=c++20",
+    "-O2",
+    "-fPIC",
+    "-I/tmp/mistral3-native-b66-v7-561813-709db960388e/include",
+    "/tmp/mistral3-native-b66-v7-561813-709db960388e/src/mistral3_runner.cpp",
+    "-L",
+    "/tmp/native214-fa4-mode20/install/lib",
+    "-ltei_torch",
+    "-Wl,-rpath,/tmp/native214-fa4-mode20/install/lib",
+    "-o",
+    "/tmp/mistral3-native-b66-v7-561813-709db960388e/mistral3-b66-runner"
+  ],
+  "vectors": {
+    "image-mean-1x4x6-deferred.f32": "9f53c3050c57ff1717ad5682c0e7e340eaea2170a9caaa14c3b44fe133b7222f",
+    "image-mean-1x4x6.f32": "9f53c3050c57ff1717ad5682c0e7e340eaea2170a9caaa14c3b44fe133b7222f",
+    "image-score-1x8x8.f32": "8a13e72c48b646707767905d70ec8b53fd9e65a42ae91cf48d9112fd0a6dc120",
+    "image-yarn-16384.f32": "5a1591dd67b06dd24791b9059e838dc61c1999872796a6e3d6f41a00bdbdabb9",
+    "text-mean-128.f32": "1aa393d85b254d775f3596ceec0662a4a29927808f464d106b48b7d5ca758732",
+    "text-mean-16.f32": "fa02cf4a5e81b5a2d690fc278d87000c1e3ed0934d216119157f183f4922eb5a",
+    "text-score-32.f32": "eba9d520cb3021a10de8ed1c4965520b435b0bb123ea2b0a34deab8664b2c7a5",
+    "text-yarn-16384.f32": "8ee9b10a4f2cffd2d292fa9a4070e8b408564ccc0f8c44a84168666dcd1b0b3b",
+    "text-yarn-262140.f32": "8ee9b10a4f2cffd2d292fa9a4070e8b408564ccc0f8c44a84168666dcd1b0b3b",
+    "text-yarn-32768.f32": "8ee9b10a4f2cffd2d292fa9a4070e8b408564ccc0f8c44a84168666dcd1b0b3b"
+  },
+  "vector_directory": "/tmp/oxide-mistral3-native-b66-root-gold-v7/vectors",
+  "comparison": null
+}

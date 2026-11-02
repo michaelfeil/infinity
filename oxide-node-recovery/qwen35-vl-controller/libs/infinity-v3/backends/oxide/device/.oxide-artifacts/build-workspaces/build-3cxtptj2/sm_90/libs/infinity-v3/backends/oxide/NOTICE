@@ -1,0 +1,42 @@
+Infinity oxide backend
+
+Covered original model-executor and kernel contributions are licensed under
+Infinity Restricted MIT License 1.0, in the workspace LICENSE.
+
+The host runtime and compiled device kernels use NVIDIA CUDA Rust, pinned at
+999094fe568fc3080f80d49e9c44e3680ad1c968:
+https://github.com/NVIDIA/cuda-rust
+Copyright (c) 2021-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+Licensed under Apache License 2.0; see LICENSES/Apache-2.0.txt in the workspace.
+Retain the dependency license notices when packaging native kernel artifacts.
+
+The kernel producer also uses libm under its published MIT OR Apache-2.0
+license. CUDA, cuBLAS, and optional attention providers retain their own terms.
+
+The word-only width-768 embedding LayerNorm in device/src/aten_embedding.rs
+is adapted from PyTorch aten/src/ATen/native/cuda/layer_norm_kernel.cu at
+5c4886908584029761b579af026dcfb627c84070. Its complete copyright and BSD
+license are retained in that source and device/LICENSE-PyTorch-BSD3. Include
+that license when redistributing the compiled device kernels.
+
+The biasless rounded-residual normalization in device/src/encoder_prenorm.rs
+adapts the bundled Candle layer-norm extension. Its complete BSD-3-Clause
+notice is retained in that source and device/LICENSE-Candle-BSD3. Include
+that license when redistributing the compiled device kernels.
+
+
+The PyTorch checkpoint adapter uses a vendored pytorch-reader 0.22.0 copy under
+vendor/pytorch-reader, derived from tracel-ai/burn at
+b8d75ad07f426537594a5beb9309d62d916bcf05 under MIT OR Apache-2.0. The complete
+upstream license texts, original file hashes, modification list and attribution
+notice are retained in that directory (LICENSE-MIT, LICENSE-APACHE, NOTICE,
+provenance.json). The vendored source is the frozen V3 prototype unchanged;
+only Cargo.toml is adapted for the Oxide path build. Deflated ZIP remains
+unsupported by the prototype verifier, and Oxide rejects compressed entries for
+backend publication rather than accepting its quadratic range access.
+
+The prepared FP8 descriptor recipe in src/lt/fp8.rs follows the public native
+helpers/fp8_linear.cpp scaled-mm implementation, which retains its PyTorch BSD
+attribution. The complete inherited notice/license remains in
+device/LICENSE-PyTorch-BSD3; original Rust ownership/binding code follows the
+repository license.

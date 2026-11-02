@@ -1,0 +1,4 @@
+infinity_encoder_activation_gelu_tanh_bf16
+infinity_encoder_activation_relu_bf16
+infinity_encoder_activation_silu_bf16
+infinity_encoder_activation_tanh_bf16

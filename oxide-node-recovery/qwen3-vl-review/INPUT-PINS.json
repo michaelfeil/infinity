@@ -1,0 +1,123 @@
+{
+  "schema": "oxide-qwen3vl-rope-budget-review-input-pins/v1",
+  "captured_utc": "2026-11-02",
+  "review_mode": "read-only; no compile/GPU/CUDA/query/Torch/Docker/network; writes only in this review project",
+  "source_ready": {
+    "path": "/tmp/oxide-qwen3vl-rope-budget-fix-v1/SOURCE-READY.json",
+    "sha256": "a7953d82d1371edbfbf8619a144c79d0b81cd38509ef88966929b0c5b8c2e224"
+  },
+  "source_freeze": {
+    "path": "/tmp/oxide-qwen3vl-rope-budget-fix-v1/SOURCE-FREEZE.json",
+    "sha256": "f9c6a6beae114b65e153b3af3d9f561d3de4f20141ccf5061f296eda91b205c8",
+    "manifest": "/tmp/oxide-qwen3vl-rope-budget-fix-v1/source-freeze.sha256",
+    "manifest_sha256": "0adca4bee57bc38b3b4f76579b96acef0dec66ee3e60d864a753dc46ab461370",
+    "file_count": 1079,
+    "manifest_verify_exit": 0
+  },
+  "candidate": {
+    "path": "/tmp/oxide-qwen3vl-rope-budget-fix-v1/candidate",
+    "decoder_sha256": "28d022df0bd22181a8187bd7329588ae3c9c7453602e0b38c67b1dca4bc5644d",
+    "rotary_sha256": "5ac97a7e119ece22f84a34b692162b1306e1850338c026d555489103817d910a",
+    "host_consumer_sha256": "921a0e56bdadce4d2c9c921fccf612483d80b4e87964e8b10a9feceb28464aa2"
+  },
+  "frozen_snapshot": {
+    "path": "/tmp/oxide-all-model-feature-matrix-v1/qwen-vl-current-v1",
+    "commit": "027b359c6e0c5378cd07398b07b4435af3ee492d",
+    "decoder_sha256": "6850cbb961ae75c672eea2820cb8e2f5b3726bb71a56b0007b36cf47a898efe5",
+    "rotary_sha256": "5ac97a7e119ece22f84a34b692162b1306e1850338c026d555489103817d910a",
+    "host_consumer_sha256": "bfcd6a0ceda7eaed2111f1f3f415ef9ef7c467b0d1de37b521cba7285600cf92"
+  },
+  "public_head": {
+    "path": "/tmp/infinity-plain-cuda",
+    "commit": "252789b05ea2e09c14971c04dfcce458f863fead",
+    "decoder_sha256": "13dcc849d07ca30f82dc8d51362b98db988614c1d0fcb23ed0ca4917a398fd51",
+    "rotary_sha256": "5ac97a7e119ece22f84a34b692162b1306e1850338c026d555489103817d910a",
+    "patched_decoder_sha256": "62a2fcf3cd2e539f5eb2681aec9a7a269d92a1f540ec86f10b760dede85745ad",
+    "working_tree_clean": true
+  },
+  "patches": {
+    "private_decoder": {
+      "path": "/tmp/oxide-qwen3vl-rope-budget-fix-v1/patches/decoder-rope-budget-private.patch",
+      "sha256": "8f0fbd782ad5c81db131d33ec85b7a5d4adcd3eb9b4591af8a235c5bf29cac96",
+      "patch_to_stdout_result_sha256": "28d022df0bd22181a8187bd7329588ae3c9c7453602e0b38c67b1dca4bc5644d"
+    },
+    "public_decoder": {
+      "path": "/tmp/oxide-qwen3vl-rope-budget-fix-v1/patches/decoder-rope-budget-public.patch",
+      "sha256": "63b6c34e9ec5697e5f17a5be4e2804a425f9980a2e745f2048d898ea75623b14",
+      "patch_to_stdout_result_sha256": "62a2fcf3cd2e539f5eb2681aec9a7a269d92a1f540ec86f10b760dede85745ad"
+    },
+    "harness": {
+      "path": "/tmp/oxide-qwen3vl-rope-budget-fix-v1/patches/qwen3_vl_host_consumer-owning-life.patch",
+      "sha256": "8fa61be422ec4afd31d8a04ac2eae18e8305c8820dfcf5f6d0d0f5a9cfba15e4",
+      "patch_to_stdout_result_sha256": "921a0e56bdadce4d2c9c921fccf612483d80b4e87964e8b10a9feceb28464aa2"
+    }
+  },
+  "build": {
+    "function_delta": {
+      "path": "/tmp/oxide-qwen3vl-rope-budget-fix-v1/build/FUNCTION-DELTA.json",
+      "sha256": "ab4ec5f42e9d949ed8c5cbf3b0debc738c8150c82d02ec9e7345ed6ebd7fa9b9"
+    },
+    "public_decoder": {
+      "path": "/tmp/oxide-qwen3vl-rope-budget-fix-v1/build/public-decoder.rs",
+      "sha256": "62a2fcf3cd2e539f5eb2681aec9a7a269d92a1f540ec86f10b760dede85745ad"
+    },
+    "conditional_script": {
+      "path": "/tmp/oxide-qwen3vl-rope-budget-fix-v1/build_once_after_pass.sh",
+      "sha256": "282653e4bb96183712df6a6b534810d73a34fb8fd433c6964f588577d3173832"
+    },
+    "opt3_target_dirs_present": false
+  },
+  "proof_logs": {
+    "environment.txt": "bf339a2b9a50ad2ca8c2509a1166e8590c672663bcf923aa8f4da121bc5a78aa",
+    "fmt.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "decoder-budget-tests.log": "5db13a5b3fa3a2550137f6a4f7b0f422a457613dec0d38ce3272ec95d289336c",
+    "oxide-lib-tests.log": "46bddf0e35668b9bcd60f1a19a979707b70aa1704d285a402ded099bfe684af5",
+    "host-consumer-tests.log": "ebe2f292ef73cc83e2b1bd2a01a061f3340f5769ef3be90c119d6ad67fe859fd",
+    "factory-tests.log": "d4d6a5222fd38c21582cbc8e5eaf724c79098a0d1a748e91a357884040a1f1d6",
+    "real-fixtures.log": "2207023318f4e9b8f679c6c1db747545d550c21da9b3d7e0b3bdb1623379fb8d",
+    "clippy.log": "c5ee62d017da04a7d4e9b8e7ea36a30601d19583bb997e4a02dca129a59b9256",
+    "host-consumer-build.log": "fb5b827e367e18b9ade472c12750cc90ed2cea2a58dc4f3ea72c2255d456eba3",
+    "patch-checks.txt": "da4fdb44681870fba0a21f674d7822155af98f374a59fd3c3a091d7caa14a56c",
+    "diff-vs-frozen.txt": "0cca6463883decc9a52a723b8501dba64439c00b3b5834f547475097d5b8d02f",
+    "build-guard-check.txt": "370b3cee07ac274c77d5c04c9fa7541f27eb17470e9cdc198adf0eddc017af46",
+    "public-head-focused-tests.log": "d6c0fa4e5a773b29e039691eab3722585372137cd077bf51db71b3f2881c8484",
+    "public-head-lib-tests.log": "974d703f1b48d16ecd95a00bc275205b5c829fdb9ed8ef32baa19994aaecd95c",
+    "public-head-patch-apply.log": "e3596e0ba09312e446f1689a71b2fbed4dd7b605e84d3178e5cdcd57925164ed"
+  },
+  "failed_capsule": {
+    "report": {
+      "path": "/tmp/oxide-qwen3vl-root-oxide-quality-v6/report.json",
+      "sha256": "cf9548e94235df635ffa6c7464b63d626a41a36b01593097b05b44acab129959"
+    },
+    "consumer": {
+      "path": "/tmp/opencode/qwen-vl-host-consumer-quality-target/release/examples/qwen3_vl_host_consumer",
+      "sha256": "13c66c8477b2b894d2416d123d5fbc818a502c1d9895f3efff909952b9d731ce"
+    }
+  },
+  "native": {
+    "v6_report": {
+      "path": "/tmp/oxide-qwen3vl-root-quality-v6/report.json",
+      "sha256": "baf895706410a8c253cc92ebf16865ab21de9bf9c48c9c0f174cab55ed9a1821",
+      "returncode": 0,
+      "observations": 8,
+      "library_sha256": "b66d70b61b39e1bf0d565aca33bac7c5e21849677396ce5216f5baf73027d37e",
+      "pins_sha256": "907a5b0d20c9a6b0b21d777ca4be08a0754c205b763bb5524aa10d12d59f3194"
+    },
+    "gold_consumer": {
+      "path": "/tmp/opencode/qwen-vl-native-release-target/release/qwen3-vl-b66-consumer",
+      "sha256": "89bd6274a26c62fa719ad442d8c2dfeb06e195cb0731117cb005437127c1b671"
+    },
+    "b66_library_pin": {
+      "path": "/tmp/native214-fa4-mode20/install/lib/libtei_torch.so",
+      "path_present": false,
+      "sha256": "b66d70b61b39e1bf0d565aca33bac7c5e21849677396ce5216f5baf73027d37e",
+      "hash_bound_by_v6_report": true,
+      "reuse_affected": false
+    }
+  },
+  "notes": [
+    "The reviewer did not re-execute the CPU proof; supplied proof logs were inspected and their hashes match SOURCE-READY.",
+    "The supplied proof environment records CPU 72-79, jobs 4, CUDA_VISIBLE_DEVICES empty, offline true.",
+    "No GPU, CUDA context, device compile, Torch, Docker, network, or optimized build was used by the reviewer."
+  ]
+}

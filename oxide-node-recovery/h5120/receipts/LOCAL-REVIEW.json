@@ -1,0 +1,53 @@
+{
+  "status": "SOURCE_REVIEW_PASS",
+  "checks": {
+    "primary_rsqrt": true,
+    "rms_leaf_reviewed_bytes": true,
+    "norm3072_corrected_bytes": true,
+    "ABI_infinity_rms_norm_5120_aten": true,
+    "ABI_infinity_rms_norm_3072_exact_vector": true,
+    "ABI_infinity_add_rms_norm_3072_exact_vector": true,
+    "ABI_infinity_mistral3_rope_tables_scaled_bf16": true,
+    "preserve_qwen3vl.rs": true,
+    "preserve_qwen35vl.rs": true,
+    "MIT_exact_inherited": true,
+    "Apache_exact_inherited": true,
+    "MIT_not_BSD": true,
+    "wrong_scale_recipe_distinguished": true,
+    "wrong_corner_group_distinguished": true
+  },
+  "interpolation_cpu_witnesses": {
+    "group": {
+      "v": [
+        0.31640625,
+        -3.625,
+        3.859375,
+        4.75
+      ],
+      "dr": 0.6472449898719788,
+      "dc": 0.02193673886358738,
+      "native": 2.59375,
+      "wrong": 2.578125
+    },
+    "scale": {
+      "v": [
+        7.3125,
+        -2.0625,
+        -7.5625,
+        5.03125
+      ],
+      "dr": 0.8642630577087402,
+      "dc": 0.3403679430484772,
+      "native": -2.265625,
+      "wrong": -2.28125
+    }
+  },
+  "scope": "Independent local review of DeepSeek-authored leaves/consumer; source ABI/licensing only, no operator or model numerical claim",
+  "external_review": "fresh Baseten dispatch rejected by automatic approval review; no retry or indirect routing",
+  "pending_runtime": [
+    "new H5120 ATen RMS20",
+    "Mistral3 norm3072/YaRN",
+    "Q35VL interpolation"
+  ],
+  "no_model_admission": true
+}

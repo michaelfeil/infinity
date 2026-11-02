@@ -1,0 +1,116 @@
+{
+  "schema": "oxide-qwen3-vl-async-upload-audit/v1",
+  "source_root": "/tmp/oxide-all-model-feature-matrix-v1/qwen-vl-current-v1/libs/infinity-v3",
+  "scope": "Qwen3-VL request-path host-to-device and device-to-host staging",
+  "finding": "No request-path DeviceBuffer::from_host synchronize found. Load-time immutable decoder rope tables still use from_host and are explicitly out of the request path.",
+  "request_path": {
+    "weights_load_once": {
+      "file": "backends/oxide/src/upload.rs",
+      "line": 150,
+      "mechanism": "pinned WeightUploader slot + memcpy_htod_async + per-slot Event retention; loaded once in Qwen3VlExecutor::new"
+    },
+    "image_pixels_and_host_rows": {
+      "file": "backends/oxide/src/qwen3_vl_device.rs",
+      "line": 157,
+      "mechanism": "plan_pinned_staging assigns disjoint per-image pixel/frame ranges; VisionWork pre-stages all images into immutable pinned regions before the first async H2D; copy_prefix enqueues memcpy_htod_async from those disjoint slices"
+    },
+    "rope_and_frame_offsets": {
+      "file": "backends/oxide/src/qwen3_vl_device.rs",
+      "line": 157,
+      "mechanism": "disjoint pinned frame regions pre-staged once; foreground rows/rope pinned tables filled once; retained until fence"
+    },
+    "output": {
+      "file": "backends/oxide/src/decoder.rs",
+      "line": 1985,
+      "mechanism": "download_output_into -> memcpy_dtoh_async into request pinned HostIo output"
+    },
+    "completion": {
+      "file": "backends/oxide/src/staging.rs",
+      "line": 494,
+      "mechanism": "event record after launches; wait only in deferred completion/drop; no success-path Stream::synchronize in launch"
+    },
+    "decoder_metadata": {
+      "file": "backends/oxide/src/qwen3_vl_engine.rs",
+      "line": 339,
+      "mechanism": "request-specific HostIoLease pinned input; pack_decoder_metadata then upload"
+    }
+  },
+  "load_time_only": {
+    "decoder_rope_tables": {
+      "file": "backends/oxide/src/decoder.rs",
+      "lines": [
+        763,
+        764
+      ],
+      "mechanism": "DeviceBuffer::from_host during DecoderModel::new; immutable weight/table setup, not a per-request upload"
+    }
+  },
+  "two_slot_contract": {
+    "pool": {
+      "file": "backends/oxide/src/staging.rs",
+      "line": 82,
+      "mechanism": "HostIo::pool creates exactly two slots"
+    },
+    "submit_use": {
+      "file": "backends/oxide/src/qwen3_vl_engine.rs",
+      "line": 339,
+      "mechanism": "Qwen3VlEngine::submit uses blocking acquire; direct same-thread held-two callers must release one owner first"
+    },
+    "acquire": {
+      "file": "backends/oxide/src/staging.rs",
+      "line": 182,
+      "mechanism": "normal blocking SlotPool::acquire per Root policy; BackendThread completion thread releases slots"
+    }
+  },
+  "one_context_bind": {
+    "file": "backends/oxide/src/qwen3_vl_engine.rs",
+    "line": 343,
+    "mechanism": "one bind per submission; forward_outputs_with has no bind; sync public forward wrapper binds separately"
+  },
+  "file_pins": [
+    {
+      "path": "backends/oxide/src/upload.rs",
+      "sha256": "88b769a7cea1fb0faa9fb68a46642e694462b2f51768c2bc39ca83b0ae1e083e",
+      "bytes": 6039
+    },
+    {
+      "path": "backends/oxide/src/qwen3_vl_device.rs",
+      "sha256": "55f61b30ef01126b3151623266cd4ea5ea64733510e4a80df2e163638f74d690",
+      "bytes": 63711
+    },
+    {
+      "path": "backends/oxide/src/decoder.rs",
+      "sha256": "6850cbb961ae75c672eea2820cb8e2f5b3726bb71a56b0007b36cf47a898efe5",
+      "bytes": 103663
+    },
+    {
+      "path": "backends/oxide/src/staging.rs",
+      "sha256": "d5f148706628770ba7b9443b38e73e3f400f6db1e7824ac3da400363a8240e68",
+      "bytes": 30866
+    },
+    {
+      "path": "backends/oxide/src/qwen3_vl_engine.rs",
+      "sha256": "1c04948aaa36c1e27a8960af9f2bf8b061fe0f3f100f4be0b05dd3477cfd24c1",
+      "bytes": 16701
+    }
+  ],
+  "non_claims": [
+    "Source-only audit; no GPU/request execution. Load-time from_host is not converted here.",
+    "No try_acquire or public try_submit is adopted."
+  ],
+  "multi_image_disjoint": {
+    "plan": "plan_pinned_staging",
+    "tests": [
+      "pinned_staging_plan_is_disjoint_and_covers_every_image",
+      "pinned_staging_plan_rejects_bad_payloads_and_overflow",
+      "pinned_arena_capacities_use_request_totals_not_max_image"
+    ],
+    "source_immutability": "No pinned source region is rewritten after the first H2D enqueue.",
+    "arena": "host_pixels/host_frames capacities are key.staged_pixels/key.staged_frames; bytes charged at totals; device pixels/frame_offsets remain max-sized."
+  },
+  "media_validation": {
+    "image": "config-aware patch_dim/merge_size preflight in prepare_batch before empty selector on both async and sync routes",
+    "audio": "non-empty audios typed-rejected before empty selector and GPU",
+    "selectors": "bounds, duplicates and mixed pooled/raw rejected before lease"
+  }
+}

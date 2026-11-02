@@ -1,0 +1,47 @@
+{
+  "schema": "oxide-qwen35-moe-factory-service-blocking-v3-freeze/v1",
+  "base_v2": "/tmp/oxide-all-model-feature-matrix-v1/qwen35-moe-factory-service-blocking-v2",
+  "base_product": "/tmp/oxide-all-model-feature-matrix-v1/qwen35-moe-factory-poisoncheckout-successor-v1",
+  "product_pins_match": true,
+  "changed_files": [
+    "libs/infinity-v3/backends/oxide/src/qwen35_moe_factory.rs"
+  ],
+  "files": {
+    "libs/infinity-v3/backends/oxide/src/qwen35_moe_factory.rs": {
+      "bytes": 47509,
+      "sha256": "869832e24779626c39f74de83d407f9a8fe973833dbb5cf81fbdd464ffb0dcb5"
+    },
+    "SERVICE-BLOCKING-WARM.patch": {
+      "bytes": 5450,
+      "sha256": "86ce2edfa368c496b11fb687ac6727251cb0d16a4929ecafeab38860713cdc6b"
+    },
+    "FOCUSED-TESTS.log": {
+      "bytes": 7155,
+      "sha256": "2f1124d56d17a31cd7cf4ce1973bb894726f14aa4e1d211f175829e7003d13bd"
+    },
+    "CLIPPY.log": {
+      "bytes": 235,
+      "sha256": "d3accd5b2ca3cfed3dc1a86aca31b0d3331672cc05677e551200f5f221547eb3"
+    },
+    "REPORT.md": {
+      "bytes": 1543,
+      "sha256": "539c42f451a6a0fea2f5b56fb503e919d08641e6e8dc5d7b812547575a9cf57b"
+    },
+    "COMMANDS.txt": {
+      "bytes": 516,
+      "sha256": "9076ae36924d2220da1ae3884c4555eeec48e5ae056039c0424aee7c655e1705"
+    },
+    "PRODUCT-PINS.json": {
+      "bytes": 1702,
+      "sha256": "09258c364dbc4ebeb36a9cd59293bb0a9fae489971ed4742cc51ad0caf9a6759"
+    }
+  },
+  "tests": {
+    "focused": "74 passed, 0 failed",
+    "clippy": "-D warnings pass",
+    "fmt": "pass"
+  },
+  "optimized_build_run": false,
+  "gpu_run": false,
+  "harness_edited": false
+}

@@ -1,0 +1,14 @@
+{"starting_cpu": {"model": "qwen3-reranker4b", "probe": "/tmp/oxide-dense-mean-lifecycle-root-v5/qwen3-reranker4b/cpu/probe"}}
+{"cuda_visible_devices": "", "engine_created": false, "model": "qwen3-reranker4b", "parser_only": true, "process_exit": 0, "report": "/tmp/oxide-dense-mean-lifecycle-root-v5/qwen3-reranker4b/cpu/probe/report.json", "run_log": "/tmp/oxide-dense-mean-lifecycle-root-v5/qwen3-reranker4b/cpu/run.log", "status": "validated"}
+{"starting_cpu": {"model": "qwen3-4b", "probe": "/tmp/oxide-dense-mean-lifecycle-root-v5/qwen3-4b/cpu/probe"}}
+{"cuda_visible_devices": "", "engine_created": false, "model": "qwen3-4b", "parser_only": true, "process_exit": 0, "report": "/tmp/oxide-dense-mean-lifecycle-root-v5/qwen3-4b/cpu/probe/report.json", "run_log": "/tmp/oxide-dense-mean-lifecycle-root-v5/qwen3-4b/cpu/run.log", "status": "validated"}
+{"starting_cpu": {"model": "mistral7b", "probe": "/tmp/oxide-dense-mean-lifecycle-root-v5/mistral7b/cpu/probe"}}
+{"cuda_visible_devices": "", "engine_created": false, "model": "mistral7b", "parser_only": true, "process_exit": 0, "report": "/tmp/oxide-dense-mean-lifecycle-root-v5/mistral7b/cpu/probe/report.json", "run_log": "/tmp/oxide-dense-mean-lifecycle-root-v5/mistral7b/cpu/run.log", "status": "validated"}
+{"starting": {"model": "qwen3-reranker4b", "mode": "plain", "probe": "/tmp/oxide-dense-mean-lifecycle-root-v5/qwen3-reranker4b/plain/probe"}}
+{"mode": "plain", "model": "qwen3-reranker4b", "process_exit": 0, "report": "/tmp/oxide-dense-mean-lifecycle-root-v5/qwen3-reranker4b/plain/probe/report.json", "run_log": "/tmp/oxide-dense-mean-lifecycle-root-v5/qwen3-reranker4b/plain/run.log", "sanitizer": null, "status": "passed"}
+{"starting": {"model": "qwen3-reranker4b", "mode": "mem", "probe": "/tmp/oxide-dense-mean-lifecycle-root-v5/qwen3-reranker4b/mem/probe"}}
+{"mode": "mem", "model": "qwen3-reranker4b", "process_exit": 0, "report": "/tmp/oxide-dense-mean-lifecycle-root-v5/qwen3-reranker4b/mem/probe/report.json", "run_log": "/tmp/oxide-dense-mean-lifecycle-root-v5/qwen3-reranker4b/mem/run.log", "sanitizer": "clean", "status": "passed"}
+{"starting": {"model": "qwen3-reranker4b", "mode": "init", "probe": "/tmp/oxide-dense-mean-lifecycle-root-v5/qwen3-reranker4b/init/probe"}}
+{"mode": "init", "model": "qwen3-reranker4b", "process_exit": 0, "report": "/tmp/oxide-dense-mean-lifecycle-root-v5/qwen3-reranker4b/init/probe/report.json", "run_log": "/tmp/oxide-dense-mean-lifecycle-root-v5/qwen3-reranker4b/init/run.log", "sanitizer": "clean", "status": "passed"}
+{"starting": {"model": "qwen3-4b", "mode": "plain", "probe": "/tmp/oxide-dense-mean-lifecycle-root-v5/qwen3-4b/plain/probe"}}
+run_root_lifecycle: embed-mixed-override: embedding total differs from planned physical count

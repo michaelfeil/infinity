@@ -1,0 +1,232 @@
+{
+  "active_process": null,
+  "comparison_progress": {
+    "cpu": []
+  },
+  "comparisons": {
+    "cpu": []
+  },
+  "mode": "cpu",
+  "native_45_rerun": false,
+  "pools": {
+    "cpu": [
+      {
+        "command": [
+          "taskset",
+          "-c",
+          "184-191",
+          "/tmp/oxide-all-model-feature-matrix-v1/qwen3-moe-root629-v8/bin/unified_probe",
+          "--cases",
+          "/tmp/oxide-moe-root629-v8-root-cpu-v1/cpu/cls/cases.json",
+          "--summary",
+          "/tmp/oxide-moe-root629-v8-root-cpu-v1/cpu/cls/summary.json",
+          "--validate-cases-only",
+          "--width",
+          "2048",
+          "--dtype",
+          "bfloat16",
+          "--trace"
+        ],
+        "mode": "cpu",
+        "parent_pid": 3,
+        "pid": 4,
+        "pool": "cls",
+        "process": {
+          "argv": [
+            "taskset",
+            "-c",
+            "184-191",
+            "/tmp/oxide-all-model-feature-matrix-v1/qwen3-moe-root629-v8/bin/unified_probe",
+            "--cases",
+            "/tmp/oxide-moe-root629-v8-root-cpu-v1/cpu/cls/cases.json",
+            "--summary",
+            "/tmp/oxide-moe-root629-v8-root-cpu-v1/cpu/cls/summary.json",
+            "--validate-cases-only",
+            "--width",
+            "2048",
+            "--dtype",
+            "bfloat16",
+            "--trace"
+          ],
+          "cwd": "/root",
+          "ended_utc": "2026-11-02T15:49:35Z",
+          "parent_argv": [
+            "/tmp/oxide-all-model-feature-matrix-v1/qwen3-moe-root629-v8/root/run_v8_45.py",
+            "--mode",
+            "cpu",
+            "--kernel-root",
+            "/tmp/oxide-moe-root629-v8-public126-bundle-v1",
+            "--output",
+            "/tmp/oxide-moe-root629-v8-root-cpu-v1"
+          ],
+          "parent_pid": 3,
+          "pid": 4,
+          "returncode": 0,
+          "started_utc": "2026-11-02T15:49:35Z",
+          "stderr": "/tmp/oxide-moe-root629-v8-root-cpu-v1/cpu/cls/cpu.stderr",
+          "stdout": "/tmp/oxide-moe-root629-v8-root-cpu-v1/cpu/cls/cpu.stdout"
+        },
+        "seconds": 0.153,
+        "stderr": "/tmp/oxide-moe-root629-v8-root-cpu-v1/cpu/cls/cpu.stderr",
+        "stderr_sha256": "4ea0b01ca08302be59f8cc44234aa48f522bf25a9c5348939ab0307d3c9e1eb6",
+        "stdout": "/tmp/oxide-moe-root629-v8-root-cpu-v1/cpu/cls/cpu.stdout",
+        "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "summary": "/tmp/oxide-moe-root629-v8-root-cpu-v1/cpu/cls/summary.json",
+        "summary_sha256": "dc22471cded72a2792f7e14ab0ef24319738ee90a3e402cc96602f57be789009",
+        "trace_lines": 30
+      },
+      {
+        "command": [
+          "taskset",
+          "-c",
+          "184-191",
+          "/tmp/oxide-all-model-feature-matrix-v1/qwen3-moe-root629-v8/bin/unified_probe",
+          "--cases",
+          "/tmp/oxide-moe-root629-v8-root-cpu-v1/cpu/mean/cases.json",
+          "--summary",
+          "/tmp/oxide-moe-root629-v8-root-cpu-v1/cpu/mean/summary.json",
+          "--validate-cases-only",
+          "--width",
+          "2048",
+          "--dtype",
+          "bfloat16",
+          "--trace"
+        ],
+        "mode": "cpu",
+        "parent_pid": 3,
+        "pid": 5,
+        "pool": "mean",
+        "process": {
+          "argv": [
+            "taskset",
+            "-c",
+            "184-191",
+            "/tmp/oxide-all-model-feature-matrix-v1/qwen3-moe-root629-v8/bin/unified_probe",
+            "--cases",
+            "/tmp/oxide-moe-root629-v8-root-cpu-v1/cpu/mean/cases.json",
+            "--summary",
+            "/tmp/oxide-moe-root629-v8-root-cpu-v1/cpu/mean/summary.json",
+            "--validate-cases-only",
+            "--width",
+            "2048",
+            "--dtype",
+            "bfloat16",
+            "--trace"
+          ],
+          "cwd": "/root",
+          "ended_utc": "2026-11-02T15:49:35Z",
+          "parent_argv": [
+            "/tmp/oxide-all-model-feature-matrix-v1/qwen3-moe-root629-v8/root/run_v8_45.py",
+            "--mode",
+            "cpu",
+            "--kernel-root",
+            "/tmp/oxide-moe-root629-v8-public126-bundle-v1",
+            "--output",
+            "/tmp/oxide-moe-root629-v8-root-cpu-v1"
+          ],
+          "parent_pid": 3,
+          "pid": 5,
+          "returncode": 0,
+          "started_utc": "2026-11-02T15:49:35Z",
+          "stderr": "/tmp/oxide-moe-root629-v8-root-cpu-v1/cpu/mean/cpu.stderr",
+          "stdout": "/tmp/oxide-moe-root629-v8-root-cpu-v1/cpu/mean/cpu.stdout"
+        },
+        "seconds": 0.14,
+        "stderr": "/tmp/oxide-moe-root629-v8-root-cpu-v1/cpu/mean/cpu.stderr",
+        "stderr_sha256": "4ea0b01ca08302be59f8cc44234aa48f522bf25a9c5348939ab0307d3c9e1eb6",
+        "stdout": "/tmp/oxide-moe-root629-v8-root-cpu-v1/cpu/mean/cpu.stdout",
+        "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "summary": "/tmp/oxide-moe-root629-v8-root-cpu-v1/cpu/mean/summary.json",
+        "summary_sha256": "14cda8a1ebda7f843ec476520b5512a18dfe413915881e049cc1e96e5d4fecaa",
+        "trace_lines": 30
+      },
+      {
+        "command": [
+          "taskset",
+          "-c",
+          "184-191",
+          "/tmp/oxide-all-model-feature-matrix-v1/qwen3-moe-root629-v8/bin/unified_probe",
+          "--cases",
+          "/tmp/oxide-moe-root629-v8-root-cpu-v1/cpu/last-token/cases.json",
+          "--summary",
+          "/tmp/oxide-moe-root629-v8-root-cpu-v1/cpu/last-token/summary.json",
+          "--validate-cases-only",
+          "--width",
+          "2048",
+          "--dtype",
+          "bfloat16",
+          "--trace"
+        ],
+        "mode": "cpu",
+        "parent_pid": 3,
+        "pid": 6,
+        "pool": "last-token",
+        "process": {
+          "argv": [
+            "taskset",
+            "-c",
+            "184-191",
+            "/tmp/oxide-all-model-feature-matrix-v1/qwen3-moe-root629-v8/bin/unified_probe",
+            "--cases",
+            "/tmp/oxide-moe-root629-v8-root-cpu-v1/cpu/last-token/cases.json",
+            "--summary",
+            "/tmp/oxide-moe-root629-v8-root-cpu-v1/cpu/last-token/summary.json",
+            "--validate-cases-only",
+            "--width",
+            "2048",
+            "--dtype",
+            "bfloat16",
+            "--trace"
+          ],
+          "cwd": "/root",
+          "ended_utc": "2026-11-02T15:49:35Z",
+          "parent_argv": [
+            "/tmp/oxide-all-model-feature-matrix-v1/qwen3-moe-root629-v8/root/run_v8_45.py",
+            "--mode",
+            "cpu",
+            "--kernel-root",
+            "/tmp/oxide-moe-root629-v8-public126-bundle-v1",
+            "--output",
+            "/tmp/oxide-moe-root629-v8-root-cpu-v1"
+          ],
+          "parent_pid": 3,
+          "pid": 6,
+          "returncode": 0,
+          "started_utc": "2026-11-02T15:49:35Z",
+          "stderr": "/tmp/oxide-moe-root629-v8-root-cpu-v1/cpu/last-token/cpu.stderr",
+          "stdout": "/tmp/oxide-moe-root629-v8-root-cpu-v1/cpu/last-token/cpu.stdout"
+        },
+        "seconds": 0.141,
+        "stderr": "/tmp/oxide-moe-root629-v8-root-cpu-v1/cpu/last-token/cpu.stderr",
+        "stderr_sha256": "4ea0b01ca08302be59f8cc44234aa48f522bf25a9c5348939ab0307d3c9e1eb6",
+        "stdout": "/tmp/oxide-moe-root629-v8-root-cpu-v1/cpu/last-token/cpu.stdout",
+        "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "summary": "/tmp/oxide-moe-root629-v8-root-cpu-v1/cpu/last-token/summary.json",
+        "summary_sha256": "d1867e5ee6b2fee0a9212573bddb0bfa0d0b90bef52a33698bfdd35f9b32a0df",
+        "trace_lines": 30
+      }
+    ]
+  },
+  "preflight": {
+    "binary_sha256": "a2d3e2a12840d088e6b7b7f8eeed6a40cbd119543e6ccfbd4bc30d2425212029",
+    "model_manifest_sha256": "55be60f3bdfa41310a73bde32d2fdd352a3f11c6e4f3c2cc4affa2f16550fc88",
+    "native_report_sha256": "17446c7c4db65b0c58a4a5bc0387102f1c3b165fe81480d2cb407249070fdb83",
+    "probe": {
+      "file_count": 6,
+      "source_sha256": "61c3fbc72b682e37dc9ac191a70473c1ebb1ce308c49f85f97f61f0a682ad5ae"
+    },
+    "worktree": {
+      "file_count": 690,
+      "source_sha256": "eadbf30a5ecfce458b3ed7ff8f3780108c26bb75f76f085bc7519009fd72307d"
+    }
+  },
+  "requested_pools": [
+    "cls",
+    "mean",
+    "last-token"
+  ],
+  "schema": "qwen3-moe-unified-root-run/v3",
+  "seconds": 0.517,
+  "started_utc": "2026-11-02T15:49:35Z",
+  "status": "cpu-validated"
+}

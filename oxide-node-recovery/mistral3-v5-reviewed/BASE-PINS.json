@@ -1,0 +1,19 @@
+{
+  "schema": "oxide-mistral3-v5-base-pins/v1",
+  "head": "55380b7",
+  "head_subject": "Provide reproducible Qwen3.5 GDN kernel builds",
+  "tree": "ba26a6aaf56ee255c3ab9eaf6c27200719768740",
+  "overlay": "625DenseV5 + Qwen35 e3c38 + MeanV6 decoder fix 629 CPU six-file working-tree overlay",
+  "overlay_files": {
+    "libs/infinity-v3/backends/oxide/src/cublas.rs": "a397c445ae9b80f525e901649e79bd67b8e64197cb89b486bb1255672e412f5c",
+    "libs/infinity-v3/backends/oxide/src/decoder.rs": "6ec12338e7f48a5745aad5bb7ff3792d9fadd3088992e9eb81ae60b14858c669",
+    "libs/infinity-v3/backends/oxide/src/decoder_model.rs": "4e1a203166759a534e1abc9c278d8bda8d62990e001c0d520cc48e2cb58a67fd",
+    "libs/infinity-v3/backends/oxide/src/lib.rs": "4c2d019c6c466eefa3ba4c87df9b541024855fee1d650c60cc8a4505be6ac607",
+    "libs/infinity-v3/backends/oxide/src/native_rope_tables.rs": "3e9555784045218416f828491fd5513754fe73eeb031fc7ef09664d9289e12a3",
+    "libs/infinity-v3/backends/oxide/src/decoder_classifier.rs": "22d68ca72825ce1046fa2453d996aaf72c196a13767a42157fba3cdc0fafd6d7"
+  },
+  "patch": "selective.patch",
+  "patch_sha256": "270c417b2623303a08b416a926f7bf20d1bb66fc23015ccc5336c891675ce2cf",
+  "not_applied": "obsolete upstream V4 bf595; current base already contains V5/Qwen35/MeanV6; v5 adds Mistral3 model-dtype mean, CLS, dynamic score width and deferred enqueue",
+  "root_readonly": true
+}

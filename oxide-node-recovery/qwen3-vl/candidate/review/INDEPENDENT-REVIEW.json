@@ -1,0 +1,259 @@
+{
+  "schema": "oxide-qwen3-vl-e582-independent-review/v1",
+  "reviewer": "author self-review (independent pass over the product route)",
+  "base_commit": "e582ce90eb1544fcff081a495cb8fd4f3c17b112",
+  "scope": "Qwen3-VL only; no Qwen3.5-VL text foundation; no public mutation",
+  "verdict": "route_reachable_source_ready_GPU_PENDING",
+  "route_trace": [
+    {
+      "step": "public factory",
+      "file": "libs/infinity-v3/backends/src/lib.rs",
+      "line": 559,
+      "detail": "init_backend calls infinity_backend_oxide::qwen3_vl_alias on the original config before dense oxide admission."
+    },
+    {
+      "step": "remote/local weights",
+      "file": "libs/infinity-v3/backends/src/lib.rs",
+      "line": 578,
+      "detail": "Remote VL requests download modules.json Dense modules and safetensors through the existing Oxide helpers; local requests must carry the same files."
+    },
+    {
+      "step": "backend construction",
+      "file": "libs/infinity-v3/backends/src/lib.rs",
+      "line": 589,
+      "detail": "Qwen3VlBackend::new_with_pool is constructed inside the existing spawn_blocking startup worker."
+    },
+    {
+      "step": "owning engine",
+      "file": "libs/infinity-v3/backends/src/lib.rs",
+      "line": 757,
+      "detail": "BackendThread owns Box<dyn CoreBackend + Send>; the VL backend is the same worker/lease path as every other backend."
+    },
+    {
+      "step": "Batch -> MultimodalEncoding",
+      "file": "libs/infinity-v3/backends/oxide/src/qwen3_vl_batch.rs",
+      "line": 25,
+      "detail": "pack_batch consumes Batch.multimodal, per-sequence position_ids, prepared pixels and packed cumulative boundaries."
+    },
+    {
+      "step": "deferred owning engine",
+      "file": "backends/oxide/src/qwen3_vl_engine.rs",
+      "line": 1,
+      "detail": "Qwen3VlEngine owns the loaded model, stream, exactly two HostIo slots, a ticket-retired workspace cache and returns Inference::Deferred for submit_embed."
+    },
+    {
+      "step": "concrete VL forward",
+      "file": "libs/infinity-v3/backends/oxide/src/qwen3_vl_service.rs",
+      "line": 115,
+      "detail": "forward_batch selects raw vs pooled, runs the vision tower + dense decoder, and applies the trained readout."
+    },
+    {
+      "step": "factory predicate test",
+      "file": "libs/infinity-v3/backends/src/lib.rs",
+      "line": 1030,
+      "detail": "normal_oxide_factory_detects_qwen3_vl_aliases_before_dense_admission proves the normal factory sees the alias even without a CUDA device."
+    }
+  ],
+  "facade_check": {
+    "isolated_facade": false,
+    "detail": "Qwen3VlBackend is returned by the normal init_backend factory and owned by the normal BackendThread. It is not a side binary that the product factory cannot reach.",
+    "literal_OxideBackend_new": "The standard dense OxideBackend::new constructor remains the dense-only path; the product factory dispatches Qwen3-VL immediately before it. Changing OxideBackend::new's return type to an enum would be a separate large refactor and is not claimed."
+  },
+  "trained_heads": {
+    "ColQwen3": {
+      "native_bridge": "backends/libtorch/cpp/bridge.cpp:234-248 strips vlm. and uses embedding_proj_layer.weight/bias; epsilon=finfo(dtype).eps.",
+      "oxide": "qwen3_vl_readout.rs loads embedding_proj_layer via the vlm. alias, then linear.weight, then Dense modules; norm_eps is 1/128 for BF16 and 1/1024 for F16.",
+      "actual_checkpoint": "/workspace/model-performance/michaelfeil/torch215-comparison-20261029/models/TomoroAI--tomoro-colqwen3-embed-4b",
+      "actual_check": "config parses, 715-tensor inventory binds 2 readout tensors, embedding_proj_layer is 320x2560, output width 320"
+    },
+    "NemotronColEmbed": {
+      "actual_checkpoints": [
+        "/workspace/model-performance/michaelfeil/torch215-comparison-20261029/models/nvidia--nemotron-colembed-vl-4b-v2",
+        "/tmp/perplexity-embedding-audit/multivector-support/nvidia--nemotron-colembed-vl-8b-v2"
+      ],
+      "actual_check": "config parses, skip_final_norm true, no projection required, full inventory binds lm_head tolerance, readout width = text hidden"
+    },
+    "HF_ColBERT": {
+      "oxide": "main-checkpoint linear.weight/bias with the vlm. alias fallback",
+      "test": "synthetic projection + L2 is covered; no checked-in HF Qwen3-VL ColBERT checkpoint was found locally"
+    },
+    "Rerank": {
+      "oxide": "explicit ReadoutConfig::rerank() only; requires a real score.weight",
+      "native": "no Qwen3-VL Native model_type selects rerank; generic score head is opt-in, not auto-selected"
+    }
+  },
+  "dtypes": {
+    "effective_dtype": "top-level config dtype; sub-config float32 is not the storage contract (ColQwen3 declares float32 but stores BF16)",
+    "bf16": "concrete tower/decoder/readout; all actual cached tuples",
+    "f16": "config/readout structural only; device kernels absent; backend rejects F16; reported to central shader owner",
+    "f32": "GPU adapter rejects; host readout only",
+    "actual_check": "ColQwen3 config text/vision dtype float32 -> effective BF16 -> inventory and readout pass"
+  },
+  "geometry": {
+    "report": "qwen-vl-geometry-v1/CONFIG-TUPLES.json",
+    "fa4_request": "qwen-vl-geometry-v1/FA4-REQUEST.json",
+    "cached_ready": [
+      "Qwen3-VL-8B-Embedding",
+      "TomoroAI-ColQwen3-4B",
+      "Nemotron-ColEmbed-VL-4B-v2",
+      "Nemotron-ColEmbed-VL-8B-v2"
+    ],
+    "derived_ready": [
+      "Qwen3-VL-2B",
+      "Qwen3-VL-32B (Q64/KV8 ratio8 reuses mode22/5)"
+    ],
+    "derived_missing_fa4": [
+      "Qwen3-VL-14B/other Q40/KV8 d128 ratio5 (causal + noncausal)"
+    ],
+    "derived_missing_decoder": [
+      "Qwen3-VL-30B-A3B (MoE text outside dense foundation)"
+    ],
+    "generic_decoder": "Qwen3Generic covers arbitrary dense Qwen3 head_dim-128 widths with the existing generic norm/RoPE/QK exports; validate_recipe tests H2048/H2560/H5120",
+    "head_alias": "FA4 selection is ratio/head_dim/dtype/causal/mask-family based; absolute Q/KV heads are runtime. Tests cover 12/12 and 24/24 d64 via bert, Q64/KV8 d128 via causal_gqa8/gqa8, Q40/KV8 rejection, and global-vs-local separation."
+  },
+  "findings": [
+    {
+      "id": "R-01",
+      "severity": "blocker",
+      "issue": "Qwen3VlBackend was only a side facade; normal factory could not reach it",
+      "fix": "init_backend now detects qwen3_vl/colqwen3/qwen3_vl_nemotron_embed before dense admission and returns Qwen3VlBackend into the owning engine",
+      "status": "closed"
+    },
+    {
+      "id": "R-02",
+      "severity": "blocker",
+      "issue": "ColQwen3 actual checkpoint uses vlm.model.* and vlm.embedding_proj_layer",
+      "fix": "checkpoint source_alias, inventory vlm. stripping, executor text prefix selection, readout embedding_proj_layer alias",
+      "status": "closed"
+    },
+    {
+      "id": "R-03",
+      "severity": "high",
+      "issue": "ColQwen3 config declares text/vision float32 but weights and runtime are BF16",
+      "fix": "effective dtype is top-level; sub-dtype retained only in original JSON",
+      "status": "closed"
+    },
+    {
+      "id": "R-04",
+      "severity": "high",
+      "issue": "o_proj inventory assumed hidden x hidden; Qwen3-VL 4B o_proj is hidden x q_width",
+      "fix": "inventory uses [hidden, q_width]",
+      "status": "closed"
+    },
+    {
+      "id": "R-05",
+      "severity": "high",
+      "issue": "decoder rejected 4B H2560/2B H2048/32B H5120",
+      "fix": "added Qwen3Generic structural recipe using existing generic exports",
+      "status": "closed"
+    },
+    {
+      "id": "R-06",
+      "severity": "medium",
+      "issue": "multi-vector normalization used hard failure on zero rows",
+      "fix": "Native clamp_min(eps) with dtype-specific epsilon",
+      "status": "closed"
+    },
+    {
+      "id": "R-07",
+      "severity": "medium",
+      "issue": "tied lm_head tensor rejected by full inventory",
+      "fix": "optional lm_head.weight/bias binding for embedding checkpoints",
+      "status": "closed"
+    },
+    {
+      "id": "R-08",
+      "severity": "high",
+      "issue": "Qwen3-VL-14B/other Q40/KV8 d128 ratio5 text FA4 profile absent",
+      "fix": "reported to central FA4 owner packet as the only genuinely new ratio; Q64/KV8 reuses existing profiles",
+      "status": "open_reported"
+    },
+    {
+      "id": "R-09",
+      "severity": "high",
+      "issue": "F16 device tower/decoder exports absent",
+      "fix": "reported; backend rejects F16",
+      "status": "open_reported"
+    },
+    {
+      "id": "R-10",
+      "severity": "medium",
+      "issue": "Qwen3-VL-30B-A3B MoE text outside dense foundation",
+      "fix": "reported as a text-foundation gap, not faked",
+      "status": "open_external"
+    },
+    {
+      "id": "R-11",
+      "severity": "medium",
+      "issue": "ColQwen3/Nemotron readout is host-side after token readback",
+      "fix": "functional CPU composition; performance qualification needs a device DenseHead readout",
+      "status": "open_perf"
+    },
+    {
+      "id": "R-12",
+      "severity": "low",
+      "issue": "literal OxideBackend::new is still dense-only",
+      "fix": "normal factory reaches VL; changing the constructor return type is a separate refactor",
+      "status": "accepted"
+    },
+    {
+      "id": "R-13",
+      "severity": "high",
+      "issue": "earlier review treated absolute Q/KV heads as a profile requirement",
+      "fix": "adopted the dynamic-heads audit: normal VL factory and geometry use ratio matching; no exact absolute-head restriction; global/local and right-asym mask families preserved",
+      "status": "closed"
+    },
+    {
+      "id": "R-14",
+      "severity": "high",
+      "issue": "submit_embed was Inference::Ready over a synchronous forward, with no request-specific lease/ticket ownership",
+      "fix": "added Qwen3VlEngine with two HostIo slots, pinned input/output, begin_tracked/record/wait, ticket-retired A/B workspaces, DeferredVl Drop fence, recoverable pre-lease media validation and one context bind per submission",
+      "status": "closed"
+    }
+  ],
+  "tests": {
+    "clean_tree_apply": "pass",
+    "oxide_lib": "480 passed, 0 failed, 56 ignored",
+    "factory_alias": "pass",
+    "actual_colqwen3_config_inventory_projection": "pass",
+    "actual_nemotron_4b_8b_config_inventory": "pass",
+    "geometry_report": "pass",
+    "real_fixtures_pack": "all 8 pass",
+    "fmt": "pass",
+    "clippy": "pass",
+    "fa4_head_alias": "pass",
+    "deferred_engine_cache": "pass (A/B held, fence drain, growth)",
+    "host_consumer_cpu": "pass (4 actual checkpoints, 8 fixtures, manifest/factory/lifecycle)"
+  },
+  "remaining_root_gates": [
+    "Run the container CPU preflight with the actual b66/Torch/cuBLASLt and both consumer SHAs.",
+    "Run coupled Native-vs-Oxide quality/lifetime/perf on the 8 fixtures, including actual ColQwen3 and Nemotron checkpoints.",
+    "Append the 40/8/128 causal BF16 text profile for the verified 32B tuple or leave 32B unadmitted.",
+    "Keep old90 preservation and canonical26 untouched during the device merge."
+  ],
+  "non_claims": [
+    "No GPU execution, device compile, quality, lifetime or performance result.",
+    "The 2B/32B tuples are derived public-family tuples and must be verified against real configs.",
+    "No F16 device support or MoE text support is claimed."
+  ],
+  "lifecycle_audit": {
+    "submit_embed": "Qwen3VlEngine::submit returns Inference::Deferred; the synchronous embed wrapper is the only Ready path and is used by probe/tests.",
+    "pinned_host_io": "HostIo::pool creates exactly two slots; lease.prepare reserves the request key/output, pack_decoder_metadata writes the pinned input, download_output_into writes the pinned output.",
+    "ticket": "lease.begin_tracked issues the slot clock ticket before the first GPU upload; lease.record records the same-stream event after all launches; DeferredVl.wait calls the event fence and publishes the ticket.",
+    "retirement": "completed tickets are drained into the free workspace list; in-flight A/B workspaces are held; a third request allocates C after a lease frees. DeferredVl::Drop waits before freeing/retiring, including when the caller drops the Inference.",
+    "growth": "WorkspaceCache grows a new workspace when no completed ticket is drainable; the HostIo budget returns Overloaded rather than overcommitting.",
+    "invalid_media": "pack_batch validates every media descriptor before a lease or ticket; the host consumer proves a typed error is recoverable and the next valid request succeeds.",
+    "reupload": "weights/executor are constructed once in Qwen3VlEngine::new; submit never uploads model weights.",
+    "context_bind": "one bind per submission in Qwen3VlEngine::submit; forward_outputs_with does not bind; FA4 uses forward_batch_bound; LT and RoPE launches do not bind per op."
+  },
+  "host_consumer": {
+    "source": "libs/infinity-v3/backends/oxide/examples/qwen3_vl_host_consumer.rs",
+    "build": "host-consumer/build_host_consumer.sh",
+    "binary": "/tmp/opencode/qwen-vl-host-consumer-successor3-target/release/examples/qwen3_vl_host_consumer",
+    "sha256": "6a00057af29e860a4447d8e6e960f15ccbb4abbee89cb5bb7d053e2b4a464b02",
+    "profile": "opt-level3, lto=false, codegen-units1, panic=abort",
+    "modes": "manifest/factory/lifecycle/gpu-forward",
+    "gpu_forward": "Root only; source included, author did not run"
+  },
+  "patch_sha256": "6676c21e8de54229d9bd59a4a7b1e1452e53ea287fed39b6ba3216a77b07f130"
+}

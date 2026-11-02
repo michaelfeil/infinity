@@ -1,0 +1,293 @@
+{
+  "schema": "oxide-qwen3-vl-e582-root-gate/v1",
+  "owner": "Qwen3-VL author (private worktree)",
+  "status": "source_ready; Root GPU/lifetime/perf not run",
+  "base_commit": "e582ce90eb1544fcff081a495cb8fd4f3c17b112",
+  "scope": {
+    "family": [
+      "qwen3_vl",
+      "colqwen3",
+      "qwen3_vl_nemotron_embed"
+    ],
+    "features": [
+      "image and multi-frame video grids",
+      "deepstack residual stages",
+      "interleaved mRoPE with image/video positions",
+      "pre-group final merger and post-group deepstack mergers",
+      "pooled Cls/Mean/LastToken",
+      "raw token rows",
+      "multi-vector ColQwen3 320-wide trained projection + L2 rows",
+      "Nemotron ColEmbed pre-final-norm token rows + L2 rows",
+      "explicit rerank score head only when score.weight exists (not a Native Qwen3-VL model_type)",
+      "trained Dense modules preserved from modules.json",
+      "normal init_backend factory route into BackendThread",
+      "actual ColQwen3-4B vlm. namespace + embedding_proj_layer",
+      "actual Nemotron ColEmbed 4B/8B skip-final-norm inventories",
+      "generic Qwen3 structural recipe for dense H2048/H2560/H5120"
+    ],
+    "excluded": [
+      "Qwen3.5-VL text foundation (separate author)",
+      "generic Qwen3/Mistral families",
+      "fake bundles",
+      "CUDA graphs for Oxide"
+    ]
+  },
+  "binaries": {
+    "native_b66": {
+      "path": "/tmp/native214-fa4-mode20/install/lib/libtei_torch.so",
+      "sha256": "b66d70b61b39e1bf0d565aca33bac7c5e21849677396ce5216f5baf73027d37e",
+      "cublaslt": 130200,
+      "torch": "2.14.1+cu130 / 5c4886908584029761b579af026dcfb627c84070"
+    },
+    "native_consumer_release": {
+      "path": "/tmp/opencode/qwen-vl-native-release-target/release/qwen3-vl-b66-consumer",
+      "sha256": "89bd6274a26c62fa719ad442d8c2dfeb06e195cb0731117cb005437127c1b671",
+      "source": "rust-consumer/"
+    },
+    "oxide_consumer_release": {
+      "path": "/tmp/opencode/qwen-vl-release-target/release/examples/qwen3_vl_oxide_consumer",
+      "sha256": "bd223911f59b29288c7a7e3f49ad2422ddc107d1b15202339dd4aaa6a82c6023",
+      "source": "backends/oxide/examples/qwen3_vl_oxide_consumer.rs"
+    },
+    "note": "Root must rebuild both release consumers from the delivered patch/source before running; hashes above bind the author-built binaries."
+  },
+  "preflight": {
+    "command": "CUDA_VISIBLE_DEVICES='' python3 root-gate/preflight_actual.py --build root-gate/BUILD.json --packet root-gate/native/Root-control-packet.native.json --fixtures root-gate/native/fixtures.json --checkpoint <checkpoint> --b66 <b66> --torch-python /opt/torch-sdk/bin/python3.12 --vendor /tmp/oxide-host-cublas-130200 --checkpoint-hashes root-gate/checkpoint-sha256.json --native-consumer <native-release> --oxide-consumer <oxide-release> --out root-gate/container-preflight.json",
+    "requires": [
+      "CUDA_VISIBLE_DEVICES is empty",
+      "config/index/4-shard SHA-256 and byte sizes match checkpoint-sha256.json",
+      "original config equals packet original_config",
+      "749 tensors / 16289587680 bytes and every packet weight offset/shape/dtype",
+      "actual b66 full SHA, 20 required exports, libtorch_cuda linkage",
+      "TeiConfig/TeiImage/TeiWeight ABI 72/120/48 and CPU create/option/destroy",
+      "Torch version/git/path/include/lib",
+      "cuBLASLt 130200 from the vendor directory",
+      "8 real fixtures with prepared pixel sizes and grid/token accounting",
+      "native and oxide consumer SHA-256"
+    ],
+    "marker": "QWEN3_VL_E582_CPU_PREFLIGHT_COMPLETE"
+  },
+  "quality": {
+    "inputs": "root-gate/native/fixtures.json (8 real processor fixtures)",
+    "native_arm": "release Native consumer, Root-control-packet.native.json; production defaults _cuda_graphs=true, _media_cuda_graphs=false",
+    "native_graph_evidence_arm": "release Native consumer, Root-control-packet.native-graphs.json; separately labeled, not the production baseline",
+    "oxide_arm": "release Oxide consumer, no CUDA graphs",
+    "plain_embedding_comparison": {
+      "scope": "all 8 fixtures, fixture pool (last_token/mean/cls)",
+      "metrics": [
+        "finite",
+        "max_abs",
+        "relative_l2",
+        "cosine"
+      ],
+      "provisional_pass": {
+        "finite": true,
+        "max_abs": 0.01,
+        "relative_l2": 0.001,
+        "cosine": 0.9999
+      },
+      "calibration": "Root may tighten these only after recording the actual distribution; tightening must be written into the result, never silently applied."
+    },
+    "multivector_comparison": {
+      "scope": "ColQwen3 and Nemotron ColEmbed token rows",
+      "metrics": [
+        "finite",
+        "max_abs",
+        "relative_l2",
+        "per_row_cosine"
+      ],
+      "provisional_pass": {
+        "finite": true,
+        "max_abs": 0.02,
+        "relative_l2": 0.002,
+        "cosine": 0.999
+      },
+      "requirement": "The trained projection/score tensors must be the checkpoint's actual modules.json/score.weight; a missing projection fails admission."
+    },
+    "fail_conditions": [
+      "any non-finite output",
+      "missing fixture output",
+      "missing or synthetic trained projection",
+      "thresholds absent from the result",
+      "native graph evidence arm used as the production baseline"
+    ],
+    "actual_checkpoint_arms": {
+      "Qwen3-VL-8B": "cached plain embedding",
+      "TomoroAI-ColQwen3-4B": "cached multivector, embedding_proj_layer, normalize eps 1/128",
+      "Nemotron-ColEmbed-4B-v2": "cached skip-final-norm multivector",
+      "Nemotron-ColEmbed-8B-v2": "cached skip-final-norm multivector"
+    }
+  },
+  "lifetime": {
+    "oxide": "one process per fixture with --iterations 50, then a second process with reversed fixture order; all 8 fixtures must remain finite and exit 0",
+    "native": "release Native consumer with 3 cold/warm repeats for the same fixtures",
+    "memory": {
+      "measure": "/usr/bin/time -v maximum resident set size and nvidia-smi used/free once per iteration batch",
+      "provisional_pass": "RSS growth <= 256 MiB across 50 iterations; device used-bytes growth <= 512 MiB; no driver error, no health failure"
+    },
+    "workspace": "the Oxide executor retains vision/decoder/position workspaces by exact geometry and retains the host readout projection; a shape change may reallocate once",
+    "fail_conditions": [
+      "crash",
+      "non-finite",
+      "stuck stream",
+      "unbounded growth",
+      "silently dropped run"
+    ]
+  },
+  "performance": {
+    "plain_embedding": {
+      "native": "release Native consumer production packet, default Native graphs",
+      "oxide": "release Oxide consumer without CUDA graphs",
+      "schedule": "20 warmups + 100 measured iterations per fixture; report p50/p99 and all iteration times",
+      "target": "admission requires Oxide p50 <= 1.05x Native p50 on the same fixture set; 0.90-0.95x is the optimization goal, not a claim",
+      "no_claim": "No performance number is claimed by the author."
+    },
+    "multivector": {
+      "schedule": "same, but separate result",
+      "note": "The delivered readout projection is host-side after token-state readback. If this arm misses the target, the follow-up is a device DenseHead readout, not a threshold change."
+    },
+    "graphs": "Oxide remains no-graphs by policy; Native graphs defaults are never disabled for the Native arm."
+  },
+  "aot": {
+    "step_0_fast_probe": "new native build.sh --architectures sm_90 --only-symbol-probes; require all six infinity_qwen3vl_* plus infinity_decoder_rows_bf16 symbols",
+    "step_1_all3": "build sm_90/sm_100/sm_120 from source and require every old 90 export .text and driver resources byte-identical to the published old90 bundle; exactly six additive exports -> 96 total",
+    "canonical26": "unchanged; no profile index collision",
+    "no_fake_bundle": "If the old90 bundle is absent, fail; do not synthesize or borrow a profile.",
+    "exact_fp16_followup": "Qwen3.5-VL exact-FP16 temporal split is not part of this Qwen3-VL gate; a future minimal SM90 source packet must carry its own hashes and old90 preservation.",
+    "old_exports": 90,
+    "new_exports": 96,
+    "old90_bundle_env": "OLD90_BUNDLE",
+    "old90_preservation_required": true,
+    "old90_preservation_executed": false,
+    "central_fa4_request": "qwen-vl-geometry-v1/FA4-REQUEST.json"
+  },
+  "root_commands": [
+    "CUDA_VISIBLE_DEVICES='' python3 root-gate/preflight_actual.py ... --out root-gate/container-preflight.json",
+    "python3 root-gate/compare_quality.py --native <native-out> --oxide <oxide-out> --fixtures root-gate/native/fixtures.json --out root-gate/quality.json",
+    "<native-consumer> root-gate/native/Root-control-packet.native.json root-gate/native/fixtures.json <b66> <native-out> --library-sha b66d70b61b39e1bf0d565aca33bac7c5e21849677396ce5216f5baf73027d37e",
+    "<oxide-consumer> <checkpoint> root-gate/native/fixtures.json <oxide-out> --iterations 1",
+    "<oxide-consumer> <checkpoint> root-gate/native/fixtures.json <oxide-life> --iterations 50",
+    "<oxide-consumer> <checkpoint> root-gate/native/fixtures.json <oxide-perf> --iterations 120",
+    "OLD90_BUNDLE=<published-old90> CARGO_OXIDE=<cargo-oxide> bash aot/build_all3.sh <out>"
+  ],
+  "author_evidence": {
+    "patch": "selective.patch",
+    "patch_applies_clean_to_e582": true,
+    "clean_tree_tests": "486 passed, 0 failed, 56 ignored",
+    "real_fixture_test": "1 passed",
+    "all_8_real_fixtures_pack_into_engine_batches": true,
+    "fmt": "pass",
+    "clippy_d_warnings": "pass",
+    "host_preflight_subset": "root-gate/host-preflight.json passed (hash/tensor/config/fixture/consumer checks; SDK checks skipped on host)",
+    "report": "evidence/report.json",
+    "patch_sha256": "94965637d760dbfd642a41d36efe3142ad892933f795b37f3c8c80e5630e14ea",
+    "backend_factory_tests": "22 passed",
+    "actual_checkpoints": "Qwen3-VL-8B, ColQwen3-4B, Nemotron ColEmbed 4B/8B config+inventory present",
+    "geometry_report": "qwen-vl-geometry-v1/CONFIG-TUPLES.json",
+    "fa4_request": "qwen-vl-geometry-v1/FA4-REQUEST.json",
+    "independent_review": "review/INDEPENDENT-REVIEW.json",
+    "deferred_engine": "pass (A/B held, ticket drain, DeferredVl drop fence, typed invalid media)",
+    "host_consumer": {
+      "path": "/tmp/opencode/qwen-vl-host-consumer-e7baa-target/release/examples/qwen3_vl_host_consumer",
+      "sha256": "01516290d5dc97960121a6da086d81e1ad6be0a800eed2c941fe1a3b4e51107f",
+      "profile": "historical e7baa opt3/lto=false (stripped)",
+      "modes": "manifest/factory/lifecycle; gpu-lifecycle; gpu-quality source added"
+    },
+    "native_b66_cpu_stage": "native-b66-cpu-stage/STAGE.json",
+    "async_upload_audit": "review/ASYNC-UPLOAD-AUDIT.json",
+    "backpressure": "normal Backend submit preserves blocking SlotPool::acquire; no try_acquire/public try_submit",
+    "multi_image_pinned_staging": "disjoint pre-staged pinned ranges",
+    "media_validation": "merge_size/grid checked; audio typed-rejected before empty selector",
+    "optimized_host_build": {
+      "status": "e7baa historical build 015162 preserved; quality-output build HELD pending independent PASS"
+    },
+    "config_media_preflight": "async+sync before empty selector",
+    "selector_preflight": "bounds/duplicates/mixed rejected",
+    "controller_v2": {
+      "controller": "native-b66-cpu-stage/controller_v2.py",
+      "pins": "native-b66-cpu-stage/CONTROLLER-PINS.json",
+      "plans": [
+        "CONTROLLER-PLAN-CPU.json",
+        "CONTROLLER-PLAN-QUALITY.json"
+      ],
+      "tests": "4 passed mocked/host-only",
+      "no_weight_copy": true
+    },
+    "changed_shape_drop_fence": "conservative whole-stream Drop fence on changed-shape cache eviction; documented limitation",
+    "source_commit": "027b359c6e0c5378cd07398b07b4435af3ee492d",
+    "controller_v3": {
+      "controller": "native-b66-cpu-stage/controller_v3.py",
+      "pins": "native-b66-cpu-stage/CONTROLLER-PINS.json",
+      "plans": [
+        "CONTROLLER-PLAN-CPU.json",
+        "CONTROLLER-PLAN-QUALITY.json"
+      ],
+      "tests": "4 passed",
+      "compare_parser_tests": "5 passed",
+      "quality_consumer_pending_build": true,
+      "artifact_retrieval": true,
+      "fa4_kernel_env": true,
+      "b66_sha_enforced": true,
+      "remote_consumer_paths": true
+    },
+    "quality_output_consumer": {
+      "path": "/tmp/opencode/qwen-vl-host-consumer-quality-target/release/examples/qwen3_vl_host_consumer",
+      "pending_build": true,
+      "build": "host-consumer/build_quality.sh"
+    },
+    "raw_contract": "plain 8B raw hidden rows unchanged; multivector/Nemotron readouts preserved",
+    "quality_host_consumer": {
+      "path": "/tmp/opencode/qwen-vl-host-consumer-quality-target/release/examples/qwen3_vl_host_consumer",
+      "sha256": "13c66c8477b2b894d2416d123d5fbc818a502c1d9895f3efff909952b9d731ce",
+      "profile": "opt3/lto=false/debug1/cgu16/debug-assertions=false/strip=none",
+      "wall_seconds": 42
+    },
+    "ready_commands": "root-gate/READY-COMMANDS.json",
+    "controller_v4": {
+      "path": "native-b66-cpu-stage/controller_v4.py",
+      "sha256": "52188ae5b19eb6ce94ceb849f00dd315f33721b04baeb74ab9adbd1a39f43cc8",
+      "pins": "native-b66-cpu-stage/CONTROLLER-PINS-v4.json",
+      "plans": [
+        "native-b66-cpu-stage/CONTROLLER-PLAN-CPU-v4.json",
+        "native-b66-cpu-stage/CONTROLLER-PLAN-QUALITY-v4.json"
+      ],
+      "load_probe": "native-b66-cpu-stage/load_probe.py",
+      "verify_helper": "native-b66-cpu-stage/verify_b66_v4.py",
+      "tests": "controller 4 + load probe 2 + comparator 8"
+    },
+    "controller_v3_deprecated": "preserved with failed report /tmp/oxide-qwen3vl-root-cpu-v3/report.json",
+    "controller_v3_snapshot": {
+      "controller": "native-b66-cpu-stage/controller_v3.py",
+      "verify_b66": "native-b66-cpu-stage/verify_b66.py",
+      "verify_b66_observed": "native-b66-cpu-stage/verify_b66-v3-observed.py",
+      "pins_run": "native-b66-cpu-stage/V3-PINS-RUN.json",
+      "deprecated": true
+    },
+    "pin_semantics": "V3 file SHA 7c91 -> canonical b523; V4 append-only file SHA e6ed -> canonical ffa79d",
+    "v5_native_policy_seal": {
+      "seal": "native-b66-cpu-stage/V5-SEAL.json",
+      "ready_commands": "root-gate/READY-COMMANDS-v5.json",
+      "packet": "native-b66-cpu-stage/Root-control-packet.native-v5.json",
+      "diff": "native-b66-cpu-stage/V5-PACKET-DIFF.json"
+    }
+  },
+  "non_claims": [
+    "No Root GPU quality, lifetime or performance result.",
+    "No device compile or AOT old90 preservation was executed.",
+    "The host readout projection is not yet a device-qualified performance path.",
+    "F16 device execution and 30B-A3B MoE text are not implemented.",
+    "No Qwen3.5-VL implementation in this worktree.",
+    "No public/common tree mutation by this author."
+  ],
+  "dtypes": {
+    "bf16": "admitted concrete path",
+    "f16": "config/readout structural only; device kernels absent; backend rejects; reported",
+    "f32": "GPU adapter rejects; host readout only"
+  },
+  "geometry_audit": {
+    "audit": "/tmp/oxide-fa4-dynamic-heads-audit-v1/report.md",
+    "rule": "FA4 bakes grouping ratio + head_dim + dtype + causal/local + mask family; absolute heads are runtime DLTensor shapes.",
+    "aliases": "12/12 and 24/24 d64 global -> bert mode0; Q64/KV8 d128 causal/noncausal -> mode22/5; Q40/KV8 d128 ratio5 is the only genuine new text mode.",
+    "preserve": "global vs local and right-asymmetric causal-local vs symmetric noncausal-local forms stay distinct; no Modern local borrow for global vision."
+  }
+}

@@ -1,0 +1,6 @@
+infinity_decoder_rows_bf16
+infinity_qwen3vl_add_bf16
+infinity_qwen3vl_gelu_tanh_bf16
+infinity_qwen3vl_pos_interp
+infinity_qwen3vl_rope2d_bf16
+infinity_qwen3vl_silu_bf16

@@ -1,0 +1,187 @@
+{
+  "schema": "oxide-qwen3-vl-e582-handoff/v1",
+  "deliverable": "/tmp/oxide-all-model-feature-matrix-v1/qwen-vl-current-v1",
+  "shared_plan": "/tmp/oxide-all-model-feature-matrix-v1/qwen-vl-shared-plan-v1",
+  "base_commit": "e582ce90eb1544fcff081a495cb8fd4f3c17b112",
+  "head_subject": "Add focused Oxide architecture development builds",
+  "scope": {
+    "owned": [
+      "qwen3_vl",
+      "colqwen3",
+      "qwen3_vl_nemotron_embed"
+    ],
+    "excluded": [
+      "Qwen3.5-VL text foundation (separate author)",
+      "generic Qwen3/Mistral"
+    ]
+  },
+  "status": {
+    "patch_applies_clean": true,
+    "source_ready": true,
+    "cpu_checks_passed": true,
+    "gpu_executed": false,
+    "device_compiled": false,
+    "aot_old90_preserved": false,
+    "quality_claimed": false,
+    "lifetime_claimed": false,
+    "performance_claimed": false,
+    "public_mutated": false,
+    "pushed": false,
+    "deferred_engine": true,
+    "host_consumer_frozen": true
+  },
+  "implemented": {
+    "aliases": [
+      "qwen3_vl",
+      "colqwen3",
+      "qwen3_vl_nemotron_embed",
+      "HF_ColBERT"
+    ],
+    "vision": "patch/pos-interp/2D-rope/per-frame-FA4/merger/deepstack",
+    "text": "dense Qwen3 decoder with external interleaved mRoPE",
+    "media": [
+      "image",
+      "multi-frame video",
+      "text-only explicit media positions"
+    ],
+    "readouts": [
+      "last/cls/mean pooling",
+      "raw token rows",
+      "ColQwen3 320-wide trained projection",
+      "Nemotron pre-final-norm rows",
+      "explicit rerank score head"
+    ],
+    "kernels": 6,
+    "composition": [
+      "qwen3_vl_batch",
+      "qwen3_vl_readout",
+      "qwen3_vl_service",
+      "qwen3_vl_fixtures"
+    ],
+    "binaries": [
+      "qwen3_vl_oxide_consumer",
+      "qwen3-vl-b66-consumer"
+    ]
+  },
+  "checks": {
+    "patch_sha256": "94965637d760dbfd642a41d36efe3142ad892933f795b37f3c8c80e5630e14ea",
+    "oxide_lib_tests": "486 passed, 0 failed, 56 ignored",
+    "composition_tests": "15 passed",
+    "real_fixture_test": "1 passed",
+    "all_8_real_fixtures_pack": true,
+    "fmt": "pass",
+    "clippy_d_warnings": "pass",
+    "oxide_consumer_build": "pass",
+    "native_consumer_build": "pass",
+    "host_preflight": "pass (SDK checks skipped on host)",
+    "isolation": "cpu 72-79; jobs 4; CUDA_VISIBLE_DEVICES=''; offline; no docker/gpu/nvcc/torch/network/device compile",
+    "host_consumer": "manifest/factory/lifecycle pass on 4 actual checkpoints and 8 fixtures",
+    "optimized_host_build": "e7baa single consumer sha 015162... wall 41s",
+    "source_commit": "027b359c6e0c5378cd07398b07b4435af3ee492d",
+    "optimized_quality_build": "HELD pending independent PASS",
+    "raw_contract": "plain 8B raw = final hidden rows unchanged; trained multivector/Nemotron readouts preserved"
+  },
+  "binaries": {
+    "native_release": {
+      "path": "/tmp/opencode/qwen-vl-native-release-target/release/qwen3-vl-b66-consumer",
+      "sha256": "89bd6274a26c62fa719ad442d8c2dfeb06e195cb0731117cb005437127c1b671"
+    },
+    "oxide_release": {
+      "path": "/tmp/opencode/qwen-vl-release-target/release/examples/qwen3_vl_oxide_consumer",
+      "sha256": "bd223911f59b29288c7a7e3f49ad2422ddc107d1b15202339dd4aaa6a82c6023"
+    },
+    "oxide_debug": {
+      "path": "/tmp/opencode/qwen-vl-current-checks/target/debug/examples/qwen3_vl_oxide_consumer",
+      "sha256": "bcf884d0969038994eb4dc4201c00bec9715cbd98e336be6ffc689d6953ec98e"
+    }
+  },
+  "b66": {
+    "container": "infinity-torch214-compare-sdk",
+    "path": "/tmp/native214-fa4-mode20/install/lib/libtei_torch.so",
+    "sha256": "b66d70b61b39e1bf0d565aca33bac7c5e21849677396ce5216f5baf73027d37e",
+    "torch": "2.14.1+cu130",
+    "torch_git": "5c4886908584029761b579af026dcfb627c84070",
+    "cublaslt": 130200
+  },
+  "artifacts": {
+    "patch": "selective.patch",
+    "evidence": "evidence/report.json",
+    "logs": "logs/",
+    "fixtures": "native-baseline/fixtures/ (8 real processor fixtures)",
+    "root_gate": "root-gate/GATE.json",
+    "root_commands": "root-gate/README.md",
+    "aot": "aot/PACKET.json",
+    "shared_plan": "../qwen-vl-shared-plan-v1/PLAN.json",
+    "host_consumer": {
+      "source": "libs/infinity-v3/backends/oxide/examples/qwen3_vl_host_consumer.rs",
+      "build": "host-consumer/build_e7baa.sh",
+      "binary": "/tmp/opencode/qwen-vl-host-consumer-e7baa-target/release/examples/qwen3_vl_host_consumer",
+      "sha256": "01516290d5dc97960121a6da086d81e1ad6be0a800eed2c941fe1a3b4e51107f",
+      "path": "/tmp/opencode/qwen-vl-host-consumer-e7baa-target/release/examples/qwen3_vl_host_consumer",
+      "profile": "historical e7baa opt3/lto=false (stripped)"
+    },
+    "native_b66_cpu_stage": "native-b66-cpu-stage/STAGE.json",
+    "controller_v2": "native-b66-cpu-stage/controller_v2.py",
+    "controller_pins": "native-b66-cpu-stage/CONTROLLER-PINS.json",
+    "controller_v3": "native-b66-cpu-stage/controller_v3.py",
+    "controller_v2_immutable": "native-b66-cpu-stage/controller_v2.py",
+    "controller_plans": [
+      "native-b66-cpu-stage/CONTROLLER-PLAN-CPU.json",
+      "native-b66-cpu-stage/CONTROLLER-PLAN-QUALITY.json"
+    ],
+    "quality_host_consumer": {
+      "path": "/tmp/opencode/qwen-vl-host-consumer-quality-target/release/examples/qwen3_vl_host_consumer",
+      "sha256": "13c66c8477b2b894d2416d123d5fbc818a502c1d9895f3efff909952b9d731ce",
+      "profile": "opt3/lto=false/debug1/cgu16/debug-assertions=false/strip=none",
+      "wall_seconds": 42
+    },
+    "ready_commands": "root-gate/READY-COMMANDS.json",
+    "controller_v4": {
+      "path": "native-b66-cpu-stage/controller_v4.py",
+      "sha256": "52188ae5b19eb6ce94ceb849f00dd315f33721b04baeb74ab9adbd1a39f43cc8",
+      "pins": "native-b66-cpu-stage/CONTROLLER-PINS-v4.json",
+      "plans": [
+        "native-b66-cpu-stage/CONTROLLER-PLAN-CPU-v4.json",
+        "native-b66-cpu-stage/CONTROLLER-PLAN-QUALITY-v4.json"
+      ],
+      "load_probe": "native-b66-cpu-stage/load_probe.py",
+      "verify_helper": "native-b66-cpu-stage/verify_b66_v4.py",
+      "tests": "controller 4 + load probe 2 + comparator 8"
+    },
+    "controller_v3_deprecated": "preserved with failed report /tmp/oxide-qwen3vl-root-cpu-v3/report.json",
+    "controller_v3_snapshot": {
+      "controller": "native-b66-cpu-stage/controller_v3.py",
+      "verify_b66": "native-b66-cpu-stage/verify_b66.py",
+      "verify_b66_observed": "native-b66-cpu-stage/verify_b66-v3-observed.py",
+      "pins_run": "native-b66-cpu-stage/V3-PINS-RUN.json",
+      "deprecated": true
+    },
+    "pin_semantics": "V3 file SHA 7c91 -> canonical b523; V4 append-only file SHA e6ed -> canonical ffa79d",
+    "v5_native_policy_seal": {
+      "seal": "native-b66-cpu-stage/V5-SEAL.json",
+      "ready_commands": "root-gate/READY-COMMANDS-v5.json",
+      "packet": "native-b66-cpu-stage/Root-control-packet.native-v5.json",
+      "diff": "native-b66-cpu-stage/V5-PACKET-DIFF.json"
+    }
+  },
+  "blockers": [
+    "Root must run the container CPU preflight, GPU Native-vs-Oxide quality/lifetime/perf gate.",
+    "Root must build the device bundle and preserve the published old90 exports; OLD90_BUNDLE is required.",
+    "ColQwen3/Nemotron host readout projection may miss the performance target; device DenseHead is the follow-up.",
+    "No Qwen3.5-VL code here; the other author must adapt the shared vision contract."
+  ],
+  "ready_commands": [
+    "taskset -c 72-79 ./run_cpu_checks.sh",
+    "CUDA_VISIBLE_DEVICES='' python3 root-gate/preflight_actual.py --build root-gate/BUILD.json --packet root-gate/native/Root-control-packet.native.json --fixtures root-gate/native/fixtures.json --checkpoint <checkpoint> --b66 <b66> --torch-python /opt/torch-sdk/bin/python3.12 --vendor /tmp/oxide-host-cublas-130200 --checkpoint-hashes root-gate/checkpoint-sha256.json --native-consumer <native-release> --oxide-consumer <oxide-release> --out root-gate/container-preflight.json",
+    "<native-release> root-gate/native/Root-control-packet.native.json root-gate/native/fixtures.json <b66> <native-out> --library-sha b66d70b61b39e1bf0d565aca33bac7c5e21849677396ce5216f5baf73027d37e",
+    "<oxide-release> <checkpoint> root-gate/native/fixtures.json <oxide-out>/pool2 --pool last_token",
+    "python3 root-gate/compare_quality.py --native <native-out>/results.json --oxide <oxide-root> --fixtures root-gate/native/fixtures.json --allow-raw --out root-gate/quality.json",
+    "OLD90_BUNDLE=<published-old90> CARGO_OXIDE=<cargo-oxide> bash aot/build_all3.sh <out>"
+  ],
+  "geometry": {
+    "report": "qwen-vl-geometry-v1/CONFIG-TUPLES.json",
+    "report_sha256": "234eae3023a7333448656ea92c671ff0f5615ecb72b18f5606fd90820e0f9486",
+    "fa4_request": "qwen-vl-geometry-v1/FA4-REQUEST.json",
+    "review": "review/INDEPENDENT-REVIEW.json"
+  }
+}

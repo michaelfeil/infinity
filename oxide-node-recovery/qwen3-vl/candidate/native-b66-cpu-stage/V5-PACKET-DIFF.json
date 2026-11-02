@@ -1,0 +1,35 @@
+{
+  "schema": "oxide-qwen3-vl-native-packet-v5-diff/v1",
+  "old": {
+    "path": "/tmp/oxide-all-model-feature-matrix-v1/qwen-vl-current-v1/root-gate/native/Root-control-packet.native.json",
+    "sha256": "6ba93ad0f3857e012c0ae0a9d5a9add9a21f40e10648be7cc4176bc9c4a49820"
+  },
+  "new": {
+    "path": "/tmp/oxide-all-model-feature-matrix-v1/qwen-vl-current-v1/native-b66-cpu-stage/Root-control-packet.native-v5.json",
+    "sha256": "ac90c550bb0acd068c18dbd5ed35b0b5de577ca663f528100c3a3c2f0ff81244"
+  },
+  "expected_changed_key_paths": [
+    "native_policy.production_defaults._cuda_graph_max_tokens",
+    "runtime_options._cuda_graph_max_tokens"
+  ],
+  "actual_changed_key_paths": [
+    "native_policy.production_defaults._cuda_graph_max_tokens",
+    "runtime_options._cuda_graph_max_tokens"
+  ],
+  "changes": [
+    {
+      "path": "native_policy.production_defaults._cuda_graph_max_tokens",
+      "kind": "changed",
+      "old": "16384",
+      "new": "4096"
+    },
+    {
+      "path": "runtime_options._cuda_graph_max_tokens",
+      "kind": "changed",
+      "old": "16384",
+      "new": "4096"
+    }
+  ],
+  "only_expected_paths": true,
+  "policy": "Native production max_tokens 4096; entries4/reuse3/512MiB/captures8 unchanged; Oxide no graphs"
+}

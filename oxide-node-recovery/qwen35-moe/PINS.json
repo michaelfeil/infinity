@@ -1,0 +1,9 @@
+{
+  "schema": "oxide-qwen35-moe-factory-poison-checkout-pins/v1",
+  "freeze_sha256": "2d14344ad4837bf9fcbcc059d3750140b347684f94a9b8d623a956c8bf24f064",
+  "patch_sha256": "85334aa2fecf2831c9aba8daa3f0d71e7dd105dddc12ab125916bf96b80232e0",
+  "test_all_targets": "751 passed, 0 failed, 133 ignored",
+  "test_log_sha256": "9060fdc3de3aef0e606e6878d4685de032d47a190004d9f9b59dc21e501923a9",
+  "clippy": "pass -D warnings",
+  "fmt": "pass"
+}

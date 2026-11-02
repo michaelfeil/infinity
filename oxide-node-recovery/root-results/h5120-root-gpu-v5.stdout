@@ -1,0 +1,836 @@
+{
+  "cases": [
+    {
+      "add_rms_norm": {
+        "bit_exact": false,
+        "canaries_ok": true,
+        "finite": true,
+        "output_sha256": [
+          "85c9a79898122c5d7b7ffab446a59d9a89f2a8530a746dca1ab6c6d801583dc7",
+          "30a338a9bb6641b327194719d5a18e0801d4286746c5f5d494f37edaed0e639f"
+        ],
+        "repeats_bit_identical": true
+      },
+      "id": "q40_rows1_eps1e-6__det",
+      "ordinary_rms_norm": {
+        "bit_exact": false,
+        "canaries_ok": true,
+        "finite": true,
+        "output_sha256": [
+          "7e1b7784cb2494c4d758e954aaa8779665c3c83975b38dbbf532e4d0f2685837"
+        ],
+        "repeats_bit_identical": true
+      },
+      "qk_norm_rope_128": {
+        "bit_exact": true,
+        "canaries_ok": true,
+        "finite": true,
+        "output_sha256": [
+          "e49dd1660a36c85c7b152ead6bdd828e2244accd95a23c3278263fffb6ca0dc2",
+          "2910b5c6be3742f762608207e940e904d30a43bcc49bcdcc6990e4c0b41761c6"
+        ],
+        "repeats_bit_identical": true
+      },
+      "silu_mul": {
+        "bit_exact": false,
+        "canaries_ok": true,
+        "finite": true,
+        "output_sha256": [
+          "6428d727857316c403a37cc848c302112e6bc383a4fd3532196cb0f8fc16b1b7"
+        ],
+        "repeats_bit_identical": true
+      }
+    },
+    {
+      "add_rms_norm": {
+        "bit_exact": false,
+        "canaries_ok": true,
+        "finite": true,
+        "output_sha256": [
+          "a96cb750bb9d3aeb436168873fc804878e256ecc4f06b9cc0d11446f80605de6",
+          "5a361bb843c9563d9b0c3d85bad2fb1f33e86b036a1ca617c69cfda1c1fe9053"
+        ],
+        "repeats_bit_identical": true
+      },
+      "id": "q40_rows1_eps1e-5__det",
+      "ordinary_rms_norm": {
+        "bit_exact": false,
+        "canaries_ok": true,
+        "finite": true,
+        "output_sha256": [
+          "1a52cc94ca2a7ea95af255f687bac6757edb2ac4dafc138b7cbbd9c5cf8a6585"
+        ],
+        "repeats_bit_identical": true
+      },
+      "qk_norm_rope_128": {
+        "bit_exact": true,
+        "canaries_ok": true,
+        "finite": true,
+        "output_sha256": [
+          "c729c4c443f7c5f8e4a466e082df43be64452e748caf611972acb9ea9d3369e3",
+          "a657f43ae44dfbdbfad9011a968e7f9b2a0d637e81e5e02ee01b18787f317456"
+        ],
+        "repeats_bit_identical": true
+      },
+      "silu_mul": {
+        "bit_exact": false,
+        "canaries_ok": true,
+        "finite": true,
+        "output_sha256": [
+          "4f30fa587e1510abc0de20f8b59de6aa7e19ce95d51f861e1fa262c98eca0d2f"
+        ],
+        "repeats_bit_identical": true
+      }
+    },
+    {
+      "add_rms_norm": {
+        "bit_exact": false,
+        "canaries_ok": true,
+        "finite": true,
+        "output_sha256": [
+          "87f0691849eba6600f3af91c216277e56debd87a80ff58d3078698445bcb24ea",
+          "82dd96dc529e2d1f09d043375439f72ec17f291b257aa83250915b6672736f3e"
+        ],
+        "repeats_bit_identical": true
+      },
+      "id": "q40_rows7_eps1e-6__det",
+      "ordinary_rms_norm": {
+        "bit_exact": false,
+        "canaries_ok": true,
+        "finite": true,
+        "output_sha256": [
+          "4a3b8aeb8fcd22a573b8663f99c728ac19ac3d3bbd649bb99604ae17a3b11f94"
+        ],
+        "repeats_bit_identical": true
+      },
+      "qk_norm_rope_128": {
+        "bit_exact": true,
+        "canaries_ok": true,
+        "finite": true,
+        "output_sha256": [
+          "6cb930e8d3a2a99b7e65384aebdcbfd07ad39cefffef9336230fa745255d6e59",
+          "21e92e2487058eefab9f96e60a027b111e684566c8d73242c12d0126c8b22308"
+        ],
+        "repeats_bit_identical": true
+      },
+      "silu_mul": {
+        "bit_exact": false,
+        "canaries_ok": true,
+        "finite": true,
+        "output_sha256": [
+          "247fa324aaf3dca83022fe43dbcb723d47e279bb8c8b3500e760ae7bc6985b17"
+        ],
+        "repeats_bit_identical": true
+      }
+    },
+    {
+      "add_rms_norm": {
+        "bit_exact": false,
+        "canaries_ok": true,
+        "finite": true,
+        "output_sha256": [
+          "19ffb659964543f3b9c82605013de82f727f4a07c6b6f4a84d98973408594f04",
+          "613049ad6549940ce3399d7248125ff6d3a63764ad0f5e894823de9b7b4d20e2"
+        ],
+        "repeats_bit_identical": true
+      },
+      "id": "q40_rows7_eps1e-5__det",
+      "ordinary_rms_norm": {
+        "bit_exact": false,
+        "canaries_ok": true,
+        "finite": true,
+        "output_sha256": [
+          "9497c804fd503a2239cc42ad2f9d6e67dcd82936d200c88c050db18b809e1d7a"
+        ],
+        "repeats_bit_identical": true
+      },
+      "qk_norm_rope_128": {
+        "bit_exact": true,
+        "canaries_ok": true,
+        "finite": true,
+        "output_sha256": [
+          "8ad7e10b2929f2b78d82833bdd6c4cfe6d30638d1d7101d1a23cf16df15ebc4d",
+          "a276966770d371532e38a8233077d91de4484b08dcc0d1653634e68d37928d96"
+        ],
+        "repeats_bit_identical": true
+      },
+      "silu_mul": {
+        "bit_exact": false,
+        "canaries_ok": true,
+        "finite": true,
+        "output_sha256": [
+          "174aa72fc19298d77c3037921e418aea59662b0ee1bb49751300a4fe779883e7"
+        ],
+        "repeats_bit_identical": true
+      }
+    },
+    {
+      "add_rms_norm": {
+        "bit_exact": false,
+        "canaries_ok": true,
+        "finite": true,
+        "output_sha256": [
+          "ffd89e38b0f8157b8cd7b378dad5c9d0f25d63e6fb1e8ce9c1be7c52ba4bf394",
+          "3374f9387ca567b73d05e6cfba241c5c3c56a17fd4f54034c7332852e9836dcd"
+        ],
+        "repeats_bit_identical": true
+      },
+      "id": "q40_rows33_eps1e-6__det",
+      "ordinary_rms_norm": {
+        "bit_exact": false,
+        "canaries_ok": true,
+        "finite": true,
+        "output_sha256": [
+          "271937c8bbc453efca3101e0e9a9a05b23a4029bf41908569721d653186605d2"
+        ],
+        "repeats_bit_identical": true
+      },
+      "qk_norm_rope_128": {
+        "bit_exact": true,
+        "canaries_ok": true,
+        "finite": true,
+        "output_sha256": [
+          "f4376183c5ad5847b13357cfa7b543b31ff3fb237ddf95eb70e734da7366ba33",
+          "315b6e488068cb11ceaefcd7229a2eb04e66e964898591ee42b72bd0c24cc27b"
+        ],
+        "repeats_bit_identical": true
+      },
+      "silu_mul": {
+        "bit_exact": false,
+        "canaries_ok": true,
+        "finite": true,
+        "output_sha256": [
+          "6dcf54a1058b8a65774c134e57cdac38e41e85962f0fd0dd9957d1d604f097dd"
+        ],
+        "repeats_bit_identical": true
+      }
+    },
+    {
+      "add_rms_norm": {
+        "bit_exact": false,
+        "canaries_ok": true,
+        "finite": true,
+        "output_sha256": [
+          "48ee565e2864788f83d3ccfc9bb5f77049221a8b1a2841eabc1809d72562ad0f",
+          "aad5931de9c6bf1787530615faa7bfd70de410e0cbcedf0fb6393b5bd9e20cfb"
+        ],
+        "repeats_bit_identical": true
+      },
+      "id": "q40_rows33_eps1e-5__det",
+      "ordinary_rms_norm": {
+        "bit_exact": false,
+        "canaries_ok": true,
+        "finite": true,
+        "output_sha256": [
+          "54009b782429f9009c1771e9c7d6aa15bec71227d27c2610cc3f3159e458ecd7"
+        ],
+        "repeats_bit_identical": true
+      },
+      "qk_norm_rope_128": {
+        "bit_exact": true,
+        "canaries_ok": true,
+        "finite": true,
+        "output_sha256": [
+          "09365749e4407185740d10686e7580872a19e40caee1fd4f623aba7631168d90",
+          "829a631f2d70cc8b4c75c144ef3ba2a46ce74425ccd708ac2a325ecda67f59bf"
+        ],
+        "repeats_bit_identical": true
+      },
+      "silu_mul": {
+        "bit_exact": false,
+        "canaries_ok": true,
+        "finite": true,
+        "output_sha256": [
+          "2580d57e579740de964409268885ddb45a71e08156cf97d76dece5210eaaa2d0"
+        ],
+        "repeats_bit_identical": true
+      }
+    },
+    {
+      "add_rms_norm": {
+        "bit_exact": false,
+        "canaries_ok": true,
+        "finite": true,
+        "output_sha256": [
+          "43b6ff35e5ac4fdd0830db5560eb7e48f101ea6dd41e83d51408797aa5033d91",
+          "9559453763adf7000ebfa3369dea72c0791e4a9ffdcc78c24277a65df3744283"
+        ],
+        "repeats_bit_identical": true
+      },
+      "id": "q40_rows129_eps1e-6__det",
+      "ordinary_rms_norm": {
+        "bit_exact": false,
+        "canaries_ok": true,
+        "finite": true,
+        "output_sha256": [
+          "57892a1870a9a62e0ab2b2e8946b9001db6b45919513677c1904ea344e0c89fd"
+        ],
+        "repeats_bit_identical": true
+      },
+      "qk_norm_rope_128": {
+        "bit_exact": true,
+        "canaries_ok": true,
+        "finite": true,
+        "output_sha256": [
+          "d238eb925687167c364552fdbb2efa986c71e6cd2a12fd2fcb1b9d6d154b2ee6",
+          "96723175794ef04458d8daaf82b7bcb53fbb21c52a5cc3095e3cd099ab59801d"
+        ],
+        "repeats_bit_identical": true
+      },
+      "silu_mul": {
+        "bit_exact": false,
+        "canaries_ok": true,
+        "finite": true,
+        "output_sha256": [
+          "fee04cf1fdaedac17c4c32ce7d4f846e4359e302a427b6c6ed4a80576370d0ef"
+        ],
+        "repeats_bit_identical": true
+      }
+    },
+    {
+      "add_rms_norm": {
+        "bit_exact": false,
+        "canaries_ok": true,
+        "finite": true,
+        "output_sha256": [
+          "ea93129ab13507456279744676f687bd41c5621e97a308e0a91d546bf61eb991",
+          "a0e73825efce12c2c502fa4883fc851bae06bb726c2fca2ecbe314272233d12f"
+        ],
+        "repeats_bit_identical": true
+      },
+      "id": "q40_rows129_eps1e-5__det",
+      "ordinary_rms_norm": {
+        "bit_exact": false,
+        "canaries_ok": true,
+        "finite": true,
+        "output_sha256": [
+          "82f0a3bc3eb3c4a7e3096bbdf004f89fbc1192b072fa28da3b98b363a1892c5f"
+        ],
+        "repeats_bit_identical": true
+      },
+      "qk_norm_rope_128": {
+        "bit_exact": true,
+        "canaries_ok": true,
+        "finite": true,
+        "output_sha256": [
+          "30645e66ad6dbbc36c4fecc52875a6e79ce3a4d345380c33e1797b6703b3718c",
+          "374752b63aaea9388f177929c4d0a1618a8c361236d6017b661bed170387b145"
+        ],
+        "repeats_bit_identical": true
+      },
+      "silu_mul": {
+        "bit_exact": false,
+        "canaries_ok": true,
+        "finite": true,
+        "output_sha256": [
+          "de977b47d9b9bce4ee060e4ed800212583017d16fc8ee8a93590d76928ccd13b"
+        ],
+        "repeats_bit_identical": true
+      }
+    },
+    {
+      "add_rms_norm": {
+        "bit_exact": false,
+        "canaries_ok": true,
+        "finite": true,
+        "output_sha256": [
+          "9c0842dfe7134f02f5b3def787ec9ba42a81cc43669f66342a0a4c33793339c5",
+          "e44826ff8ec75d9e881de47205f705d296d2f89bfc169e099d315b5329342e1f"
+        ],
+        "repeats_bit_identical": true
+      },
+      "id": "q64_rows1_eps1e-6__det",
+      "ordinary_rms_norm": {
+        "bit_exact": false,
+        "canaries_ok": true,
+        "finite": true,
+        "output_sha256": [
+          "fe1fe18106cab0bcc10b96494b2cd9991112f0efcb78e00b126c5bbde9b502b1"
+        ],
+        "repeats_bit_identical": true
+      },
+      "qk_norm_rope_128": {
+        "bit_exact": true,
+        "canaries_ok": true,
+        "finite": true,
+        "output_sha256": [
+          "a6e850b9a598fe22f002d0f2348bb23cf6fa5c193254569d212959a1c1c561f7",
+          "5f35e8d53065dde1fdc9b8b775b4f635fadecb66db189bf0e394543df007d228"
+        ],
+        "repeats_bit_identical": true
+      },
+      "silu_mul": {
+        "bit_exact": false,
+        "canaries_ok": true,
+        "finite": true,
+        "output_sha256": [
+          "0b9719a51d45af6cafd4d4300c32c8ac2f61e7997a37db3810928501c1fdec73"
+        ],
+        "repeats_bit_identical": true
+      }
+    },
+    {
+      "add_rms_norm": {
+        "bit_exact": false,
+        "canaries_ok": true,
+        "finite": true,
+        "output_sha256": [
+          "2b87b7def676f7cd21deffe617171d4a2d91ba6e3250f973a3a9d021467449f1",
+          "fa0170f2b1c86696aab16ab232f555165af0ae6c9b6a1878079b7de67cc329fc"
+        ],
+        "repeats_bit_identical": true
+      },
+      "id": "q64_rows1_eps1e-5__det",
+      "ordinary_rms_norm": {
+        "bit_exact": false,
+        "canaries_ok": true,
+        "finite": true,
+        "output_sha256": [
+          "15182fb289c016aa97b37f8d8400404082b4b9441d68289eb3db4027963e686f"
+        ],
+        "repeats_bit_identical": true
+      },
+      "qk_norm_rope_128": {
+        "bit_exact": true,
+        "canaries_ok": true,
+        "finite": true,
+        "output_sha256": [
+          "cb05b236f8c8058e04e82b86ed82a5a659f4c03958fccac82eb7df93cdb359b4",
+          "860f40401556f27d3ad725a250240e0efa2a2522ca3f3ce85cdaefee08cec8d5"
+        ],
+        "repeats_bit_identical": true
+      },
+      "silu_mul": {
+        "bit_exact": false,
+        "canaries_ok": true,
+        "finite": true,
+        "output_sha256": [
+          "e330ce456de69d19f3768ce13ff4cf30d2aa109953eb748f9d832ace6d7953f3"
+        ],
+        "repeats_bit_identical": true
+      }
+    },
+    {
+      "add_rms_norm": {
+        "bit_exact": false,
+        "canaries_ok": true,
+        "finite": true,
+        "output_sha256": [
+          "b56a22765818d3ab45f42944203c6136e52d63315b0755154061a5fcd101e60c",
+          "fb8f457ab5fad39cb7dbe8c080352add73c0d740d8dd9b7181ea64ffd4cb5849"
+        ],
+        "repeats_bit_identical": true
+      },
+      "id": "q64_rows7_eps1e-6__det",
+      "ordinary_rms_norm": {
+        "bit_exact": false,
+        "canaries_ok": true,
+        "finite": true,
+        "output_sha256": [
+          "148c4c2a7547c1742aedd892c0d0aeaa0bc8486074c4f9a149ed60762457e210"
+        ],
+        "repeats_bit_identical": true
+      },
+      "qk_norm_rope_128": {
+        "bit_exact": true,
+        "canaries_ok": true,
+        "finite": true,
+        "output_sha256": [
+          "69917b25bb3d6345a5a38b8e08b1e7b0d79ed52ef17a7dc416407089da905710",
+          "fe2df9970452612296004d402a279e8b0d65863846eaec519b4398d65425c0b8"
+        ],
+        "repeats_bit_identical": true
+      },
+      "silu_mul": {
+        "bit_exact": false,
+        "canaries_ok": true,
+        "finite": true,
+        "output_sha256": [
+          "3c7aceee0cb850c3e724911acc54b40688d7c8d4a5f12d91330c5b82d4a79b51"
+        ],
+        "repeats_bit_identical": true
+      }
+    },
+    {
+      "add_rms_norm": {
+        "bit_exact": false,
+        "canaries_ok": true,
+        "finite": true,
+        "output_sha256": [
+          "4ddd39a3d59199628fa96527d72a4505512a4812cd45827ab2e24e4291b49ea8",
+          "7510986980c23e4515d4dce705864f008fec99718fc7987b91e4624f763b80e4"
+        ],
+        "repeats_bit_identical": true
+      },
+      "id": "q64_rows7_eps1e-5__det",
+      "ordinary_rms_norm": {
+        "bit_exact": false,
+        "canaries_ok": true,
+        "finite": true,
+        "output_sha256": [
+          "e3bf97e270bcb9a1ef56da70895f6ef48a1717a856abd1680caf2dab5e00fb44"
+        ],
+        "repeats_bit_identical": true
+      },
+      "qk_norm_rope_128": {
+        "bit_exact": true,
+        "canaries_ok": true,
+        "finite": true,
+        "output_sha256": [
+          "a5bf288c8e7b2c87f624dc6ab336e5cbcc8639bd8e90a3a7820cfa452c318a4a",
+          "85310b02920b59a575c0a2e1fa0d78b87e4d4bd3002b6c9e3635fb2568250711"
+        ],
+        "repeats_bit_identical": true
+      },
+      "silu_mul": {
+        "bit_exact": false,
+        "canaries_ok": true,
+        "finite": true,
+        "output_sha256": [
+          "6bf97ffd280b5ef3e148930a0c849d8b215184108c5367ab858e0a823b9be4f7"
+        ],
+        "repeats_bit_identical": true
+      }
+    },
+    {
+      "add_rms_norm": {
+        "bit_exact": false,
+        "canaries_ok": true,
+        "finite": true,
+        "output_sha256": [
+          "44736fe2771440c0e5151e777f702c8c343fbef611c591598119984b942c8849",
+          "d5afb850d7a15eb35767e0f81dbb5ceb44d66595fdbbdb7b6f6e56b2f2dbd718"
+        ],
+        "repeats_bit_identical": true
+      },
+      "id": "q64_rows33_eps1e-6__det",
+      "ordinary_rms_norm": {
+        "bit_exact": false,
+        "canaries_ok": true,
+        "finite": true,
+        "output_sha256": [
+          "28700388080429a31e5785bfff0c771ac9c9da3503e257c80c5cf4ebc6bf8012"
+        ],
+        "repeats_bit_identical": true
+      },
+      "qk_norm_rope_128": {
+        "bit_exact": true,
+        "canaries_ok": true,
+        "finite": true,
+        "output_sha256": [
+          "3ccf9844c2d275530e645e0d065a46c6ccde2aea111683643f80de150d5b84cd",
+          "0c39e98d8bc64028953778db1ec267b6022093a2091769aff92f8750dc9f2f24"
+        ],
+        "repeats_bit_identical": true
+      },
+      "silu_mul": {
+        "bit_exact": false,
+        "canaries_ok": true,
+        "finite": true,
+        "output_sha256": [
+          "f5d3b914f8b5eea77e301759487b659d6af62c26fee9fdc5a2117098dc825f08"
+        ],
+        "repeats_bit_identical": true
+      }
+    },
+    {
+      "add_rms_norm": {
+        "bit_exact": false,
+        "canaries_ok": true,
+        "finite": true,
+        "output_sha256": [
+          "f8df5a3e4018b1a77e0507765f19f9aa31cd793a62d2f0f96a61765f505a18b3",
+          "a0d8d9481bb2e0b89db801ca164e4e9300f4d0d9bc52cd77fd46a0572eb5e578"
+        ],
+        "repeats_bit_identical": true
+      },
+      "id": "q64_rows33_eps1e-5__det",
+      "ordinary_rms_norm": {
+        "bit_exact": false,
+        "canaries_ok": true,
+        "finite": true,
+        "output_sha256": [
+          "0c08b02d6a7beff3ed92469a4bf8f555eb08f21407423066c2bfc7b30c8c1b2f"
+        ],
+        "repeats_bit_identical": true
+      },
+      "qk_norm_rope_128": {
+        "bit_exact": true,
+        "canaries_ok": true,
+        "finite": true,
+        "output_sha256": [
+          "c0b169d522f21a8194a2b0387d3efa7295601529353f5bae70fdc51e7e583f68",
+          "5d21cba95dd9a5c16c42bf3eacf7603a10747ba4e9d3dd9f5527c3763dc24053"
+        ],
+        "repeats_bit_identical": true
+      },
+      "silu_mul": {
+        "bit_exact": false,
+        "canaries_ok": true,
+        "finite": true,
+        "output_sha256": [
+          "4a5be05bd6f1e3eac473964b396fb1d1700b2ff28138ca2b61f7dd496bd2b9ea"
+        ],
+        "repeats_bit_identical": true
+      }
+    },
+    {
+      "add_rms_norm": {
+        "bit_exact": false,
+        "canaries_ok": true,
+        "finite": true,
+        "output_sha256": [
+          "9efae549effa26baf2d5a3db9528bae39bcbd2f733a3f3e3b2746ff2a78a5c1d",
+          "3c598c377f2c3bac9d9ac323e9293bf1da3d2e7aae4b9ee86cf60820e6b530fa"
+        ],
+        "repeats_bit_identical": true
+      },
+      "id": "q64_rows129_eps1e-6__det",
+      "ordinary_rms_norm": {
+        "bit_exact": false,
+        "canaries_ok": true,
+        "finite": true,
+        "output_sha256": [
+          "f5c272bb7c2b281e49c1b3d2199c3ca87dffb9a849510f70fbe63650b8119834"
+        ],
+        "repeats_bit_identical": true
+      },
+      "qk_norm_rope_128": {
+        "bit_exact": true,
+        "canaries_ok": true,
+        "finite": true,
+        "output_sha256": [
+          "5a30200d8fe8f64119aedcc978b5b96f2d9341bee323ed3d4e40601b43f54387",
+          "37ae5445db2d013821d5630c83f4c41b4e549769c452b06bf49acf0a648145fc"
+        ],
+        "repeats_bit_identical": true
+      },
+      "silu_mul": {
+        "bit_exact": false,
+        "canaries_ok": true,
+        "finite": true,
+        "output_sha256": [
+          "4a51000658b8f1cbf9556ac5be86145c1b467ebe896ee9ac1463f60bb287a46d"
+        ],
+        "repeats_bit_identical": true
+      }
+    },
+    {
+      "add_rms_norm": {
+        "bit_exact": false,
+        "canaries_ok": true,
+        "finite": true,
+        "output_sha256": [
+          "24220867f0eb805364a2bd378925b8f2792b43fe7e0f7589c231f555d1a91228",
+          "76860866ea221f049ad1d3510c0d7813767d85a5635e55fad1fef16f40907d4d"
+        ],
+        "repeats_bit_identical": true
+      },
+      "id": "q64_rows129_eps1e-5__det",
+      "ordinary_rms_norm": {
+        "bit_exact": false,
+        "canaries_ok": true,
+        "finite": true,
+        "output_sha256": [
+          "8b75008ae7a0f4f273392bdb41912c98765d2f5faa31c6101f867d377cdc867f"
+        ],
+        "repeats_bit_identical": true
+      },
+      "qk_norm_rope_128": {
+        "bit_exact": true,
+        "canaries_ok": true,
+        "finite": true,
+        "output_sha256": [
+          "cc6c10ed4e549aac231e42edb621688bc3d41d1a88c0b387fd34882357fb5067",
+          "f51fe557bd34436b36b45039890161846bad542d5ac7b1b84c3542a0e039900c"
+        ],
+        "repeats_bit_identical": true
+      },
+      "silu_mul": {
+        "bit_exact": false,
+        "canaries_ok": true,
+        "finite": true,
+        "output_sha256": [
+          "7a32c4b7f856f2225ca9c7942b88880a448212a90c1c04981eab1762b7764037"
+        ],
+        "repeats_bit_identical": true
+      }
+    },
+    {
+      "add_rms_norm": {
+        "bit_exact": false,
+        "canaries_ok": true,
+        "finite": true,
+        "output_sha256": [
+          "dc6f6329ed4c11aa076d878c6f76f29a2e6bf92aae463fd27092c5b1fc174d7f",
+          "ede31233d7f7036fd2a5c8b038625eb1793767687ed33af03d0d90388545bbcc"
+        ],
+        "repeats_bit_identical": true
+      },
+      "id": "q40_rows7_eps1e-6__zero-sign",
+      "ordinary_rms_norm": {
+        "bit_exact": false,
+        "canaries_ok": true,
+        "finite": true,
+        "output_sha256": [
+          "53991f38b42acc75c707e3bf8668ec20dcf2f2617e47c1a5725d3d829e98d986"
+        ],
+        "repeats_bit_identical": true
+      },
+      "qk_norm_rope_128": {
+        "bit_exact": true,
+        "canaries_ok": true,
+        "finite": true,
+        "output_sha256": [
+          "2d9373fe04e745c996a478362387ebff1b4ecee7979a34dbf03f836d8bbeed66",
+          "8ddd85f3fbb18ac26fbe51934e724506b6d30ed0ef25cdacb2eb96824c3323fa"
+        ],
+        "repeats_bit_identical": true
+      },
+      "silu_mul": {
+        "bit_exact": false,
+        "canaries_ok": true,
+        "finite": true,
+        "output_sha256": [
+          "87da8268d4e204405ea76579563d4dcc48f34f17c82b59a26addb6480f08c66f"
+        ],
+        "repeats_bit_identical": true
+      }
+    },
+    {
+      "add_rms_norm": {
+        "bit_exact": false,
+        "canaries_ok": true,
+        "finite": true,
+        "output_sha256": [
+          "f9e234fc2a8000df0383e60ff6b96cf0716b6954677d168e5c0b7f71bbe269b9",
+          "80017c9308ac877e20dd2626b41deab9e687d3091d4cf74583d6e93f4fcdf838"
+        ],
+        "repeats_bit_identical": true
+      },
+      "id": "q40_rows33_eps1e-5__exponent-edge",
+      "ordinary_rms_norm": {
+        "bit_exact": false,
+        "canaries_ok": true,
+        "finite": true,
+        "output_sha256": [
+          "1af5b007d599ff3e01e1d4c620aa20a7e973a26c5bbf981aae8be050e6311c7b"
+        ],
+        "repeats_bit_identical": true
+      },
+      "qk_norm_rope_128": {
+        "bit_exact": true,
+        "canaries_ok": true,
+        "finite": true,
+        "output_sha256": [
+          "df0ef7598da9a31dbdad0167cd8c3411e77a0c6c14a3fc61d404fced845532bb",
+          "f737964203609f61b940f8c79756c65181b19f93e0a1f4d703a95a1aecac0e0f"
+        ],
+        "repeats_bit_identical": true
+      },
+      "silu_mul": {
+        "bit_exact": false,
+        "canaries_ok": true,
+        "finite": true,
+        "output_sha256": [
+          "6a1123ca6577e4a969e05b41c9432f7dfb5af209afc2735796646b08d669019e"
+        ],
+        "repeats_bit_identical": true
+      }
+    },
+    {
+      "add_rms_norm": {
+        "bit_exact": false,
+        "canaries_ok": true,
+        "finite": true,
+        "output_sha256": [
+          "1b67f88f94561fd316415c05b4ae39fc1f5a2e1df4655ba7a426a8db1aa73305",
+          "99657834e588fc2072e350434e5f9617c7d851d1a3c1df6c81d42f934ff9d6e7"
+        ],
+        "repeats_bit_identical": true
+      },
+      "id": "q64_rows7_eps1e-6__zero-sign",
+      "ordinary_rms_norm": {
+        "bit_exact": false,
+        "canaries_ok": true,
+        "finite": true,
+        "output_sha256": [
+          "2b75781046c0028cd4b36fea9536171edaaa95214b509f56bf675453025b693f"
+        ],
+        "repeats_bit_identical": true
+      },
+      "qk_norm_rope_128": {
+        "bit_exact": true,
+        "canaries_ok": true,
+        "finite": true,
+        "output_sha256": [
+          "aabeefbbb707b7cf5079d4f912f7d46aa17138ff7dd3aafa9849b0849c0c998e",
+          "53e0430fdade319b46836c176d361ddbcf93bb8d16fe16b09e22813c9b055885"
+        ],
+        "repeats_bit_identical": true
+      },
+      "silu_mul": {
+        "bit_exact": false,
+        "canaries_ok": true,
+        "finite": true,
+        "output_sha256": [
+          "9ce9aae06fc6a4e75ed483cf860cada6e648cdee4ac87e824c15d33d84000a84"
+        ],
+        "repeats_bit_identical": true
+      }
+    },
+    {
+      "add_rms_norm": {
+        "bit_exact": false,
+        "canaries_ok": true,
+        "finite": true,
+        "output_sha256": [
+          "7ac711dbf64e48f5693ff45304ca34d148885255114a9254d7b4ed41c93bb56a",
+          "ad7cf8d1f734651f3fcd2f6da92a9d1b3da13ef814ac15d354a12dbe34578652"
+        ],
+        "repeats_bit_identical": true
+      },
+      "id": "q64_rows33_eps1e-5__exponent-edge",
+      "ordinary_rms_norm": {
+        "bit_exact": false,
+        "canaries_ok": true,
+        "finite": true,
+        "output_sha256": [
+          "ef619c8277769a82ab74c304bf6b3e816345931eef9b8beb79b81170aa66ec7b"
+        ],
+        "repeats_bit_identical": true
+      },
+      "qk_norm_rope_128": {
+        "bit_exact": true,
+        "canaries_ok": true,
+        "finite": true,
+        "output_sha256": [
+          "f5bcb247f6f67c11347ea7126d2c9f660fe229f75412088693583fd107e9df1c",
+          "03bfd99c555b795adebabb1e2934d230c45e61e2c50248bdb97fca74a686830d"
+        ],
+        "repeats_bit_identical": true
+      },
+      "silu_mul": {
+        "bit_exact": false,
+        "canaries_ok": true,
+        "finite": true,
+        "output_sha256": [
+          "12b5a1933eeaa615100f05f7f7812505539037f41fb79a8ca37aeae4368fc767"
+        ],
+        "repeats_bit_identical": true
+      }
+    }
+  ],
+  "compute_capability": [
+    9,
+    0
+  ],
+  "cubin_sha256": "caab47a579a230ed6b3ccfe7f75e4555232d6081ac6dbd1dc578d24e8bbdd332",
+  "gpu_executed": true,
+  "infinity_export_count": 90,
+  "manifest_sha256": "3d9cfdea0f6fb2c8ff590287da2f8ccc2216e1975e7427caadf1752c634b60e5",
+  "provenance": "actual-native",
+  "schema": "h5120-consumer/run/v1",
+  "status": "failed-bit-exact"
+}
+h5120-consumer: case q40_rows1_eps1e-6__det failed a bit-exact/immutability guard

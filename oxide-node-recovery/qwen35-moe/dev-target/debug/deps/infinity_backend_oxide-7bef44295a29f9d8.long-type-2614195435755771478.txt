@@ -1,0 +1,2 @@
+for<'a> fn(&'a mut FakeWork) -> Result<(), infinity_v3_backend_core::BackendError> {FakeWork::release}
+for<'a> fn(&'a mut FakeWork) -> Result<(), infinity_v3_backend_core::BackendError> {FakeWork::release}: qwen35_moe_factory::WorkBytes

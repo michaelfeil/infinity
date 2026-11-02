@@ -1,0 +1,71 @@
+{
+  "review": "bounded-coldq35-zero-init-batching-correction",
+  "scope": "source-only",
+  "candidate_compiled": false,
+  "executed": false,
+  "verdict": "source_cleared_for_focused_cpu_compile_only",
+  "clearance_condition": "Use corrected/gdn_prepared.rs, corrected/qwen35_block_work.rs, corrected/warm_head.rs, corrected/qwen35_work.rs plus the original hook-free before/gdn_aot_provider.rs. Do not retain after/gdn_aot_provider.rs.",
+  "b1": {
+    "status": "closed_in_corrected_leaves",
+    "evidence": [
+      "no poison_after_uncertain_fence method/wrapper/call in corrected four leaves",
+      "only pre-existing poison text at corrected/gdn_prepared.rs:1904 and explanatory comment at corrected/qwen35_work.rs:192-196",
+      "corrected leaves use GdnAotProvider load/workspace_bytes/is_healthy/forward only"
+    ],
+    "provider_file_caveat": "corrected/ contains no provider file; before/gdn_aot_provider.rs is hook-free, after/gdn_aot_provider.rs still contains the hook. Byte/exact final-provider composition is not provable from corrected/ alone. Use the original before file as CORRECTION.json declares.",
+    "parent_health": "Qwen35Work::new -> ExecutableModel::workspace dep/oxide_lib.rs:1591 at :3104/:3503 -> From<BackendError> :266-270 -> classify_backend :238-243 -> Fatal :2915-2918 -> fail_closed :2875-2883 sets failed and io.close before fallback drain. No extra health hook required."
+  },
+  "b2": {
+    "status": "closed",
+    "evidence": [
+      "no ColdFencePolicy or OuterWorkOwner in corrected/",
+      "direct fences at corrected/gdn_prepared.rs:1500,1680; qwen35_block_work.rs:175; warm_head.rs:221",
+      "policy test and enum removed; root uses Building::publish directly"
+    ]
+  },
+  "fences": {
+    "engine_text_before": 23,
+    "engine_block_head_before": 28,
+    "engine_after": 1,
+    "one_successful_outer_fence_all_variants": true,
+    "excluded": "weight-upload fences",
+    "engine_fence_location": "corrected/qwen35_work.rs:230",
+    "standalone_fence_locations": [
+      "corrected/gdn_prepared.rs:1500",
+      "corrected/gdn_prepared.rs:1680",
+      "corrected/qwen35_block_work.rs:175",
+      "corrected/warm_head.rs:221"
+    ],
+    "remaining_weight_upload_fences": "GdnPrepared::new and new_default_dense retain four synchronous DeviceBuffer::from_host uploads at corrected/gdn_prepared.rs:1262-1265; excluded as instructed"
+  },
+  "standalone_ready_contract": {
+    "intact": true,
+    "constructors": [
+      "GdnPrepared::new",
+      "GdnPrepared::new_default_dense",
+      "GdnPrepared::new_default_dense_with_device_weights",
+      "BlockWork::new",
+      "WarmHeadScratch::new"
+    ]
+  },
+  "panic_type_signature_ownership": {
+    "production_panic_in_construction": "none found",
+    "cold_pending": "into_fenced/settle now return Result; all root, block, warm, and test call sites updated; quarantine unchanged",
+    "public_signatures": "unchanged",
+    "owner_before_fallible": true,
+    "failed_zero_retains_owner": true,
+    "failed_fence_no_retry_no_free": true,
+    "stream_provider_module_retention": true,
+    "publication_missing": false,
+    "zero_async_lease": "real enqueue_access lease path retained per dep/cuda_device_buffer.rs:182-193,1068-1075",
+    "uninitialized_stream_retention": "dep/cuda_device_buffer.rs:922-939",
+    "stable_warm_math_launch_retirement_changed": false
+  },
+  "accounting": {
+    "at_most_once": true,
+    "reserved_upper_bound": true,
+    "actual_touched_or_resident_exact": false,
+    "detail": "Building::new seeds Some(reserved_bytes); settle_error charges when owners exist; publish charges on fence failure; standalone paths pass None. This is a reserved upper bound, not exact actual bytes, as CORRECTION.json states."
+  },
+  "next_gate": "Focused CPU compile only under the declared composition. Root decides future CPU and churn gates. Not cleared for optimized host, GPU, numerical, performance, or runtime admission. No executions performed by this review."
+}

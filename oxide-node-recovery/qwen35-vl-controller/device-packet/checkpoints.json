@@ -1,0 +1,234 @@
+{
+  "schema": "oxide-qwen35vl-checkpoints/v1",
+  "checkpoints": {
+    "Qwen3.5-0.8B": {
+      "path": "/workspace/model-performance/michaelfeil/onejev-perf/backbone-comparison-20261023/models/Qwen3.5-0.8B",
+      "config_sha256": "b90b86f35c8e6925ef74ee04d0e758f0a845c83a42089ad82bbaa948de9b4204",
+      "index_sha256": "d8a08838a613b025eb7952ed9db11696213e57e76a375661ef5c12f9dd5dcf4e",
+      "tensor_count": 488,
+      "vision_tensor_count": 153,
+      "shards": 1,
+      "model_type": "qwen3_5",
+      "text_model_type": "qwen3_5_text",
+      "vision_model_type": "qwen3_5",
+      "vision_depth": 12,
+      "vision_hidden": 768,
+      "text_hidden": 1024,
+      "rotary_dim": 64,
+      "mrope_section": [
+        11,
+        11,
+        10
+      ],
+      "deepstack_visual_indexes": [],
+      "has_preprocessor": true,
+      "has_video_preprocessor": true,
+      "vision_head_dim": 64,
+      "dtype_counts": {
+        "F32": 36,
+        "BF16": 452
+      },
+      "f32_tensor_count": 36,
+      "f32_names_sample": [
+        "model.language_model.layers.0.linear_attn.A_log",
+        "model.language_model.layers.0.linear_attn.norm.weight",
+        "model.language_model.layers.1.linear_attn.A_log",
+        "model.language_model.layers.1.linear_attn.norm.weight",
+        "model.language_model.layers.10.linear_attn.A_log",
+        "model.language_model.layers.10.linear_attn.norm.weight"
+      ],
+      "f32_a_log": 18,
+      "f32_dt_bias": 0,
+      "f32_linear_attn_norm": 18
+    },
+    "Qwen3.5-2B": {
+      "path": "/workspace/model-performance/michaelfeil/onejev-perf/backbone-comparison-20261023/models/Qwen3.5-2B",
+      "config_sha256": "ed1c1723241f23f7f4e23430759cbd7dcfb4103cbdfe052bfe7626b57c2615b4",
+      "index_sha256": "aca8afed9da75b0f050b408d270766fd77627f1af401e240f61c3b47d0db02f9",
+      "tensor_count": 632,
+      "vision_tensor_count": 297,
+      "shards": 1,
+      "model_type": "qwen3_5",
+      "text_model_type": "qwen3_5_text",
+      "vision_model_type": "qwen3_5",
+      "vision_depth": 24,
+      "vision_hidden": 1024,
+      "text_hidden": 2048,
+      "rotary_dim": 64,
+      "mrope_section": [
+        11,
+        11,
+        10
+      ],
+      "deepstack_visual_indexes": [],
+      "has_preprocessor": true,
+      "has_video_preprocessor": true,
+      "vision_head_dim": 64,
+      "dtype_counts": {
+        "F32": 36,
+        "BF16": 596
+      },
+      "f32_tensor_count": 36,
+      "f32_names_sample": [
+        "model.language_model.layers.0.linear_attn.A_log",
+        "model.language_model.layers.0.linear_attn.norm.weight",
+        "model.language_model.layers.1.linear_attn.A_log",
+        "model.language_model.layers.1.linear_attn.norm.weight",
+        "model.language_model.layers.10.linear_attn.A_log",
+        "model.language_model.layers.10.linear_attn.norm.weight"
+      ],
+      "f32_a_log": 18,
+      "f32_dt_bias": 0,
+      "f32_linear_attn_norm": 18
+    },
+    "Qwen3.5-4B": {
+      "path": "/workspace/model-performance/michaelfeil/onejev-perf/backbone-comparison-20261023/models/Qwen3.5-4B",
+      "config_sha256": "ddc63e1c717afa86c865bb5e01313d89d72bb53b97ad4a8a03ba8510c0621670",
+      "index_sha256": "cf3f798ee02ba45f9622aa8892a47369ab667d0afbf154ee7c2212de42e6302d",
+      "tensor_count": 738,
+      "vision_tensor_count": 297,
+      "shards": 2,
+      "model_type": "qwen3_5",
+      "text_model_type": "qwen3_5_text",
+      "vision_model_type": "qwen3_5",
+      "vision_depth": 24,
+      "vision_hidden": 1024,
+      "text_hidden": 2560,
+      "rotary_dim": 64,
+      "mrope_section": [
+        11,
+        11,
+        10
+      ],
+      "deepstack_visual_indexes": [],
+      "has_preprocessor": true,
+      "has_video_preprocessor": true,
+      "vision_head_dim": 64,
+      "dtype_counts": {
+        "BF16": 690,
+        "F32": 48
+      },
+      "f32_tensor_count": 48,
+      "f32_names_sample": [
+        "model.language_model.layers.0.linear_attn.A_log",
+        "model.language_model.layers.0.linear_attn.norm.weight",
+        "model.language_model.layers.1.linear_attn.A_log",
+        "model.language_model.layers.1.linear_attn.norm.weight",
+        "model.language_model.layers.10.linear_attn.A_log",
+        "model.language_model.layers.10.linear_attn.norm.weight"
+      ],
+      "f32_a_log": 24,
+      "f32_dt_bias": 0,
+      "f32_linear_attn_norm": 24
+    },
+    "Qwen3.5-35B-A3B": {
+      "path": "/workspace/model-performance/michaelfeil/onejev-perf/models/qwen35-35b-a3b",
+      "config_sha256": "5e4d7f74fec2f360eb9cfbfcd6ec0c4c76e684d3a11caaed259d9fd9bfbc7944",
+      "index_sha256": "d8d0b7ca4e61ae107e3e87a3ff21136b3ac7c789e64bb24267227ca804e04205",
+      "tensor_count": 1811,
+      "vision_tensor_count": 333,
+      "shards": 14,
+      "model_type": "qwen3_5_moe",
+      "text_model_type": "qwen3_5_moe_text",
+      "vision_model_type": "qwen3_5_moe",
+      "vision_depth": 27,
+      "vision_hidden": 1152,
+      "text_hidden": 2048,
+      "rotary_dim": 64,
+      "mrope_section": [
+        11,
+        11,
+        10
+      ],
+      "deepstack_visual_indexes": [],
+      "has_preprocessor": false,
+      "has_video_preprocessor": false,
+      "vision_head_dim": 72,
+      "dtype_counts": {
+        "BF16": 1751,
+        "F32": 60
+      },
+      "f32_tensor_count": 60,
+      "f32_names_sample": [
+        "model.language_model.layers.0.linear_attn.A_log",
+        "model.language_model.layers.0.linear_attn.norm.weight",
+        "model.language_model.layers.1.linear_attn.A_log",
+        "model.language_model.layers.1.linear_attn.norm.weight",
+        "model.language_model.layers.10.linear_attn.A_log",
+        "model.language_model.layers.10.linear_attn.norm.weight"
+      ],
+      "f32_a_log": 30,
+      "f32_dt_bias": 0,
+      "f32_linear_attn_norm": 30
+    },
+    "Elephant-Qwen3.5-VL": {
+      "path": "/workspace/model-performance/michaelfeil/elephant-1",
+      "format": "single",
+      "config_sha256": "f26324589d15932e2742dbb13dbc7c561865ce4f80990af3b7dff05efe4dadab",
+      "index_sha256": null,
+      "tensor_count": 760,
+      "vision_tensor_count": 333,
+      "shards": 1,
+      "model_type": "qwen3_5",
+      "text_model_type": "qwen3_5_text",
+      "vision_model_type": "qwen3_5_vision",
+      "vision_depth": 27,
+      "vision_hidden": 1152,
+      "vision_head_dim": 72,
+      "text_hidden": 4096,
+      "rotary_dim": 64,
+      "mrope_section": [
+        11,
+        11,
+        10
+      ],
+      "deepstack_visual_indexes": [],
+      "has_preprocessor": true,
+      "has_video_preprocessor": true,
+      "combined_processor": true,
+      "dtype_counts": {
+        "BF16": 760
+      },
+      "f32_tensor_count": 0,
+      "f32_names_sample": [],
+      "f32_a_log": 0,
+      "f32_dt_bias": 0,
+      "f32_linear_attn_norm": 0
+    },
+    "Mammoth-Qwen3.5-VL": {
+      "path": "/workspace/model-performance/michaelfeil/onejev-perf/models/mammoth-1",
+      "format": "index",
+      "config_sha256": "bab5a8ceb73fd6a8f191afaf23afbf689d931da5b3c7c9d5153cf1e4b5024502",
+      "index_sha256": "0424520f63f04816eee4d229a4487dc9744866ceb46513e591dd987e401b1663",
+      "tensor_count": 1184,
+      "vision_tensor_count": 333,
+      "shards": 2,
+      "model_type": "qwen3_5",
+      "text_model_type": "qwen3_5_text",
+      "vision_model_type": "qwen3_5_vision",
+      "vision_depth": 27,
+      "vision_hidden": 1152,
+      "vision_head_dim": 72,
+      "text_hidden": 5120,
+      "rotary_dim": 64,
+      "mrope_section": [
+        11,
+        11,
+        10
+      ],
+      "deepstack_visual_indexes": [],
+      "has_preprocessor": true,
+      "has_video_preprocessor": true,
+      "combined_processor": true,
+      "dtype_counts": {
+        "BF16": 1184
+      },
+      "f32_tensor_count": 0,
+      "f32_names_sample": [],
+      "f32_a_log": 0,
+      "f32_dt_bias": 0,
+      "f32_linear_attn_norm": 0
+    }
+  },
+  "note": "Root contains vision_config; no separate qwen35_vl model_type. Native constructs the shared Qwen3-VL tower only when media is needed. 35B-A3B cached copy has config+index+14 shards but no preprocessor JSON."
+}

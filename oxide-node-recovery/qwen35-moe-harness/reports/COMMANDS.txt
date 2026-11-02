@@ -1,0 +1,17 @@
+v4b source update only. No command below was executed in this update.
+
+Not run:
+- python3 control/generate_fixtures.py
+- cargo fmt --all
+- cargo check --offline
+- cargo test --offline
+- cargo clippy --offline --all-targets -- -D warnings
+- cargo run --offline --quiet -- validate-only ...
+- cargo run --offline --quiet -- metadata ...
+- python3 control/freeze.py
+
+Generator-owned value:
+- control/generate_fixtures.py writes fixtures/t9.json and replaces the t9 manifest sha256 sentinel before freeze/build.
+
+NO CPU build, test run, release/optimized build, GPU/context/device query, Docker, Torch, network, device compile, or model weights were used.
+Product freeze remains UNBOUND until Codex binds the final product sha256 before any build.

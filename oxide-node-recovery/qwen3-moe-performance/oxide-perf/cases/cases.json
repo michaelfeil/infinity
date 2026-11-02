@@ -1,0 +1,8 @@
+{
+  "schema": "qwen3-moe-paired-perf-cases/v1",
+  "cases": [
+    {"id": "t7", "batch": "t7.json"},
+    {"id": "ragged129", "batch": "ragged129.json"},
+    {"id": "stable2k", "batch": "stable2k.json"}
+  ]
+}

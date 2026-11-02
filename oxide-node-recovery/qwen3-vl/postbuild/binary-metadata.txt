@@ -1,0 +1,29 @@
+date_utc=2026-11-02T17:22:46Z
+binary=/tmp/opencode/qwen3vl-rope-budget-fix-author-opt3-pass1-target/release/examples/qwen3_vl_host_consumer
+a2c02adb32445d6bb36fd5d2056ce34d63af629ce83f83598cd64829d63de100  /tmp/opencode/qwen3vl-rope-budget-fix-author-opt3-pass1-target/release/examples/qwen3_vl_host_consumer
+size_bytes=24599072 mode=-rwxr-xr-x
+/tmp/opencode/qwen3vl-rope-budget-fix-author-opt3-pass1-target/release/examples/qwen3_vl_host_consumer: ELF 64-bit LSB pie executable, x86-64, version 1 (SYSV), dynamically linked, interpreter /lib64/ld-linux-x86-64.so.2, for GNU/Linux 3.2.0, BuildID[sha1]=ee2161d7e08268867506db0337303f39bc1b7310, with debug_info, not stripped
+
+Displaying notes found in: .note.ABI-tag
+  Owner                Data size 	Description
+  GNU                  0x00000010	NT_GNU_ABI_TAG (ABI version tag)
+    OS: Linux, ABI: 3.2.0
+
+Displaying notes found in: .note.gnu.build-id
+  Owner                Data size 	Description
+  GNU                  0x00000014	NT_GNU_BUILD_ID (unique build ID bitstring)
+    Build ID: ee2161d7e08268867506db0337303f39bc1b7310
+--- debug sections ---
+  [33] .debug_abbrev     PROGBITS         0000000000000000  001fb6a0
+  [34] .debug_info       PROGBITS         0000000000000000  0021d2c0
+  [37] .debug_str        PROGBITS         0000000000000000  00bf1f84
+  [38] .debug_line       PROGBITS         0000000000000000  013ae220
+--- mode/helper literals ---
+/workspace/model-performance/michaelfeil/benchmark-overview/models/Qwen--Qwen3-VL-Embedding-8B/workspace/model-performance/michaelfeil/torch215-comparison-20261029/models/TomoroAI--tomoro-colqwen3-embed-4b/workspace/model-performance/michaelfeil/torch215-comparison-20261029/models/nvidia--nemotron-colembed-vl-4b-v2/tmp/perplexity-embedding-audit/multivector-support/nvidia--nemotron-colembed-vl-8b-v2widthsequencescumulative.schemaqwen3-vl-host-consumer-gpu/v1recordscheckpointelapsed_msmissing checkpoint,qwen3-vl-host-consumer-gpu-lifecycle/v1direct_third_requires_released_leasedrop_without_completion_healthinvalid_media_typedhealth_after_invalidgpu-lifecycle.jsonqwen3-vl-host-consumer-gpu-quality-life/v1backend_constructionsgpu-quality-life.jsonqwen3-vl-host-consumer-gpu-owning-life/v1Qwen3VlBackend::submit_embedtwo_held_then_drop_a_then_complete_b_then_nextthird_submit_while_two_heldmulti_vectordrop_without_completion_fencedinvalid_media_zero_selectorshealth_after_recoverypool0pool1pool2oxide-consumer.jsonqwen3-vl-quality-consumer/v1rawqwen3-vl-host-consumer-gpu-quality/v1poolstokenssingle-catsvarying-shapesmissing A baselinemissing B baselinemissing changed baselinemissing recovery baselinecompleted B differs from its ordinary baselinechanged-shape request differs from its ordinary baselineinvalid media with empty selectors was not rejected with a typed errorrecovery request differs from its ordinary baselinegpu-owning-life.jsonlife-baselinesqwen3-vl-host-consumer/v1factorylifecyclehost-consumer.jsoninvalid media must be rejectedvalid_after_errorimagesnormal factory did not detect the Qwen3-VL aliasconfig.jsonaliasqwen3_vl_nemotron_embedmodel_typedtypefloat16float32text_hiddenvision_hiddenvision_depthdeepstackreadout_kindreadout_widthtensor_countreadout_tensorstotal_bytesinvalid_media_recoverabledescription() is deprecated; use Displaycalled `Result::unwrap()` on an `Err` valueClsSpladeLastTokenOverloadedNoBackendStartInferenceUnhealthyWeightsNotFoundEmbeddingRerankPackedVlRequestforwardhas_mediaidsmedia_positionsraw_tokensQwen3VlForward
+_ZN22infinity_backend_oxide7decoder24rope_construction_budget17h81b720d98d98a260E
+_ZN22infinity_backend_oxide7decoder24rope_construction_budget28_$u7b$$u7b$closure$u7d$$u7d$17hd8569f065d4752dbE
+_ZN22infinity_backend_oxide7decoder24rope_construction_budget28_$u7b$$u7b$closure$u7d$$u7d$17hec5911c31b09a884E
+gpu-quality-lifedown_proj.weightqwen3_vl_nemotroq
+ok_or_else<usize, infinity_v3_backend_core::BackendError, infinity_backend_oxide::decoder::rope_construction_budget::{closure_env#0}>
+ok_or_else<usize, infinity_v3_backend_core::BackendError, infinity_backend_oxide::decoder::rope_construction_budget::{closure_env#1}>
+rope_construction_budget

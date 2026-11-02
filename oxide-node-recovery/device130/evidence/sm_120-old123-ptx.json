@@ -1,0 +1,752 @@
+{
+  "status": "PASS",
+  "errors": [],
+  "checks": [
+    {
+      "table": "entries",
+      "symbol": "infinity_add_rms_norm",
+      "signature_and_all_nonordinal_tokens_identical": true
+    },
+    {
+      "table": "entries",
+      "symbol": "infinity_add_rms_norm_1024_exact_vector",
+      "signature_and_all_nonordinal_tokens_identical": true
+    },
+    {
+      "table": "entries",
+      "symbol": "infinity_add_rms_norm_1536_cached",
+      "signature_and_all_nonordinal_tokens_identical": true
+    },
+    {
+      "table": "entries",
+      "symbol": "infinity_add_rms_norm_1536_vector",
+      "signature_and_all_nonordinal_tokens_identical": true
+    },
+    {
+      "table": "entries",
+      "symbol": "infinity_add_rms_norm_2048_exact",
+      "signature_and_all_nonordinal_tokens_identical": true
+    },
+    {
+      "table": "entries",
+      "symbol": "infinity_add_rms_norm_2048_vector",
+      "signature_and_all_nonordinal_tokens_identical": true
+    },
+    {
+      "table": "entries",
+      "symbol": "infinity_add_rms_norm_4096_vector",
+      "signature_and_all_nonordinal_tokens_identical": true
+    },
+    {
+      "table": "entries",
+      "symbol": "infinity_add_rms_norm_rounded",
+      "signature_and_all_nonordinal_tokens_identical": true
+    },
+    {
+      "table": "entries",
+      "symbol": "infinity_attention",
+      "signature_and_all_nonordinal_tokens_identical": true
+    },
+    {
+      "table": "entries",
+      "symbol": "infinity_base_rope_tables_128_bf16",
+      "signature_and_all_nonordinal_tokens_identical": true
+    },
+    {
+      "table": "entries",
+      "symbol": "infinity_base_rope_tables_128_scaled_bf16",
+      "signature_and_all_nonordinal_tokens_identical": true
+    },
+    {
+      "table": "entries",
+      "symbol": "infinity_base_rope_tables_64_bf16",
+      "signature_and_all_nonordinal_tokens_identical": true
+    },
+    {
+      "table": "entries",
+      "symbol": "infinity_bf16_to_f32",
+      "signature_and_all_nonordinal_tokens_identical": true
+    },
+    {
+      "table": "entries",
+      "symbol": "infinity_classifier_bias_bf16",
+      "signature_and_all_nonordinal_tokens_identical": true
+    },
+    {
+      "table": "entries",
+      "symbol": "infinity_classifier_embedding_norm_384_exact",
+      "signature_and_all_nonordinal_tokens_identical": true
+    },
+    {
+      "table": "entries",
+      "symbol": "infinity_classifier_gather_first_bf16",
+      "signature_and_all_nonordinal_tokens_identical": true
+    },
+    {
+      "table": "entries",
+      "symbol": "infinity_classifier_layer_norm_384_exact",
+      "signature_and_all_nonordinal_tokens_identical": true
+    },
+    {
+      "table": "entries",
+      "symbol": "infinity_deberta_divide",
+      "signature_and_all_nonordinal_tokens_identical": true
+    },
+    {
+      "table": "entries",
+      "symbol": "infinity_deberta_embedding_word_norm_768",
+      "signature_and_all_nonordinal_tokens_identical": true
+    },
+    {
+      "table": "entries",
+      "symbol": "infinity_deberta_layer_norm_768",
+      "signature_and_all_nonordinal_tokens_identical": true
+    },
+    {
+      "table": "entries",
+      "symbol": "infinity_deberta_relative_transpose",
+      "signature_and_all_nonordinal_tokens_identical": true
+    },
+    {
+      "table": "entries",
+      "symbol": "infinity_deberta_signed_buckets",
+      "signature_and_all_nonordinal_tokens_identical": true
+    },
+    {
+      "table": "entries",
+      "symbol": "infinity_deberta_unpack_scaled",
+      "signature_and_all_nonordinal_tokens_identical": true
+    },
+    {
+      "table": "entries",
+      "symbol": "infinity_decoder_rows_bf16",
+      "signature_and_all_nonordinal_tokens_identical": true
+    },
+    {
+      "table": "entries",
+      "symbol": "infinity_dense_tanh_bf16_inplace",
+      "signature_and_all_nonordinal_tokens_identical": true
+    },
+    {
+      "table": "entries",
+      "symbol": "infinity_embedding_gather",
+      "signature_and_all_nonordinal_tokens_identical": true
+    },
+    {
+      "table": "entries",
+      "symbol": "infinity_embedding_gather_scaled",
+      "signature_and_all_nonordinal_tokens_identical": true
+    },
+    {
+      "table": "entries",
+      "symbol": "infinity_embedding_norm",
+      "signature_and_all_nonordinal_tokens_identical": true
+    },
+    {
+      "table": "entries",
+      "symbol": "infinity_embedding_norm_1024_rounded_native",
+      "signature_and_all_nonordinal_tokens_identical": true
+    },
+    {
+      "table": "entries",
+      "symbol": "infinity_embedding_norm_384",
+      "signature_and_all_nonordinal_tokens_identical": true
+    },
+    {
+      "table": "entries",
+      "symbol": "infinity_embedding_norm_384_f16",
+      "signature_and_all_nonordinal_tokens_identical": true
+    },
+    {
+      "table": "entries",
+      "symbol": "infinity_embedding_norm_768_exact",
+      "signature_and_all_nonordinal_tokens_identical": true
+    },
+    {
+      "table": "entries",
+      "symbol": "infinity_embedding_norm_768_exact_vector",
+      "signature_and_all_nonordinal_tokens_identical": true
+    },
+    {
+      "table": "entries",
+      "symbol": "infinity_embedding_norm_mpnet_768_aten",
+      "signature_and_all_nonordinal_tokens_identical": true
+    },
+    {
+      "table": "entries",
+      "symbol": "infinity_embedding_norm_rounded",
+      "signature_and_all_nonordinal_tokens_identical": true
+    },
+    {
+      "table": "entries",
+      "symbol": "infinity_embedding_norm_word_768_aten",
+      "signature_and_all_nonordinal_tokens_identical": true
+    },
+    {
+      "table": "entries",
+      "symbol": "infinity_embedding_word_norm_768_candle",
+      "signature_and_all_nonordinal_tokens_identical": true
+    },
+    {
+      "table": "entries",
+      "symbol": "infinity_embedding_word_type_norm_512_exact",
+      "signature_and_all_nonordinal_tokens_identical": true
+    },
+    {
+      "table": "entries",
+      "symbol": "infinity_embedding_word_type_norm_768_exact",
+      "signature_and_all_nonordinal_tokens_identical": true
+    },
+    {
+      "table": "entries",
+      "symbol": "infinity_encoder_activation_gelu_tanh_bf16",
+      "signature_and_all_nonordinal_tokens_identical": true
+    },
+    {
+      "table": "entries",
+      "symbol": "infinity_encoder_activation_relu_bf16",
+      "signature_and_all_nonordinal_tokens_identical": true
+    },
+    {
+      "table": "entries",
+      "symbol": "infinity_encoder_activation_silu_bf16",
+      "signature_and_all_nonordinal_tokens_identical": true
+    },
+    {
+      "table": "entries",
+      "symbol": "infinity_encoder_activation_tanh_bf16",
+      "signature_and_all_nonordinal_tokens_identical": true
+    },
+    {
+      "table": "entries",
+      "symbol": "infinity_f16_to_f32",
+      "signature_and_all_nonordinal_tokens_identical": true
+    },
+    {
+      "table": "entries",
+      "symbol": "infinity_f32_to_bf16",
+      "signature_and_all_nonordinal_tokens_identical": true
+    },
+    {
+      "table": "entries",
+      "symbol": "infinity_gated_gelu_up_first",
+      "signature_and_all_nonordinal_tokens_identical": true
+    },
+    {
+      "table": "entries",
+      "symbol": "infinity_gelu_bias",
+      "signature_and_all_nonordinal_tokens_identical": true
+    },
+    {
+      "table": "entries",
+      "symbol": "infinity_gelu_exact",
+      "signature_and_all_nonordinal_tokens_identical": true
+    },
+    {
+      "table": "entries",
+      "symbol": "infinity_gemma2_gated_gelu_bf16",
+      "signature_and_all_nonordinal_tokens_identical": true
+    },
+    {
+      "table": "entries",
+      "symbol": "infinity_gemma2_mean_pool_bf16",
+      "signature_and_all_nonordinal_tokens_identical": true
+    },
+    {
+      "table": "entries",
+      "symbol": "infinity_gemma2_norm_bf16_f32scale",
+      "signature_and_all_nonordinal_tokens_identical": true
+    },
+    {
+      "table": "entries",
+      "symbol": "infinity_gemma2_ple_gate_bf16",
+      "signature_and_all_nonordinal_tokens_identical": true
+    },
+    {
+      "table": "entries",
+      "symbol": "infinity_gemma2_residual_norm_bf16_f32scale",
+      "signature_and_all_nonordinal_tokens_identical": true
+    },
+    {
+      "table": "entries",
+      "symbol": "infinity_gemma2_rope_tables_bf16",
+      "signature_and_all_nonordinal_tokens_identical": true
+    },
+    {
+      "table": "entries",
+      "symbol": "infinity_gemma2_scale_bf16",
+      "signature_and_all_nonordinal_tokens_identical": true
+    },
+    {
+      "table": "entries",
+      "symbol": "infinity_gemma2_unit_norm_bf16",
+      "signature_and_all_nonordinal_tokens_identical": true
+    },
+    {
+      "table": "entries",
+      "symbol": "infinity_jina_code_qk_norm_768",
+      "signature_and_all_nonordinal_tokens_identical": true
+    },
+    {
+      "table": "entries",
+      "symbol": "infinity_layer_norm",
+      "signature_and_all_nonordinal_tokens_identical": true
+    },
+    {
+      "table": "entries",
+      "symbol": "infinity_layer_norm_1024_rounded_native",
+      "signature_and_all_nonordinal_tokens_identical": true
+    },
+    {
+      "table": "entries",
+      "symbol": "infinity_layer_norm_384",
+      "signature_and_all_nonordinal_tokens_identical": true
+    },
+    {
+      "table": "entries",
+      "symbol": "infinity_layer_norm_384_f16",
+      "signature_and_all_nonordinal_tokens_identical": true
+    },
+    {
+      "table": "entries",
+      "symbol": "infinity_layer_norm_512_rounded_native",
+      "signature_and_all_nonordinal_tokens_identical": true
+    },
+    {
+      "table": "entries",
+      "symbol": "infinity_layer_norm_768_exact",
+      "signature_and_all_nonordinal_tokens_identical": true
+    },
+    {
+      "table": "entries",
+      "symbol": "infinity_layer_norm_768_exact_vector",
+      "signature_and_all_nonordinal_tokens_identical": true
+    },
+    {
+      "table": "entries",
+      "symbol": "infinity_layer_norm_mpnet_768_aten",
+      "signature_and_all_nonordinal_tokens_identical": true
+    },
+    {
+      "table": "entries",
+      "symbol": "infinity_layer_norm_rounded",
+      "signature_and_all_nonordinal_tokens_identical": true
+    },
+    {
+      "table": "entries",
+      "symbol": "infinity_mean_pool",
+      "signature_and_all_nonordinal_tokens_identical": true
+    },
+    {
+      "table": "entries",
+      "symbol": "infinity_mean_pool_bf16_native",
+      "signature_and_all_nonordinal_tokens_identical": true
+    },
+    {
+      "table": "entries",
+      "symbol": "infinity_mean_pool_f16",
+      "signature_and_all_nonordinal_tokens_identical": true
+    },
+    {
+      "table": "entries",
+      "symbol": "infinity_mistral3_add_bf16",
+      "signature_and_all_nonordinal_tokens_identical": true
+    },
+    {
+      "table": "entries",
+      "symbol": "infinity_mistral3_gelu_bf16",
+      "signature_and_all_nonordinal_tokens_identical": true
+    },
+    {
+      "table": "entries",
+      "symbol": "infinity_mistral3_llama4_query_scale_bf16",
+      "signature_and_all_nonordinal_tokens_identical": true
+    },
+    {
+      "table": "entries",
+      "symbol": "infinity_mistral3_merge_gather_bf16",
+      "signature_and_all_nonordinal_tokens_identical": true
+    },
+    {
+      "table": "entries",
+      "symbol": "infinity_mistral3_pixels_to_bf16",
+      "signature_and_all_nonordinal_tokens_identical": true
+    },
+    {
+      "table": "entries",
+      "symbol": "infinity_mistral3_rope2d_bf16",
+      "signature_and_all_nonordinal_tokens_identical": true
+    },
+    {
+      "table": "entries",
+      "symbol": "infinity_mistral3_scatter_features_bf16",
+      "signature_and_all_nonordinal_tokens_identical": true
+    },
+    {
+      "table": "entries",
+      "symbol": "infinity_mistral3_silu_mul_bf16",
+      "signature_and_all_nonordinal_tokens_identical": true
+    },
+    {
+      "table": "entries",
+      "symbol": "infinity_plain_norm_384_f16",
+      "signature_and_all_nonordinal_tokens_identical": true
+    },
+    {
+      "table": "entries",
+      "symbol": "infinity_pool",
+      "signature_and_all_nonordinal_tokens_identical": true
+    },
+    {
+      "table": "entries",
+      "symbol": "infinity_pool_f16",
+      "signature_and_all_nonordinal_tokens_identical": true
+    },
+    {
+      "table": "entries",
+      "symbol": "infinity_qk_norm_rope_128_bf16",
+      "signature_and_all_nonordinal_tokens_identical": true
+    },
+    {
+      "table": "entries",
+      "symbol": "infinity_qk_norm_rope_256_bf16",
+      "signature_and_all_nonordinal_tokens_identical": true
+    },
+    {
+      "table": "entries",
+      "symbol": "infinity_qkv",
+      "signature_and_all_nonordinal_tokens_identical": true
+    },
+    {
+      "table": "entries",
+      "symbol": "infinity_qkv_f16",
+      "signature_and_all_nonordinal_tokens_identical": true
+    },
+    {
+      "table": "entries",
+      "symbol": "infinity_qwen35_attention_gate_bf16",
+      "signature_and_all_nonordinal_tokens_identical": true
+    },
+    {
+      "table": "entries",
+      "symbol": "infinity_qwen35_join_ab_bf16",
+      "signature_and_all_nonordinal_tokens_identical": true
+    },
+    {
+      "table": "entries",
+      "symbol": "infinity_qwen35_moe_shared_gate_bf16",
+      "signature_and_all_nonordinal_tokens_identical": true
+    },
+    {
+      "table": "entries",
+      "symbol": "infinity_qwen35_norm_scalar_bf16",
+      "signature_and_all_nonordinal_tokens_identical": true
+    },
+    {
+      "table": "entries",
+      "symbol": "infinity_qwen35_norm_vector_bf16",
+      "signature_and_all_nonordinal_tokens_identical": true
+    },
+    {
+      "table": "entries",
+      "symbol": "infinity_qwen35_partial_rope_256_bf16",
+      "signature_and_all_nonordinal_tokens_identical": true
+    },
+    {
+      "table": "entries",
+      "symbol": "infinity_qwen35_residual_norm_scalar_bf16",
+      "signature_and_all_nonordinal_tokens_identical": true
+    },
+    {
+      "table": "entries",
+      "symbol": "infinity_qwen35_residual_norm_vector_bf16",
+      "signature_and_all_nonordinal_tokens_identical": true
+    },
+    {
+      "table": "entries",
+      "symbol": "infinity_qwen35_rope_tables_bf16",
+      "signature_and_all_nonordinal_tokens_identical": true
+    },
+    {
+      "table": "entries",
+      "symbol": "infinity_qwen35vl_add_bf16",
+      "signature_and_all_nonordinal_tokens_identical": true
+    },
+    {
+      "table": "entries",
+      "symbol": "infinity_qwen35vl_bias_bf16",
+      "signature_and_all_nonordinal_tokens_identical": true
+    },
+    {
+      "table": "entries",
+      "symbol": "infinity_qwen35vl_gelu_tanh_bf16",
+      "signature_and_all_nonordinal_tokens_identical": true
+    },
+    {
+      "table": "entries",
+      "symbol": "infinity_qwen35vl_rope2d_bf16",
+      "signature_and_all_nonordinal_tokens_identical": true
+    },
+    {
+      "table": "entries",
+      "symbol": "infinity_qwen35vl_silu_bf16",
+      "signature_and_all_nonordinal_tokens_identical": true
+    },
+    {
+      "table": "entries",
+      "symbol": "infinity_qwen35vl_temporal_slice_bf16",
+      "signature_and_all_nonordinal_tokens_identical": true
+    },
+    {
+      "table": "entries",
+      "symbol": "infinity_qwen3vl_add_bf16",
+      "signature_and_all_nonordinal_tokens_identical": true
+    },
+    {
+      "table": "entries",
+      "symbol": "infinity_qwen3vl_gelu_tanh_bf16",
+      "signature_and_all_nonordinal_tokens_identical": true
+    },
+    {
+      "table": "entries",
+      "symbol": "infinity_qwen3vl_pos_interp",
+      "signature_and_all_nonordinal_tokens_identical": true
+    },
+    {
+      "table": "entries",
+      "symbol": "infinity_qwen3vl_rope2d_bf16",
+      "signature_and_all_nonordinal_tokens_identical": true
+    },
+    {
+      "table": "entries",
+      "symbol": "infinity_qwen3vl_silu_bf16",
+      "signature_and_all_nonordinal_tokens_identical": true
+    },
+    {
+      "table": "entries",
+      "symbol": "infinity_rms_norm",
+      "signature_and_all_nonordinal_tokens_identical": true
+    },
+    {
+      "table": "entries",
+      "symbol": "infinity_rms_norm_1024_exact_vector",
+      "signature_and_all_nonordinal_tokens_identical": true
+    },
+    {
+      "table": "entries",
+      "symbol": "infinity_rms_norm_1536_cached",
+      "signature_and_all_nonordinal_tokens_identical": true
+    },
+    {
+      "table": "entries",
+      "symbol": "infinity_rms_norm_1536_vector",
+      "signature_and_all_nonordinal_tokens_identical": true
+    },
+    {
+      "table": "entries",
+      "symbol": "infinity_rms_norm_2048_exact",
+      "signature_and_all_nonordinal_tokens_identical": true
+    },
+    {
+      "table": "entries",
+      "symbol": "infinity_rms_norm_2048_vector",
+      "signature_and_all_nonordinal_tokens_identical": true
+    },
+    {
+      "table": "entries",
+      "symbol": "infinity_rms_norm_4096_vector",
+      "signature_and_all_nonordinal_tokens_identical": true
+    },
+    {
+      "table": "entries",
+      "symbol": "infinity_rms_norm_rounded",
+      "signature_and_all_nonordinal_tokens_identical": true
+    },
+    {
+      "table": "entries",
+      "symbol": "infinity_rope_interleaved",
+      "signature_and_all_nonordinal_tokens_identical": true
+    },
+    {
+      "table": "entries",
+      "symbol": "infinity_rope_interleaved_hfma",
+      "signature_and_all_nonordinal_tokens_identical": true
+    },
+    {
+      "table": "entries",
+      "symbol": "infinity_rope_neox",
+      "signature_and_all_nonordinal_tokens_identical": true
+    },
+    {
+      "table": "entries",
+      "symbol": "infinity_rope_neox_hfma",
+      "signature_and_all_nonordinal_tokens_identical": true
+    },
+    {
+      "table": "entries",
+      "symbol": "infinity_rounded_residual_norm_768_candle",
+      "signature_and_all_nonordinal_tokens_identical": true
+    },
+    {
+      "table": "entries",
+      "symbol": "infinity_selected_rows",
+      "signature_and_all_nonordinal_tokens_identical": true
+    },
+    {
+      "table": "entries",
+      "symbol": "infinity_silu_mul",
+      "signature_and_all_nonordinal_tokens_identical": true
+    },
+    {
+      "table": "entries",
+      "symbol": "infinity_silu_mul_bf16_pairs",
+      "signature_and_all_nonordinal_tokens_identical": true
+    },
+    {
+      "table": "entries",
+      "symbol": "infinity_silu_mul_bf16_pairs_native",
+      "signature_and_all_nonordinal_tokens_identical": true
+    },
+    {
+      "table": "entries",
+      "symbol": "infinity_silu_mul_bf16_vector8_native",
+      "signature_and_all_nonordinal_tokens_identical": true
+    },
+    {
+      "table": "entries",
+      "symbol": "infinity_silu_mul_f32",
+      "signature_and_all_nonordinal_tokens_identical": true
+    },
+    {
+      "table": "funcs",
+      "symbol": "embedding_norm_384_exact",
+      "signature_and_all_nonordinal_tokens_identical": true
+    },
+    {
+      "table": "funcs",
+      "symbol": "embedding_norm_384_f16",
+      "signature_and_all_nonordinal_tokens_identical": true
+    },
+    {
+      "table": "funcs",
+      "symbol": "layer_norm_384_exact",
+      "signature_and_all_nonordinal_tokens_identical": true
+    },
+    {
+      "table": "funcs",
+      "symbol": "layer_norm_384_f16",
+      "signature_and_all_nonordinal_tokens_identical": true
+    },
+    {
+      "table": "funcs",
+      "symbol": "norm_rope_headKb0_EB4_",
+      "signature_and_all_nonordinal_tokens_identical": true
+    },
+    {
+      "table": "funcs",
+      "symbol": "norm_rope_headKb1_EB4_",
+      "signature_and_all_nonordinal_tokens_identical": true
+    },
+    {
+      "table": "funcs",
+      "symbol": "normalizeKb0_EB4_",
+      "signature_and_all_nonordinal_tokens_identical": true
+    },
+    {
+      "table": "funcs",
+      "symbol": "normalizeKb1_EB4_",
+      "signature_and_all_nonordinal_tokens_identical": true
+    },
+    {
+      "table": "funcs",
+      "symbol": "normalize_scalar_1024Kb1_EB4_",
+      "signature_and_all_nonordinal_tokens_identical": true
+    },
+    {
+      "table": "funcs",
+      "symbol": "normalize_vector",
+      "signature_and_all_nonordinal_tokens_identical": true
+    },
+    {
+      "table": "funcs",
+      "symbol": "normalize_vectorKb0_EB4_",
+      "signature_and_all_nonordinal_tokens_identical": true
+    },
+    {
+      "table": "funcs",
+      "symbol": "normalize_vectorKb1_EB4_",
+      "signature_and_all_nonordinal_tokens_identical": true
+    },
+    {
+      "table": "funcs",
+      "symbol": "normalize_vector_1024Kb1_EB4_",
+      "signature_and_all_nonordinal_tokens_identical": true
+    },
+    {
+      "table": "funcs",
+      "symbol": "residual_values",
+      "signature_and_all_nonordinal_tokens_identical": true
+    }
+  ],
+  "shared_bijection": {
+    "__shared_mem_0d869bbe3057566a_11": "__shared_mem_0d869bbe3057566a_14",
+    "__shared_mem_0d869bbe3057566a_7": "__shared_mem_0d869bbe3057566a_10",
+    "__shared_mem_0d869bbe3057566a_25": "__shared_mem_0d869bbe3057566a_29",
+    "__shared_mem_0d869bbe3057566a_26": "__shared_mem_0d869bbe3057566a_30",
+    "__shared_mem_0d869bbe3057566a_22": "__shared_mem_0d869bbe3057566a_25",
+    "__shared_mem_0d869bbe3057566a_23": "__shared_mem_0d869bbe3057566a_26",
+    "__shared_mem_0d869bbe3057566a_1": "__shared_mem_0d869bbe3057566a_3",
+    "__shared_mem_0d869bbe3057566a_14": "__shared_mem_0d869bbe3057566a_17",
+    "__shared_mem_0d869bbe3057566a_21": "__shared_mem_0d869bbe3057566a_24",
+    "__shared_mem_0d869bbe3057566a_27": "__shared_mem_0d869bbe3057566a_31",
+    "__shared_mem_0d869bbe3057566a_15": "__shared_mem_0d869bbe3057566a_18",
+    "__shared_mem_0d869bbe3057566a_20": "__shared_mem_0d869bbe3057566a_23",
+    "__shared_mem_0d869bbe3057566a_16": "__shared_mem_0d869bbe3057566a_19",
+    "__shared_mem_0d869bbe3057566a_6": "__shared_mem_0d869bbe3057566a_9",
+    "__shared_mem_0d869bbe3057566a_18": "__shared_mem_0d869bbe3057566a_21",
+    "__shared_mem_0d869bbe3057566a_19": "__shared_mem_0d869bbe3057566a_22",
+    "__shared_mem_0d869bbe3057566a_13": "__shared_mem_0d869bbe3057566a_16",
+    "__shared_mem_0d869bbe3057566a_24": "__shared_mem_0d869bbe3057566a_27",
+    "__shared_mem_0d869bbe3057566a_12": "__shared_mem_0d869bbe3057566a_15",
+    "__shared_mem_0d869bbe3057566a_2": "__shared_mem_0d869bbe3057566a_4",
+    "__shared_mem_0d869bbe3057566a_10": "__shared_mem_0d869bbe3057566a_13",
+    "__shared_mem_0d869bbe3057566a_17": "__shared_mem_0d869bbe3057566a_20",
+    "__shared_mem_0d869bbe3057566a_8": "__shared_mem_0d869bbe3057566a_11",
+    "__shared_mem_0d869bbe3057566a_9": "__shared_mem_0d869bbe3057566a_12",
+    "__shared_mem_0d869bbe3057566a_5": "__shared_mem_0d869bbe3057566a_7",
+    "__shared_mem_0d869bbe3057566a_4": "__shared_mem_0d869bbe3057566a_6",
+    "__shared_mem_0d869bbe3057566a_0": "__shared_mem_0d869bbe3057566a_0",
+    "__shared_mem_0d869bbe3057566a_3": "__shared_mem_0d869bbe3057566a_5"
+  },
+  "shared_declarations": {
+    "__shared_mem_0d869bbe3057566a_11": ".visible .shared .align 4 .b8 SHARED_SYMBOL[32];",
+    "__shared_mem_0d869bbe3057566a_7": ".visible .shared .align 4 .b8 SHARED_SYMBOL[32];",
+    "__shared_mem_0d869bbe3057566a_25": ".visible .shared .align 4 .b8 SHARED_SYMBOL[6144];",
+    "__shared_mem_0d869bbe3057566a_26": ".visible .shared .align 4 .b8 SHARED_SYMBOL[32];",
+    "__shared_mem_0d869bbe3057566a_22": ".visible .shared .align 4 .b8 SHARED_SYMBOL[16384];",
+    "__shared_mem_0d869bbe3057566a_23": ".visible .shared .align 4 .b8 SHARED_SYMBOL[32];",
+    "__shared_mem_0d869bbe3057566a_1": ".visible .shared .align 4 .b8 SHARED_SYMBOL[32];",
+    "__shared_mem_0d869bbe3057566a_14": ".visible .shared .align 4 .b8 SHARED_SYMBOL[32];",
+    "__shared_mem_0d869bbe3057566a_21": ".visible .shared .align 4 .b8 SHARED_SYMBOL[32];",
+    "__shared_mem_0d869bbe3057566a_27": ".visible .shared .align 4 .b8 SHARED_SYMBOL[32];",
+    "__shared_mem_0d869bbe3057566a_15": ".visible .shared .align 4 .b8 SHARED_SYMBOL[24];",
+    "__shared_mem_0d869bbe3057566a_20": ".visible .shared .align 4 .b8 SHARED_SYMBOL[24];",
+    "__shared_mem_0d869bbe3057566a_16": ".visible .shared .align 2 .b8 SHARED_SYMBOL[16384];",
+    "__shared_mem_0d869bbe3057566a_6": ".visible .shared .align 4 .b8 SHARED_SYMBOL[2048];",
+    "__shared_mem_0d869bbe3057566a_18": ".visible .shared .align 4 .b8 SHARED_SYMBOL[2048];",
+    "__shared_mem_0d869bbe3057566a_19": ".visible .shared .align 4 .b8 SHARED_SYMBOL[2048];",
+    "__shared_mem_0d869bbe3057566a_13": ".visible .shared .align 4 .b8 SHARED_SYMBOL[32];",
+    "__shared_mem_0d869bbe3057566a_24": ".visible .shared .align 4 .b8 SHARED_SYMBOL[32];",
+    "__shared_mem_0d869bbe3057566a_12": ".visible .shared .align 4 .b8 SHARED_SYMBOL[24];",
+    "__shared_mem_0d869bbe3057566a_2": ".visible .shared .align 4 .b8 SHARED_SYMBOL[1024];",
+    "__shared_mem_0d869bbe3057566a_10": ".visible .shared .align 2 .b8 SHARED_SYMBOL[16384];",
+    "__shared_mem_0d869bbe3057566a_17": ".visible .shared .align 2 .b8 SHARED_SYMBOL[16384];",
+    "__shared_mem_0d869bbe3057566a_8": ".visible .shared .align 4 .b8 SHARED_SYMBOL[32];",
+    "__shared_mem_0d869bbe3057566a_9": ".visible .shared .align 2 .b8 SHARED_SYMBOL[512];",
+    "__shared_mem_0d869bbe3057566a_5": ".visible .shared .align 4 .b8 SHARED_SYMBOL[4096];",
+    "__shared_mem_0d869bbe3057566a_4": ".visible .shared .align 4 .b8 SHARED_SYMBOL[4096];",
+    "__shared_mem_0d869bbe3057566a_0": ".visible .shared .align 4 .b8 SHARED_SYMBOL[4096];",
+    "__shared_mem_0d869bbe3057566a_3": ".visible .shared .align 4 .b8 SHARED_SYMBOL[4096];"
+  },
+  "rule": "Only whole-module BB prefix ordinal, single local_depot ordinal, and declaration-verified bijective shared symbol rename; local branch target suffixes/storage sizes unchanged"
+}

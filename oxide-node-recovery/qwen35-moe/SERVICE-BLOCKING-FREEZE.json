@@ -1,0 +1,59 @@
+{
+  "schema": "oxide-qwen35-moe-factory-service-blocking-freeze/v1",
+  "base_product": "/tmp/oxide-all-model-feature-matrix-v1/qwen35-moe-factory-poisoncheckout-successor-v1",
+  "base_product_freeze_sha256": "2d14344ad4837bf9fcbcc059d3750140b347684f94a9b8d623a956c8bf24f064",
+  "product_pins_match": true,
+  "changed_files": [
+    "libs/infinity-v3/backends/oxide/src/qwen35_moe_factory.rs"
+  ],
+  "files": {
+    "libs/infinity-v3/backends/oxide/src/qwen35_moe_factory.rs": {
+      "bytes": 37185,
+      "sha256": "3983b186cc68f2d91ee6a4a4e1023b78d7cc8681dd5743ed6d8f932fc194e7f6"
+    },
+    "SERVICE-BLOCKING.patch": {
+      "bytes": 33752,
+      "sha256": "e56e2f0b6a0b047f11ca3edd7b573dc06d1d2ee31138efa68363438e5e82c829"
+    },
+    "FOCUSED-TESTS.log": {
+      "bytes": 1990,
+      "sha256": "39bd9a858cddccba807b568e743b7324d0e83c00c7b2bbb3b2a3799158358204"
+    },
+    "ALL-LIB-TESTS.log": {
+      "bytes": 75402,
+      "sha256": "0981a35bdc56bfc0fcd73936241463c04c11ab7f3887d82c2e2c4287b7d90daa"
+    },
+    "CLIPPY.log": {
+      "bytes": 234,
+      "sha256": "87fe8cf2c94cd182f9d18213f98617752030afc343dd074948692cad7d1dc3fa"
+    },
+    "REPORT.md": {
+      "bytes": 3269,
+      "sha256": "8ae8319b4d73501c37abc988b2fe5267d312a22f458e6322621eec30a937a35f"
+    },
+    "COMMANDS.txt": {
+      "bytes": 568,
+      "sha256": "06160628c2a8f0ec194c96eb88af37c8a006375821767ea6f896c69409c83e46"
+    },
+    "PRODUCT-PINS.json": {
+      "bytes": 1702,
+      "sha256": "09258c364dbc4ebeb36a9cd59293bb0a9fae489971ed4742cc51ad0caf9a6759"
+    },
+    "FREEZE.json": {
+      "bytes": 1918,
+      "sha256": "2d14344ad4837bf9fcbcc059d3750140b347684f94a9b8d623a956c8bf24f064"
+    },
+    "PINS.json": {
+      "bytes": 437,
+      "sha256": "1f1f83431291b63cb2e10ef6cb8e7b8faf094f95ba468a7782662c4f7c777422"
+    }
+  },
+  "tests": {
+    "focused": "15 passed, 0 failed",
+    "lib": "725 passed, 0 failed, 73 ignored",
+    "clippy": "-D warnings pass",
+    "fmt": "pass"
+  },
+  "optimized_build_run": false,
+  "gpu_run": false
+}

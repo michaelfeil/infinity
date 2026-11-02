@@ -1,0 +1,26 @@
+{
+  "config.json": {
+    "sha256": "1eaa88d8d8824a47304e864c14101fe9efe3286607a7573f27eb723637f0d73d",
+    "bytes": 1539
+  },
+  "model.safetensors.index.json": {
+    "sha256": "f8656aa4a0a666568f6f6befe980a2ba02d9702eb909bd4c211d6f5db1f980ea",
+    "bytes": 67737
+  },
+  "model-00001-of-00004.safetensors": {
+    "sha256": "79ef275ec5f751d5fb59357c00d473268f9fd74abf5e38aa30137d268e7733c4",
+    "bytes": 4998056552
+  },
+  "model-00002-of-00004.safetensors": {
+    "sha256": "a4da61f512e84fc0f0b80bcb7bcc5137eb3bf25b658a7d55f84f4056078545f0",
+    "bytes": 4915962464
+  },
+  "model-00003-of-00004.safetensors": {
+    "sha256": "7fb17cf8f06d6fe5aaacf114e85c4e6d8318799f24b517f50d1ec154a8d47007",
+    "bytes": 4915962496
+  },
+  "model-00004-of-00004.safetensors": {
+    "sha256": "000213b6d1d03ed9023fac23716da51ec4c5be221a04526c2f732d31d8fed1f5",
+    "bytes": 1459698112
+  }
+}

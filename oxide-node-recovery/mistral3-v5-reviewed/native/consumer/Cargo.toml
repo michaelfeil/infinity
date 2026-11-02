@@ -1,0 +1,12 @@
+[package]
+name = "mistral3-b66-consumer"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+libloading = "0.8"
+
+[profile.release]
+lto = true
+codegen-units = 1

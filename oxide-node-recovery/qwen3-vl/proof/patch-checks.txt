@@ -1,0 +1,3 @@
+public_decoder_patch=applies
+private_decoder_patch=applies
+private_harness_patch=applies

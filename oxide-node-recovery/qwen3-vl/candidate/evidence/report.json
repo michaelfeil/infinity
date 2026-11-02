@@ -1,0 +1,88 @@
+{
+  "schema": "oxide-qwen3-vl-e582-cpu-evidence/v1",
+  "base_commit": "e582ce90eb1544fcff081a495cb8fd4f3c17b112",
+  "source_commit": "027b359c6e0c5378cd07398b07b4435af3ee492d",
+  "patch": "selective.patch",
+  "patch_sha256": "94965637d760dbfd642a41d36efe3142ad892933f795b37f3c8c80e5630e14ea",
+  "toolchain": [
+    "date_utc=2026-11-02T15:50:52Z",
+    "cpu_affinity_requested=72-79",
+    "cpu_affinity_effective=pid 461569's current affinity list: 72-79",
+    "cuda_visible_devices=''",
+    "cargo_net_offline=true",
+    "job_limit=4",
+    "host_rustc=rustc 1.99.1 (58cf8f9c3 2026-10-13)",
+    "host_cargo=cargo 1.99.1 (5f94df478 2026-08-27)",
+    "tree_rustc=rustc 1.93.1 (01f6ddf75 2026-02-11)",
+    "tree_cargo=cargo 1.93.1 (083ac5135 2025-12-15)"
+  ],
+  "tests": {
+    "oxide_lib": {
+      "passed": 486,
+      "failed": 0,
+      "ignored": 56
+    },
+    "real_fixtures": {
+      "passed": 1,
+      "failed": 0,
+      "ignored": 0
+    },
+    "backend_factory": "test result: ok. 22 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+    "fmt": "pass",
+    "clippy_d_warnings": "pass",
+    "consumer_build": "pass"
+  },
+  "consumer": {
+    "path": "/tmp/opencode/qwen-vl-current-checks/target/debug/examples/qwen3_vl_oxide_consumer",
+    "sha256": "2846f6cad166120cb188bd6ca24a0b0b76ebc77e7c935ed623c7982d6703f550",
+    "profile": "debug"
+  },
+  "host_consumer": {
+    "sha256": "6a00057af29e860a4447d8e6e960f15ccbb4abbee89cb5bb7d053e2b4a464b02",
+    "profile": "historical opt3/lto=false successor3",
+    "source_commit": "f657f1941fff29c1e864166a61c98d1a135ab0dc",
+    "matches_current_source": false,
+    "run": "historical manifest/factory/lifecycle",
+    "note": "Not CPU evidence for the current freeze; optimized successor for this freeze remains eligible only via Root grant.",
+    "frozen_history": "6e4f7f53afcb9aaac0ac855c65a1c6a18aa1a6084da5abb6eb97b92d0c0702a1"
+  },
+  "source_sha256": {
+    "backends/oxide/device/src/qwen3vl.rs": "8af729dd7cf90cbea7d716eb604ff10fb08f340fb3510db29df3ca6b5b142e3f",
+    "backends/oxide/device/build.sh": "af7d3ec38e5ef68f666f0d0ad60aa6351ee44cfec19840f7b838122eff1bcb00",
+    "backends/oxide/device/src/main.rs": "9ea9de42da00eba0ff9d64767440477f6d56335086ae969b8b0e082ebe4c1627",
+    "backends/oxide/src/qwen3_vl_config.rs": "90b12365c524e93f7691df98d4f81d3c8abe307928eb600c403a9e75106df6d4",
+    "backends/oxide/src/qwen3_vl_vision.rs": "13278fd00c17da95f9aa8456b220b582987f457a76773867664132c719584c59",
+    "backends/oxide/src/qwen3_vl_device.rs": "23530373951952e1ca4ca7a8b6b7d0537735b9319f24bbbb16ced8269291fb91",
+    "backends/oxide/src/qwen3_vl_engine.rs": "24a78f4cf3cfb426e0411d19bb6a887e0b552e30bcc86bd2e61d1b11600942a3",
+    "backends/oxide/src/qwen3_vl_batch.rs": "65f924d27d3c52a3dfbe6a7196981687d80221e49c73203360cd7c687a763fce",
+    "backends/oxide/src/qwen3_vl_text.rs": "cdcf20b68df1b0a6794fee846389114734ee9b24ff73cf485434511a678d1229",
+    "backends/oxide/src/qwen3_vl_contract.rs": "7bc5a50fd756626de5ab6464d896f41dc631e2ae07556f6de601fa2087898de0",
+    "backends/oxide/src/qwen3_vl_readout.rs": "0eaf770fe46444b593edf334c4aa56b210b0efef2a8874f80d6e3df3015d5735",
+    "backends/oxide/src/qwen3_vl_service.rs": "36c6a3f8f96936ac4d60570ba911e645a50dd9bd0e3a51ad40e9624efc1ce994",
+    "backends/oxide/src/qwen3_vl_fixtures.rs": "973e76383bc9b707a75eaa80a79641e0836000b38028d5c5f55cd9038ccce0f5",
+    "backends/oxide/src/decoder.rs": "6850cbb961ae75c672eea2820cb8e2f5b3726bb71a56b0007b36cf47a898efe5",
+    "backends/oxide/src/decoder_model.rs": "52f7ef48e9624745347fdc818eebc3f32796115e6c375b24591f0d6be18d54a4",
+    "backends/oxide/src/model.rs": "2b7854084372199b5f071fce9c9077eda8f9cd15ba1ee1de905aed71ae68f473",
+    "backends/oxide/src/lib.rs": "fe32739d598fc2f77dc5b9774b5a6b01f4ea917062b25d5471e963026c53d65a"
+  },
+  "fixtures": {
+    "path": "/tmp/oxide-all-model-feature-matrix-v1/qwen-vl-current-v1/native-baseline/fixtures/fixtures.json",
+    "sha256": "0190631e9389cf65a398534bdce0f4f457b4522dbcd3d192ef7c456321f24374",
+    "count": 8,
+    "packed_engine_batches": "all 8 passed in qwen_vl_factory_tests"
+  },
+  "isolation": {
+    "cuda_visible_devices": "",
+    "gpu_context": false,
+    "docker_used": false,
+    "nvcc_used": false,
+    "torch_loaded": false,
+    "network_used": false,
+    "device_compile": false
+  },
+  "non_claims": [
+    "No GPU execution, device compile, Native parity, lifetime or performance result.",
+    "The first-run readout projection is host-side; Root performance gate must measure the release consumer.",
+    "No Qwen3.5-VL code is present; see qwen-vl-shared-plan-v1."
+  ]
+}

@@ -1,0 +1,36 @@
+{
+  "patch": "fa4-canonical31-shared-cold-selector",
+  "target_file": "fa4.rs",
+  "parent_file_untouched": "fa4.before.rs",
+  "source_only": true,
+  "no_build_no_bash_no_gpu_no_network": true,
+  "notes": [
+    "Extends the existing canonical append selector by exactly five profiles from profiles.inc; the first 26 entries, their order, and all registry identity rows 19..26 are unchanged.",
+    "CANONICAL31_PROFILE_COUNT is 31. Modes 26..30 are: qwen35_moe_gqa8 (16/2 d256 causal global), qwen3_q40kv8_d128_causal (40/8 d128 causal global), qwen3_q40kv8_d128_noncausal (40/8 d128 noncausal global), mistral_local4096_noncausal (32/8 d128 noncausal local [4096,-1]), qwen35_moe_gqa8_noncausal (16/2 d256 noncausal global).",
+    "Mode 29 is inventory-only. manifest_window_matches accepts only the exact declared [4096,-1] pair for that profile during ordered manifest validation; parse_window and Window::canonical_local_extents still reject every negative extent, so a runtime request stays a typed missing-profile and never becomes a causal or bidirectional local mask.",
+    "No arbitrary negative window was admitted: signed matching is guarded by expected.right == -1 and the exact expected left value, and applies only to the declared mode 29 identity.",
+    "Registry identity policy: canonical31 registry metadata publishes the source-contract fingerprint 187defaacc9f9b9b326b392fbeda675545a73660f44f69e21743743f782a87f1. Rows 27..31 use that source identity; partial canonical31 declarations normally omit registry metadata. Legacy per-prefix identities 19..26 are untouched. Executing SHA-256 was not permitted in this source-only environment, so no fabricated per-prefix hashes were introduced.",
+    "Selection invariants kept: ratio cross-multiplication with absolute runtime heads, exact global masks, safe local extents of the same causal kind, loaded-prefix slicing, and deterministic exact-then-first preference.",
+    "Q40/KV8 d128 ratio 5 selects 27 causal / 28 noncausal. Nearby ratios, zero grouping, wrong head dimension, and overflowing grouping stay typed rejects.",
+    "Q64/KV8 d128 remains on old mode 22 causal and mode 5 noncausal; canonical31 appends do not capture that ratio.",
+    "supports_published still slices PROFILES[..PUBLISHED_PROFILE_COUNT] (20) and therefore does not auto-admit canonical31. Explicit construction, including the Qwen3 H5120 Q40/KV8 root path, may use the full declared prefix via supports/Fa4::new.",
+    "Preserved: ABI7/native1 query symbols, six-library lifetimes, ALiBi/DeBERTa additive exports, strict unknown-extra rejection, and local window bound guards.",
+    "The strict unknown-extra guard now uses PROFILES.len() == 31, so a reordered or appended canonical31 tail is rejected exactly as before for earlier prefixes."
+  ],
+  "tests_added": [
+    "canonical31_real_manifest_validates_full_registry_for_both_dtypes is #[ignore = \"requires actual canonical31 bundle; run explicitly with env\"] so ordinary CPU CI never needs the external artifact. When Root catalog runs it explicitly with --ignored and INFINITY_FA4_CANONICAL31_MANIFEST bound, it panics on a missing/unreadable/unparsable manifest (no silent skip), validates F16 and Bf16 full 31, asserts modes 26/27/28/30 select from the actual manifest, keeps mode29 an explicit typed missing-profile, checks Q40/KV8 selection, and rejects registry tampering.",
+    "canonical31_qwen3_h5120_ratio5_rejects_nearby_zero_and_overflow covers absolute H5120 aliases, old-26 typed rejection, nearby ratios, zero, wrong dimension, and overflow.",
+    "canonical31_keeps_q64_kv8_dynamic_selection_on_old_modes pins Q64/KV8 to modes 22 and 5.",
+    "canonical31_mode29_inventory_window_never_becomes_a_runtime_mask checks the exact [4096,-1] manifest identity, negative/wrong window rejection, typed pending selection, local-bound rejection, and non-admission as ratio-4 global masks.",
+    "canonical31_rejects_reordered_and_unknown_tail_exports mutates canonical31 tail indices 26..30 and appends an unknown ordinary export for both dtypes.",
+    "canonical31_complete_bundle_with_exact_mul_validates_31_modes keeps the additive DeBERTa exact-mul path additive.",
+    "canonical31_registry_metadata_carries_the_source_contract_identity validates the canonical31 namespace, count, mask 0x7fffffff, and source fingerprint.",
+    "canonical26_prefix_still_validates_but_cannot_select_canonical31_ratio5 proves old binaries remain usable and new ratio-5 profiles stay unavailable there."
+  ],
+  "cpu_run_note": "Default CPU CI runs without the external bundle: the actual-manifest test is #[ignore = \"requires actual canonical31 bundle; run explicitly with env\"]. Root catalog must run it explicitly with --ignored and INFINITY_FA4_CANONICAL31_MANIFEST bound to the real canonical31 manifest; under that explicit run it fails loudly if the binding is absent, unreadable, or unparsable and never silently returns or skips. All non-ignored meaningful tests remain in the normal suite.",
+  "claims": {
+    "model_admission": false,
+    "gpu_execution": false,
+    "runtime_gold": false
+  }
+}

@@ -1,0 +1,343 @@
+{
+  "schema": "oxide-qwen3vl-rope-budget-source-ready/v1",
+  "status": {
+    "source_ready": true,
+    "cpu_proof_passed": true,
+    "optimized_build_executed": false,
+    "optimized_build_granted": "conditional_after_independent_pass_only",
+    "gpu_executed": false,
+    "device_compiled": false,
+    "quality_claimed": false,
+    "lifetime_claimed": false,
+    "performance_claimed": false,
+    "public_mutated": false,
+    "frozen_snapshot_mutated": false,
+    "original_failed_capsule_preserved": true,
+    "native_gpu_rerun_needed": false,
+    "native_gold_reuse": "Native FIX a26 + gold V6 fully PASS 8 observations; reuse only",
+    "public_head_patch_compiled": true,
+    "public_head_tests_passed": true
+  },
+  "root_cause": {
+    "failed_report": "/tmp/oxide-qwen3vl-root-oxide-quality-v6/report.json",
+    "failed_report_sha256": "cf9548e94235df635ffa6c7464b63d626a41a36b01593097b05b44acab129959",
+    "error": "RoPE construction requires 134217984 bytes, exceeding its 134217728-byte budget",
+    "required_bytes": 134217984,
+    "limit_bytes": 134217728,
+    "geometry": {
+      "positions": 262144,
+      "head_dim": 128,
+      "table_bytes": 134217728,
+      "inverse_metadata_bytes": 256
+    },
+    "actual_helper": "rotary::BaseRopeTables::new",
+    "actual_constructor": "decoder::DecoderModel::new_with_classifier (public HEAD) / decoder::DecoderModel::new (private snapshot)",
+    "cause": "The generic constructor compared table payload plus exact inverse-frequency scratch against the 128 MiB table cap, so a legal 128 MiB table with its 256-byte d128 metadata was rejected."
+  },
+  "fix": {
+    "production_file": "libs/infinity-v3/backends/oxide/src/decoder.rs",
+    "helper": "rope_construction_budget(head_dim)",
+    "effective_budget": "ROPE_TABLE_BYTE_LIMIT + checked((head_dim / 2) * size_of::<f32>())",
+    "table_cap_unchanged": true,
+    "metadata_allowance": "exact checked inverse-frequency scratch only (d128 => 64 F32 => 256 B)",
+    "math_changed": false,
+    "max_position_changed": false,
+    "dtype_changed": false,
+    "initialization_changed": false,
+    "generic_rotary_helper_changed": false,
+    "generic_rotary_helper_sha256": "5ac97a7e119ece22f84a34b692162b1306e1850338c026d555489103817d910a",
+    "overflow_policy": "typed SizeOverflow / start errors; no wrapping; over-table and next-position still rejected"
+  },
+  "pins": {
+    "public_head": {
+      "path": "/tmp/infinity-plain-cuda",
+      "commit": "252789b05ea2e09c14971c04dfcce458f863fead",
+      "decoder_old_sha256": "13dcc849d07ca30f82dc8d51362b98db988614c1d0fcb23ed0ca4917a398fd51",
+      "decoder_patched_sha256": "62a2fcf3cd2e539f5eb2681aec9a7a269d92a1f540ec86f10b760dede85745ad"
+    },
+    "frozen_private_snapshot": {
+      "path": "/tmp/oxide-all-model-feature-matrix-v1/qwen-vl-current-v1",
+      "commit": "027b359c6e0c5378cd07398b07b4435af3ee492d",
+      "decoder_old_sha256": "6850cbb961ae75c672eea2820cb8e2f5b3726bb71a56b0007b36cf47a898efe5",
+      "decoder_patched_sha256": "28d022df0bd22181a8187bd7329588ae3c9c7453602e0b38c67b1dca4bc5644d"
+    },
+    "candidate": {
+      "path": "/tmp/oxide-qwen3vl-rope-budget-fix-v1/candidate",
+      "status": "isolated_copy_excluding_git_target_compiled_bins"
+    },
+    "native_b66": {
+      "path": "/tmp/native214-fa4-mode20/install/lib/libtei_torch.so",
+      "sha256": "b66d70b61b39e1bf0d565aca33bac7c5e21849677396ce5216f5baf73027d37e",
+      "reused": true
+    },
+    "native_gold_consumer": {
+      "path": "/tmp/opencode/qwen-vl-native-release-target/release/qwen3-vl-b66-consumer",
+      "sha256": "89bd6274a26c62fa719ad442d8c2dfeb06e195cb0731117cb005437127c1b671",
+      "reused": true
+    }
+  },
+  "changed_source": {
+    "libs/infinity-v3/backends/oxide/src/decoder.rs": {
+      "old_sha256": "6850cbb961ae75c672eea2820cb8e2f5b3726bb71a56b0007b36cf47a898efe5",
+      "new_sha256": "28d022df0bd22181a8187bd7329588ae3c9c7453602e0b38c67b1dca4bc5644d"
+    },
+    "libs/infinity-v3/backends/oxide/examples/qwen3_vl_host_consumer.rs": {
+      "old_sha256": "bfcd6a0ceda7eaed2111f1f3f415ef9ef7c467b0d1de37b521cba7285600cf92",
+      "new_sha256": "921a0e56bdadce4d2c9c921fccf612483d80b4e87964e8b10a9feceb28464aa2"
+    }
+  },
+  "patches": {
+    "public_decoder": {
+      "path": "/tmp/oxide-qwen3vl-rope-budget-fix-v1/patches/decoder-rope-budget-public.patch",
+      "sha256": "63b6c34e9ec5697e5f17a5be4e2804a425f9980a2e745f2048d898ea75623b14",
+      "applies_to": "public HEAD 252789 decoder.rs",
+      "check": "git apply --check passed"
+    },
+    "private_decoder": {
+      "path": "/tmp/oxide-qwen3vl-rope-budget-fix-v1/patches/decoder-rope-budget-private.patch",
+      "sha256": "8f0fbd782ad5c81db131d33ec85b7a5d4adcd3eb9b4591af8a235c5bf29cac96",
+      "applies_to": "frozen snapshot 027b359 decoder.rs",
+      "check": "git apply --check passed"
+    },
+    "private_harness": {
+      "path": "/tmp/oxide-qwen3vl-rope-budget-fix-v1/patches/qwen3_vl_host_consumer-owning-life.patch",
+      "sha256": "8fa61be422ec4afd31d8a04ac2eae18e8305c8820dfcf5f6d0d0f5a9cfba15e4",
+      "applies_to": "frozen snapshot host consumer",
+      "check": "git apply --check passed"
+    },
+    "no_whole_decoder_copy": true
+  },
+  "function_delta": {
+    "path": "/tmp/oxide-qwen3vl-rope-budget-fix-v1/build/FUNCTION-DELTA.json",
+    "sha256": "ab4ec5f42e9d949ed8c5cbf3b0debc738c8150c82d02ec9e7345ed6ebd7fa9b9",
+    "summary": "Only the decoder constructor budget moved; the generic BaseRopeTables constructor and its math are byte-identical."
+  },
+  "source_freeze": {
+    "manifest": "/tmp/oxide-qwen3vl-rope-budget-fix-v1/source-freeze.sha256",
+    "manifest_sha256": "0adca4bee57bc38b3b4f76579b96acef0dec66ee3e60d864a753dc46ab461370",
+    "file_count": 1079,
+    "only_intended_files_differ": true,
+    "diff_vs_frozen": [
+      "Files /tmp/oxide-all-model-feature-matrix-v1/qwen-vl-current-v1/libs/infinity-v3/backends/oxide/examples/qwen3_vl_host_consumer.rs and /tmp/oxide-qwen3vl-rope-budget-fix-v1/candidate/libs/infinity-v3/backends/oxide/examples/qwen3_vl_host_consumer.rs differ",
+      "Files /tmp/oxide-all-model-feature-matrix-v1/qwen-vl-current-v1/libs/infinity-v3/backends/oxide/src/decoder.rs and /tmp/oxide-qwen3vl-rope-budget-fix-v1/candidate/libs/infinity-v3/backends/oxide/src/decoder.rs differ"
+    ],
+    "rotary_rs_unchanged_in_public_private_candidate": true
+  },
+  "cpu_proof": {
+    "isolation": {
+      "cpu": "72-79",
+      "jobs": 4,
+      "offline": true,
+      "cuda_visible_devices": "",
+      "hf_hub_offline": 1,
+      "gpu": false,
+      "cuda_context": false,
+      "device_compile": false,
+      "torch": false,
+      "docker": false,
+      "network": false
+    },
+    "toolchain": {
+      "rustc": "1.93.1",
+      "cargo": "1.93.1"
+    },
+    "results": {
+      "focused_decoder_budget": {
+        "passed": 3,
+        "failed": 0,
+        "ignored": 0
+      },
+      "oxide_lib": {
+        "passed": 489,
+        "failed": 0,
+        "ignored": 56
+      },
+      "host_consumer_contract": {
+        "passed": 3,
+        "failed": 0,
+        "ignored": 0
+      },
+      "factory": {
+        "passed": 22,
+        "failed": 0,
+        "ignored": 0
+      },
+      "real_fixtures": {
+        "passed": 1,
+        "failed": 0,
+        "ignored": 0
+      },
+      "fmt": "pass",
+      "clippy_all_targets_d_warnings": "pass",
+      "debug_host_consumer_build": "pass"
+    },
+    "tests_cover": [
+      "exact 128 MiB table at 262144 d128 plus 256-byte inverse metadata accepted",
+      "same table with only the bare table cap still rejected",
+      "next position and one-byte-under-table rejected",
+      "multiplication overflow, add overflow and metadata budget overflow return typed errors",
+      "ordinary tiny geometry tables byte-identical to the previous generous-budget constructor",
+      "parser, all-8 real fixture packing, zero-selector invalid-media rejection, owning-life report shape"
+    ],
+    "logs": {
+      "environment.txt": {
+        "path": "/tmp/oxide-qwen3vl-rope-budget-fix-v1/proof/environment.txt",
+        "sha256": "bf339a2b9a50ad2ca8c2509a1166e8590c672663bcf923aa8f4da121bc5a78aa"
+      },
+      "fmt.log": {
+        "path": "/tmp/oxide-qwen3vl-rope-budget-fix-v1/proof/fmt.log",
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      "decoder-budget-tests.log": {
+        "path": "/tmp/oxide-qwen3vl-rope-budget-fix-v1/proof/decoder-budget-tests.log",
+        "sha256": "5db13a5b3fa3a2550137f6a4f7b0f422a457613dec0d38ce3272ec95d289336c"
+      },
+      "oxide-lib-tests.log": {
+        "path": "/tmp/oxide-qwen3vl-rope-budget-fix-v1/proof/oxide-lib-tests.log",
+        "sha256": "46bddf0e35668b9bcd60f1a19a979707b70aa1704d285a402ded099bfe684af5"
+      },
+      "host-consumer-tests.log": {
+        "path": "/tmp/oxide-qwen3vl-rope-budget-fix-v1/proof/host-consumer-tests.log",
+        "sha256": "ebe2f292ef73cc83e2b1bd2a01a061f3340f5769ef3be90c119d6ad67fe859fd"
+      },
+      "factory-tests.log": {
+        "path": "/tmp/oxide-qwen3vl-rope-budget-fix-v1/proof/factory-tests.log",
+        "sha256": "d4d6a5222fd38c21582cbc8e5eaf724c79098a0d1a748e91a357884040a1f1d6"
+      },
+      "real-fixtures.log": {
+        "path": "/tmp/oxide-qwen3vl-rope-budget-fix-v1/proof/real-fixtures.log",
+        "sha256": "2207023318f4e9b8f679c6c1db747545d550c21da9b3d7e0b3bdb1623379fb8d"
+      },
+      "clippy.log": {
+        "path": "/tmp/oxide-qwen3vl-rope-budget-fix-v1/proof/clippy.log",
+        "sha256": "c5ee62d017da04a7d4e9b8e7ea36a30601d19583bb997e4a02dca129a59b9256"
+      },
+      "host-consumer-build.log": {
+        "path": "/tmp/oxide-qwen3vl-rope-budget-fix-v1/proof/host-consumer-build.log",
+        "sha256": "fb5b827e367e18b9ade472c12750cc90ed2cea2a58dc4f3ea72c2255d456eba3"
+      },
+      "patch-checks.txt": {
+        "path": "/tmp/oxide-qwen3vl-rope-budget-fix-v1/proof/patch-checks.txt",
+        "sha256": "da4fdb44681870fba0a21f674d7822155af98f374a59fd3c3a091d7caa14a56c"
+      },
+      "diff-vs-frozen.txt": {
+        "path": "/tmp/oxide-qwen3vl-rope-budget-fix-v1/proof/diff-vs-frozen.txt",
+        "sha256": "0cca6463883decc9a52a723b8501dba64439c00b3b5834f547475097d5b8d02f"
+      },
+      "build-guard-check.txt": {
+        "path": "/tmp/oxide-qwen3vl-rope-budget-fix-v1/proof/build-guard-check.txt",
+        "sha256": "370b3cee07ac274c77d5c04c9fa7541f27eb17470e9cdc198adf0eddc017af46"
+      },
+      "original-failure-report.sha256": {
+        "path": "/tmp/oxide-qwen3vl-rope-budget-fix-v1/proof/original-failure-report.sha256",
+        "sha256": "a1255ddb289acb2768fb312d22d2fd78edd6e0d08003953fada8eec753e16ae3"
+      }
+    },
+    "note": "No model, CUDA context, device compile, Torch, Docker or network was used. GPU-only modes were compiled, not executed.",
+    "commands": {
+      "workdir": "/tmp/oxide-qwen3vl-rope-budget-fix-v1/candidate/libs/infinity-v3",
+      "environment": "PATH=$HOME/.cargo/bin:$PATH CARGO_NET_OFFLINE=true CARGO_BUILD_JOBS=4 CUDA_VISIBLE_DEVICES= CARGO_TARGET_DIR=/tmp/opencode/qwen-vl-current-checks/target",
+      "fmt": "taskset -c 72-79 cargo fmt --all -- --check",
+      "focused_decoder": "taskset -c 72-79 cargo test --offline -p infinity-backend-oxide --lib rope_construction_budget",
+      "oxide_lib": "taskset -c 72-79 cargo test --offline -p infinity-backend-oxide --lib",
+      "host_consumer_contract": "taskset -c 72-79 cargo test --offline -p infinity-backend-oxide --example qwen3_vl_host_consumer",
+      "factory": "taskset -c 72-79 cargo test --offline -p infinity_v3-backend --no-default-features --features oxide --lib",
+      "real_fixtures": "TMPDIR=/tmp taskset -c 72-79 cargo test --offline -p infinity-backend-oxide --test qwen3_vl_real_fixtures",
+      "clippy": "taskset -c 72-79 cargo clippy --offline -p infinity-backend-oxide --all-targets -- -D warnings",
+      "debug_build": "taskset -c 72-79 cargo build --offline -p infinity-backend-oxide --example qwen3_vl_host_consumer"
+    }
+  },
+  "conditional_build": {
+    "script": "/tmp/oxide-qwen3vl-rope-budget-fix-v1/build_once_after_pass.sh",
+    "script_sha256": "282653e4bb96183712df6a6b534810d73a34fb8fd433c6964f588577d3173832",
+    "guard": "refuses to run unless OXIDE_INDEPENDENT_PASS=1; guard check exit=2 without PASS",
+    "new_unique_target": "/tmp/opencode/qwen3vl-rope-budget-fix-opt3-target",
+    "root_unique_target": "/tmp/opencode/qwen3vl-root-rope-budget-fix-opt3-target",
+    "profile": "opt-level=3, lto=false, debug=1, codegen-units=16, debug-assertions=false, strip=\"none\"",
+    "exact_command": "cd ${OXIDE_BUILD_ROOT:-/tmp/oxide-qwen3vl-rope-budget-fix-v1/candidate}/libs/infinity-v3 && PATH=\"$HOME/.cargo/bin:$PATH\" CARGO_NET_OFFLINE=true CARGO_BUILD_JOBS=4 CUDA_VISIBLE_DEVICES= CARGO_TARGET_DIR=/tmp/opencode/qwen3vl-rope-budget-fix-opt3-target taskset -c 72-79 cargo build --offline --release --config 'profile.release.opt-level=3' --config 'profile.release.lto=false' --config 'profile.release.debug=1' --config 'profile.release.codegen-units=16' --config 'profile.release.debug-assertions=false' --config 'profile.release.strip=\"none\"' -p infinity-backend-oxide --example qwen3_vl_host_consumer",
+    "root_invocation": "OXIDE_INDEPENDENT_PASS=1 OXIDE_BUILD_ROOT=<composed Root worktree> OXIDE_TARGET_DIR=/tmp/opencode/qwen3vl-root-rope-budget-fix-opt3-target bash /tmp/oxide-qwen3vl-rope-budget-fix-v1/build_once_after_pass.sh",
+    "executed": false
+  },
+  "root_gpu_recipe": {
+    "native_rerun": "none; reuse Native a26 gold V6 8-observation PASS",
+    "composition": "Apply decoder-rope-budget-public.patch to public HEAD 252789 and compose the private Qwen3-VL files as before. Do not copy the obsolete private decoder.rs over Root main.",
+    "build": "one incremental opt3/no-LTO build after independent PASS using the conditional script and a unique target",
+    "run_combined": "<consumer> --mode gpu-quality-life --checkpoint <Qwen3-VL-8B> --fixtures <root-gate/native/fixtures.json> --out <out>",
+    "run_quality": "<consumer> --mode gpu-quality --checkpoint <Qwen3-VL-8B> --fixtures <fixtures> --out <out>",
+    "run_owning_life": "<consumer> --mode gpu-owning-life --checkpoint <Qwen3-VL-8B> --fixtures <fixtures> --out <out>",
+    "quality_contract": "unchanged 3 pools (Cls/Mean/LastToken) plus raw F32 serialization and strict comparator",
+    "owning_life_contract": "all 8 real baselines; hold A/B with different shapes; drop A uncalled; complete B exact; changed shape exact; zero-selector invalid media typed; recovery exact; no third submit while two held",
+    "cold_loads": {
+      "combined_mode": 1,
+      "separate_modes": 2
+    },
+    "performance_claim": false
+  },
+  "non_claims": [
+    "No GPU execution, CUDA context, device compile, Torch, Docker or network was used by this author.",
+    "No quality, lifetime or performance result is claimed.",
+    "The owning-life GPU path was compiled and CPU contract-tested only; Root must execute it.",
+    "The generic rotary table math and all model math are unchanged.",
+    "No public or frozen snapshot source was mutated."
+  ],
+  "preserved": {
+    "failed_capsule_report": {
+      "path": "/tmp/oxide-qwen3vl-root-oxide-quality-v6/report.json",
+      "sha256": "cf9548e94235df635ffa6c7464b63d626a41a36b01593097b05b44acab129959",
+      "touched": false
+    },
+    "failed_quality_consumer": {
+      "path": "/tmp/opencode/qwen-vl-host-consumer-quality-target/release/examples/qwen3_vl_host_consumer",
+      "touched": false
+    },
+    "frozen_snapshot": {
+      "path": "/tmp/oxide-all-model-feature-matrix-v1/qwen-vl-current-v1",
+      "touched": false
+    },
+    "public_source_ref": {
+      "path": "/tmp/infinity-plain-cuda",
+      "touched": false
+    },
+    "native_gold": {
+      "path": "/tmp/opencode/qwen-vl-native-release-target/release/qwen3-vl-b66-consumer",
+      "touched": false
+    }
+  },
+  "used_helper_review": {
+    "failure_string_owner": "libs/infinity-v3/backends/oxide/src/rotary.rs:RotaryError::ByteBudgetExceeded Display",
+    "actual_constructor_call_site": "libs/infinity-v3/backends/oxide/src/decoder.rs:DecoderModel::new_with_classifier else branch -> BaseRopeTables::new",
+    "actual_helper_invoked": "rotary::BaseRopeTables::new",
+    "generic_helper_math_unchanged": true,
+    "generic_helper_sha256": "5ac97a7e119ece22f84a34b692162b1306e1850338c026d555489103817d910a",
+    "untouched_other_path": "native_rope_tables::decoder_128_tables is the Mistral H4096 branch and is not the Qwen3-VL failing path; left unchanged to avoid math/scope expansion",
+    "test_location": "The new boundary/overflow tests live in decoder.rs and invoke the production rope_construction_budget helper plus BaseRopeTables::new; no test was mirrored into an unused helper module."
+  },
+  "public_head_verification": {
+    "reference_readonly": "/tmp/infinity-plain-cuda",
+    "reference_commit": "252789b05ea2e09c14971c04dfcce458f863fead",
+    "isolated_export": "/tmp/opencode/qwen3vl-public-head-check/tree",
+    "patch_applied": "patches/decoder-rope-budget-public.patch",
+    "patched_decoder_sha256": "62a2fcf3cd2e539f5eb2681aec9a7a269d92a1f540ec86f10b760dede85745ad",
+    "patch_apply_log": {
+      "path": "/tmp/oxide-qwen3vl-rope-budget-fix-v1/proof/public-head-patch-apply.log",
+      "sha256": "e3596e0ba09312e446f1689a71b2fbed4dd7b605e84d3178e5cdcd57925164ed"
+    },
+    "focused_tests": {
+      "path": "/tmp/oxide-qwen3vl-rope-budget-fix-v1/proof/public-head-focused-tests.log",
+      "sha256": "d6c0fa4e5a773b29e039691eab3722585372137cd077bf51db71b3f2881c8484",
+      "passed": 3,
+      "failed": 0,
+      "ignored": 0
+    },
+    "full_lib_tests": {
+      "path": "/tmp/oxide-qwen3vl-rope-budget-fix-v1/proof/public-head-lib-tests.log",
+      "sha256": "974d703f1b48d16ecd95a00bc275205b5c829fdb9ed8ef32baa19994aaecd95c",
+      "passed": 667,
+      "failed": 0,
+      "ignored": 73
+    },
+    "target": "/tmp/opencode/qwen3vl-public-head-check/target",
+    "profile": "debug only; no optimized build; no GPU/device compile",
+    "wrote_to_readonly_reference": false
+  }
+}

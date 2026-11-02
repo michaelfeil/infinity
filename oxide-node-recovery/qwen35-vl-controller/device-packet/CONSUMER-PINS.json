@@ -1,0 +1,25 @@
+{
+  "schema": "oxide-qwen35vl-consumer-pin/v1",
+  "path": "/tmp/oxide-all-model-feature-matrix-v1/qwen35-vl-lifecycle-fix-v1/target-opt3-noLTO/release/qwen35-vl-consumer",
+  "sha256": "3780facf61529822f33a4cf1416bc6c8723acc1fa2cd2c778f7bc54f2140d83b",
+  "profile": "release opt-level=3, lto=false, debug=0",
+  "build_env": {
+    "CARGO_BUILD_JOBS": "4",
+    "CUDA_VISIBLE_DEVICES": "",
+    "CARGO_PROFILE_RELEASE_OPT_LEVEL": "3",
+    "CARGO_PROFILE_RELEASE_LTO": "false",
+    "offline": true,
+    "cpus": "88-95"
+  },
+  "commands": [
+    "inventory",
+    "plan-full",
+    "whole-factory",
+    "native-whole/oxide-whole/pair-whole",
+    "tower-cpu",
+    "tower-device",
+    "lifetime",
+    "perf"
+  ],
+  "note": "incremental opt3/noLTO rebuild from frozen source 72659d63; build record device-packet/CONSUMER-BUILD.json; old predecessor binary preserved"
+}

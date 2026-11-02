@@ -1,0 +1,15 @@
+{
+  "ragged129": {
+    "batch_sha256": "d9a3e4539b5349fc18a702a1a04f303ede29dbfd0da8793368745f3274cb10d1",
+    "native_fixture": "/tmp/infinity-oxide-parity-20261101/qwen3-moe-native-capi-v1/fixtures/ragged129-mixed.json"
+  },
+  "schema": "qwen3-moe-paired-perf-cases-source/v1",
+  "stable2k": {
+    "batch_sha256": "22c0b44d246e8d5920616d3343ba19932bf44af071419371938d8f7318a2125d",
+    "generated": "single sequence 2048 tokens, pooled [0], raw []"
+  },
+  "t7": {
+    "batch_sha256": "d310918e4d36acda95d7de58ea212080d46e45bcef0d550193e38b60167a6f8a",
+    "native_fixture": "/tmp/infinity-oxide-parity-20261101/qwen3-moe-native-capi-v1/fixtures/ragged7-pooled.json"
+  }
+}

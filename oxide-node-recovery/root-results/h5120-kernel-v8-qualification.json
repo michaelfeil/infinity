@@ -1,0 +1,34 @@
+{
+  "schema": "root-h5120-kernel-qualification/v1",
+  "actual_gpu0_sm90": true,
+  "runs": {
+    "plain": {
+      "path": "/tmp/h5120-root-gpu-v8.json",
+      "sha256": "84b4266affece1c9ff641418abafff7dd1ffbb9e5bfeb957f539ef9d1325d267",
+      "status": "passed-bit-exact",
+      "cases": 20,
+      "all_four_operations_bitexact_guarded_repeatable": true,
+      "sanitizer_zero_errors": false,
+      "cubin_sha256": "695e72ffbcd1f7a7ac7648e2b4cf5d146516c7100820dd6f73c41181271f9d0e"
+    },
+    "mem": {
+      "path": "/tmp/h5120-root-gpu-v8-mem.json",
+      "sha256": "84b4266affece1c9ff641418abafff7dd1ffbb9e5bfeb957f539ef9d1325d267",
+      "status": "passed-bit-exact",
+      "cases": 20,
+      "all_four_operations_bitexact_guarded_repeatable": true,
+      "sanitizer_zero_errors": true,
+      "cubin_sha256": "695e72ffbcd1f7a7ac7648e2b4cf5d146516c7100820dd6f73c41181271f9d0e"
+    },
+    "init": {
+      "path": "/tmp/h5120-root-gpu-v8-init.json",
+      "sha256": "84b4266affece1c9ff641418abafff7dd1ffbb9e5bfeb957f539ef9d1325d267",
+      "status": "passed-bit-exact",
+      "cases": 20,
+      "all_four_operations_bitexact_guarded_repeatable": true,
+      "sanitizer_zero_errors": true,
+      "cubin_sha256": "695e72ffbcd1f7a7ac7648e2b4cf5d146516c7100820dd6f73c41181271f9d0e"
+    }
+  },
+  "scope": "Kernel controls only; not full H5120 model serving or performance qualification."
+}

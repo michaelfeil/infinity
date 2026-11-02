@@ -1,0 +1,83 @@
+# An action for setting up poetry install with caching.
+# Using a custom action since the default action does not
+# take poetry install groups into account.
+# Action code from:
+# https://github.com/actions/setup-python/issues/505#issuecomment-1273013236
+name: poetry-install-with-caching
+description: Poetry install with support for caching of dependency groups.
+
+inputs:
+  python-version:
+    description: Python version, supporting MAJOR.MINOR only
+    required: true
+
+  poetry-version:
+    description: Poetry version
+    required: true
+
+  cache-key:
+    description: Cache key to use for manual handling of caching
+    required: true
+
+  working-directory:
+    description: Directory whose poetry.lock file should be cached
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-python@v5
+      name: Setup python ${{ inputs.python-version }}
+      id: setup-python
+      with:
+        python-version: ${{ inputs.python-version }}
+
+    - name: Restore pip and poetry cached dependencies
+      uses: actions/cache@v4
+      env:
+        SEGMENT_DOWNLOAD_TIMEOUT_MIN: "4"
+        WORKDIR: ${{ inputs.working-directory == '' && '.' || inputs.working-directory }}
+      with:
+        path: |
+          ~/.cache/pip
+          ~/.cache/pypoetry/virtualenvs
+          ~/.cache/pypoetry/cache
+          ~/.cache/pypoetry/artifacts
+          ${{ env.WORKDIR }}/.venv
+        key: py-deps-${{ runner.os }}-${{ runner.arch }}-py-${{ inputs.python-version }}-poetry-${{ inputs.poetry-version }}-${{ inputs.cache-key }}-${{ hashFiles(format('{0}/**/poetry.lock', env.WORKDIR)) }}
+
+    - name: Install Poetry in an isolated environment
+      shell: bash
+      env:
+        POETRY_VERSION: ${{ inputs.poetry-version }}
+        POETRY_PYTHON: ${{ steps.setup-python.outputs.python-path }}
+      run: |
+        "$POETRY_PYTHON" - <<'PY'
+        import os
+        from pathlib import Path
+        import shutil
+        import subprocess
+        import venv
+
+        # Give Poetry its own pip for this Python version. pipx's shared pip can
+        # require a newer Python than the interpreter selected by the CI matrix.
+        environment = Path(os.environ["RUNNER_TEMP"]) / "infinity-poetry"
+        venv.EnvBuilder(with_pip=True, clear=True).create(environment)
+        scripts = environment / ("Scripts" if os.name == "nt" else "bin")
+        python = scripts / ("python.exe" if os.name == "nt" else "python")
+        subprocess.run(
+            [str(python), "-m", "pip", "install", "--disable-pip-version-check",
+             f"poetry=={os.environ['POETRY_VERSION']}"],
+            check=True,
+        )
+        subprocess.run([str(python), "-m", "poetry", "--version"], check=True)
+
+        # Expose only Poetry, so python/pip still refer to setup-python's
+        # interpreter. The generated launcher retains its absolute venv path.
+        commands = Path(os.environ["RUNNER_TEMP"]) / "infinity-poetry-bin"
+        commands.mkdir(exist_ok=True)
+        launcher = "poetry.exe" if os.name == "nt" else "poetry"
+        shutil.copy2(scripts / launcher, commands / launcher)
+        with open(os.environ["GITHUB_PATH"], "a", encoding="utf-8") as path_file:
+            path_file.write(f"{commands}\n")
+        PY

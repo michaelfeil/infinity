@@ -1,0 +1,21 @@
+{
+  "repository": "pytorch/pytorch",
+  "ref": "5c4886908584029761b579af026dcfb627c84070",
+  "files": [
+    {
+      "path": "/tmp/oxide-mistral3-aten-5c488-mean-source-v1/Reduce.cuh",
+      "git_blob": "ab51f76613fd138293aa0c63faa5a991f17c24e9",
+      "url": "https://github.com/pytorch/pytorch/blob/5c4886908584029761b579af026dcfb627c84070/aten/src/ATen/native/cuda/Reduce.cuh"
+    },
+    {
+      "path": "/tmp/oxide-mistral3-aten-5c488-mean-source-v1/ReduceSumProdKernel.cu",
+      "git_blob": "36f0835890de87c2b85c3f6e38e2d39a8c52228d",
+      "url": "https://github.com/pytorch/pytorch/blob/5c4886908584029761b579af026dcfb627c84070/aten/src/ATen/native/cuda/ReduceSumProdKernel.cu"
+    },
+    {
+      "path": "/tmp/oxide-mistral3-aten-5c488-mean-source-v1/Reduce.cu",
+      "git_blob": "b32c55a10df6b3c640ed59bd373b2a893125c397",
+      "url": "https://github.com/pytorch/pytorch/blob/5c4886908584029761b579af026dcfb627c84070/aten/src/ATen/native/cuda/Reduce.cu"
+    }
+  ]
+}

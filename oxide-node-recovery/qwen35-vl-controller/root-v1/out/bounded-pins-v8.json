@@ -1,0 +1,25 @@
+{
+  "schema": "oxide-qwen35vl-bounded-pins/v1",
+  "missing": [],
+  "hashes": {
+    "consumer": "3780facf61529822f33a4cf1416bc6c8723acc1fa2cd2c778f7bc54f2140d83b",
+    "kernels": null,
+    "fa4": null,
+    "gdn_raw": null,
+    "gdn_provider": null,
+    "gdn_aux": null,
+    "media": "0190631e9389cf65a398534bdce0f4f457b4522dbcd3d192ef7c456321f24374"
+  },
+  "container": "infinity-torch214-compare-sdk",
+  "b66": {
+    "container_path": "/tmp/native214-fa4-mode20/install/lib/libtei_torch.so",
+    "host_present": false
+  },
+  "vendor": {
+    "container_path": "/tmp/oxide-host-cublas-130200",
+    "host_present": false
+  },
+  "manifest": "56863d52270f04e2a72c07f0213295cb78cd003ec111239bef1f78e75ea720c5",
+  "fa4_manifest": "0e4af6e1fd40714300649dd98e6eb31a0c59e9e3cb493b377de07d57d63916a9",
+  "gdn_manifest": "f0b2a18d14c80eec9e1e881d87bff80c27408c77a07eb9a1039ed57548b74a7b"
+}

@@ -1,0 +1,100 @@
+{
+  "missing_author_inputs": [
+    {
+      "expected_sha256": "b66d70b61b39e1bf0d565aca33bac7c5e21849677396ce5216f5baf73027d37e",
+      "input": "native_sdk",
+      "path": "/tmp/native214-fa4-mode20/install/lib/libtei_torch.so",
+      "reason": "exact used SDK path is absent in author environment; Root must provide the exact file or --native-sdk"
+    }
+  ],
+  "model": {
+    "bytes": 61084187391,
+    "config_sha256": "2850ddb3bf7aecad20b611e2d44f3077fc8193f4827c93beddd4c02ad63c2297",
+    "manifest_sha256": "55be60f3bdfa41310a73bde32d2fdd352a3f11c6e4f3c2cc4affa2f16550fc88",
+    "path": "/tmp/infinity-oxide-bench/models/Qwen--Qwen3-30B-A3B-ad44e777"
+  },
+  "native_gold": {
+    "ragged129": "/tmp/infinity-oxide-parity-20261101/qwen3-moe-native-capi-v1/root-native-quality-all-v1/mean/ragged129-mixed.json",
+    "ragged129_sha256": "0eeee85e0f91a681f8ca489f52ab191be277628a1a2cfedfb901ed698f49dbde",
+    "report": "/tmp/infinity-oxide-parity-20261101/qwen3-moe-native-capi-v1/root-native-quality-all-v1/report.json",
+    "sha256": "17446c7c4db65b0c58a4a5bc0387102f1c3b165fe81480d2cb407249070fdb83",
+    "t7": "/tmp/infinity-oxide-parity-20261101/qwen3-moe-native-capi-v1/root-native-quality-all-v1/mean/ragged7-pooled.json",
+    "t7_sha256": "02a3fa1fa513d5edf955d32f28332b47906736e29f132b2378cd2efe21916307"
+  },
+  "native_sdk": {
+    "graph_policy": "LibTorch graphs/defaults preserved: INFINITY_TORCH_CUDA_GRAPHS=1, entries4, reuse3, max_tokens4096, max_bytes512MiB, max_captures8",
+    "header": "/tmp/infinity-oxide-parity-20261101/qwen3-moe-native-capi-v1/bridge.h",
+    "header_sha256": "ed5cd44f735cbe21160f43fbdec0f4e003acd477497ab4141e2625c37c5b3b69",
+    "helper": "/tmp/infinity-oxide-parity-20261101/qwen3-moe-native-capi-v1/bench_helper.so",
+    "helper_sha256": "679603a8b729a3aa4d625ad3ea23fa090e90842c9bded30def3ba2c522cd2ddb",
+    "helper_source": "/tmp/infinity-oxide-parity-20261101/qwen3-moe-native-capi-v1/native_capi_bench.cpp",
+    "helper_source_sha256": "215992fa26708bc1be7affb78b1f62ca758ffde8cf3e70dd33d0bcad7d7c3c40",
+    "path": "/tmp/native214-fa4-mode20/install/lib/libtei_torch.so",
+    "quality_runner": "/tmp/infinity-oxide-parity-20261101/qwen3-moe-native-capi-v1/native_moe.py",
+    "raw_runner": "/tmp/infinity-oxide-parity-20261101/qwen3-moe-native-capi-v1/native_raw_probe.py",
+    "sha256": "b66d70b61b39e1bf0d565aca33bac7c5e21849677396ce5216f5baf73027d37e"
+  },
+  "no_build_by_author": true,
+  "no_device_compile": true,
+  "no_docker": true,
+  "no_gpu_by_author": true,
+  "no_network": true,
+  "no_torch_by_author": true,
+  "oxide_probe": {
+    "lifecycle": "/tmp/oxide-all-model-feature-matrix-v1/qwen3-moe-root629-v8-lifecycle-v1/bin/qwen3_moe_lifecycle",
+    "lifecycle_sha256": "4dfeefe1031e10d51ede7f19c67cf4ccda41cd6a1ad0195428f2a22f2226a2fd",
+    "sha256": "a2d3e2a12840d088e6b7b7f8eeed6a40cbd119543e6ccfbd4bc30d2425212029",
+    "unified_probe": "/tmp/oxide-all-model-feature-matrix-v1/qwen3-moe-root629-v8/bin/unified_probe"
+  },
+  "public": {
+    "commit": "252789b05ea2e09c14971c04dfcce458f863fead",
+    "oxide_backend_source": "/tmp/infinity-plain-cuda/libs/infinity-v3/backends/oxide",
+    "path": "/tmp/infinity-plain-cuda"
+  },
+  "runtime_paths": {
+    "kernel_root": "/tmp/oxide-moe-root629-v8-public126-bundle-v1",
+    "provider_root": "/tmp/oxide-fa4-canonical26-derived-v4/bundle",
+    "sidecar_root": "/tmp/oxide-moe-root629-v8-public126-bundle-v1/moe"
+  },
+  "schema": "qwen3-moe-paired-performance-manifest/v1",
+  "source_freeze": "/tmp/oxide-qwen3-moe-paired-performance-v1/SOURCE-FREEZE.json",
+  "source_freeze_sha256": "85d7d31fea1ad002da20150a762e18361cb4186a7199c72739e30b3bab01e867",
+  "timing_contract": {
+    "aba_warm_separate": true,
+    "first_call_separate": true,
+    "gpu": 0,
+    "larger_requires_justification": true,
+    "native_graphs": true,
+    "native_timed_section": "tei_forward + canonical result flat/hash",
+    "one_engine_at_a_time": true,
+    "oxide_graphs": false,
+    "oxide_timed_section": "submit_embed + complete + canonical result pack/hash",
+    "timed_smoke": 200,
+    "vendor_version": 130200,
+    "warmups": 20
+  },
+  "windows": [
+    "native-1",
+    "oxide-1",
+    "oxide-2",
+    "native-2"
+  ],
+  "workloads": {
+    "ragged129": {
+      "batch": "oxide-perf/cases/ragged129.json",
+      "sha256": "d9a3e4539b5349fc18a702a1a04f303ede29dbfd0da8793368745f3274cb10d1",
+      "source_native_fixture": "ragged129-mixed"
+    },
+    "stable2k": {
+      "batch": "oxide-perf/cases/stable2k.json",
+      "note": "fit-dependent; --skip-stable2k available",
+      "sha256": "22c0b44d246e8d5920616d3343ba19932bf44af071419371938d8f7318a2125d",
+      "tokens": 2048
+    },
+    "t7": {
+      "batch": "oxide-perf/cases/t7.json",
+      "sha256": "d310918e4d36acda95d7de58ea212080d46e45bcef0d550193e38b60167a6f8a",
+      "source_native_fixture": "ragged7-pooled"
+    }
+  }
+}

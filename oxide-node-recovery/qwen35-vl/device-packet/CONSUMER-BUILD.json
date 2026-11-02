@@ -1,0 +1,67 @@
+{
+  "schema": "oxide-qwen35vl-consumer-build/v1",
+  "source_commit": "72659d63a908a9279bccc7c791e182a029d4307e",
+  "source_freeze_sha256": "4c7aa3a6c7b6e273b2468cd0640cf4a3c655cc203842bbf9461a1fcf650e4f25",
+  "source_pins_unchanged_before_after": true,
+  "command": "CARGO_TARGET_DIR=target-opt3-noLTO CARGO_BUILD_JOBS=4 CUDA_VISIBLE_DEVICES= CARGO_PROFILE_RELEASE_OPT_LEVEL=3 CARGO_PROFILE_RELEASE_LTO=false taskset -c 88-95 cargo build --release --offline --manifest-path consumer/Cargo.toml",
+  "attempts": [
+    {
+      "exit": 127,
+      "wall_seconds": 0,
+      "note": "cargo not on PATH; no binary produced"
+    },
+    {
+      "exit": 0,
+      "wall_seconds": 39,
+      "note": "successful consumer build"
+    }
+  ],
+  "build_exit": 0,
+  "wall_seconds": 39,
+  "binary": {
+    "path": "/tmp/oxide-all-model-feature-matrix-v1/qwen35-vl-lifecycle-fix-v1/target-opt3-noLTO/release/qwen35-vl-consumer",
+    "sha256": "3780facf61529822f33a4cf1416bc6c8723acc1fa2cd2c778f7bc54f2140d83b",
+    "size_bytes": 5140296
+  },
+  "old_binary": {
+    "path": "/tmp/oxide-all-model-feature-matrix-v1/qwen35-vl-full-v1/target-opt3-noLTO/release/qwen35-vl-consumer",
+    "sha256": "e8bf05960d100b689ff3c50bb7ce2ed4565453d25972941ba3b71be0281a29e0",
+    "preserved": true
+  },
+  "runtime_pins": {
+    "fa4_request": {
+      "path": "device-packet/FA4-REQUEST.json",
+      "sha256": "85f3bbb476c41250ae0345cf28497cd355d74c2c8971932c148dfd07aa9375ca"
+    },
+    "aot": {
+      "path": "/tmp/infinity-oxide-parity-20261101/device-union124-all3-v1/kernels",
+      "manifest_sha256": "56863d52270f04e2a72c07f0213295cb78cd003ec111239bef1f78e75ea720c5",
+      "architectures": {
+        "sm_90": 124,
+        "sm_100": 124,
+        "sm_120": 124
+      }
+    },
+    "vendor": {
+      "path_in_container": "/tmp/oxide-host-cublas-130200",
+      "cublaslt": 130200,
+      "libcublasLt_sha256": null,
+      "note": "container path pinned by SDK-CONTROLLER-PINS; host copy absent, not checked"
+    },
+    "b66": {
+      "path_in_container": "/tmp/native214-fa4-mode20/install/lib/libtei_torch.so",
+      "sha256": "b66d70b61b39e1bf0d565aca33bac7c5e21849677396ce5216f5baf73027d37e",
+      "host_present": false
+    },
+    "torch": {
+      "version": "2.14.1+cu130",
+      "git": "5c4886908584029761b579af026dcfb627c84070"
+    }
+  },
+  "non_claims": [
+    "no GPU execution",
+    "no Docker",
+    "no device compile",
+    "no runtime quality/fence/canary"
+  ]
+}

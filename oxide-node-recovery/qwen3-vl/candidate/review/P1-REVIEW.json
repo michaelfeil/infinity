@@ -1,0 +1,132 @@
+{
+  "schema": "oxide-qwen3-vl-p1-independent-review/v1",
+  "reviewer": "fresh independent read-only reviewer (P1 scope)",
+  "base_commit": "e582ce90eb1544fcff081a495cb8fd4f3c17b112",
+  "scope": [
+    "DeferredVl RAII drop without completion",
+    "partial enqueue + failed fence owner retention",
+    "invalid media with zero selectors",
+    "health/context-bind/fail-closed semantics",
+    "bounded workspace bytes vs old common cache",
+    "preserved old frozen source/binary 6e4f"
+  ],
+  "verdict": "PASS source-level; Root GPU lifecycle still required",
+  "findings": [
+    {
+      "id": "P1-1",
+      "edge": "Drop Inference without invoking the deferred closure",
+      "verdict": "closed",
+      "evidence": "FencedOwner is constructed before Inference::Deferred and is the only closure capture. Drop calls wait; on success finish retires resources then releases the lease; on failure fail_closed quarantines the lease and forgets all resources. Test dropping_inference_without_completion_fences_before_resource_drop asserts wait -> retire -> resource_drop."
+    },
+    {
+      "id": "P1-2",
+      "edge": "Partial enqueue then failed fence",
+      "verdict": "closed",
+      "evidence": "launch/record errors return through the same owner Drop. partial_enqueue_then_failed_fence_retains_all_owners asserts wait -> quarantine and no resource_drop. HostIoLease::quarantine closes the I/O pool and leaks the pinned slot; model/request/workspaces are forgotten together."
+    },
+    {
+      "id": "P1-3",
+      "edge": "Malformed media with zero selectors",
+      "verdict": "closed",
+      "evidence": "submit calls pack_batch before the pooled/raw empty shortcut. malformed_media_with_zero_selectors_is_still_rejected builds a zero-selector Batch with a bad pixel payload and requires the typed payload error. No lease or ticket is acquired."
+    },
+    {
+      "id": "P1-4",
+      "edge": "No fixed closure capture order",
+      "verdict": "closed",
+      "evidence": "The closure captures one FencedOwner. No separate model/request/workspace/lease captures exist, so capture order cannot free resources before the fence."
+    },
+    {
+      "id": "P1-5",
+      "edge": "Health, context binding and fail-closed",
+      "verdict": "closed",
+      "evidence": "Health returns Unhealthy if the I/O pool is poisoned, then synchronizes the stream. Submission binds the context once; forward_outputs_with does not bind; FA4 uses forward_batch_bound; LT/RoPE calls do not bind. A failed fence closes the pool and retains owners."
+    },
+    {
+      "id": "P1-6",
+      "edge": "Bounded physical workspace bytes",
+      "verdict": "closed source-level",
+      "evidence": "WorkspaceCache tracks retained bytes against cache::BYTE_BUDGET, drops oversized fenced workspaces, trims free fenced workspaces and returns Overloaded before allocating beyond budget. workspace_byte_budget_fails_before_allocating_another_owner covers the guard."
+    },
+    {
+      "id": "P1-7",
+      "edge": "Old frozen source/binary preserved",
+      "verdict": "closed",
+      "evidence": "history/qwen3_vl_engine_v1.rs and history/README.md preserve the pre-P1 engine and frozen host binary 6a00057af29e860a4447d8e6e960f15ccbb4abbee89cb5bb7d053e2b4a464b02. The successor is separate."
+    },
+    {
+      "id": "P1-9",
+      "edge": "Request-path hidden stream synchronize / host upload",
+      "verdict": "closed source-level",
+      "evidence": "review/ASYNC-UPLOAD-AUDIT.json: weights use pinned WeightUploader async H2D with event retention; VisionWork/PositionWork own pinned host pixel/row/frame/rope tables and copy_prefix enqueues async H2D from them; decoder metadata uses the request pinned HostIo input; output uses memcpy_dtoh_async into pinned output. No request-path DeviceBuffer::from_host. Only load-time decoder rope tables use from_host."
+    },
+    {
+      "id": "P1-8",
+      "edge": "Third same-thread submit with two held Deferred owners",
+      "verdict": "closed by serving policy contract",
+      "evidence": "Normal Backend serving keeps blocking SlotPool::acquire per Root policy. BackendThread producer hands Deferred work to the dedicated CompletionThread, so completion releases a slot while the producer waits. Direct low-level same-thread callers must complete or drop one of two held owners before the third submit; this is documented, not converted to try_acquire/429. No public try_submit was added."
+    },
+    {
+      "id": "P1-10",
+      "edge": "Multi-image pinned source rewritten before prior async H2D fence",
+      "verdict": "closed source-level",
+      "evidence": "VisionWork pre-stages every image/frame list into disjoint immutable pinned regions using plan_pinned_staging before the first H2D; run loops over disjoint slices. CPU tests assert disjoint ranges, exact totals, bad payload and overflow rejection."
+    },
+    {
+      "id": "P1-11",
+      "edge": "merge_size=0 panic before media validation",
+      "verdict": "closed",
+      "evidence": "pack_batch validates merge_size/grid with checked arithmetic before token-count division; real CPU test returns typed error without panic."
+    },
+    {
+      "id": "P1-12",
+      "edge": "Audio descriptors silently ignored",
+      "verdict": "closed",
+      "evidence": "pack_batch rejects any non-empty media.audios before images/positions and before the empty-selector shortcut; real CPU test asserts typed audio rejection."
+    },
+    {
+      "id": "P1-13",
+      "edge": "Pinned arena sized/accounted per max image while plan spans request totals",
+      "verdict": "closed",
+      "evidence": "VisionWork::new now allocates host_pixels/host_frames from key.staged_pixels/key.staged_frames via pinned_staging_capacities; bytes accounting charges totals. CPU test compares multi-image plan totals against capacity and proves capacity exceeds max-image sizes. Device pixels/frame_offsets remain max-sized and stream-ordered."
+    },
+    {
+      "id": "P1-14",
+      "edge": "Config-inconsistent descriptor accepted on zero-selector path",
+      "verdict": "closed",
+      "evidence": "prepare_batch validates media against loaded config patch_dim/merge_size before the empty-selector Ready. CPU tests cover patch_dim 0/empty pixels, patch_dim 4/16 pixels, and merge_size 4/config 2 with zero selectors."
+    },
+    {
+      "id": "P1-15",
+      "edge": "Selection bounds panic after fence",
+      "verdict": "closed",
+      "evidence": "validate_selectors rejects out-of-range, duplicate, and mixed pooled/raw selections before lease/ticket. CPU test exercises all four cases."
+    },
+    {
+      "id": "P1-16",
+      "edge": "Public sync forward_batch skips media validation before empty success",
+      "verdict": "closed",
+      "evidence": "forward_batch now uses prepare_batch (pack + config media + selectors) before its empty shortcut."
+    }
+  ],
+  "tests": {
+    "oxide_lib": "485 passed, 0 failed, 56 ignored",
+    "deferred_owner_drop": "pass",
+    "partial_enqueue_failed_fence": "pass",
+    "zero_selector_invalid_media": "pass",
+    "workspace_budget_guard": "pass",
+    "normal_factory": "22 passed",
+    "fmt": "pass",
+    "clippy": "pass"
+  },
+  "residual": [
+    "The real CUDA HostIoLease/event fence path cannot execute on this CPU-only host; Root must run the GPU lifecycle stage.",
+    "The shadow host consumer successor must be rebuilt after this review and then frozen with a new SHA.",
+    "Native b66 controller is plan/source complete; Root must run it in the SDK container with /bench read-only models."
+  ],
+  "non_claims": [
+    "No GPU execution or device compile.",
+    "No quality, lifetime or performance claim.",
+    "No public mutation or push."
+  ]
+}

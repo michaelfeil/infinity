@@ -1,0 +1,9 @@
+{
+  "schema": "root-q35vl-controller-fix/v1",
+  "predecessor": "/tmp/oxide-qwen35vl-sdk-map-policy-v1/qwen35_vl_map_policy_controller_v3.py",
+  "predecessor_sha256": "08b58cfa4c858690135c5f57c9ac3fd4b3aab1240b975438df77cd41c9a7f981",
+  "new": "/tmp/oxide-qwen35vl-sdk-map-policy-v1/qwen35_vl_map_policy_controller_v4.py",
+  "sha256": "5ce7b5f184ab2cf4e1fff42fd80bc5477c149d42b39d71cf42630c641210181b",
+  "actual_failure": "V3 staged sdk_map_preflight.py but executed sdk_map_preflight_v3.py; real CPU failed before engine",
+  "fix": "Use SDK_PREFLIGHT.name in both actual stage destination and argv builder; fresh remote namespaceV4. No Rust/runtime/model/policy/threshold changes."
+}

@@ -1,0 +1,27 @@
+{
+  "tool": "rustfmt1.93.1",
+  "check_returncode": 0,
+  "files": {
+    "qwen35_work.rs": {
+      "before": "98ec0b4757c5b4c3c58898dbc90c3d05206fc0ef130cebc3794930a16e01bb0e",
+      "after": "fd2abd2a7dfb0ac209f6add667cb322491a09c034e2e29f0ba0bc839b3df578a",
+      "whitespace_and_optional_trailing_comma_only": true
+    },
+    "gdn_prepared.rs": {
+      "before": "2bfe683288abe17fe589d9f38005483fe260a710b2134ea892a3883903641b89",
+      "after": "efed0e7e612dbda74bdbd02c72f96ea1b273e047bc60ac68bdef8665dd7cd3ff",
+      "whitespace_and_optional_trailing_comma_only": true
+    },
+    "qwen35_block_work.rs": {
+      "before": "82573a78eefe05c1b6b3d413b84459db1df2299e1485c7b529892271ae8145c2",
+      "after": "5f869642b9bd20788520519e7d9bbe54d3eed92e038ebaebb300a15648f6c48c",
+      "whitespace_and_optional_trailing_comma_only": true
+    },
+    "warm_head.rs": {
+      "before": "6d1c8c7e647c0d469c8d43855ba2c0284fe1717689c39b321313d7117499d4b3",
+      "after": "5ec63be968da8cb939c1a5a393823189cfa1ff972dc623203361692ea9dc7255",
+      "whitespace_and_optional_trailing_comma_only": true
+    }
+  },
+  "scope": "rustfmt-only correction after six focused CPU tests and libClippy passed. Only whitespace and optional trailing commas changed; no test repeat for formatting."
+}

@@ -1,0 +1,36 @@
+{
+  "schema": "oxide-q35moe-unified-runtime-report/v1",
+  "mode": "validate-only",
+  "status": "ok",
+  "started_unix_seconds": 1793638149,
+  "model": null,
+  "pool": null,
+  "product_source": "/tmp/oxide-all-model-feature-matrix-v1/qwen35-moe-factory-poisoncheckout-successor-v1",
+  "product_freeze_sha256": "2d14344ad4837bf9fcbcc059d3750140b347684f94a9b8d623a956c8bf24f064",
+  "normal_factory_source": "/tmp/oxide-all-model-feature-matrix-v1/qwen35-moe-factory-poisoncheckout-successor-v1/libs/infinity-v3/backends/src/lib.rs",
+  "canonical31_provider": "/tmp/oxide-all-model-feature-matrix-v1/qwen35-moe-v6/aot/canonical31-provider",
+  "root_checkpoint": "/workspace/model-performance/michaelfeil/onejev-perf/models/qwen35-35b-a3b",
+  "engine_count": 0,
+  "normal_factory_route": false,
+  "submission_type": null,
+  "phases": [
+    {
+      "name": "fixtures",
+      "status": "ok",
+      "detail": {
+        "engine_count": 0,
+        "gpu_path_taken": false,
+        "invalid": 12,
+        "manifest": "../fixtures/manifest.json",
+        "model_loaded": false,
+        "total": 24,
+        "valid": 12
+      }
+    }
+  ],
+  "quality": null,
+  "life": null,
+  "metadata": null,
+  "errors": [],
+  "typed_errors": []
+}

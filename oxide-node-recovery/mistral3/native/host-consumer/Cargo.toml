@@ -1,0 +1,12 @@
+[package]
+name = "mistral3-host-consumer"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[workspace]
+
+[dependencies]
+infinity-backend-oxide = { path = "../../libs/infinity-v3/backends/oxide" }
+infinity_v3-backend-core = { path = "../../libs/infinity-v3/backends/core" }
+serde_json = "1"

@@ -1,0 +1,53 @@
+{
+  "schema": "oxide-qwen35vl-root-runtime-pins/v1",
+  "consumer_source_sha256": "5d7a75d681a882be7149d4e543b9b861bcd5c674b0e416fd301a7d648f8d2a2b",
+  "consumer_binary": {
+    "path": "/tmp/oxide-all-model-feature-matrix-v1/qwen35-vl-lifecycle-fix-v1/target-opt3-noLTO-harness/release/qwen35-vl-consumer",
+    "sha256": "21c5603ee6e9eff06dae5a4344d83fba43ee8bd0ed9a31d462417970c0bf297a",
+    "size_bytes": 5186936,
+    "profile": "release opt-level=3, lto=false, debug=0"
+  },
+  "aot": {
+    "path": "/tmp/infinity-oxide-parity-20261101/device-union124-all3-v1/kernels",
+    "manifest_sha256": "56863d52270f04e2a72c07f0213295cb78cd003ec111239bef1f78e75ea720c5",
+    "architectures": {
+      "sm_90": 124,
+      "sm_100": 124,
+      "sm_120": 124
+    }
+  },
+  "fa4": {
+    "path": "/tmp/oxide-fa4-canonical26-derived-v4/bundle",
+    "sm_90_manifest_sha256": "0e4af6e1fd40714300649dd98e6eb31a0c59e9e3cb493b377de07d57d63916a9"
+  },
+  "gdn_raw": {
+    "path": "/tmp/infinity-oxide-parity-20261101/qwen35-gdn-foundation-v1/kernels",
+    "manifest_sha256": "f0b2a18d14c80eec9e1e881d87bff80c27408c77a07eb9a1039ed57548b74a7b"
+  },
+  "gdn_provider": {
+    "path": "/tmp/infinity-oxide-parity-20261101/qwen35-gdn-aot-compiled-root-v2",
+    "library_sha256": "126df49037a086eb5b29017edb3121ad2458998e10b14d584bf8b525100dda44",
+    "manifest_sha256": "79b9e8e10d2214d88374254d113917b44dcc5bc326e91c82a115f0c047b5beeb"
+  },
+  "gdn_aux": {
+    "path": "/tmp/oxide-qwen35-gdn-aot-pack-v1/kernels",
+    "manifest_sha256": "d1cd7aab5324ad3f1cc8e961ee33f016caa5a344e440661ec332d089ba904be8"
+  },
+  "b66": {
+    "container_path": "/tmp/native214-fa4-mode20/install/lib/libtei_torch.so",
+    "sha256": "b66d70b61b39e1bf0d565aca33bac7c5e21849677396ce5216f5baf73027d37e",
+    "host_present": false
+  },
+  "vendor": {
+    "container_path": "/tmp/oxide-host-cublas-130200",
+    "cublaslt": 130200,
+    "host_present": false
+  },
+  "torch": {
+    "version": "2.14.1+cu130",
+    "git": "5c4886908584029761b579af026dcfb627c84070",
+    "python": "/opt/torch-sdk/bin/python3.12"
+  },
+  "container": "infinity-torch214-compare-sdk",
+  "host_absent_note": "b66 and vendor are container paths; SDK CPU phase validates them inside the existing container."
+}

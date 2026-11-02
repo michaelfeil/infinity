@@ -1,0 +1,53 @@
+{
+  "schema": "oxide-qwen35vl-runtime-paths/v1",
+  "purpose": "Explicit Qwen3.5-VL runtime source records. FA4 uses the separate canonical26-derived-v4 bundle, not the Qwen3-VL root staging copy. GDN raw/provider/aux are staged to every remote run and checked by actual filenames and manifest hashes before any inside/quality command.",
+  "phase_gpu": false,
+  "components": {
+    "union124": {
+      "host_path": "/tmp/infinity-oxide-parity-20261101/device-union124-all3-v1/kernels",
+      "remote_rel": "runtime/kernels",
+      "manifest_rel": "manifest.json",
+      "manifest_sha256": "56863d52270f04e2a72c07f0213295cb78cd003ec111239bef1f78e75ea720c5",
+      "file_count": 20,
+      "architectures": {
+        "sm_90": 124,
+        "sm_100": 124,
+        "sm_120": 124
+      }
+    },
+    "fa4": {
+      "host_path": "/tmp/oxide-fa4-canonical26-derived-v4/bundle",
+      "remote_rel": "runtime/fa4",
+      "manifest_rel": "sm_90/manifest.json",
+      "manifest_sha256": "0e4af6e1fd40714300649dd98e6eb31a0c59e9e3cb493b377de07d57d63916a9",
+      "file_count": 213,
+      "architecture_manifests": {
+        "sm_90": "0e4af6e1fd40714300649dd98e6eb31a0c59e9e3cb493b377de07d57d63916a9",
+        "sm_100": "634de7ce55310205e96b09e424b4e307e0bba1aeb53686111958bbf56c603c9a",
+        "sm_120": "3780acd14bedd2356abe08f56c805e710663996742352a5b8ed9a3b3c4695187"
+      },
+      "note": "Qwen3.5 original bounded controller uses this canonical26 bundle for FA4; the Qwen3-VL /tmp/fa4-root staging copy is not assumed to cover Qwen3.5-VL."
+    },
+    "gdn_raw": {
+      "host_path": "/tmp/infinity-oxide-parity-20261101/qwen35-gdn-foundation-v1/kernels",
+      "remote_rel": "runtime/gdn-raw",
+      "manifest_rel": "manifest.json",
+      "manifest_sha256": "f0b2a18d14c80eec9e1e881d87bff80c27408c77a07eb9a1039ed57548b74a7b",
+      "file_count": 6
+    },
+    "gdn_provider": {
+      "host_path": "/tmp/infinity-oxide-parity-20261101/qwen35-gdn-aot-compiled-root-v2",
+      "remote_rel": "runtime/gdn-provider",
+      "manifest_rel": "manifest.json",
+      "manifest_sha256": "79b9e8e10d2214d88374254d113917b44dcc5bc326e91c82a115f0c047b5beeb",
+      "file_count": 74
+    },
+    "gdn_aux": {
+      "host_path": "/tmp/oxide-qwen35-gdn-aot-pack-v1/kernels",
+      "remote_rel": "runtime/gdn-aux",
+      "manifest_rel": "manifest.json",
+      "manifest_sha256": "d1cd7aab5324ad3f1cc8e961ee33f016caa5a344e440661ec332d089ba904be8",
+      "file_count": 9
+    }
+  }
+}

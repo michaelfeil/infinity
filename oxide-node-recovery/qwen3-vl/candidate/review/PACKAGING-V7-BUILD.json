@@ -1,0 +1,14 @@
+{
+  "schema": "oxide-qwen3-vl-quality-consumer-build/v1",
+  "source_commit": "027b359c6e0c5378cd07398b07b4435af3ee492d",
+  "patch_sha256": "94965637d760dbfd642a41d36efe3142ad892933f795b37f3c8c80e5630e14ea",
+  "binary": "/tmp/opencode/qwen-vl-host-consumer-quality-target/release/examples/qwen3_vl_host_consumer",
+  "sha256": "13c66c8477b2b894d2416d123d5fbc818a502c1d9895f3efff909952b9d731ce",
+  "wall_seconds": 42,
+  "exit": 0,
+  "profile": "opt3/lto=false/debug1/cgu16/debug-assertions=false/strip=none",
+  "elf": "with debug_info, not stripped",
+  "single_consumer": true,
+  "preserved_historical": "01516290d5dc97960121a6da086d81e1ad6be0a800eed2c941fe1a3b4e51107f",
+  "no_native_gpu_device_build": true
+}

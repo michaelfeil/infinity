@@ -1,0 +1,108 @@
+{
+  "schema": "oxide-qwen3-vl-central-fa4-request/v2",
+  "from": "Qwen3-VL author",
+  "to": "central FA4 / device coordinator",
+  "audit_reference": "/tmp/oxide-fa4-dynamic-heads-audit-v1/report.md",
+  "audit_verdict": "FA4 AOT banks the Q/KV grouping ratio, head_dim, dtype, causal/local kind and mask family, not absolute Q/KV head counts. Absolute heads are runtime DLTensor shapes.",
+  "base_commit": "e582ce90eb1544fcff081a495cb8fd4f3c17b112",
+  "canonical26": {
+    "count": 26,
+    "unchanged": true,
+    "do_not_append_in_place": true
+  },
+  "geometry_report": "qwen-vl-geometry-v1/CONFIG-TUPLES.json",
+  "geometry_report_sha256": "234eae3023a7333448656ea92c671ff0f5615ecb72b18f5606fd90820e0f9486",
+  "existing_profiles_used": [
+    {
+      "tuple": "Qwen3-VL-8B-Embedding",
+      "text": "qwen (ratio 4, d128, causal global)",
+      "vision": "media72 (16/16/d72 noncausal global)",
+      "status": "present"
+    },
+    {
+      "tuple": "TomoroAI-ColQwen3-4B",
+      "text": "qwen ratio 4 d128 causal global",
+      "vision": "bert (16/16/d64 noncausal global)",
+      "status": "present"
+    },
+    {
+      "tuple": "Nemotron-ColEmbed-VL-4B-v2",
+      "text": "gqa4 (ratio 4 d128 noncausal global)",
+      "vision": "bert",
+      "status": "present"
+    },
+    {
+      "tuple": "Nemotron-ColEmbed-VL-8B-v2",
+      "text": "gqa4",
+      "vision": "media72",
+      "status": "present"
+    },
+    {
+      "tuple": "Qwen3-VL-2B (derived)",
+      "text": "causal_gqa2 (ratio 2 d128 causal global)",
+      "vision": "bert",
+      "status": "present"
+    },
+    {
+      "tuple": "Qwen3-VL-32B (derived)",
+      "text": "Q64/KV8 d128 -> causal_gqa8 mode22 / gqa8 mode5 (ratio 8)",
+      "vision": "media72",
+      "status": "present"
+    },
+    {
+      "tuple": "vision Q12/KV12 d64 noncausal global",
+      "text": "n/a",
+      "vision": "bert mode0 (ratio 1)",
+      "status": "present; no Modern local borrow"
+    },
+    {
+      "tuple": "Qwen3-VL-30B-A3B (derived)",
+      "text": "ratio-8 d128 profiles exist",
+      "vision": "media72",
+      "status": "decoder gap: MoE text outside dense VL foundation, not an FA4 gap"
+    }
+  ],
+  "missing_profiles": [
+    {
+      "missing": {
+        "causal": true,
+        "dtype": "bf16",
+        "head_dim": 128,
+        "heads": 40,
+        "kind": "text",
+        "kv_heads": 8,
+        "reason": "grouping ratio 5 is absent from canonical26",
+        "role": "Qwen3-VL-14B/other Q40/KV8 d128 causal global",
+        "scale": "rsqrt_head_dim",
+        "window": "global"
+      },
+      "tuple": "Qwen3-VL-14B (derived profile-only request)"
+    },
+    {
+      "missing": {
+        "causal": false,
+        "dtype": "bf16",
+        "head_dim": 128,
+        "heads": 40,
+        "kind": "text",
+        "kv_heads": 8,
+        "reason": "grouping ratio 5 is absent from canonical26",
+        "role": "Qwen3-VL-14B/other Q40/KV8 d128 noncausal global",
+        "scale": "rsqrt_head_dim",
+        "window": "global"
+      },
+      "tuple": "Qwen3-VL-14B (derived profile-only request)"
+    }
+  ],
+  "requested_actions": [
+    "Append only the genuinely absent Q40/KV8 d128 ratio-5 profiles (causal and noncausal global BF16) for the derived 14B/other tuple, after Root verifies the real config.",
+    "Do NOT append redundant exact-absolute-head profiles for Q64/KV8 d128 (reuse mode22/5), Q12/KV12 d64 global (reuse mode0), or the ratio-4 Q32/KV4 d128 tuples.",
+    "Keep global and local kernels distinct; do not let global vision borrow modern_local, and keep right-asymmetric causal-local vs symmetric noncausal-local forms separate.",
+    "Preserve canonical26 and the published old90 export set plus the six additive Qwen3-VL exports during the device merge."
+  ],
+  "non_claims": [
+    "No GPU execution or profile qualification was run by the author.",
+    "The 2B/14B/32B tuples are derived public-family tuples and must be verified against the real config before admission.",
+    "No profile index is invented or borrowed here."
+  ]
+}

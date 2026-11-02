@@ -1,0 +1,264 @@
+diff -ruN a/infinity-v3/backends/oxide/src/qwen35_moe_engine.rs b/infinity-v3/backends/oxide/src/qwen35_moe_engine.rs
+--- a/infinity-v3/backends/oxide/src/qwen35_moe_engine.rs	2026-11-02 07:53:49.807537601 -0800
++++ b/infinity-v3/backends/oxide/src/qwen35_moe_engine.rs	2026-11-02 08:02:27.993769438 -0800
+@@ -385,6 +385,22 @@
+ 
+ /// A worked public host-I/O lease. The engine owns exactly two pooled slots and
+ /// a lease is returned to the pool only after its event/fence is drained.
++fn fence_once<T>(
++    failed: &mut bool,
++    fence: impl FnOnce() -> Result<T, BackendError>,
++) -> Result<T, BackendError> {
++    if *failed {
++        return Err(infer("experimental MoE completion fence previously failed"));
++    }
++    match fence() {
++        Ok(value) => Ok(value),
++        Err(error) => {
++            *failed = true;
++            Err(error)
++        }
++    }
++}
++
+ pub struct ExperimentalMoELease {
+     engine: Arc<()>,
+     slot: Option<HostIo>,
+@@ -393,6 +409,7 @@
+     started: bool,
+     recorded: bool,
+     drained: bool,
++    failed_fence: bool,
+     completion: Option<CompletionTicket>,
+ }
+ 
+@@ -411,6 +428,7 @@
+             started: false,
+             recorded: false,
+             drained: false,
++            failed_fence: false,
+             completion: None,
+         }
+     }
+@@ -459,17 +477,27 @@
+         Ok(())
+     }
+ 
++    pub fn started(&self) -> bool {
++        self.started
++    }
++
+     pub fn wait(&mut self) -> Result<(), BackendError> {
++        if self.failed_fence {
++            return Err(infer("experimental MoE completion fence previously failed"));
++        }
+         if self.drained {
+             return Ok(());
+         }
+-        let complete = match self.slot.as_ref() {
++        let complete = fence_once(&mut self.failed_fence, || match self.slot.as_ref() {
+             Some(slot) if self.recorded => slot.event.synchronize().map_err(infer),
+             Some(_) if self.started => self.stream.synchronize().map_err(infer),
+             Some(_) => Ok(()),
+-            None => return Err(infer("Missing experimental MoE host lease")),
+-        };
+-        complete?;
++            None => Err(infer("Missing experimental MoE host lease")),
++        });
++        if let Err(error) = complete {
++            self.latch_failed_fence();
++            return Err(error);
++        }
+         if let Some(ticket) = self.completion.as_ref() {
+             // SAFETY: the same stream event or whole-stream fence just returned.
+             unsafe { ticket.mark_completed_after_fence() };
+@@ -478,6 +506,15 @@
+         Ok(())
+     }
+ 
++    fn latch_failed_fence(&mut self) {
++        self.failed_fence = true;
++        self.drained = true;
++        self.pool.close();
++        if let Some(slot) = self.slot.take() {
++            std::mem::forget(slot);
++        }
++    }
++
+     pub fn output(&self, elements: usize) -> Result<&[f32], BackendError> {
+         if !self.drained {
+             return Err(infer("Experimental MoE output has not completed"));
+@@ -517,21 +554,21 @@
+ 
+ impl Drop for ExperimentalMoELease {
+     fn drop(&mut self) {
++        if self.failed_fence {
++            return;
++        }
+         if self.slot.is_none() {
+             return;
+         }
+         if !self.drained {
+-            let complete = match self.slot.as_ref() {
+-                Some(slot) if self.recorded => slot.event.synchronize().is_ok(),
+-                Some(_) if self.started => self.stream.synchronize().is_ok(),
+-                Some(_) => true,
+-                None => false,
+-            };
+-            if !complete {
+-                self.pool.close();
+-                if let Some(slot) = self.slot.take() {
+-                    std::mem::forget(slot);
+-                }
++            let complete = fence_once(&mut self.failed_fence, || match self.slot.as_ref() {
++                Some(slot) if self.recorded => slot.event.synchronize().map_err(infer),
++                Some(_) if self.started => self.stream.synchronize().map_err(infer),
++                Some(_) => Ok(()),
++                None => Err(infer("Missing experimental MoE host lease")),
++            });
++            if complete.is_err() {
++                self.latch_failed_fence();
+                 return;
+             }
+             if let Some(ticket) = self.completion.as_ref() {
+@@ -1965,4 +2002,21 @@
+         assert!(engine_unhealthy(false, true));
+         assert!(engine_unhealthy(true, true));
+     }
++    #[test]
++    fn fence_latch_attempts_exactly_once_after_first_failure() {
++        let mut failed = false;
++        let mut attempts = 0;
++        let first: Result<(), BackendError> = fence_once(&mut failed, || {
++            attempts += 1;
++            Err(BackendError::Unhealthy)
++        });
++        assert!(first.is_err());
++        let second: Result<(), BackendError> = fence_once(&mut failed, || {
++            attempts += 1;
++            Ok(())
++        });
++        assert!(second.is_err());
++        assert_eq!(attempts, 1);
++        assert!(failed);
++    }
+ }
+diff -ruN a/infinity-v3/backends/oxide/src/qwen35_moe_factory.rs b/infinity-v3/backends/oxide/src/qwen35_moe_factory.rs
+--- a/infinity-v3/backends/oxide/src/qwen35_moe_factory.rs	2026-11-02 07:53:22.584208640 -0800
++++ b/infinity-v3/backends/oxide/src/qwen35_moe_factory.rs	2026-11-02 08:03:08.843762833 -0800
+@@ -78,6 +78,10 @@
+     }
+ }
+ 
++fn cache_eligible(started: bool, proven: bool) -> bool {
++    !started || proven
++}
++
+ struct PendingFrame {
+     lease: Option<ManuallyDrop<ExperimentalMoELease>>,
+     work: Option<ManuallyDrop<ExperimentalMoEWork>>,
+@@ -128,12 +132,15 @@
+     }
+ 
+     fn complete(mut self) -> Result<Embeddings, BackendError> {
+-        let lease = self.lease.as_deref_mut().ok_or(BackendError::Unhealthy)?;
+-        self.engine
+-            .as_deref()
+-            .ok_or(BackendError::Unhealthy)?
+-            .wait(lease)
+-            .map_err(moe_error)?;
++        let wait = match (self.engine.as_deref(), self.lease.as_deref_mut()) {
++            (Some(engine), Some(lease)) => engine.wait(lease).map_err(moe_error),
++            _ => Err(BackendError::Unhealthy),
++        };
++        if let Err(error) = wait {
++            self.quarantine();
++            return Err(error);
++        }
++        let lease = self.lease.as_deref().ok_or(BackendError::Unhealthy)?;
+         let selected = lease.output(self.selected_count)?;
+         let mut embeddings = output::pack(
+             selected,
+@@ -154,33 +161,40 @@
+         }
+         let engine = self.engine.as_deref().ok_or(BackendError::Unhealthy)?;
+         let lease = self.lease.as_deref().ok_or(BackendError::Unhealthy)?;
++        let started = lease.started();
+         let proof = engine.completion_proof(lease);
+-        let work =
+-            unsafe { ManuallyDrop::take(self.work.as_mut().ok_or(BackendError::Unhealthy)?) };
+-        let mut pending_work = Some(work);
+-        if let Ok(mut cache) = self.cache.lock() {
+-            match cache.return_slot(self.key, pending_work.take().unwrap()) {
+-                Ok(()) => {}
+-                Err(work) => pending_work = Some(work),
++        if !cache_eligible(started, proof.is_some()) {
++            self.quarantine();
++            return Err(BackendError::Unhealthy);
++        }
++        let work = self
++            .work
++            .take()
++            .map(ManuallyDrop::into_inner)
++            .ok_or(BackendError::Unhealthy)?;
++        let mut work = work;
++        if let Some(proof) = proof.as_ref() {
++            if unsafe { work.release_after_completion(proof) }.is_err() {
++                std::mem::forget(work);
++                self.quarantine();
++                return Err(BackendError::Unhealthy);
+             }
+         }
+-        if let Some(mut work) = pending_work {
+-            match proof {
+-                Some(proof) if unsafe { work.release_after_completion(&proof) }.is_ok() => {}
+-                _ => {
+-                    std::mem::forget(work);
+-                    self.quarantine();
+-                    return Err(BackendError::Unhealthy);
+-                }
+-            }
++        let retained = if let Ok(mut cache) = self.cache.lock() {
++            cache.return_slot(self.key, work).err()
++        } else {
++            Some(work)
++        };
++        if let Some(work) = retained {
++            std::mem::forget(work);
++            self.quarantine();
++            return Err(BackendError::Unhealthy);
+         }
+-        if let Some(mut lease) = self.lease.take() {
+-            // SAFETY: the fence completed and this is the only owner.
+-            unsafe { ManuallyDrop::drop(&mut lease) };
++        if let Some(lease) = self.lease.take() {
++            drop(ManuallyDrop::into_inner(lease));
+         }
+         if let Some(engine) = self.engine.take() {
+-            let engine = ManuallyDrop::into_inner(engine);
+-            drop(engine);
++            drop(ManuallyDrop::into_inner(engine));
+         }
+         self.settled = true;
+         Ok(())
+@@ -468,15 +482,11 @@
+     }
+ 
+     #[test]
+-    fn workcache_partial_constructor_failure_cannot_commit_partial_slots() {
+-        // reset only accepts both completed owners; there is no partial commit API.
+-        let mut cache: WorkCache<u32> = WorkCache::default();
+-        let result: Result<(u32, u32), &'static str> = Err("second constructor failed");
+-        if let Ok((first, second)) = result {
+-            cache.reset((1, 1, 1), first, second);
+-        }
+-        assert_eq!(cache.key, None);
+-        assert!(cache.slots.iter().all(Option::is_none));
++    fn cache_accepts_never_queued_or_proven_and_rejects_started_unproven() {
++        assert!(cache_eligible(false, false));
++        assert!(cache_eligible(false, true));
++        assert!(cache_eligible(true, true));
++        assert!(!cache_eligible(true, false));
+     }
+     #[test]
+     fn factory_error_classification_preserves_backend_overloaded_and_unhealthy() {

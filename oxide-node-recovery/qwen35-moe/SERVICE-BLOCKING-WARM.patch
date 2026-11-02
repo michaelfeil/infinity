@@ -1,0 +1,162 @@
+--- a/libs/infinity-v3/backends/oxide/src/qwen35_moe_factory.rs
++++ b/libs/infinity-v3/backends/oxide/src/qwen35_moe_factory.rs
+@@ -285,13 +285,14 @@
+ fn checkout_work<W: WorkBytes>(
+     slots: &mut WorkSlots<W>,
+     key: (usize, usize, usize),
+-    projected_bytes: usize,
++    projected_bytes: impl FnOnce() -> Result<usize, BackendError>,
+     build: impl FnOnce() -> Result<W, BackendError>,
+     mut evict: impl FnMut(&mut W) -> Result<bool, BackendError>,
+ ) -> Result<(usize, W), BackendError> {
+     if let Some(found) = slots.checkout_ready(key) {
+         return Ok(found);
+     }
++    let projected_bytes = projected_bytes()?;
+     loop {
+         if slots.empty_index().is_some() && slots.projected_fits(projected_bytes) {
+             break;
+@@ -642,17 +643,17 @@
+         // Reuse the common two-slot host-I/O pool as the admission primitive:
+         // acquire() blocks on the condition variable and closes to Unhealthy.
+         // Completion runs on the independent service completion thread.
+-        let projected_bytes = self
+-            .engine
+-            .work_bytes(tokens, sequences, max_len)
+-            .map_err(moe_error)?;
+         let lease = self.engine.lease().map_err(moe_error)?;
+         let (slot, work) = {
+             let mut slots = self.work.lock().map_err(|_| BackendError::Unhealthy)?;
+             checkout_work(
+                 &mut slots,
+                 key,
+-                projected_bytes,
++                || {
++                    self.engine
++                        .work_bytes(tokens, sequences, max_len)
++                        .map_err(moe_error)
++                },
+                 || {
+                     self.engine
+                         .work(tokens, sequences, max_len)
+@@ -888,7 +889,7 @@
+         let error = checkout_work(
+             &mut slots,
+             key_b,
+-            80,
++            || Ok(80),
+             || Err(BackendError::Unhealthy),
+             FakeWork::discard,
+         )
+@@ -901,6 +902,57 @@
+     }
+ 
+     #[test]
++    fn cached_ready_hit_never_invokes_plan_or_build() {
++        let key = (7, 1, 7);
++        let mut slots: WorkSlots<FakeWork> = WorkSlots::default();
++        let (work, _, _) = FakeWork::new(64);
++        slots.install_ready(0, key, work).unwrap();
++        let (index, work) = checkout_work(
++            &mut slots,
++            key,
++            || panic!("warm cache hit must not plan Work bytes"),
++            || panic!("warm cache hit must not build a Work"),
++            |_: &mut FakeWork| -> Result<bool, BackendError> {
++                panic!("warm cache hit must not evict")
++            },
++        )
++        .unwrap();
++        assert_eq!(index, 0);
++        assert!(work.live);
++    }
++
++    #[test]
++    fn cache_miss_plans_once_and_overbudget_rejects_before_build() {
++        let mut slots: WorkSlots<FakeWork> = WorkSlots::with_budget(10);
++        let (held, _, _) = FakeWork::new(5);
++        slots.install_ready(0, (6, 1, 6), held).unwrap();
++        let (_held_index, held_work) = slots.checkout_ready((6, 1, 6)).unwrap();
++        let plans = Rc::new(Cell::new(0usize));
++        let builds = Rc::new(Cell::new(0usize));
++        let plan_count = Rc::clone(&plans);
++        let build_count = Rc::clone(&builds);
++        let error = checkout_work(
++            &mut slots,
++            (7, 1, 7),
++            || {
++                plan_count.set(plan_count.get() + 1);
++                Ok(20)
++            },
++            || {
++                build_count.set(build_count.get() + 1);
++                Ok(FakeWork::new(20).0)
++            },
++            FakeWork::discard,
++        )
++        .unwrap_err();
++        assert!(matches!(error, BackendError::Overloaded(_)));
++        assert_eq!(plans.get(), 1);
++        assert_eq!(builds.get(), 0);
++        assert_eq!(slots.resident_bytes(), 5);
++        drop(held_work);
++    }
++
++    #[test]
+     fn work_budget_admits_under_budget_and_rejects_before_allocation() {
+         let key_a = (7, 1, 7);
+         let key_b = (8, 1, 8);
+@@ -913,7 +965,7 @@
+         let (b_index, b_work) = checkout_work(
+             &mut slots,
+             key_b,
+-            30,
++            || Ok(30),
+             || {
+                 builds += 1;
+                 Ok(FakeWork::new(30).0)
+@@ -926,7 +978,7 @@
+         let error = checkout_work(
+             &mut slots,
+             key_c,
+-            20,
++            || Ok(20),
+             || {
+                 builds += 1;
+                 Ok(FakeWork::new(20).0)
+@@ -951,7 +1003,7 @@
+         let (a_index, a_work) = checkout_work(
+             &mut slots,
+             key_a,
+-            150,
++            || Ok(150),
+             || Ok(FakeWork::new(150).0),
+             FakeWork::discard,
+         )
+@@ -961,7 +1013,7 @@
+         let error = checkout_work(
+             &mut slots,
+             key_b,
+-            1,
++            || Ok(1),
+             || {
+                 builds += 1;
+                 Ok(FakeWork::new(1).0)
+@@ -976,7 +1028,7 @@
+         let error = checkout_work(
+             &mut slots,
+             key_b,
+-            1,
++            || Ok(1),
+             || {
+                 builds += 1;
+                 Ok(FakeWork::new(1).0)
+@@ -1003,7 +1055,7 @@
+         let (b_index, b_work) = checkout_work(
+             &mut slots,
+             key_b,
+-            50,
++            || Ok(50),
+             || Ok(FakeWork::new(50).0),
+             FakeWork::discard,
+         )

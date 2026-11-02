@@ -1,0 +1,663 @@
+{
+  "schema": "oxide-qwen35vl-full-cpu-evidence/v1",
+  "all_targets": {
+    "runs": 29,
+    "passed": 635,
+    "failed": 0,
+    "ignored": 134
+  },
+  "focused_qwen35_vl": "16 passed; 0 failed; 3 ignored",
+  "full_checkpoint_metadata": "Elephant 760/333; Mammoth 1184/333; 4B 738=690 BF16+48 F32 (24 A_log + 24 linear_attn.norm.weight); both full checkpoints pass text candidate gate",
+  "real_cpu_tower_forward": {
+    "checkpoint": "Qwen3.5-0.8B",
+    "merged_rows": 1,
+    "out_hidden": 1024,
+    "output": "evidence/tower-cpu-0.8b.json"
+  },
+  "native_whole_plan_only": {
+    "model": "/workspace/model-performance/michaelfeil/elephant-1",
+    "tokens": 8,
+    "spans": [
+      {
+        "grid": [
+          1,
+          4,
+          4
+        ],
+        "merge": 2,
+        "token_start": 2,
+        "token_count": 4
+      }
+    ],
+    "positions": [
+      [
+        0,
+        1,
+        2,
+        2,
+        2,
+        2,
+        4,
+        5
+      ],
+      [
+        0,
+        1,
+        2,
+        2,
+        3,
+        3,
+        4,
+        5
+      ],
+      [
+        0,
+        1,
+        2,
+        3,
+        2,
+        3,
+        4,
+        5
+      ]
+    ]
+  },
+  "consumer_release_build": "pass",
+  "clippy": "pass (-D warnings)",
+  "fmt": "pass",
+  "old_exports_proof": {
+    "schema": "oxide-qwen35vl-old-exports-proof/v1",
+    "status": "passed",
+    "old_exports": 86,
+    "foundation_additive_exports": 9,
+    "encoder_activation_additive_exports": 4,
+    "qwen35vl_additive_exports": 7,
+    "new_total_exports": 106,
+    "qwen35vl_names": [
+      "infinity_qwen35vl_add_bf16",
+      "infinity_qwen35vl_bias_bf16",
+      "infinity_qwen35vl_gelu_tanh_bf16",
+      "infinity_qwen35vl_pos_interp",
+      "infinity_qwen35vl_rope2d_bf16",
+      "infinity_qwen35vl_silu_bf16",
+      "infinity_qwen35vl_temporal_slice_bf16"
+    ],
+    "old86_pin_sha256": "f80fb666510c3842eabcc8f23b7db1e1be0ad92cc2c478d520e0e30b2d843a24",
+    "build_sha256": "99b6dcd130b277d61cbcc61f99226758a51a7b235ffd2e2377c2478e653f0e37",
+    "qwen35vl_source_sha256": "8eca5fd396ec71aa0cf32b1ee8967459bd8d53b7d09d3758e5c78d73aedb136c",
+    "semantic_cubin_comparison": "Root-only: requires the published old86 bundle",
+    "failures": []
+  },
+  "host_preflight": {
+    "schema": "oxide-qwen35vl-root-preflight/v1",
+    "marker": "QWEN35_VL_PREFLIGHT_COMPLETE",
+    "status": "passed",
+    "base_commit": "e582ce90eb1544fcff081a495cb8fd4f3c17b112",
+    "container": "infinity-torch214-compare-sdk",
+    "b66": {
+      "path": "/tmp/native214-fa4-mode20/install/lib/libtei_torch.so",
+      "sha256": "b66d70b61b39e1bf0d565aca33bac7c5e21849677396ce5216f5baf73027d37e"
+    },
+    "torch": {
+      "python": "/opt/torch-sdk/bin/python3.12",
+      "version": "2.14.1+cu130",
+      "git": "5c4886908584029761b579af026dcfb627c84070",
+      "root": "/opt/torch-sdk/lib/python3.12/site-packages/torch"
+    },
+    "cublaslt": "130200",
+    "checkpoints": {
+      "Qwen3.5-0.8B": "/workspace/model-performance/michaelfeil/onejev-perf/backbone-comparison-20261023/models/Qwen3.5-0.8B",
+      "Qwen3.5-2B": "/workspace/model-performance/michaelfeil/onejev-perf/backbone-comparison-20261023/models/Qwen3.5-2B",
+      "Qwen3.5-4B": "/workspace/model-performance/michaelfeil/onejev-perf/backbone-comparison-20261023/models/Qwen3.5-4B",
+      "Qwen3.5-35B-A3B": "/workspace/model-performance/michaelfeil/onejev-perf/models/qwen35-35b-a3b",
+      "Elephant-Qwen3.5-VL": "/workspace/model-performance/michaelfeil/elephant-1",
+      "Mammoth-Qwen3.5-VL": "/workspace/model-performance/michaelfeil/onejev-perf/models/mammoth-1"
+    },
+    "old_exports_proof": {
+      "schema": "oxide-qwen35vl-old-exports-proof/v1",
+      "status": "passed",
+      "old_exports": 86,
+      "foundation_additive_exports": 9,
+      "encoder_activation_additive_exports": 4,
+      "qwen35vl_additive_exports": 7,
+      "new_total_exports": 106,
+      "qwen35vl_names": [
+        "infinity_qwen35vl_add_bf16",
+        "infinity_qwen35vl_bias_bf16",
+        "infinity_qwen35vl_gelu_tanh_bf16",
+        "infinity_qwen35vl_pos_interp",
+        "infinity_qwen35vl_rope2d_bf16",
+        "infinity_qwen35vl_silu_bf16",
+        "infinity_qwen35vl_temporal_slice_bf16"
+      ],
+      "old86_pin_sha256": "f80fb666510c3842eabcc8f23b7db1e1be0ad92cc2c478d520e0e30b2d843a24",
+      "build_sha256": "99b6dcd130b277d61cbcc61f99226758a51a7b235ffd2e2377c2478e653f0e37",
+      "qwen35vl_source_sha256": "8eca5fd396ec71aa0cf32b1ee8967459bd8d53b7d09d3758e5c78d73aedb136c",
+      "semantic_cubin_comparison": "Root-only: requires the published old86 bundle",
+      "failures": []
+    },
+    "failures": []
+  },
+  "not_run": [
+    "GPU",
+    "CUDA context",
+    "device compile",
+    "Docker",
+    "Torch CUDA",
+    "NVCC",
+    "network",
+    "FA4 DSO execution",
+    "full fat LTO host build"
+  ],
+  "non_claims": [
+    "no GPU/native full-model parity yet",
+    "no performance/quality",
+    "no model admission",
+    "no public route"
+  ],
+  "dtype_coverage": {
+    "reference_recipe": "BF16-rounded CPU reference",
+    "device_recipe": "BF16 only",
+    "f16_patch_stem": "source structure only; not F16 device/reference",
+    "f32_device": "not attached",
+    "native_f32_exceptions": [
+      "linear_attn.A_log",
+      "linear_attn.dt_bias"
+    ]
+  },
+  "weight_precision_fix": {
+    "read_f32_range": "WeightSource::read_f32 (safetensors + PyTorch)",
+    "gdn_reader": "read_gdn_f32",
+    "test": "decay_parameters_keep_native_f32_precision_without_a_bf16_roundtrip passed"
+  },
+  "normal_factory_run_plans": {
+    "Qwen3.5-0.8B": {
+      "dtype": "bfloat16",
+      "factory_proof": {
+        "dtype_accepted": true,
+        "gaps": [],
+        "is_qwen35_checkpoint": true,
+        "run_plan_ready": true,
+        "serving_route": "Text(causal=true)"
+      },
+      "family": "dense",
+      "fp16_supported": false,
+      "gaps": [],
+      "modes": [
+        {
+          "causal": false,
+          "component": "vision",
+          "expected_mode": 0,
+          "head_dim": 64,
+          "heads": 12,
+          "kv_heads": 12,
+          "note": "central mode present",
+          "present": true,
+          "registry_mode": 0
+        },
+        {
+          "causal": true,
+          "component": "text.full.causal",
+          "expected_mode": 18,
+          "head_dim": 256,
+          "heads": 8,
+          "kv_heads": 2,
+          "note": "central mode present",
+          "present": true,
+          "registry_mode": 18
+        }
+      ],
+      "moe_owner_required": false,
+      "normal_factory_ready": true,
+      "path": "/workspace/model-performance/michaelfeil/onejev-perf/backbone-comparison-20261023/models/Qwen3.5-0.8B",
+      "projection_score_route": "OxideBackend pooled/raw output + warm OneJev Decision score; no Dense text projection stand-in",
+      "text_admission": "dense text candidate admitted",
+      "text_causal": true,
+      "text_hidden": 1024,
+      "text_layers": 24,
+      "vision_tensors": 153
+    },
+    "Qwen3.5-2B": {
+      "dtype": "bfloat16",
+      "factory_proof": {
+        "dtype_accepted": true,
+        "gaps": [],
+        "is_qwen35_checkpoint": true,
+        "run_plan_ready": true,
+        "serving_route": "Text(causal=true)"
+      },
+      "family": "dense",
+      "fp16_supported": false,
+      "gaps": [],
+      "modes": [
+        {
+          "causal": false,
+          "component": "vision",
+          "expected_mode": 0,
+          "head_dim": 64,
+          "heads": 16,
+          "kv_heads": 16,
+          "note": "central mode present",
+          "present": true,
+          "registry_mode": 0
+        },
+        {
+          "causal": true,
+          "component": "text.full.causal",
+          "expected_mode": 18,
+          "head_dim": 256,
+          "heads": 8,
+          "kv_heads": 2,
+          "note": "central mode present",
+          "present": true,
+          "registry_mode": 18
+        }
+      ],
+      "moe_owner_required": false,
+      "normal_factory_ready": true,
+      "path": "/workspace/model-performance/michaelfeil/onejev-perf/backbone-comparison-20261023/models/Qwen3.5-2B",
+      "projection_score_route": "OxideBackend pooled/raw output + warm OneJev Decision score; no Dense text projection stand-in",
+      "text_admission": "dense text candidate admitted",
+      "text_causal": true,
+      "text_hidden": 2048,
+      "text_layers": 24,
+      "vision_tensors": 297
+    },
+    "Qwen3.5-4B": {
+      "dtype": "bfloat16",
+      "factory_proof": {
+        "dtype_accepted": true,
+        "gaps": [],
+        "is_qwen35_checkpoint": true,
+        "run_plan_ready": true,
+        "serving_route": "Text(causal=true)"
+      },
+      "family": "dense",
+      "fp16_supported": false,
+      "gaps": [],
+      "modes": [
+        {
+          "causal": false,
+          "component": "vision",
+          "expected_mode": 0,
+          "head_dim": 64,
+          "heads": 16,
+          "kv_heads": 16,
+          "note": "central mode present",
+          "present": true,
+          "registry_mode": 0
+        },
+        {
+          "causal": true,
+          "component": "text.full.causal",
+          "expected_mode": 18,
+          "head_dim": 256,
+          "heads": 16,
+          "kv_heads": 4,
+          "note": "central mode present",
+          "present": true,
+          "registry_mode": 18
+        }
+      ],
+      "moe_owner_required": false,
+      "normal_factory_ready": true,
+      "path": "/workspace/model-performance/michaelfeil/onejev-perf/backbone-comparison-20261023/models/Qwen3.5-4B",
+      "projection_score_route": "OxideBackend pooled/raw output + warm OneJev Decision score; no Dense text projection stand-in",
+      "text_admission": "dense text candidate admitted",
+      "text_causal": true,
+      "text_hidden": 2560,
+      "text_layers": 32,
+      "vision_tensors": 297
+    },
+    "Qwen3.5-35B-A3B": {
+      "dtype": "bfloat16",
+      "factory_proof": {
+        "dtype_accepted": true,
+        "gaps": [
+          "text.full.causal: central append-only mode 26 is not in this branch registry",
+          "MoE Qwen3.5 text execution must be supplied by the owning MoE engine"
+        ],
+        "is_qwen35_checkpoint": true,
+        "run_plan_ready": false,
+        "serving_route": "Text(causal=true)"
+      },
+      "family": "moe",
+      "fp16_supported": false,
+      "gaps": [
+        "text.full.causal: central append-only mode 26 is not in this branch registry",
+        "MoE Qwen3.5 text execution must be supplied by the owning MoE engine"
+      ],
+      "modes": [
+        {
+          "causal": false,
+          "component": "vision",
+          "expected_mode": 8,
+          "head_dim": 72,
+          "heads": 16,
+          "kv_heads": 16,
+          "note": "central mode present",
+          "present": true,
+          "registry_mode": 8
+        },
+        {
+          "causal": true,
+          "component": "text.full.causal",
+          "expected_mode": 26,
+          "head_dim": 256,
+          "heads": 16,
+          "kv_heads": 2,
+          "note": "central append-only mode 26 is not in this branch registry",
+          "present": false,
+          "registry_mode": null
+        }
+      ],
+      "moe_owner_required": true,
+      "normal_factory_ready": false,
+      "path": "/workspace/model-performance/michaelfeil/onejev-perf/models/qwen35-35b-a3b",
+      "projection_score_route": "OxideBackend pooled/raw output + warm OneJev Decision score; no Dense text projection stand-in",
+      "text_admission": "MoE owner required",
+      "text_causal": true,
+      "text_hidden": 2048,
+      "text_layers": 40,
+      "vision_tensors": 333
+    },
+    "Elephant-Qwen3.5-VL": {
+      "dtype": "bfloat16",
+      "factory_proof": {
+        "dtype_accepted": true,
+        "gaps": [],
+        "is_qwen35_checkpoint": true,
+        "run_plan_ready": true,
+        "serving_route": "DynamicBlockDecision"
+      },
+      "family": "dense",
+      "fp16_supported": false,
+      "gaps": [],
+      "modes": [
+        {
+          "causal": false,
+          "component": "vision",
+          "expected_mode": 8,
+          "head_dim": 72,
+          "heads": 16,
+          "kv_heads": 16,
+          "note": "central mode present",
+          "present": true,
+          "registry_mode": 8
+        },
+        {
+          "causal": false,
+          "component": "text.full.noncausal",
+          "expected_mode": 6,
+          "head_dim": 256,
+          "heads": 16,
+          "kv_heads": 4,
+          "note": "central mode present",
+          "present": true,
+          "registry_mode": 6
+        }
+      ],
+      "moe_owner_required": false,
+      "normal_factory_ready": true,
+      "path": "/workspace/model-performance/michaelfeil/elephant-1",
+      "projection_score_route": "OxideBackend pooled/raw output + warm OneJev Decision score; no Dense text projection stand-in",
+      "text_admission": "dense text candidate admitted",
+      "text_causal": false,
+      "text_hidden": 4096,
+      "text_layers": 32,
+      "vision_tensors": 333
+    },
+    "Mammoth-Qwen3.5-VL": {
+      "dtype": "bfloat16",
+      "factory_proof": {
+        "dtype_accepted": true,
+        "gaps": [],
+        "is_qwen35_checkpoint": true,
+        "run_plan_ready": true,
+        "serving_route": "DynamicBlockDecision"
+      },
+      "family": "dense",
+      "fp16_supported": false,
+      "gaps": [],
+      "modes": [
+        {
+          "causal": false,
+          "component": "vision",
+          "expected_mode": 8,
+          "head_dim": 72,
+          "heads": 16,
+          "kv_heads": 16,
+          "note": "central mode present",
+          "present": true,
+          "registry_mode": 8
+        },
+        {
+          "causal": false,
+          "component": "text.full.noncausal",
+          "expected_mode": 16,
+          "head_dim": 256,
+          "heads": 24,
+          "kv_heads": 4,
+          "note": "central mode present",
+          "present": true,
+          "registry_mode": 16
+        }
+      ],
+      "moe_owner_required": false,
+      "normal_factory_ready": true,
+      "path": "/workspace/model-performance/michaelfeil/onejev-perf/models/mammoth-1",
+      "projection_score_route": "OxideBackend pooled/raw output + warm OneJev Decision score; no Dense text projection stand-in",
+      "text_admission": "dense text candidate admitted",
+      "text_causal": false,
+      "text_hidden": 5120,
+      "text_layers": 64,
+      "vision_tensors": 333
+    }
+  },
+  "fa4_request": {
+    "schema": "oxide-qwen35vl-fa4-request/v1",
+    "source_evidence": "evidence/run-plans.json",
+    "abi": "published FA4 bakes ratio + head_dim + dtype + causal/local; absolute q/kv are runtime DLTensor shapes with unchanged Rust shape/stride validation",
+    "policy": "match exact Q/KV ratio, head_dim, causal bit and global mask; never borrow a local or different-ratio profile",
+    "reuse_modes": {
+      "vision_ratio1_d64_global": 0,
+      "vision_ratio1_d72_global": 8,
+      "text_ratio4_d256_causal": 18,
+      "text_ratio4_d256_noncausal": 6,
+      "text_ratio6_d256_causal": 17,
+      "text_ratio6_d256_noncausal": 16
+    },
+    "new_tail": {
+      "text_ratio8_d256_causal": 26,
+      "scope": "only Qwen3.5-35B-A3B Q16/KV2/d256 global"
+    },
+    "noncausal_runtime_evidence": "No 0.8B/2B/4B/35B config declares use_bidirectional_attention or a noncausal decision mode; only the causal text mask is required. Elephant/Mammoth declare block_bidirectional and use their noncausal modes.",
+    "requests": [
+      {
+        "component": "vision",
+        "heads": 12,
+        "kv_heads": 12,
+        "head_dim": 64,
+        "ratio": 1,
+        "causal": false,
+        "expected_central_mode": 0,
+        "registry_mode": 0,
+        "present": true,
+        "note": "central mode present"
+      },
+      {
+        "component": "text.full.causal",
+        "heads": 8,
+        "kv_heads": 2,
+        "head_dim": 256,
+        "ratio": 4,
+        "causal": true,
+        "expected_central_mode": 18,
+        "registry_mode": 18,
+        "present": true,
+        "note": "central mode present"
+      },
+      {
+        "component": "vision",
+        "heads": 16,
+        "kv_heads": 16,
+        "head_dim": 72,
+        "ratio": 1,
+        "causal": false,
+        "expected_central_mode": 8,
+        "registry_mode": 8,
+        "present": true,
+        "note": "central mode present"
+      },
+      {
+        "component": "text.full.causal",
+        "heads": 16,
+        "kv_heads": 2,
+        "head_dim": 256,
+        "ratio": 8,
+        "causal": true,
+        "expected_central_mode": 26,
+        "registry_mode": null,
+        "present": false,
+        "note": "central append-only mode 26 is not in this branch registry"
+      },
+      {
+        "component": "text.full.noncausal",
+        "heads": 16,
+        "kv_heads": 4,
+        "head_dim": 256,
+        "ratio": 4,
+        "causal": false,
+        "expected_central_mode": 6,
+        "registry_mode": 6,
+        "present": true,
+        "note": "central mode present"
+      },
+      {
+        "component": "text.full.noncausal",
+        "heads": 24,
+        "kv_heads": 4,
+        "head_dim": 256,
+        "ratio": 6,
+        "causal": false,
+        "expected_central_mode": 16,
+        "registry_mode": 16,
+        "present": true,
+        "note": "central mode present"
+      }
+    ]
+  },
+  "actual_ignored": {
+    "run_plans": "1 passed for all 6 cached checkpoints",
+    "factory_route": "1 passed (Elephant/Mammoth DynamicBlockDecision; dense Text(causal=true))",
+    "full_metadata": "1 passed",
+    "f32_decay_precision": "1 passed"
+  },
+  "ordinary_server_route": {
+    "construction": "OxideBackend::new -> new_qwen35_serving validates run plan and stores Qwen35VlRuntime",
+    "embed": "Backend::submit_embed converts Batch.multimodal ImagePatches into fusion and passes it to engine enqueue",
+    "decision": "submit_warm_decision does the same and retains fusion in the deferred closure",
+    "missing_runtime": "media Batch without VL runtime is rejected; images are not silently ignored",
+    "private_attachment_required": false
+  },
+  "normal_factory_ready": [
+    "Qwen3.5-0.8B",
+    "Qwen3.5-2B",
+    "Qwen3.5-4B",
+    "Elephant-Qwen3.5-VL",
+    "Mammoth-Qwen3.5-VL"
+  ],
+  "typed_gaps": [
+    "Qwen3.5-35B-A3B"
+  ],
+  "optimized_host_consumer": {
+    "schema": "oxide-qwen35vl-consumer-pin/v1",
+    "path": "/tmp/oxide-all-model-feature-matrix-v1/qwen35-vl-full-v1/target-opt3-noLTO/release/qwen35-vl-consumer",
+    "sha256": "e8bf05960d100b689ff3c50bb7ce2ed4565453d25972941ba3b71be0281a29e0",
+    "profile": "release opt-level=3, lto=false, debug=0",
+    "build_env": {
+      "CARGO_BUILD_JOBS": "4",
+      "CUDA_VISIBLE_DEVICES": "",
+      "CARGO_PROFILE_RELEASE_OPT_LEVEL": "3",
+      "CARGO_PROFILE_RELEASE_LTO": "false",
+      "offline": true,
+      "cpus": "88-95"
+    },
+    "commands": [
+      "inventory",
+      "plan-full",
+      "whole-factory",
+      "native-whole/oxide-whole/pair-whole"
+    ],
+    "note": "incremental opt3/noLTO rebuild after P1 RAII fusion-owner fix; frozen after build"
+  },
+  "independent_review": "review/INDEPENDENT-REVIEW.md",
+  "tower_serving_path": {
+    "device_resident_features": true,
+    "feature_d2h_h2d": false,
+    "success_path_sync": false,
+    "weights_reuploaded_per_call": false,
+    "completion_marking": "after lease.wait",
+    "error_path": "fence/quarantine"
+  },
+  "sdk_controller": {
+    "schema": "oxide-qwen35vl-sdk-controller-pins/v1",
+    "pins_sha256": "c3fee7bcf2c7b4c63da63b5d50243f64c4cf4f16b5e4689da7ab78b49b8b9205",
+    "container": "infinity-torch214-compare-sdk",
+    "b66": {
+      "path": "/tmp/native214-fa4-mode20/install/lib/libtei_torch.so",
+      "sha256": "b66d70b61b39e1bf0d565aca33bac7c5e21849677396ce5216f5baf73027d37e"
+    },
+    "torch": {
+      "python": "/opt/torch-sdk/bin/python3.12",
+      "version": "2.14.1+cu130",
+      "git": "5c4886908584029761b579af026dcfb627c84070"
+    },
+    "vendor": {
+      "path": "/tmp/oxide-host-cublas-130200",
+      "cublaslt": 130200
+    },
+    "union124": {
+      "path": "/tmp/infinity-oxide-parity-20261101/device-union124-all3-v1/kernels",
+      "manifest_sha256": "56863d52270f04e2a72c07f0213295cb78cd003ec111239bef1f78e75ea720c5",
+      "architectures": {
+        "sm_90": 124,
+        "sm_100": 124,
+        "sm_120": 124
+      }
+    },
+    "consumer": {
+      "schema": "oxide-qwen35vl-consumer-pin/v1",
+      "path": "/tmp/oxide-all-model-feature-matrix-v1/qwen35-vl-full-v1/target-opt3-noLTO/release/qwen35-vl-consumer",
+      "sha256": "e8bf05960d100b689ff3c50bb7ce2ed4565453d25972941ba3b71be0281a29e0",
+      "profile": "release opt-level=3, lto=false, debug=0",
+      "build_env": {
+        "CARGO_BUILD_JOBS": "4",
+        "CUDA_VISIBLE_DEVICES": "",
+        "CARGO_PROFILE_RELEASE_OPT_LEVEL": "3",
+        "CARGO_PROFILE_RELEASE_LTO": "false",
+        "offline": true,
+        "cpus": "88-95"
+      },
+      "commands": [
+        "inventory",
+        "plan-full",
+        "whole-factory",
+        "native-whole/oxide-whole/pair-whole"
+      ],
+      "note": "incremental opt3/noLTO rebuild after P1 RAII fusion-owner fix; frozen after build"
+    },
+    "files": {
+      "native/native_whole_model.py": "7ebde88a44f26d4cd1de2d3f959464b0575825069df8131dbbf39500076bd338",
+      "native/sdk/sdk_stage.py": "8644417163668bf7c83502d4f5462ef56e120d3ccdbcff8358ba103b54d1f3a3",
+      "root-v1/qwen35_vl_sdk_controller.py": "89ef167907b64bb6c6ea248b43a6a4064ac7afbefac828eabea0ca389c9861bf",
+      "root-v1/ROOT-INVOCATIONS.md": "bc0b182a1e5f9c04887d47e6699cba931c7dad2fcb1e808a4dc75991b4dffe15"
+    }
+  },
+  "p1_raii_owner": {
+    "constructed_before_deferred": true,
+    "uncalled_drop_fences": true,
+    "uncertain_fence_quarantines_fusion": true,
+    "cpu_drop_witness": "pass"
+  }
+}

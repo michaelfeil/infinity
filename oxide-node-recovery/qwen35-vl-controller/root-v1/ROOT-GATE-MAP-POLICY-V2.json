@@ -1,0 +1,169 @@
+{
+  "schema": "oxide-qwen35vl-map-policy-gate/v2",
+  "status": "author-cpu-tests-ready-root-sdk-cpu-pending",
+  "predecessor": {
+    "gate": "root-v1/ROOT-GATE-MAP-POLICY-V1.json",
+    "gate_sha256": "9b5413381de7763c88fa64bc4080bca9f3148de4229f27483a3f8da34abd4705",
+    "controller": "qwen35_vl_map_policy_controller.py",
+    "controller_sha256": "e8b13196ec9de9ed4b0840cc8ece42d02a3c808802003e326108319128d51e3f",
+    "ready": "READY.json",
+    "ready_sha256": "6cf117fe82fee0a5d434a2d6025dbf87526a750de88bafa0efbb93c86f0d0995",
+    "failed_run": "cpu-1793638200711671722",
+    "failed_report": "evidence/failed-cpu-0.8B-single-v1/report.json",
+    "failed_report_sha256": "bd08521a2cb5b53fc46ccdb61c79a465a9f36806fea24e3d2f0016ba2610c228",
+    "failed_log": "evidence/failed-cpu-0.8B-single-v1/cpu-Qwen3.5-0.8B-single-cats-sdk.log",
+    "failed_log_sha256": "f2186fcb3a2f0902ee3e2054e18c6ca389609e243a2485e7535fbd97040d2e56"
+  },
+  "pins": {
+    "controller": {
+      "path": "qwen35_vl_map_policy_controller_v2.py",
+      "sha256": "bef456a206b82900ebf0d70cdb83993ca15e00526a5e9357a49552599f2f574c"
+    },
+    "controller_v1_preserved": {
+      "path": "qwen35_vl_map_policy_controller.py",
+      "sha256": "e8b13196ec9de9ed4b0840cc8ece42d02a3c808802003e326108319128d51e3f"
+    },
+    "preflight": {
+      "path": "native/sdk/sdk_map_preflight.py",
+      "sha256": "dcbedc7fe309b7b037553c89ccfd73edfaea403ac86f623e1590bf1807a91b58"
+    },
+    "native_policy_helper": {
+      "path": "native/native_whole_model_policy.py",
+      "sha256": "a2a49d25560e0d8d989617fd4215cfeb2ba013839390f6b0ffd7cb82d149079e"
+    },
+    "native_device_file_routing_v2": {
+      "path": "device-packet/native-device-file-routing-v2-taskset.json",
+      "sha256": "54c484989a58a0f55a58cd2f3eb9261fa92738754eff3024f06e50a5f415db5a"
+    },
+    "models": {
+      "path": "device-packet/model-locations-v1.json",
+      "sha256": "38e08589615f080d28b8ec054207ce275339af57ee128e410bdb9d628a636b85"
+    },
+    "model_manifest": {
+      "path": "device-packet/model-manifest-v1.json",
+      "sha256": "920237b2f74abe544f024cf0ead30789ab923c944938a117431d477c68ec6d9a"
+    },
+    "assets": {
+      "path": "device-packet/native-assets-v1.json",
+      "sha256": "b6b3ab21f43cff2c96a82bcea1a71168b1aa94903ce03425ded1c2768321ebb1"
+    },
+    "runtime": {
+      "path": "device-packet/runtime-paths-v1.json",
+      "sha256": "2409cc14d3bad325d4267dcaa089c5f6305843179c28d6de9bbb713343e0b1e4"
+    },
+    "successor_pins": {
+      "path": "device-packet/successor-pins-v2.json",
+      "sha256": "eff526ca43603de9f9108f8964da659490a7a70d5c3d02edab58b2611dbc1ca5"
+    },
+    "tests": {
+      "path": "tests/test_map_policy_packet_v2.py",
+      "sha256": "4335502a06186573025973964f86a0d8913183a701fc8905737fd233b7549714"
+    }
+  },
+  "binaries": {
+    "paired": "3780facf61529822f33a4cf1416bc6c8723acc1fa2cd2c778f7bc54f2140d83b",
+    "owning_life": "21c5603ee6e9eff06dae5a4344d83fba43ee8bd0ed9a31d462417970c0bf297a"
+  },
+  "native_policy": {
+    "_cuda_graphs": "true",
+    "_cuda_graph_entries": "4",
+    "_cuda_graph_reuse": "3",
+    "_cuda_graph_max_bytes": "536870912",
+    "_cuda_graph_max_captures": "8",
+    "_cuda_graph_max_tokens": "4096",
+    "_media_cuda_graphs": "false"
+  },
+  "oxide_cuda_graphs": false,
+  "taskset_fix": {
+    "python": "/opt/torch-sdk/bin/python3.12",
+    "helper_argv_builders": [
+      "sdk_preflight_argv",
+      "native_plan_argv",
+      "native_whole_argv"
+    ],
+    "consumer_argv_unchanged": true,
+    "chmod_used": false
+  },
+  "root_commands": {
+    "cpu": [
+      "env",
+      "CUDA_VISIBLE_DEVICES=",
+      "taskset",
+      "-c",
+      "88-95",
+      "python3",
+      "qwen35_vl_map_policy_controller_v2.py",
+      "--phase",
+      "cpu",
+      "--run",
+      "--model-name",
+      "Qwen3.5-0.8B",
+      "--case",
+      "single-cats",
+      "--output",
+      "/tmp/oxide-qwen35vl-sdk-map-policy-output/cpu-0.8B-single-v2"
+    ],
+    "paired": [
+      "env",
+      "CUDA_VISIBLE_DEVICES=",
+      "taskset",
+      "-c",
+      "88-95",
+      "python3",
+      "qwen35_vl_map_policy_controller_v2.py",
+      "--phase",
+      "paired",
+      "--run",
+      "--model-name",
+      "Qwen3.5-0.8B",
+      "--case",
+      "single-cats",
+      "--consumer",
+      "/tmp/oxide-all-model-feature-matrix-v1/qwen35-vl-lifecycle-fix-v1/target-opt3-noLTO/release/qwen35-vl-consumer",
+      "--output",
+      "/tmp/oxide-qwen35vl-sdk-map-policy-output/paired-0.8B-single-v2"
+    ],
+    "life": [
+      "env",
+      "CUDA_VISIBLE_DEVICES=",
+      "taskset",
+      "-c",
+      "88-95",
+      "python3",
+      "qwen35_vl_map_policy_controller_v2.py",
+      "--phase",
+      "life",
+      "--run",
+      "--model-name",
+      "Qwen3.5-0.8B",
+      "--case",
+      "single-cats",
+      "--life-consumer",
+      "/tmp/oxide-all-model-feature-matrix-v1/qwen35-vl-lifecycle-fix-v1/target-opt3-noLTO-harness/release/qwen35-vl-consumer",
+      "--output",
+      "/tmp/oxide-qwen35vl-sdk-map-policy-output/life-0.8B-single-v2"
+    ]
+  },
+  "available_unvalidated_commands": {
+    "cpu_all": [
+      "env",
+      "CUDA_VISIBLE_DEVICES=",
+      "taskset",
+      "-c",
+      "88-95",
+      "python3",
+      "qwen35_vl_map_policy_controller_v2.py",
+      "--phase",
+      "cpu",
+      "--run",
+      "--output",
+      "/tmp/oxide-qwen35vl-sdk-map-policy-output/cpu-all-v2"
+    ]
+  },
+  "qualification_scope": "Initial Root CPU retry and paired/life qualification are bounded to Qwen3.5-0.8B single-cats. Other checkpoints/cases remain available but are not claimed validated.",
+  "non_claims": [
+    "author did not run Docker/GPU/Torch/compile/network",
+    "no chmod/Rust/source8/binary/policy change",
+    "Root CPU retry remains pending"
+  ]
+}

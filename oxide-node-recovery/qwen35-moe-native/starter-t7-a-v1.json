@@ -1,0 +1,49 @@
+{
+  "schema": "q35moe-native-starter-cases/v1",
+  "cases": [
+    {
+      "case_id": "t7_a",
+      "pool": "mean",
+      "batch": {
+        "cumulative_seq_lengths": [
+          0,
+          7
+        ],
+        "input_ids": [
+          20,
+          33,
+          46,
+          59,
+          72,
+          85,
+          98
+        ],
+        "max_length": 7,
+        "pooled_indices": [
+          0
+        ],
+        "position_ids": [
+          0,
+          1,
+          2,
+          3,
+          4,
+          5,
+          6
+        ],
+        "raw_indices": [],
+        "token_type_ids": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ]
+      },
+      "source_batch_file": "/tmp/oxide-q35moe-unified-runtime-v3/fixtures/t7_a.json",
+      "source_batch_sha256": "344def7466553b7d773cf92efc4bd5234cd53b4f24e9dbca334f47fafff05b8c"
+    }
+  ]
+}

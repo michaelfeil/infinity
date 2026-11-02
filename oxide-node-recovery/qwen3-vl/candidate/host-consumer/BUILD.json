@@ -1,0 +1,113 @@
+{
+  "schema": "oxide-qwen3-vl-host-consumer-build/v1",
+  "source": "libs/infinity-v3/backends/oxide/examples/qwen3_vl_host_consumer.rs",
+  "target": "/tmp/opencode/qwen-vl-host-consumer-target",
+  "profile": {
+    "opt_level": 3,
+    "lto": false,
+    "debug": 1,
+    "codegen_units": 16,
+    "debug_assertions": false,
+    "strip": "none"
+  },
+  "isolation": {
+    "cpu": "72-79",
+    "jobs": 4,
+    "offline": true,
+    "cuda_visible_devices": "",
+    "gpu": false,
+    "torch": false,
+    "docker": false,
+    "network": false
+  },
+  "builds_granted": 1,
+  "modes": {
+    "manifest": "actual config/alias/readout/full inventory",
+    "factory": "Batch.multimodal -> pack_batch for all 8 fixtures plus typed recoverable invalid media",
+    "lifecycle": "3 rounds A/B/A growth/drop with recoverable invalid media",
+    "gpu-forward": "Root only; uses Qwen3VlBackend and needs CUDA",
+    "gpu-lifecycle": "Root only; actual Qwen3VlBackend drop-without-completion and zero-selector invalid media; direct third call after releasing one lease"
+  },
+  "binary": {
+    "path": "/tmp/opencode/qwen-vl-host-consumer-e7baa-target/release/examples/qwen3_vl_host_consumer",
+    "sha256": "01516290d5dc97960121a6da086d81e1ad6be0a800eed2c941fe1a3b4e51107f"
+  },
+  "run": "host-consumer/out/host-consumer.json",
+  "author_builds_executed": 3,
+  "build_note": "Two historical pre-e7 builds, one e7baa host build (015162). The new quality-output consumer build is granted but HELD until independent PASS.",
+  "frozen_history": {
+    "source": "history/qwen3_vl_engine_v1.rs",
+    "binary": "/tmp/opencode/qwen-vl-host-consumer-target/release/examples/qwen3_vl_host_consumer",
+    "sha256": "6e4f7f53afcb9aaac0ac855c65a1c6a18aa1a6084da5abb6eb97b92d0c0702a1",
+    "profile": "opt3/lto=false",
+    "builds": 2,
+    "note": "pre-P1; Root has not run it on GPU"
+  },
+  "successor": {
+    "path": "/tmp/opencode/qwen-vl-host-consumer-e7baa-target/release/examples/qwen3_vl_host_consumer",
+    "sha256": "01516290d5dc97960121a6da086d81e1ad6be0a800eed2c941fe1a3b4e51107f",
+    "profile": "opt-level=3, lto=false, debug=1, codegen-units=16, debug-assertions=false, panic=abort",
+    "source_commit": "e7baa4531505df53f41b47674cd7c79bf33fb9bb",
+    "patch_sha256": "14a4ef4212b284b0a89ea7d22c679a389b1a2c6e8bbf027b5732792cf7d99f56",
+    "build_wall": "wall_seconds=41",
+    "build_log": "logs/host-consumer-e7baa-build.log",
+    "target": "/tmp/opencode/qwen-vl-host-consumer-e7baa-target",
+    "single_consumer": true
+  },
+  "common_api": {
+    "policy": "normal Backend submit keeps blocking SlotPool::acquire per SERVING-BACKPRESSURE-POLICY",
+    "try_acquire": "optional future utility only; not adopted",
+    "public_try_submit": false
+  },
+  "async_upload_audit": "review/ASYNC-UPLOAD-AUDIT.json",
+  "previous_successor": {
+    "binary": "/tmp/opencode/qwen-vl-host-consumer-successor2-target/release/examples/qwen3_vl_host_consumer",
+    "sha256": "9ac8015195ecd5b160f80cb15525e0c8fdcf6dc728f19c62250aaedc282ce01b",
+    "profile": "opt3/lto=false",
+    "run": "host-consumer/out-successor2/host-consumer.json"
+  },
+  "optimized_e7baa": {
+    "path": "/tmp/opencode/qwen-vl-host-consumer-e7baa-target/release/examples/qwen3_vl_host_consumer",
+    "sha256": "01516290d5dc97960121a6da086d81e1ad6be0a800eed2c941fe1a3b4e51107f",
+    "profile": "opt-level=3, lto=false, debug=1, codegen-units=16, debug-assertions=false, panic=abort",
+    "source_commit": "e7baa4531505df53f41b47674cd7c79bf33fb9bb",
+    "patch_sha256": "14a4ef4212b284b0a89ea7d22c679a389b1a2c6e8bbf027b5732792cf7d99f56",
+    "build_wall": "wall_seconds=41",
+    "build_log": "logs/host-consumer-e7baa-build.log",
+    "target": "/tmp/opencode/qwen-vl-host-consumer-e7baa-target",
+    "single_consumer": true
+  },
+  "artifact_015162": {
+    "path": "/tmp/opencode/qwen-vl-host-consumer-e7baa-target/release/examples/qwen3_vl_host_consumer",
+    "sha256": "01516290d5dc97960121a6da086d81e1ad6be0a800eed2c941fe1a3b4e51107f",
+    "elf": "stripped",
+    "debug_info": false,
+    "profile_requested": "opt3/lto=false/debug1/cgu16/debug-assertions=false",
+    "note": "profile.release.strip=\"symbols\" remained, so no debug info; truthful historical artifact"
+  },
+  "next_quality_build": {
+    "script": "host-consumer/build_quality.sh",
+    "target": "/tmp/opencode/qwen-vl-host-consumer-quality-target",
+    "status": "held_until_independent_pass",
+    "command": "taskset -c 72-79 ./host-consumer/build_quality.sh"
+  },
+  "quality_consumer_pin": {
+    "path": "/tmp/opencode/qwen-vl-host-consumer-quality-target/release/examples/qwen3_vl_host_consumer",
+    "sha256": "13c66c8477b2b894d2416d123d5fbc818a502c1d9895f3efff909952b9d731ce",
+    "pending_build": false,
+    "profile": "opt3/lto=false/debug1/cgu16/debug-assertions=false/strip=none",
+    "wall_seconds": 42,
+    "exit": 0,
+    "elf": "with debug_info, not stripped",
+    "build_log": "logs/host-consumer-quality-build.log"
+  },
+  "quality_build": {
+    "path": "/tmp/opencode/qwen-vl-host-consumer-quality-target/release/examples/qwen3_vl_host_consumer",
+    "sha256": "13c66c8477b2b894d2416d123d5fbc818a502c1d9895f3efff909952b9d731ce",
+    "wall_seconds": 42,
+    "exit": 0,
+    "source_commit": "027b359c6e0c5378cd07398b07b4435af3ee492d",
+    "patch_sha256": "94965637d760dbfd642a41d36efe3142ad892933f795b37f3c8c80e5630e14ea",
+    "single_consumer": true
+  }
+}

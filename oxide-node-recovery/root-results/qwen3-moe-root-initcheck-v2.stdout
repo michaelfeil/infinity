@@ -1,0 +1,118 @@
+{
+  "active_process": null,
+  "comparison_progress": {
+    "initcheck": []
+  },
+  "comparisons": {
+    "initcheck": []
+  },
+  "error": "No module named 'compare_moe'",
+  "mode": "initcheck",
+  "native_45_rerun": false,
+  "pools": {
+    "initcheck": [
+      {
+        "command": [
+          "taskset",
+          "-c",
+          "184-191",
+          "/usr/local/cuda/bin/compute-sanitizer",
+          "--tool",
+          "initcheck",
+          "--error-exitcode",
+          "86",
+          "/tmp/infinity-oxide-qwen3-moe-serving-v1-unified-target/release/unified_probe",
+          "--model",
+          "/tmp/infinity-oxide-bench/models/Qwen--Qwen3-30B-A3B-ad44e777",
+          "--pool",
+          "cls",
+          "--device",
+          "0",
+          "--dtype",
+          "bfloat16",
+          "--width",
+          "2048",
+          "--cases",
+          "/tmp/oxide-all-model-feature-matrix-v1/qwen3-moe-serving-v1/root-initcheck-v2/initcheck/cls/cases.json",
+          "--summary",
+          "/tmp/oxide-all-model-feature-matrix-v1/qwen3-moe-serving-v1/root-initcheck-v2/initcheck/cls/summary.json",
+          "--trace"
+        ],
+        "mode": "initcheck",
+        "parent_pid": 4069549,
+        "pid": 4069550,
+        "pool": "cls",
+        "process": {
+          "argv": [
+            "taskset",
+            "-c",
+            "184-191",
+            "/usr/local/cuda/bin/compute-sanitizer",
+            "--tool",
+            "initcheck",
+            "--error-exitcode",
+            "86",
+            "/tmp/infinity-oxide-qwen3-moe-serving-v1-unified-target/release/unified_probe",
+            "--model",
+            "/tmp/infinity-oxide-bench/models/Qwen--Qwen3-30B-A3B-ad44e777",
+            "--pool",
+            "cls",
+            "--device",
+            "0",
+            "--dtype",
+            "bfloat16",
+            "--width",
+            "2048",
+            "--cases",
+            "/tmp/oxide-all-model-feature-matrix-v1/qwen3-moe-serving-v1/root-initcheck-v2/initcheck/cls/cases.json",
+            "--summary",
+            "/tmp/oxide-all-model-feature-matrix-v1/qwen3-moe-serving-v1/root-initcheck-v2/initcheck/cls/summary.json",
+            "--trace"
+          ],
+          "cwd": "/root",
+          "ended_utc": "2026-11-02T13:59:13Z",
+          "parent_argv": [
+            "/tmp/oxide-all-model-feature-matrix-v1/qwen3-moe-serving-v1/root/run_unified_v2.py",
+            "--mode",
+            "initcheck",
+            "--cpu-run",
+            "184-191",
+            "--output",
+            "/tmp/oxide-all-model-feature-matrix-v1/qwen3-moe-serving-v1/root-initcheck-v2"
+          ],
+          "parent_pid": 4069549,
+          "pid": 4069550,
+          "returncode": 0,
+          "started_utc": "2026-11-02T13:58:30Z",
+          "stderr": "/tmp/oxide-all-model-feature-matrix-v1/qwen3-moe-serving-v1/root-initcheck-v2/initcheck/cls/initcheck.stderr",
+          "stdout": "/tmp/oxide-all-model-feature-matrix-v1/qwen3-moe-serving-v1/root-initcheck-v2/initcheck/cls/initcheck.stdout"
+        },
+        "seconds": 43.184,
+        "stderr": "/tmp/oxide-all-model-feature-matrix-v1/qwen3-moe-serving-v1/root-initcheck-v2/initcheck/cls/initcheck.stderr",
+        "stderr_sha256": "7e3915b80d9502c083633f648d75ad79d05fadbb1f83d5ed74009fcf5266e5a4",
+        "stdout": "/tmp/oxide-all-model-feature-matrix-v1/qwen3-moe-serving-v1/root-initcheck-v2/initcheck/cls/initcheck.stdout",
+        "stdout_sha256": "a9d061cee538182f762e132abeea7bac7bddb844338f25751bbbb043f242c425",
+        "summary": "/tmp/oxide-all-model-feature-matrix-v1/qwen3-moe-serving-v1/root-initcheck-v2/initcheck/cls/summary.json",
+        "summary_sha256": "326fb84de98dae30c7a1897da40c2afa541b79f0a8617539036a2d1a96ca949a",
+        "trace_lines": 32
+      }
+    ]
+  },
+  "preflight": {
+    "binary_sha256": "fd7edfac670edce06998dc7110c338f528854f31f97454b8d6b1020cce799a70",
+    "model_manifest_sha256": "55be60f3bdfa41310a73bde32d2fdd352a3f11c6e4f3c2cc4affa2f16550fc88",
+    "native_report_sha256": "17446c7c4db65b0c58a4a5bc0387102f1c3b165fe81480d2cb407249070fdb83",
+    "probe": {
+      "file_count": 5,
+      "source_sha256": "e8a41b9f108ea8b2a3cc15aba58bf5ad60614fd1e72f701de77db97164e6d321"
+    },
+    "worktree": {
+      "file_count": 653,
+      "source_sha256": "2a5d0a40d9dd0443618bfaba7563e2fd546331446729b8aa94e68a93012039ea"
+    }
+  },
+  "schema": "qwen3-moe-unified-root-run/v2",
+  "seconds": 43.244,
+  "started_utc": "2026-11-02T13:58:30Z",
+  "status": "failed"
+}

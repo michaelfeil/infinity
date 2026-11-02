@@ -1,0 +1,7 @@
+CPU-only, cores 40-43, jobs 2, offline, CUDA_VISIBLE_DEVICES='', unique v3 dev-target:
+CARGO_TARGET_DIR=/tmp/oxide-all-model-feature-matrix-v1/qwen35-moe-factory-service-blocking-v3/dev-target
+cargo check -p infinity-backend-oxide --offline
+cargo test -p infinity-backend-oxide --lib qwen35_moe --offline
+cargo clippy -p infinity-backend-oxide --all-targets --offline -- -D warnings
+cargo fmt --all -- --check
+No optimized/release build, GPU, Docker, Torch, network, device compile, model weights, or harness edits.

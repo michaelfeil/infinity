@@ -1,0 +1,53 @@
+{
+  "schema": "oxide-qwen3-vl-packaging-v4-fixes/v1",
+  "base_source": "085ef45fb6381d11b0fcc957fcdbe9a2b8967df3",
+  "findings": [
+    {
+      "id": "P1.1",
+      "status": "closed",
+      "detail": "Host consumer gpu-quality writes actual Backend f32 vectors for pool0/pool1/pool2/raw; comparator accepts retrieved oxide-consumer schema and exits nonzero on failures."
+    },
+    {
+      "id": "P1.2",
+      "status": "closed",
+      "detail": "controller_v3 retrieves b66 proof, native-cpu, oxide-cpu, native-quality, oxide-quality-vectors and lifecycle artifacts with docker cp and fails if missing."
+    },
+    {
+      "id": "P1.3",
+      "status": "closed",
+      "detail": "quality env passes INFINITY_FA4_ROOT and INFINITY_OXIDE_KERNEL_MODULE with pinned worker paths."
+    },
+    {
+      "id": "P1.4",
+      "status": "acknowledged",
+      "detail": "015162 is truthfully recorded as stripped with no debug info; next quality build uses strip=none and is held."
+    },
+    {
+      "id": "P1.5",
+      "status": "closed",
+      "detail": "verify_b66 and native_vl_cpu hash actual b66 bytes against the pinned SHA; controller passes --library-sha."
+    },
+    {
+      "id": "P2.1",
+      "status": "closed",
+      "detail": "plan explicitly marks ColQwen3-4B/Nemotron-4B native_packet_missing and Nemotron-8B no /bench mapping."
+    },
+    {
+      "id": "P2.2",
+      "status": "closed",
+      "detail": "STAGE/HANDOFF/readiness/freeze notice/BUILD regenerated for controller_v3 and actual binary pins."
+    },
+    {
+      "id": "P2.3",
+      "status": "closed",
+      "detail": "quality-lifecycle-smoke is labeled smoke; the documented 50-iteration lifetime gate remains a separate Root follow-up."
+    }
+  ],
+  "cpu_tests": {
+    "oxide_lib": "485 passed",
+    "factory": "22 passed",
+    "controller_v3": "4 passed",
+    "compare_quality_parser": "1 passed"
+  },
+  "optimized_quality_build": "HELD pending independent PASS"
+}

@@ -1,0 +1,1343 @@
+--- a/libs/infinity-v3/backends/oxide/src/qwen35_work.rs
++++ b/libs/infinity-v3/backends/oxide/src/qwen35_work.rs
+@@ -1,21 +1,123 @@
+ // Copyright Infinity Core Contributors. Licensed under the repository LICENSE.
+ //! One arena owns three phase slabs and one recurrent scratch pipeline.
+ use crate::decision_head_gpu::{DecisionGpuError, OneJevGpuHead};
+-use crate::gdn_prepared::{GdnCapacity, GdnKernelSet, GdnPrepared};
+-use crate::qwen35_block_work::BlockWork;
++use crate::gdn_prepared::{GdnCapacity, GdnKernelSet, GdnPrepared, GdnPreparedBuilding};
++use crate::qwen35_block_work::{BlockWork, BlockWorkBuilding};
+ use crate::qwen35_execute::{PreparedWork, Slabs};
+ use crate::qwen35_layout::Qwen35Layout;
+ use crate::qwen35_runtime::Qwen35Model;
+ use crate::tensor::Bf16;
+-use crate::warm_head::{WarmDecisionPlan, WarmHeadScratch};
++use crate::warm_head::{WarmDecisionPlan, WarmHeadBuilding, WarmHeadScratch};
+ use crate::work_retirement::{CompletedTicket, CompletionTicket};
+ use crate::{infer, product, HostIoLease, WorkKey};
+-use cuda_core::{DeviceBuffer, Stream};
++use cuda_core::{DeviceBuffer, DeviceCopy, Stream};
+ use infinity_v3_backend_core::{BackendError, Batch};
+ use std::{
+     mem::ManuallyDrop,
+     sync::{atomic::Ordering, Arc},
+ };
++
++/// Owners whose initialization was enqueued but whose actual stream fence has
++/// not yet been observed. Drop is deliberately conservative: an owner that was
++/// never settled is leaked rather than freed while queued work may still touch
++/// it. Only [`ColdPending::settle`] may release owners after a successful fence.
++pub(crate) struct ColdPending<T> {
++    owners: Option<T>,
++    charged_bytes: Option<usize>,
++}
++
++pub(crate) enum ColdFenceOutcome<T> {
++    Fenced(T),
++    Quarantined { bytes: Option<usize> },
++}
++
++impl<T> ColdPending<T> {
++    pub(crate) fn new(owners: T, charged_bytes: Option<usize>) -> Self {
++        Self {
++            owners: Some(owners),
++            charged_bytes,
++        }
++    }
++
++    pub(crate) fn owners_ref(&self) -> Option<&T> {
++        self.owners.as_ref()
++    }
++
++    pub(crate) fn owners_mut(&mut self) -> Option<&mut T> {
++        self.owners.as_mut()
++    }
++
++    /// Extracts owners only after the caller has already observed a successful
++    /// actual fence, and therefore performs no second fence.
++    pub(crate) fn into_fenced(mut self) -> Result<T, BackendError> {
++        self.owners
++            .take()
++            .ok_or_else(|| infer("cold pending owners are missing after the fence"))
++    }
++
++    pub(crate) fn settle<F>(mut self, fence: F) -> Result<ColdFenceOutcome<T>, BackendError>
++    where
++        F: FnOnce() -> Result<(), BackendError>,
++    {
++        match fence() {
++            Ok(()) => {
++                let owners = self
++                    .owners
++                    .take()
++                    .ok_or_else(|| infer("cold pending owners are missing after the fence"))?;
++                Ok(ColdFenceOutcome::Fenced(owners))
++            }
++            Err(_) => {
++                if let Some(owners) = self.owners.take() {
++                    std::mem::forget(owners);
++                }
++                Ok(ColdFenceOutcome::Quarantined {
++                    bytes: self.charged_bytes,
++                })
++            }
++        }
++    }
++
++    /// Quarantines owners after an actual fence has already failed. This does
++    /// not retry the fence and does not free any owner.
++    pub(crate) fn quarantine(mut self) -> ColdFenceOutcome<T> {
++        if let Some(owners) = self.owners.take() {
++            std::mem::forget(owners);
++        }
++        ColdFenceOutcome::Quarantined {
++            bytes: self.charged_bytes,
++        }
++    }
++}
++
++impl<T> Drop for ColdPending<T> {
++    fn drop(&mut self) {
++        if let Some(owners) = self.owners.take() {
++            std::mem::forget(owners);
++        }
++    }
++}
++
++/// Allocates a stream-ordered zero buffer and stores its typed owner in `slot`
++/// before the fallible zero enqueue. Callers hold the enclosing construction
++/// guard until one actual fence decides release versus quarantine.
++pub(crate) fn allocate_zero_ordered<T: DeviceCopy>(
++    stream: &Arc<Stream>,
++    len: usize,
++    slot: &mut Option<DeviceBuffer<T>>,
++) -> Result<(), BackendError> {
++    if slot.is_some() {
++        return Err(infer("cold zero buffer slot is already occupied"));
++    }
++    // SAFETY: the private allocation is initialized before any use on this
++    // stream; no other owner can observe the undefined contents.
++    let buffer = unsafe { DeviceBuffer::<T>::uninitialized_async(stream, len) }.map_err(infer)?;
++    *slot = Some(buffer);
++    slot.as_mut()
++        .ok_or_else(|| infer("cold zero buffer lost its owner"))?
++        .zero_async(stream)
++        .map_err(infer)
++}
+ 
+ pub(crate) struct Payload {
+     pub input: DeviceBuffer<u32>,
+@@ -46,33 +148,94 @@
+     projection: Option<DeviceBuffer<Bf16>>,
+     activation: Option<DeviceBuffer<Bf16>>,
+     pooled: Option<DeviceBuffer<f32>>,
+-    gdn: Option<GdnPrepared>,
+-    block: Option<BlockWork>,
+-    head: Option<WarmHeadScratch>,
++    gdn: Option<GdnPreparedBuilding>,
++    block: Option<BlockWorkBuilding>,
++    head: Option<WarmHeadBuilding>,
++}
++impl BuildingData {
++    fn has_owners(&self) -> bool {
++        self.input.is_some()
++            || self.residual.is_some()
++            || self.projection.is_some()
++            || self.activation.is_some()
++            || self.pooled.is_some()
++            || self.gdn.is_some()
++            || self.block.is_some()
++            || self.head.is_some()
++    }
+ }
+ struct Building {
+     stream: Arc<Stream>,
+-    data: Option<BuildingData>,
+-    // On an uncertain cold fence, charge the full reserved upper bound even
+-    // when construction only reached a subset of these allocations.
+-    reserved_bytes: usize,
+-}
+-impl Drop for Building {
+-    fn drop(&mut self) {
+-        if let Some(data) = self.data.take() {
+-            if self.stream.synchronize().is_err() {
+-                let allocated = data.input.is_some()
+-                    || data.residual.is_some()
+-                    || data.projection.is_some()
+-                    || data.activation.is_some()
+-                    || data.pooled.is_some()
+-                    || data.gdn.is_some()
+-                    || data.block.is_some()
+-                    || data.head.is_some();
++    pending: ColdPending<BuildingData>,
++}
++impl Building {
++    fn new(stream: Arc<Stream>, reserved_bytes: usize) -> Self {
++        Self {
++            stream,
++            // On an uncertain cold fence, charge the full reserved upper bound
++            // even when construction only reached a subset of these owners.
++            pending: ColdPending::new(BuildingData::default(), Some(reserved_bytes)),
++        }
++    }
++
++    fn data_mut(&mut self) -> Result<&mut BuildingData, BackendError> {
++        self.pending
++            .owners_mut()
++            .ok_or_else(|| infer("Missing Qwen3.5 arena constructor"))
++    }
++
++    /// On a construction error, one actual fence decides whether the frozen
++    /// owners may be released. A failed fence quarantines every owner, charges
++    /// the reserved upper bound once, and preserves the original error text.
++    /// Authoritative health is the existing parent Engine path: this Err reaches
++    /// ExecutableModel::workspace, classify_backend selects Overloaded/Admission
++    /// or Fatal, and a Fatal enqueue makes fail_closed set failed + io.close
++    /// before the fallback drain. A per-constructor provider poison would be
++    /// unobservable once this private builder is quarantined.
++    fn settle_error(self, original: BackendError) -> BackendError {
++        let Building { stream, pending } = self;
++        match stream.synchronize() {
++            Ok(()) => match pending.into_fenced() {
++                Ok(data) => {
++                    drop(data);
++                    original
++                }
++                Err(invariant) => infer(format!("{original}; {invariant}")),
++            },
++            Err(fence_error) => {
++                let allocated = pending.owners_ref().is_some_and(BuildingData::has_owners);
++                let bytes = match pending.quarantine() {
++                    ColdFenceOutcome::Quarantined { bytes } => bytes,
++                    ColdFenceOutcome::Fenced(_) => None,
++                };
+                 if allocated {
+-                    crate::record_uncharged_retained_bytes(self.reserved_bytes);
++                    if let Some(bytes) = bytes {
++                        crate::record_uncharged_retained_bytes(bytes);
++                    }
+                 }
+-                std::mem::forget((data, Arc::clone(&self.stream)));
++                infer(format!(
++                    "{original}; Qwen3.5 cold initialization fence failed: {fence_error}"
++                ))
++            }
++        }
++    }
++
++    /// The single successful publication fence for a whole new cold Work.
++    fn publish(self) -> Result<BuildingData, BackendError> {
++        let Building { stream, pending } = self;
++        match stream.synchronize() {
++            Ok(()) => pending.into_fenced(),
++            Err(fence_error) => {
++                let bytes = match pending.quarantine() {
++                    ColdFenceOutcome::Quarantined { bytes } => bytes,
++                    ColdFenceOutcome::Fenced(_) => None,
++                };
++                if let Some(bytes) = bytes {
++                    crate::record_uncharged_retained_bytes(bytes);
++                }
++                Err(infer(format!(
++                    "Qwen3.5 cold publication fence failed: {fence_error}"
++                )))
+             }
+         }
+     }
+@@ -123,33 +286,38 @@
+             .and_then(|n| n.checked_add(head_bytes))
+             .ok_or_else(|| infer("Qwen3.5 complete arena byte count overflow"))
+     }
+-    pub(crate) fn new(
+-        stream: Arc<Stream>,
++    fn build_cold(
++        building: &mut Building,
++        stream: &Arc<Stream>,
+         model: &Qwen35Model,
+         key: WorkKey,
+-    ) -> Result<Self, BackendError> {
+-        let bytes = Self::allocation_bytes(key, model)?;
+-        let layout = Self::layout_for(key, model)?;
+-        let mut pending = Building {
+-            stream: Arc::clone(&stream),
+-            data: Some(BuildingData::default()),
+-            reserved_bytes: bytes,
+-        };
+-        let d = pending
+-            .data
+-            .as_mut()
+-            .ok_or_else(|| infer("Missing Qwen3.5 arena constructor"))?;
+-        d.input = Some(DeviceBuffer::zeroed(&stream, model.input_capacity(key)?).map_err(infer)?);
+-        d.residual = Some(DeviceBuffer::zeroed(&stream, layout.hidden_elements).map_err(infer)?);
+-        d.projection =
+-            Some(DeviceBuffer::zeroed(&stream, layout.projection_elements).map_err(infer)?);
+-        d.activation =
+-            Some(DeviceBuffer::zeroed(&stream, layout.activation_elements).map_err(infer)?);
+-        d.pooled = Some(
+-            DeviceBuffer::zeroed(&stream, product(key.2, model.weights.config.hidden_size)?)
+-                .map_err(infer)?,
+-        );
+-        d.block = BlockWork::new(&stream, model, key)?;
++        layout: Qwen35Layout,
++    ) -> Result<(), BackendError> {
++        {
++            let d = building.data_mut()?;
++            allocate_zero_ordered(stream, model.input_capacity(key)?, &mut d.input)?;
++            allocate_zero_ordered(stream, layout.hidden_elements, &mut d.residual)?;
++            allocate_zero_ordered(stream, layout.projection_elements, &mut d.projection)?;
++            allocate_zero_ordered(stream, layout.activation_elements, &mut d.activation)?;
++            allocate_zero_ordered(
++                stream,
++                product(key.2, model.weights.config.hidden_size)?,
++                &mut d.pooled,
++            )?;
++        }
++        if model.block_mode().is_some() {
++            let block = BlockWorkBuilding::new(model, key)?
++                .ok_or_else(|| infer("Qwen3.5 block builder is unavailable"))?;
++            building.data_mut()?.block = Some(block);
++            BlockWork::build_into(
++                building
++                    .data_mut()?
++                    .block
++                    .as_mut()
++                    .ok_or_else(|| infer("Qwen3.5 block builder is unavailable"))?,
++                stream,
++            )?;
++        }
+         let first = model
+             .weights
+             .layers
+@@ -161,30 +329,60 @@
+                 _ => None,
+             })
+             .ok_or_else(|| infer("Dense Qwen3.5 requires recurrent layers"))?;
+-        let kernels = GdnKernelSet::load_bundle(stream.context(), &model.options.gdn_raw_kernels)?;
+         let sequences = key
+             .1
+             .checked_sub(1)
+             .ok_or_else(|| infer("Missing Qwen3.5 sequence capacity"))?;
+-        d.gdn = Some(GdnPrepared::new_default_dense_with_device_weights(
+-            &stream,
++        let capacity = GdnCapacity::new(key.0, sequences, sequences)?;
++        let kernels = GdnKernelSet::load_bundle(stream.context(), &model.options.gdn_raw_kernels)?;
++        let prepared = GdnPreparedBuilding::new(
++            stream,
++            model.gdn_geometry,
++            capacity,
++            model.weights.config.rms_norm_eps,
++        );
++        building.data_mut()?.gdn = Some(prepared);
++        GdnPrepared::build_default_dense_into(
++            building
++                .data_mut()?
++                .gdn
++                .as_mut()
++                .ok_or_else(|| infer("Qwen3.5 GDN builder is unavailable"))?,
++            stream,
+             kernels,
+-            GdnCapacity::new(key.0, sequences, sequences)?,
++            capacity,
+             first,
+             model.weights.config.rms_norm_eps,
+             &model.options.gdn_provider,
+             &model.options.gdn_aux_kernels,
+-        )?);
+-        d.head = match model.decision_capacity(key)? {
+-            Some(capacity) => Some(WarmHeadScratch::new(&stream, capacity)?),
+-            None => None,
+-        };
+-        // Cold construction publishes no owner until every initialization finished.
+-        stream.synchronize().map_err(infer)?;
+-        let mut d = pending
+-            .data
+-            .take()
+-            .ok_or_else(|| infer("Qwen3.5 constructor lost owners"))?;
++        )?;
++        if let Some(capacity) = model.decision_capacity(key)? {
++            building.data_mut()?.head = Some(WarmHeadBuilding::new(capacity));
++            WarmHeadScratch::build_into(
++                building
++                    .data_mut()?
++                    .head
++                    .as_mut()
++                    .ok_or_else(|| infer("Warm OneJev builder is unavailable"))?,
++                stream,
++            )?;
++        }
++        Ok(())
++    }
++
++    pub(crate) fn new(
++        stream: Arc<Stream>,
++        model: &Qwen35Model,
++        key: WorkKey,
++    ) -> Result<Self, BackendError> {
++        let bytes = Self::allocation_bytes(key, model)?;
++        let layout = Self::layout_for(key, model)?;
++        let mut pending = Building::new(Arc::clone(&stream), bytes);
++        if let Err(error) = Self::build_cold(&mut pending, &stream, model, key, layout) {
++            return Err(pending.settle_error(error));
++        }
++        // Cold construction publishes no owner until the one shared fence below.
++        let mut d = pending.publish()?;
+         let missing = || infer("Qwen3.5 incomplete arena constructor");
+         let data = Payload {
+             input: d.input.take().ok_or_else(missing)?,
+@@ -192,9 +390,15 @@
+             projection: d.projection.take().ok_or_else(missing)?,
+             activation: d.activation.take().ok_or_else(missing)?,
+             pooled: d.pooled.take().ok_or_else(missing)?,
+-            gdn: d.gdn.take().ok_or_else(missing)?,
+-            block: d.block.take(),
+-            head: d.head.take(),
++            gdn: d.gdn.take().ok_or_else(missing)?.finish()?,
++            block: match d.block.take() {
++                Some(block) => Some(block.finish()?),
++                None => None,
++            },
++            head: match d.head.take() {
++                Some(head) => Some(head.finish()?),
++                None => None,
++            },
+             prepared: None,
+             prepared_shape: None,
+             layout,
+@@ -454,3 +658,134 @@
+         }
+     }
+ }
++
++#[cfg(test)]
++mod cold_zero_tests {
++    use super::*;
++    use std::cell::Cell;
++    use std::sync::atomic::{AtomicUsize, Ordering as AtomicOrdering};
++
++    struct FakeOwner {
++        drops: Arc<AtomicUsize>,
++    }
++
++    impl FakeOwner {
++        fn new(drops: Arc<AtomicUsize>) -> Self {
++            Self { drops }
++        }
++    }
++
++    impl Drop for FakeOwner {
++        fn drop(&mut self) {
++            self.drops.fetch_add(1, AtomicOrdering::SeqCst);
++        }
++    }
++
++    fn counted_fence(
++        calls: &Cell<usize>,
++        fail: bool,
++    ) -> impl FnOnce() -> Result<(), BackendError> + '_ {
++        move || {
++            calls.set(calls.get() + 1);
++            if fail {
++                Err(infer("injected fence failure"))
++            } else {
++                Ok(())
++            }
++        }
++    }
++
++    #[test]
++    fn partial_zero_failure_releases_only_after_a_successful_fence() {
++        let drops = Arc::new(AtomicUsize::new(0));
++        let fence_calls = Cell::new(0);
++        // The first owner represents buffers already allocated and zeroed; the
++        // second zero enqueue fails and keeps the whole owner set pending.
++        let owner = FakeOwner::new(Arc::clone(&drops));
++        let failed_zero: Result<(), BackendError> =
++            Err(infer("injected partial zero enqueue failure"));
++        assert!(failed_zero.is_err());
++        let outcome =
++            match ColdPending::new(owner, Some(4_096)).settle(counted_fence(&fence_calls, false)) {
++                Ok(outcome) => outcome,
++                Err(error) => panic!("cold settlement lost its owners: {error}"),
++            };
++        let ColdFenceOutcome::Fenced(owner) = outcome else {
++            panic!("a successful fence must release owners");
++        };
++        assert_eq!(fence_calls.get(), 1);
++        assert_eq!(drops.load(AtomicOrdering::SeqCst), 0);
++        drop(owner);
++        assert_eq!(drops.load(AtomicOrdering::SeqCst), 1);
++    }
++
++    #[test]
++    fn failed_fence_retains_every_owner_and_reports_reserved_bytes() {
++        let drops = Arc::new(AtomicUsize::new(0));
++        let fence_calls = Cell::new(0);
++        let outcome = match ColdPending::new(
++            (
++                FakeOwner::new(Arc::clone(&drops)),
++                FakeOwner::new(Arc::clone(&drops)),
++            ),
++            Some(12_345),
++        )
++        .settle(counted_fence(&fence_calls, true))
++        {
++            Ok(outcome) => outcome,
++            Err(error) => panic!("cold settlement lost its owners: {error}"),
++        };
++
++        match outcome {
++            ColdFenceOutcome::Quarantined { bytes } => assert_eq!(bytes, Some(12_345)),
++            ColdFenceOutcome::Fenced(_) => panic!("a failed fence must not release owners"),
++        }
++        assert_eq!(fence_calls.get(), 1, "settlement fences exactly once");
++        assert_eq!(
++            drops.load(AtomicOrdering::SeqCst),
++            0,
++            "uncertain owners must not be freed"
++        );
++    }
++
++    #[test]
++    fn already_failed_fence_is_never_retried_and_does_not_double_charge() {
++        let drops = Arc::new(AtomicUsize::new(0));
++        let fence_calls = Cell::new(0);
++        let pending = ColdPending::new(FakeOwner::new(Arc::clone(&drops)), Some(777));
++        // Simulate the caller having observed a failed fence already.
++        let outcome = pending.quarantine();
++        assert_eq!(fence_calls.get(), 0, "quarantine must not retry the fence");
++        match outcome {
++            ColdFenceOutcome::Quarantined { bytes } => assert_eq!(bytes, Some(777)),
++            ColdFenceOutcome::Fenced(_) => panic!("quarantine cannot release owners"),
++        }
++        assert_eq!(drops.load(AtomicOrdering::SeqCst), 0);
++    }
++
++    #[test]
++    fn outer_owner_extraction_does_not_add_another_fence_or_drop() {
++        let drops = Arc::new(AtomicUsize::new(0));
++        let pending = ColdPending::new(FakeOwner::new(Arc::clone(&drops)), Some(1));
++        let owner = match pending.into_fenced() {
++            Ok(owner) => owner,
++            Err(error) => panic!("cold owners vanished after the fence: {error}"),
++        };
++        assert_eq!(drops.load(AtomicOrdering::SeqCst), 0);
++        drop(owner);
++        assert_eq!(drops.load(AtomicOrdering::SeqCst), 1);
++    }
++
++    #[test]
++    fn unsettled_pending_drop_quarantines_instead_of_freeing() {
++        let drops = Arc::new(AtomicUsize::new(0));
++        {
++            let _pending = ColdPending::new(FakeOwner::new(Arc::clone(&drops)), Some(9));
++        }
++        assert_eq!(
++            drops.load(AtomicOrdering::SeqCst),
++            0,
++            "an unfenced owner must never be freed by Drop"
++        );
++    }
++}
+--- a/libs/infinity-v3/backends/oxide/src/gdn_prepared.rs
++++ b/libs/infinity-v3/backends/oxide/src/gdn_prepared.rs
+@@ -25,6 +25,7 @@
+ //! occurs.
+ 
+ use crate::gdn_aot_provider::{DeviceFacts, GdnAotLaunch, GdnAotPlan, GdnAotProvider};
++use crate::qwen35_work::{allocate_zero_ordered, ColdPending};
+ use cuda_core::{
+     Context, DeviceBuffer, DeviceBufferView, DeviceCopy, Function, Module, RawDeviceBuffer, Stream,
+ };
+@@ -1185,6 +1186,58 @@
+     workspace: DeviceBuffer<u8>,
+ }
+ 
++/// Typed owners for the AOT half of a cold prepared operator. Every buffer is
++/// stored here before its fallible zero enqueue, so a partial failure leaves all
++/// uncertain GPU/module/provider owners under the enclosing construction guard.
++struct GdnAotBuilding {
++    provider: Option<Arc<GdnAotProvider>>,
++    kernels: Option<GdnAotKernelSet>,
++    packed_q: Option<DeviceBuffer<bf16>>,
++    packed_k: Option<DeviceBuffer<bf16>>,
++    packed_v: Option<DeviceBuffer<bf16>>,
++    alpha: Option<DeviceBuffer<f32>>,
++    beta: Option<DeviceBuffer<f32>>,
++    state_vk: Option<DeviceBuffer<f32>>,
++    initial_vk: Option<DeviceBuffer<f32>>,
++    workspace: Option<DeviceBuffer<u8>>,
++}
++
++impl GdnAotBuilding {
++    fn new() -> Self {
++        Self {
++            provider: None,
++            kernels: None,
++            packed_q: None,
++            packed_k: None,
++            packed_v: None,
++            alpha: None,
++            beta: None,
++            state_vk: None,
++            initial_vk: None,
++            workspace: None,
++        }
++    }
++
++    fn finish(self) -> Result<Option<GdnAotWork>, BackendError> {
++        if self.provider.is_none() && self.kernels.is_none() {
++            return Ok(None);
++        }
++        let missing = || start("GDN AOT cold construction lost an owner");
++        Ok(Some(GdnAotWork {
++            provider: self.provider.ok_or_else(missing)?,
++            kernels: self.kernels.ok_or_else(missing)?,
++            packed_q: self.packed_q.ok_or_else(missing)?,
++            packed_k: self.packed_k.ok_or_else(missing)?,
++            packed_v: self.packed_v.ok_or_else(missing)?,
++            alpha: self.alpha.ok_or_else(missing)?,
++            beta: self.beta.ok_or_else(missing)?,
++            state_vk: self.state_vk.ok_or_else(missing)?,
++            initial_vk: self.initial_vk.ok_or_else(missing)?,
++            workspace: self.workspace.ok_or_else(missing)?,
++        }))
++    }
++}
++
+ /// Cold immutable GDN weights, reusable across Work capacities. The model
+ /// owns one binding per layer while each Work owns a single scratch pipeline.
+ pub struct GdnDeviceWeights {
+@@ -1252,6 +1305,98 @@
+     aot: Option<GdnAotWork>,
+ }
+ 
++/// Typed owners for one cold core. The raw module, weights, every device buffer,
++/// host metadata and retention slots are retained here before any zero enqueue.
++struct GdnCoreBuilding {
++    stream: Arc<Stream>,
++    kernels: Option<GdnKernelSet>,
++    default_weights: Option<Arc<GdnDeviceWeights>>,
++    convolution: Option<DeviceBuffer<bf16>>,
++    qk: Option<DeviceBuffer<f32>>,
++    decay_beta: Option<DeviceBuffer<f32>>,
++    recurrence: Option<DeviceBuffer<bf16>>,
++    output: Option<DeviceBuffer<bf16>>,
++    final_state: Option<DeviceBuffer<f32>>,
++    cu: Option<DeviceBuffer<u32>>,
++    sources: Option<DeviceBuffer<i64>>,
++    history_cu: Option<DeviceBuffer<i32>>,
++    host_cu: Option<Vec<u32>>,
++    host_sources: Option<Vec<i64>>,
++    host_history_cu: Option<Vec<i32>>,
++    metadata_generation: u64,
++    retained_storage: Option<Vec<RawDeviceBuffer>>,
++    aot: GdnAotBuilding,
++}
++
++impl GdnCoreBuilding {
++    fn new(stream: &Arc<Stream>) -> Self {
++        Self {
++            stream: stream.clone(),
++            kernels: None,
++            default_weights: None,
++            convolution: None,
++            qk: None,
++            decay_beta: None,
++            recurrence: None,
++            output: None,
++            final_state: None,
++            cu: None,
++            sources: None,
++            history_cu: None,
++            host_cu: None,
++            host_sources: None,
++            host_history_cu: None,
++            metadata_generation: 0,
++            retained_storage: None,
++            aot: GdnAotBuilding::new(),
++        }
++    }
++
++    fn finish(self) -> Result<GdnCore, BackendError> {
++        let GdnCoreBuilding {
++            stream,
++            kernels,
++            default_weights,
++            convolution,
++            qk,
++            decay_beta,
++            recurrence,
++            output,
++            final_state,
++            cu,
++            sources,
++            history_cu,
++            host_cu,
++            host_sources,
++            host_history_cu,
++            metadata_generation,
++            retained_storage,
++            aot,
++        } = self;
++        let missing = || start("GDN cold core construction lost an owner");
++        Ok(GdnCore {
++            stream,
++            kernels: kernels.ok_or_else(missing)?,
++            default_weights: default_weights.ok_or_else(missing)?,
++            convolution: convolution.ok_or_else(missing)?,
++            qk: qk.ok_or_else(missing)?,
++            decay_beta: decay_beta.ok_or_else(missing)?,
++            recurrence: recurrence.ok_or_else(missing)?,
++            output: output.ok_or_else(missing)?,
++            final_state: final_state.ok_or_else(missing)?,
++            cu: cu.ok_or_else(missing)?,
++            sources: sources.ok_or_else(missing)?,
++            history_cu: history_cu.ok_or_else(missing)?,
++            host_cu: host_cu.ok_or_else(missing)?,
++            host_sources: host_sources.ok_or_else(missing)?,
++            host_history_cu: host_history_cu.ok_or_else(missing)?,
++            metadata_generation,
++            retained_storage: retained_storage.ok_or_else(missing)?,
++            aot: aot.finish()?,
++        })
++    }
++}
++
+ fn build_core(
+     stream: &Arc<Stream>,
+     kernels: GdnKernelSet,
+@@ -1280,6 +1425,63 @@
+     build_core_with_device_weights(stream, kernels, geometry, capacity, device_weights, epsilon)
+ }
+ 
++/// Ordered core allocation used by both the standalone constructor and the
++/// enclosing Q35 Work. It never fences: every allocation and zero enqueue is
++/// retained in `building`, and the caller takes the one publication fence.
++fn build_core_with_device_weights_into(
++    building: &mut GdnPreparedBuilding,
++    kernels: GdnKernelSet,
++    geometry: GdnGeometry,
++    capacity: GdnCapacity,
++    weights: Arc<GdnDeviceWeights>,
++    epsilon: f32,
++) -> Result<(), BackendError> {
++    let stream = building.stream.clone();
++    if !Arc::ptr_eq(stream.context(), &kernels.context) {
++        return Err(start("kernel module belongs to a different CUDA context"));
++    }
++    let core = building.core_mut()?;
++    // Retain the module and weight owners before any other fallible step.
++    core.kernels = Some(kernels);
++    core.default_weights = Some(weights);
++    validate_epsilon(epsilon)?;
++    core.default_weights
++        .as_ref()
++        .ok_or_else(|| start("GDN cold core lost its weights"))?
++        .validate_binding(geometry, stream.context())?;
++    let layout = GdnScratchLayout::new(geometry, capacity)?;
++    allocate_zero_ordered(
++        &stream,
++        layout.convolution_elements(),
++        &mut core.convolution,
++    )?;
++    allocate_zero_ordered(&stream, layout.qk_elements(), &mut core.qk)?;
++    allocate_zero_ordered(&stream, layout.decay_beta_elements(), &mut core.decay_beta)?;
++    allocate_zero_ordered(&stream, layout.recurrence_elements(), &mut core.recurrence)?;
++    allocate_zero_ordered(&stream, layout.output_elements(), &mut core.output)?;
++    allocate_zero_ordered(
++        &stream,
++        layout.final_state_elements(),
++        &mut core.final_state,
++    )?;
++    allocate_zero_ordered(&stream, layout.cumulative_elements(), &mut core.cu)?;
++    allocate_zero_ordered(&stream, layout.source_elements(), &mut core.sources)?;
++    allocate_zero_ordered(
++        &stream,
++        layout.history_cumulative_elements(),
++        &mut core.history_cu,
++    )?;
++    core.host_cu = Some(zeroed_host(layout.cumulative_elements(), "cu")?);
++    core.host_sources = Some(zeroed_host(layout.source_elements(), "sources")?);
++    core.host_history_cu = Some(zeroed_host(
++        layout.history_cumulative_elements(),
++        "history_cu",
++    )?);
++    core.metadata_generation = 0;
++    core.retained_storage = Some(retained_storage_slots()?);
++    Ok(())
++}
++
+ fn build_core_with_device_weights(
+     stream: &Arc<Stream>,
+     kernels: GdnKernelSet,
+@@ -1288,43 +1490,45 @@
+     weights: Arc<GdnDeviceWeights>,
+     epsilon: f32,
+ ) -> Result<Box<GdnCore>, BackendError> {
+-    if !Arc::ptr_eq(stream.context(), &kernels.context) {
+-        return Err(start("kernel module belongs to a different CUDA context"));
+-    }
+-    validate_epsilon(epsilon)?;
+-    weights.validate_binding(geometry, stream.context())?;
+-    let layout = GdnScratchLayout::new(geometry, capacity)?;
+-    let convolution = DeviceBuffer::zeroed(stream, layout.convolution_elements()).map_err(start)?;
+-    let qk = DeviceBuffer::zeroed(stream, layout.qk_elements()).map_err(start)?;
+-    let decay_beta = DeviceBuffer::zeroed(stream, layout.decay_beta_elements()).map_err(start)?;
+-    let recurrence = DeviceBuffer::zeroed(stream, layout.recurrence_elements()).map_err(start)?;
+-    let output = DeviceBuffer::zeroed(stream, layout.output_elements()).map_err(start)?;
+-    let final_state = DeviceBuffer::zeroed(stream, layout.final_state_elements()).map_err(start)?;
+-    let cu = DeviceBuffer::zeroed(stream, layout.cumulative_elements()).map_err(start)?;
+-    let sources = DeviceBuffer::zeroed(stream, layout.source_elements()).map_err(start)?;
+-    let history_cu =
+-        DeviceBuffer::zeroed(stream, layout.history_cumulative_elements()).map_err(start)?;
+-
+-    Ok(Box::new(GdnCore {
+-        stream: stream.clone(),
++    let mut building = GdnPreparedBuilding::new(stream, geometry, capacity, epsilon);
++    if let Err(error) = build_core_with_device_weights_into(
++        &mut building,
+         kernels,
+-        default_weights: weights,
+-        convolution,
+-        qk,
+-        decay_beta,
+-        recurrence,
+-        output,
+-        final_state,
+-        cu,
+-        sources,
+-        history_cu,
+-        host_cu: zeroed_host(layout.cumulative_elements(), "cu")?,
+-        host_sources: zeroed_host(layout.source_elements(), "sources")?,
+-        host_history_cu: zeroed_host(layout.history_cumulative_elements(), "history_cu")?,
+-        metadata_generation: 0,
+-        retained_storage: retained_storage_slots()?,
+-        aot: None,
+-    }))
++        geometry,
++        capacity,
++        weights,
++        epsilon,
++    ) {
++        return Err(settle_cold_error(building, stream, error));
++    }
++    match stream.synchronize() {
++        Ok(()) => building.finish()?.into_core(),
++        Err(fence_error) => {
++            let _ = ColdPending::new(building, None).quarantine();
++            Err(start(format!(
++                "GDN cold publication fence failed: {fence_error}"
++            )))
++        }
++    }
++}
++
++fn settle_cold_error(
++    building: GdnPreparedBuilding,
++    stream: &Arc<Stream>,
++    original: BackendError,
++) -> BackendError {
++    match stream.synchronize() {
++        Ok(()) => {
++            drop(building);
++            original
++        }
++        Err(fence_error) => {
++            let _ = ColdPending::new(building, None).quarantine();
++            start(format!(
++                "{original}; GDN cold initialization fence failed: {fence_error}"
++            ))
++        }
++    }
+ }
+ 
+ /// Cold owner of the immutable weights, reusable buffers, and exact exports.
+@@ -1336,7 +1540,66 @@
+     core: Option<Box<GdnCore>>,
+ }
+ 
++/// Engine-only ordered construction state. Public constructors fence this
++/// owner set before returning; the enclosing Q35 Work keeps it unfenced and
++/// takes the single publication fence after every zero enqueue.
++pub(crate) struct GdnPreparedBuilding {
++    stream: Arc<Stream>,
++    geometry: GdnGeometry,
++    capacity: GdnCapacity,
++    epsilon: f32,
++    core: Option<GdnCoreBuilding>,
++}
++
++impl GdnPreparedBuilding {
++    pub(crate) fn new(
++        stream: &Arc<Stream>,
++        geometry: GdnGeometry,
++        capacity: GdnCapacity,
++        epsilon: f32,
++    ) -> Self {
++        Self {
++            stream: stream.clone(),
++            geometry,
++            capacity,
++            epsilon,
++            core: Some(GdnCoreBuilding::new(stream)),
++        }
++    }
++
++    fn core_mut(&mut self) -> Result<&mut GdnCoreBuilding, BackendError> {
++        self.core
++            .as_mut()
++            .ok_or_else(|| start("GDN cold builder lost its core"))
++    }
++
++    pub(crate) fn finish(self) -> Result<GdnPrepared, BackendError> {
++        let Self {
++            stream,
++            geometry,
++            capacity,
++            epsilon,
++            core,
++        } = self;
++        let core = core
++            .ok_or_else(|| start("GDN cold builder lost its core"))?
++            .finish()?;
++        Ok(GdnPrepared {
++            stream,
++            geometry,
++            capacity,
++            epsilon,
++            core: Some(Box::new(core)),
++        })
++    }
++}
++
+ impl GdnPrepared {
++    fn into_core(self) -> Result<Box<GdnCore>, BackendError> {
++        let GdnPrepared { core, .. } = self;
++        core.ok_or_else(|| start("GDN prepared construction lost its core"))
++    }
++
+     /// Cold construction: validate geometry, capacity, epsilon, and weight
+     /// lengths, then upload weights and allocate all reusable scratch once.
+     pub fn new(
+@@ -1405,6 +1668,60 @@
+         validate_epsilon(epsilon)?;
+         weights.validate_binding(geometry, stream.context())?;
+         let _ = GdnScratchLayout::new(geometry, capacity)?;
++        let mut building = GdnPreparedBuilding::new(stream, geometry, capacity, epsilon);
++        if let Err(error) = Self::build_default_dense_into(
++            &mut building,
++            stream,
++            kernels,
++            capacity,
++            weights,
++            epsilon,
++            provider_root,
++            aux_bundle,
++        ) {
++            return Err(settle_cold_error(building, stream, error));
++        }
++        match stream.synchronize() {
++            Ok(()) => building.finish(),
++            Err(fence_error) => {
++                let _ = ColdPending::new(building, None).quarantine();
++                Err(start(format!(
++                    "GDN cold publication fence failed: {fence_error}"
++                )))
++            }
++        }
++    }
++
++    /// Engine-only ordered default-dense construction. It allocates and zeroes
++    /// every owner into `building` without a fence; the caller owns the single
++    /// publication fence and the error-path release/quarantine decision.
++    #[allow(clippy::too_many_arguments)]
++    pub(crate) fn build_default_dense_into(
++        building: &mut GdnPreparedBuilding,
++        stream: &Arc<Stream>,
++        kernels: GdnKernelSet,
++        capacity: GdnCapacity,
++        weights: Arc<GdnDeviceWeights>,
++        epsilon: f32,
++        provider_root: &Path,
++        aux_bundle: &Path,
++    ) -> Result<(), BackendError> {
++        let geometry = weights.geometry;
++        if !Arc::ptr_eq(stream, &building.stream) {
++            return Err(start("GDN cold builder stream changed"));
++        }
++        if !Arc::ptr_eq(stream.context(), &kernels.context) {
++            return Err(start("kernel module belongs to a different CUDA context"));
++        }
++        validate_epsilon(epsilon)?;
++        weights.validate_binding(geometry, stream.context())?;
++        if geometry != building.geometry || capacity != building.capacity {
++            return Err(start("GDN cold builder binding changed"));
++        }
++        if epsilon != building.epsilon {
++            return Err(start("GDN cold builder epsilon changed"));
++        }
++        let _ = GdnScratchLayout::new(geometry, capacity)?;
+         let context = kernels.context.clone();
+         let validated_aux = GdnAotValidatedBundle::load(aux_bundle)?;
+         let provider = Arc::new(GdnAotProvider::load(provider_root, context.clone())?);
+@@ -1415,28 +1732,26 @@
+         if workspace_bytes == 0 {
+             return Err(start("AOT provider workspace must be positive"));
+         }
+-
+-        let mut core =
+-            build_core_with_device_weights(stream, kernels, geometry, capacity, weights, epsilon)?;
+-        core.aot = Some(GdnAotWork {
+-            provider,
+-            kernels: aot_kernels,
+-            packed_q: DeviceBuffer::zeroed(stream, aot_layout.packed_qk).map_err(start)?,
+-            packed_k: DeviceBuffer::zeroed(stream, aot_layout.packed_qk).map_err(start)?,
+-            packed_v: DeviceBuffer::zeroed(stream, aot_layout.packed_v).map_err(start)?,
+-            alpha: DeviceBuffer::zeroed(stream, aot_layout.gates).map_err(start)?,
+-            beta: DeviceBuffer::zeroed(stream, aot_layout.gates).map_err(start)?,
+-            state_vk: DeviceBuffer::zeroed(stream, aot_layout.state).map_err(start)?,
+-            initial_vk: DeviceBuffer::zeroed(stream, aot_layout.state).map_err(start)?,
+-            workspace: DeviceBuffer::zeroed(stream, workspace_bytes).map_err(start)?,
+-        });
+-        Ok(Self {
+-            stream: stream.clone(),
+-            geometry,
+-            capacity,
+-            epsilon,
+-            core: Some(core),
+-        })
++        // Retain the provider and its module before the first fallible zero.
++        {
++            let core = building.core_mut()?;
++            core.aot.provider = Some(provider);
++            core.aot.kernels = Some(aot_kernels);
++        }
++        build_core_with_device_weights_into(
++            building, kernels, geometry, capacity, weights, epsilon,
++        )?;
++        let stream = building.stream.clone();
++        let core = building.core_mut()?;
++        allocate_zero_ordered(&stream, aot_layout.packed_qk, &mut core.aot.packed_q)?;
++        allocate_zero_ordered(&stream, aot_layout.packed_qk, &mut core.aot.packed_k)?;
++        allocate_zero_ordered(&stream, aot_layout.packed_v, &mut core.aot.packed_v)?;
++        allocate_zero_ordered(&stream, aot_layout.gates, &mut core.aot.alpha)?;
++        allocate_zero_ordered(&stream, aot_layout.gates, &mut core.aot.beta)?;
++        allocate_zero_ordered(&stream, aot_layout.state, &mut core.aot.state_vk)?;
++        allocate_zero_ordered(&stream, aot_layout.state, &mut core.aot.initial_vk)?;
++        allocate_zero_ordered(&stream, workspace_bytes, &mut core.aot.workspace)?;
++        Ok(())
+     }
+ 
+     fn core_ref(&self) -> Result<&GdnCore, BackendError> {
+@@ -3410,6 +3725,11 @@
+         }
+     }
+ 
++    #[test]
++    fn empty_aot_building_finishes_without_a_provider_owner() {
++        assert!(GdnAotBuilding::new().finish().unwrap().is_none());
++    }
++
+     fn compilation(architecture: &str) -> serde_json::Value {
+         serde_json::json!({
+             "architecture": architecture,
+--- a/libs/infinity-v3/backends/oxide/src/qwen35_block_work.rs
++++ b/libs/infinity-v3/backends/oxide/src/qwen35_block_work.rs
+@@ -11,6 +11,7 @@
+ use crate::qwen35_block_layout::{Qwen35BlockLayout, Qwen35BlockMode};
+ use crate::qwen35_config::Qwen35Config;
+ use crate::qwen35_runtime::Qwen35Model;
++use crate::qwen35_work::{allocate_zero_ordered, ColdFenceOutcome, ColdPending};
+ use crate::{infer, product, staging, HostIoLease, WorkKey};
+ use cuda_core::{DeviceBuffer, Stream};
+ use infinity_v3_backend_core::BackendError;
+@@ -49,25 +50,22 @@
+     layout: Cell<Option<Qwen35BlockLayout>>,
+ }
+ 
+-impl BlockWork {
+-    pub(crate) fn allocation_bytes(
+-        _key: WorkKey,
+-        model: &Qwen35Model,
+-    ) -> Result<usize, BackendError> {
+-        if model.block_mode().is_none() {
+-            return Ok(0);
+-        }
+-        product(
+-            prefix_state_elements(model.weights.config.linear_num_value_heads)?,
+-            4,
+-        )
+-    }
+-
+-    pub(crate) fn new(
+-        stream: &Arc<Stream>,
+-        model: &Qwen35Model,
+-        key: WorkKey,
+-    ) -> Result<Option<Self>, BackendError> {
++/// Engine-only ordered construction state. The prefix buffer is retained here
++/// before its fallible zero enqueue; the enclosing Q35 Work takes the single
++/// publication fence.
++pub(crate) struct BlockWorkBuilding {
++    prefix_state: Option<DeviceBuffer<f32>>,
++    prefix_state_elements: usize,
++    mode: Qwen35BlockMode,
++    value_heads: usize,
++    channels: usize,
++    capacity_tokens: usize,
++    metadata_base: usize,
++    metadata_capacity: usize,
++}
++
++impl BlockWorkBuilding {
++    pub(crate) fn new(model: &Qwen35Model, key: WorkKey) -> Result<Option<Self>, BackendError> {
+         let Some(mode) = model.block_mode() else {
+             return Ok(None);
+         };
+@@ -84,11 +82,8 @@
+                 "Qwen3.5 block metadata exceeds the actual Work input capacity",
+             ));
+         }
+-
+-        let prefix_state: DeviceBuffer<f32> =
+-            DeviceBuffer::zeroed(stream, elements).map_err(infer)?;
+         Ok(Some(Self {
+-            prefix_state,
++            prefix_state: None,
+             prefix_state_elements: elements,
+             mode,
+             value_heads,
+@@ -96,8 +91,91 @@
+             capacity_tokens: key.0,
+             metadata_base,
+             metadata_capacity: TAIL_WORDS,
++        }))
++    }
++
++    pub(crate) fn finish(self) -> Result<BlockWork, BackendError> {
++        Ok(BlockWork {
++            prefix_state: self
++                .prefix_state
++                .ok_or_else(|| infer("Qwen3.5 block cold construction lost its prefix state"))?,
++            prefix_state_elements: self.prefix_state_elements,
++            mode: self.mode,
++            value_heads: self.value_heads,
++            channels: self.channels,
++            capacity_tokens: self.capacity_tokens,
++            metadata_base: self.metadata_base,
++            metadata_capacity: self.metadata_capacity,
+             layout: Cell::new(None),
+-        }))
++        })
++    }
++}
++
++fn settle_block_cold_error(
++    building: BlockWorkBuilding,
++    stream: &Arc<Stream>,
++    original: BackendError,
++) -> BackendError {
++    match ColdPending::new(building, None).settle(|| stream.synchronize().map_err(infer)) {
++        Ok(ColdFenceOutcome::Fenced(building)) => {
++            drop(building);
++            original
++        }
++        Ok(ColdFenceOutcome::Quarantined { .. }) => infer(format!(
++            "{original}; Qwen3.5 block cold initialization fence failed"
++        )),
++        Err(invariant) => infer(format!("{original}; {invariant}")),
++    }
++}
++
++impl BlockWork {
++    pub(crate) fn allocation_bytes(
++        _key: WorkKey,
++        model: &Qwen35Model,
++    ) -> Result<usize, BackendError> {
++        if model.block_mode().is_none() {
++            return Ok(0);
++        }
++        product(
++            prefix_state_elements(model.weights.config.linear_num_value_heads)?,
++            4,
++        )
++    }
++
++    /// Engine-only ordered path: allocate and enqueue the zero without a fence.
++    pub(crate) fn build_into(
++        building: &mut BlockWorkBuilding,
++        stream: &Arc<Stream>,
++    ) -> Result<(), BackendError> {
++        allocate_zero_ordered(
++            stream,
++            building.prefix_state_elements,
++            &mut building.prefix_state,
++        )
++    }
++
++    /// Standalone path: one successful fence before the owner is returned.
++    #[allow(dead_code)] // Kept for the standalone leaf contract.
++    pub(crate) fn new(
++        stream: &Arc<Stream>,
++        model: &Qwen35Model,
++        key: WorkKey,
++    ) -> Result<Option<Self>, BackendError> {
++        let Some(mut building) = BlockWorkBuilding::new(model, key)? else {
++            return Ok(None);
++        };
++        if let Err(error) = Self::build_into(&mut building, stream) {
++            return Err(settle_block_cold_error(building, stream, error));
++        }
++        match stream.synchronize() {
++            Ok(()) => Ok(Some(building.finish()?)),
++            Err(fence_error) => {
++                let _ = ColdPending::new(building, None).quarantine();
++                Err(infer(format!(
++                    "Qwen3.5 block cold publication fence failed: {fence_error}"
++                )))
++            }
++        }
+     }
+ 
+     pub(crate) fn prefix_state(&self) -> &DeviceBuffer<f32> {
+--- a/libs/infinity-v3/backends/oxide/src/warm_head.rs
++++ b/libs/infinity-v3/backends/oxide/src/warm_head.rs
+@@ -27,6 +27,7 @@
+     decision_head_gpu::{launch_cast, DecisionGpuError, GpuHiddenRows, OneJevGpuHead},
+     infer,
+     math::{GemmArguments, LinearPlan},
++    qwen35_work::{allocate_zero_ordered, ColdFenceOutcome, ColdPending},
+     tensor::{Bf16, Layout, F32},
+     WorkKey,
+ };
+@@ -133,50 +134,50 @@
+     pub(crate) logits: u64,
+ }
+ 
+-struct ScratchBuilding<'a> {
+-    stream: &'a Arc<Stream>,
++/// Engine-only ordered construction state for the three F32 readout buffers.
++/// Each owner is inserted before its fallible zero enqueue, so a partial failure
++/// leaves every uncertain allocation under the enclosing Q35 Work guard.
++pub(crate) struct WarmHeadBuilding {
++    capacity: WarmHeadCapacity,
+     hidden: Option<DeviceBuffer<f32>>,
+     selected: Option<DeviceBuffer<f32>>,
+     logits: Option<DeviceBuffer<f32>>,
+ }
+ 
+-impl<'a> ScratchBuilding<'a> {
+-    fn new(stream: &'a Arc<Stream>) -> Self {
++impl WarmHeadBuilding {
++    pub(crate) fn new(capacity: WarmHeadCapacity) -> Self {
+         Self {
+-            stream,
++            capacity,
+             hidden: None,
+             selected: None,
+             logits: None,
+         }
+     }
+ 
+-    fn take(&mut self) -> Option<WarmHeadScratch> {
+-        Some(WarmHeadScratch {
+-            hidden: ManuallyDrop::new(self.hidden.take()?),
+-            selected: ManuallyDrop::new(self.selected.take()?),
+-            logits: ManuallyDrop::new(self.logits.take()?),
++    pub(crate) fn finish(self) -> Result<WarmHeadScratch, BackendError> {
++        let missing = || infer("Warm OneJev scratch construction lost owners");
++        Ok(WarmHeadScratch {
++            hidden: ManuallyDrop::new(self.hidden.ok_or_else(missing)?),
++            selected: ManuallyDrop::new(self.selected.ok_or_else(missing)?),
++            logits: ManuallyDrop::new(self.logits.ok_or_else(missing)?),
+         })
+     }
+ }
+ 
+-impl Drop for ScratchBuilding<'_> {
+-    fn drop(&mut self) {
+-        let allocated = self.hidden.is_some() || self.selected.is_some() || self.logits.is_some();
+-        if !allocated {
+-            return;
+-        }
+-        if self.stream.synchronize().is_ok() {
+-            self.hidden.take();
+-            self.selected.take();
+-            self.logits.take();
+-        } else {
+-            std::mem::forget((
+-                self.hidden.take(),
+-                self.selected.take(),
+-                self.logits.take(),
+-                Arc::clone(self.stream),
+-            ));
+-        }
++fn settle_warm_cold_error(
++    building: WarmHeadBuilding,
++    stream: &Arc<Stream>,
++    original: BackendError,
++) -> BackendError {
++    match ColdPending::new(building, None).settle(|| stream.synchronize().map_err(infer)) {
++        Ok(ColdFenceOutcome::Fenced(building)) => {
++            drop(building);
++            original
++        }
++        Ok(ColdFenceOutcome::Quarantined { .. }) => infer(format!(
++            "{original}; Warm OneJev cold initialization fence failed"
++        )),
++        Err(invariant) => infer(format!("{original}; {invariant}")),
+     }
+ }
+ 
+@@ -189,20 +190,41 @@
+ }
+ 
+ impl WarmHeadScratch {
++    /// Engine-only ordered path: allocate and enqueue every zero without a
++    /// fence. The caller owns the single publication fence.
++    pub(crate) fn build_into(
++        building: &mut WarmHeadBuilding,
++        stream: &Arc<Stream>,
++    ) -> Result<(), BackendError> {
++        let capacity = building.capacity;
++        allocate_zero_ordered(stream, capacity.hidden_elements()?, &mut building.hidden)?;
++        allocate_zero_ordered(
++            stream,
++            capacity.selected_elements()?,
++            &mut building.selected,
++        )?;
++        allocate_zero_ordered(stream, capacity.rows, &mut building.logits)
++    }
++
++    /// Standalone path: one successful fence before returning a usable owner.
++    #[allow(dead_code)] // Kept for the standalone leaf contract and GPU gate.
+     pub(crate) fn new(
+         stream: &Arc<Stream>,
+         capacity: WarmHeadCapacity,
+     ) -> Result<Self, BackendError> {
+-        let mut pending = ScratchBuilding::new(stream);
+-        pending.hidden =
+-            Some(DeviceBuffer::zeroed(stream, capacity.hidden_elements()?).map_err(infer)?);
+-        pending.selected =
+-            Some(DeviceBuffer::zeroed(stream, capacity.selected_elements()?).map_err(infer)?);
+-        pending.logits = Some(DeviceBuffer::zeroed(stream, capacity.rows).map_err(infer)?);
+-        stream.synchronize().map_err(infer)?;
+-        pending
+-            .take()
+-            .ok_or_else(|| infer("Warm OneJev scratch constructor lost owners"))
++        let mut building = WarmHeadBuilding::new(capacity);
++        if let Err(error) = Self::build_into(&mut building, stream) {
++            return Err(settle_warm_cold_error(building, stream, error));
++        }
++        match stream.synchronize() {
++            Ok(()) => building.finish(),
++            Err(fence_error) => {
++                let _ = ColdPending::new(building, None).quarantine();
++                Err(infer(format!(
++                    "Warm OneJev cold publication fence failed: {fence_error}"
++                )))
++            }
++        }
+     }
+ 
+     pub(crate) fn bases(&self) -> WarmScratchBases {

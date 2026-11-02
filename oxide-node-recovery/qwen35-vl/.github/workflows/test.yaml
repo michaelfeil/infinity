@@ -1,0 +1,164 @@
+on:
+  workflow_call:
+    inputs:
+      working-directory:
+        required: true
+        type: string
+        description: "From which folder this pipeline executes"
+      upload_coverage:
+        description: 'Wheather to upload coverage report to codecov or not'
+        required: false
+        type: boolean
+        default: true
+      extra_poetry:
+        description: 'Extra poetry commands to run'
+        required: false
+        type: string
+        default: "--extras all --with test"
+
+
+env:
+  POETRY_VERSION: "1.8.4"
+
+
+jobs:
+  initial-job: # Run initial job to create model cache
+    defaults:
+      run:
+        working-directory: ${{ inputs.working-directory }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest] # macos-latest
+        python-version:
+          - "3.12"
+        coverage_tests: ["unit_test", "end_to_end"]
+          
+    runs-on: ${{ matrix.os }}
+    name: Py${{ matrix.python-version }}-${{ matrix.os }}-${{ matrix.coverage_tests }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Free Disk Space
+        uses: "./.github/actions/disk_cleanup"
+        if: runner.os == 'Linux'
+        with:
+          tool-cache: false
+          android: true
+          dotnet: true
+          haskell: true
+          large-packages: true
+          docker-images: false
+          swap-storage: false
+      - name: Set up Python ${{ matrix.python-version }} + Poetry ${{ env.POETRY_VERSION }}
+        uses: "./.github/actions/poetry_setup"
+        with:
+          python-version: ${{ matrix.python-version }}
+          poetry-version: ${{ env.POETRY_VERSION }}
+          working-directory: ${{ inputs.working-directory }}
+          cache-key: ${{ inputs.working-directory }}-test-${{ matrix.coverage_tests }}
+
+      - name: Install dependencies from local
+        # only if source is local
+        shell: bash
+        run: poetry install ${{ inputs.extra_poetry }}
+
+      - name: Cache HuggingFace models
+        id: cache-models
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/huggingface/hub
+          key: hf-models-${{ inputs.working-directory }}-test-${{ matrix.coverage_tests }}
+
+
+      - name: Run Pytest Coverage
+        if: ${{ inputs.working-directory == 'libs/infinity_emb' }}
+        run: |
+          poetry run coverage run -m --source ./infinity_emb pytest tests/${{ matrix.coverage_tests }} 
+          poetry run coverage xml
+        env:
+          HF_TOKEN: ${{ secrets.HFTOKEN_NOPERMISSIONS }}
+      
+      - name: Run Pytest Coverage w/o infinity
+        if: ${{ inputs.working-directory != 'libs/infinity_emb' }}
+        run: 
+          make coverage
+
+      - name: Upload coverage Report to Codecov for python 3.11
+        if: ${{ matrix.python-version == '3.11' && inputs.upload_coverage == true && matrix.os == 'ubuntu-latest'}}
+        uses: codecov/codecov-action@v4
+        env:
+          CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
+
+
+  testing-job: # Run the other jobs to use cache from initial job
+    needs: initial-job
+    defaults:
+      run:
+        working-directory: ${{ inputs.working-directory }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest] # macos-latest
+        python-version:
+          - "3.9"
+          - "3.10"
+          - "3.11"
+        coverage_tests: ["unit_test", "end_to_end"]
+          
+    runs-on: ${{ matrix.os }}
+    name: Py${{ matrix.python-version }}-${{ matrix.os }}-${{ matrix.coverage_tests }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Free Disk Space
+        uses: "./.github/actions/disk_cleanup"
+        if: runner.os == 'Linux'
+        with:
+          tool-cache: false
+          android: true
+          dotnet: true
+          haskell: true
+          large-packages: false
+          docker-images: false
+          swap-storage: false
+      - name: Set up Python ${{ matrix.python-version }} + Poetry ${{ env.POETRY_VERSION }}
+        uses: "./.github/actions/poetry_setup"
+        with:
+          python-version: ${{ matrix.python-version }}
+          poetry-version: ${{ env.POETRY_VERSION }}
+          working-directory: ${{ inputs.working-directory }}
+          cache-key: ${{ inputs.working-directory }}-test-${{ matrix.coverage_tests }}
+
+      - name: Install dependencies from local
+        # only if source is local
+        shell: bash
+        run: poetry install ${{ inputs.extra_poetry }}
+
+      - name: Cached HuggingFace models
+        id: cache-models
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/huggingface/hub
+          key: hf-models-${{ inputs.working-directory }}-test-${{ matrix.coverage_tests }}
+
+      - name: Run Pytest Coverage
+        if: ${{ inputs.working-directory == 'libs/infinity_emb' }}
+        run: |
+          poetry run coverage run -m --source ./infinity_emb pytest tests/${{ matrix.coverage_tests }} 
+          poetry run coverage xml
+      
+      - name: Run Pytest Coverage w/o infinity
+        if: ${{ inputs.working-directory != 'libs/infinity_emb' }}
+        run: 
+          make coverage
+
+      - name: Upload coverage Report to Codecov for python 3.11
+        if: ${{ matrix.python-version == '3.11' && inputs.upload_coverage == true && matrix.os == 'ubuntu-latest'}}
+        uses: codecov/codecov-action@v4
+        env:
+          CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
+
+

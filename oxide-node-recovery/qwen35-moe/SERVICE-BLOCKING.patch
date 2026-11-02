@@ -1,0 +1,919 @@
+--- a/qwen35_moe_factory.rs	2026-11-02 09:02:38.565056236 -0800
++++ b/qwen35_moe_factory.rs	2026-11-02 09:02:38.567056186 -0800
+@@ -38,58 +38,182 @@
+ pub struct Qwen35MoeBackend {
+     engine: Arc<ExperimentalMoEEngine>,
+     pool: Pool,
+-    work: Arc<Mutex<WorkCache>>,
++    work: Arc<Mutex<WorkSlots<ExperimentalMoEWork>>>,
+ }
+ 
+-struct WorkCache<W = ExperimentalMoEWork> {
+-    key: Option<(usize, usize, usize)>,
+-    slots: Vec<Option<W>>,
++const WORK_SLOTS: usize = 2;
++
++trait WorkBytes {
++    fn work_bytes(&self) -> usize;
++}
++
++impl WorkBytes for ExperimentalMoEWork {
++    fn work_bytes(&self) -> usize {
++        self.bytes()
++    }
++}
++
++enum WorkSlot<W> {
++    Empty,
++    Ready {
++        key: (usize, usize, usize),
++        work: W,
++    },
++    CheckedOut {
++        key: (usize, usize, usize),
++        bytes: usize,
++    },
++}
++
++struct WorkSlots<W> {
++    slots: Vec<WorkSlot<W>>,
++    accounted_bytes: usize,
+ }
+ 
+-impl<W> Default for WorkCache<W> {
++impl<W> Default for WorkSlots<W> {
+     fn default() -> Self {
+         Self {
+-            key: None,
+-            slots: vec![None, None],
++            slots: (0..WORK_SLOTS).map(|_| WorkSlot::Empty).collect(),
++            accounted_bytes: 0,
+         }
+     }
+ }
+ 
+-impl<W> WorkCache<W> {
+-    fn reset(&mut self, key: (usize, usize, usize), first: W, second: W) {
+-        self.key = Some(key);
+-        self.slots = vec![Some(first), Some(second)];
++impl<W: WorkBytes> WorkSlots<W> {
++    fn resident_bytes(&self) -> usize {
++        self.accounted_bytes
+     }
+ 
+-    fn take_slot(&mut self) -> Option<W> {
+-        self.slots.iter_mut().find_map(|slot| slot.take())
++    fn empty_index(&self) -> Option<usize> {
++        self.slots
++            .iter()
++            .position(|slot| matches!(slot, WorkSlot::Empty))
+     }
+ 
+-    fn can_change_key(&self) -> bool {
+-        self.key.is_none() || self.slots.iter().all(Option::is_some)
++    fn checkout_ready(&mut self, key: (usize, usize, usize)) -> Option<(usize, W)> {
++        for index in 0..self.slots.len() {
++            if matches!(self.slots[index], WorkSlot::Ready { key: slot_key, .. } if slot_key == key)
++            {
++                let slot = std::mem::replace(&mut self.slots[index], WorkSlot::Empty);
++                if let WorkSlot::Ready { work, .. } = slot {
++                    let bytes = work.work_bytes();
++                    self.slots[index] = WorkSlot::CheckedOut { key, bytes };
++                    return Some((index, work));
++                }
++            }
++        }
++        None
+     }
+ 
+-    fn return_slot(&mut self, key: (usize, usize, usize), work: W) -> Result<(), W> {
+-        if self.key != Some(key) {
++    fn install_ready(
++        &mut self,
++        index: usize,
++        key: (usize, usize, usize),
++        work: W,
++    ) -> Result<(), W> {
++        if index >= self.slots.len() || !matches!(self.slots[index], WorkSlot::Empty) {
+             return Err(work);
+         }
+-        if let Some(slot) = self.slots.iter_mut().find(|slot| slot.is_none()) {
+-            *slot = Some(work);
+-            Ok(())
+-        } else {
+-            Err(work)
++        self.accounted_bytes = self.accounted_bytes.saturating_add(work.work_bytes());
++        self.slots[index] = WorkSlot::Ready { key, work };
++        Ok(())
++    }
++
++    fn return_ready(&mut self, index: usize, key: (usize, usize, usize), work: W) -> Result<(), W> {
++        let valid = matches!(
++            self.slots.get(index),
++            Some(WorkSlot::CheckedOut { key: slot_key, .. }) if *slot_key == key
++        );
++        if !valid {
++            return Err(work);
++        }
++        self.slots[index] = WorkSlot::Ready { key, work };
++        Ok(())
++    }
++
++    fn release_checked_out(&mut self, index: usize, key: (usize, usize, usize)) {
++        if let Some(WorkSlot::CheckedOut {
++            key: slot_key,
++            bytes,
++        }) = self.slots.get(index)
++        {
++            if *slot_key == key {
++                let bytes = *bytes;
++                self.accounted_bytes = self.accounted_bytes.saturating_sub(bytes);
++                self.slots[index] = WorkSlot::Empty;
++            }
++        }
++    }
++
++    fn evict_idle(
++        &mut self,
++        mut release: impl FnMut(&mut W) -> Result<bool, BackendError>,
++    ) -> Result<Option<usize>, BackendError> {
++        for index in 0..self.slots.len() {
++            let released = match self.slots.get_mut(index) {
++                Some(WorkSlot::Ready { work, .. }) => release(work)?,
++                _ => false,
++            };
++            if released {
++                let slot = std::mem::replace(&mut self.slots[index], WorkSlot::Empty);
++                if let WorkSlot::Ready { work, .. } = slot {
++                    self.accounted_bytes = self.accounted_bytes.saturating_sub(work.work_bytes());
++                    drop(work);
++                }
++                return Ok(Some(index));
++            }
+         }
++        Ok(None)
+     }
+ }
+ 
++fn checkout_work<W: WorkBytes>(
++    slots: &mut WorkSlots<W>,
++    key: (usize, usize, usize),
++    build: impl FnOnce() -> Result<W, BackendError>,
++    mut evict: impl FnMut(&mut W) -> Result<bool, BackendError>,
++) -> Result<(usize, W), BackendError> {
++    if let Some(found) = slots.checkout_ready(key) {
++        return Ok(found);
++    }
++    let index = match slots.empty_index() {
++        Some(index) => index,
++        None => slots
++            .evict_idle(&mut evict)?
++            .ok_or(BackendError::Unhealthy)?,
++    };
++    let work = build()?;
++    slots
++        .install_ready(index, key, work)
++        .map_err(|_| BackendError::Unhealthy)?;
++    slots.checkout_ready(key).ok_or(BackendError::Unhealthy)
++}
++
++fn canonicalize_selection(mut batch: Batch) -> Batch {
++    let raw = batch
++        .raw_indices
++        .iter()
++        .copied()
++        .collect::<std::collections::BTreeSet<_>>();
++    let mut pooled_seen = std::collections::BTreeSet::new();
++    batch
++        .pooled_indices
++        .retain(|index| !raw.contains(index) && pooled_seen.insert(*index));
++    let mut raw_seen = std::collections::BTreeSet::new();
++    batch.raw_indices.retain(|index| raw_seen.insert(*index));
++    batch
++}
++
+ enum WorkSettlement<W> {
+     Cached,
+     Released(W),
+     Quarantined(W),
+ }
+ 
+-fn settle_work<W>(
+-    cache: &mut WorkCache<W>,
++#[allow(clippy::too_many_arguments)]
++fn settle_work<W: WorkBytes>(
++    slots: &mut WorkSlots<W>,
++    slot: usize,
+     key: (usize, usize, usize),
+     started: bool,
+     proof_state: Option<bool>,
+@@ -100,17 +224,21 @@
+     if started && proof_state != Some(true) {
+         return WorkSettlement::Quarantined(work);
+     }
+-    match cache.return_slot(key, work) {
++    match slots.return_ready(slot, key, work) {
+         Ok(()) => WorkSettlement::Cached,
+         Err(mut work) if proof_state == Some(true) => {
+             if release(&mut work).is_err() {
+                 WorkSettlement::Quarantined(work)
+             } else {
++                slots.release_checked_out(slot, key);
+                 WorkSettlement::Released(work)
+             }
+         }
+         Err(mut work) if !started => match discard_unstarted(&mut work) {
+-            Ok(true) => WorkSettlement::Released(work),
++            Ok(true) => {
++                slots.release_checked_out(slot, key);
++                WorkSettlement::Released(work)
++            }
+             _ => WorkSettlement::Quarantined(work),
+         },
+         Err(work) => WorkSettlement::Quarantined(work),
+@@ -121,7 +249,8 @@
+     lease: Option<ManuallyDrop<ExperimentalMoELease>>,
+     work: Option<ManuallyDrop<ExperimentalMoEWork>>,
+     engine: Option<ManuallyDrop<Arc<ExperimentalMoEEngine>>>,
+-    cache: Arc<Mutex<WorkCache>>,
++    cache: Arc<Mutex<WorkSlots<ExperimentalMoEWork>>>,
++    slot: usize,
+     key: (usize, usize, usize),
+     selected_count: usize,
+     batch: Batch,
+@@ -136,7 +265,8 @@
+         lease: ExperimentalMoELease,
+         work: ExperimentalMoEWork,
+         engine: Arc<ExperimentalMoEEngine>,
+-        cache: Arc<Mutex<WorkCache>>,
++        cache: Arc<Mutex<WorkSlots<ExperimentalMoEWork>>>,
++        slot: usize,
+         key: (usize, usize, usize),
+         batch: Batch,
+         hidden: usize,
+@@ -147,6 +277,7 @@
+             work: Some(ManuallyDrop::new(work)),
+             engine: Some(ManuallyDrop::new(engine)),
+             cache,
++            slot,
+             key,
+             selected_count: 0,
+             batch,
+@@ -207,6 +338,7 @@
+         let settlement = match self.cache.lock() {
+             Ok(mut cache) => settle_work(
+                 &mut cache,
++                self.slot,
+                 self.key,
+                 started,
+                 proof_state,
+@@ -322,7 +454,7 @@
+         Ok(Self {
+             engine: Arc::new(engine),
+             pool,
+-            work: Arc::new(Mutex::new(WorkCache::default())),
++            work: Arc::new(Mutex::new(WorkSlots::default())),
+         })
+     }
+ 
+@@ -345,20 +477,19 @@
+             .max()
+             .unwrap_or(0);
+         let key = (tokens, sequences, max_len);
++        // Core Embeddings is last-wins and keyed by sequence index. Canonicalize
++        // duplicates and raw-overrides before staging, result reservation,
++        // Work selection or launch. The original request above was validated
++        // exactly as supplied, including empty/media/compact cases.
++        let batch = canonicalize_selection(batch);
+         let raw_rows = output::raw_rows(&batch)?;
+         let selected_rows = batch
+             .pooled_indices
+             .len()
+             .checked_add(raw_rows)
+             .ok_or_else(|| BackendError::Inference("selected row overflow".into()))?;
+-        if selected_rows > tokens.saturating_add(sequences) {
+-            return Err(BackendError::Inference(
+-                "duplicate selectors exceed the bounded MoE selected-output capacity".into(),
+-            ));
+-        }
+         let hidden = self.engine.hidden_size().map_err(moe_error)?;
+-        // Reserve results before enqueue so a budget rejection cannot follow a
+-        // launch or mutate cached Work.
++        // Reserve canonical result memory before lease/work acquisition.
+         let memory =
+             result_memory::global_pool()?.reserve(output::result_bytes(&batch, hidden, hidden)?)?;
+         if selected_rows == 0 {
+@@ -366,47 +497,22 @@
+             empty.memory = Some(memory);
+             return Ok(Inference::Ready(empty));
+         }
+-        let mut cache = self.work.lock().map_err(|_| BackendError::Unhealthy)?;
+-        if cache.key != Some(key) {
+-            if !cache.can_change_key() {
+-                return Err(BackendError::Overloaded(
+-                    "Qwen3.5-MoE geometry growth while a Work is checked out".into(),
+-                ));
+-            }
+-            if self.engine.active_leases().map_err(moe_error)? > 0 {
+-                return Err(BackendError::Overloaded(
+-                    "Qwen3.5-MoE geometry growth while a result is held".into(),
+-                ));
+-            }
+-            // Transactional construction: commit key/slots only after both
+-            // Works exist. A partial constructor failure leaves the old cache
+-            // state untouched and returns the typed engine error.
+-            let first = self
+-                .engine
+-                .work(tokens, sequences, max_len)
+-                .map_err(moe_error)?;
+-            let second = self
+-                .engine
+-                .work(tokens, sequences, max_len)
+-                .map_err(moe_error)?;
+-            cache.reset(key, first, second);
+-        }
+-        let work = cache.take_slot().ok_or_else(|| {
+-            BackendError::Overloaded(
+-                "third concurrent Qwen3.5-MoE result exceeds the two host slots".into(),
+-            )
+-        })?;
+-        drop(cache);
+-        let lease = match self.engine.lease() {
+-            Ok(lease) => lease,
+-            Err(error) => {
+-                if let Ok(mut cache) = self.work.lock() {
+-                    if cache.key == Some(key) {
+-                        let _ = cache.return_slot(key, work);
+-                    }
+-                }
+-                return Err(moe_error(error));
+-            }
++        // Reuse the common two-slot host-I/O pool as the admission primitive:
++        // acquire() blocks on the condition variable and closes to Unhealthy.
++        // Completion runs on the independent service completion thread.
++        let lease = self.engine.lease().map_err(moe_error)?;
++        let (slot, work) = {
++            let mut slots = self.work.lock().map_err(|_| BackendError::Unhealthy)?;
++            checkout_work(
++                &mut slots,
++                key,
++                || {
++                    self.engine
++                        .work(tokens, sequences, max_len)
++                        .map_err(moe_error)
++                },
++                |work| unsafe { work.release_if_idle() },
++            )?
+         };
+         // Full owner exists before Deferred is returned, so cancellation and
+         // enqueue failure both traverse the same PendingFrame Drop path.
+@@ -415,6 +521,7 @@
+             work,
+             Arc::clone(&self.engine),
+             Arc::clone(&self.work),
++            slot,
+             key,
+             batch,
+             hidden,
+@@ -511,35 +618,22 @@
+         let _ = std::fs::remove_dir_all(text);
+         let _ = std::fs::remove_dir_all(dense);
+     }
+-    #[test]
+-    fn workcache_recovers_after_two_cancelled_slots_and_out_of_order_returns() {
+-        let mut cache: WorkCache<u32> = WorkCache::default();
+-        cache.reset((1, 1, 1), 10, 11);
+-        let a = cache.take_slot().unwrap();
+-        let b = cache.take_slot().unwrap();
+-        assert_eq!((a, b), (10, 11));
+-        assert!(cache.take_slot().is_none());
+-        assert!(cache.return_slot((1, 1, 1), b).is_ok());
+-        assert!(cache.return_slot((1, 1, 2), a).is_err());
+-        assert_eq!(cache.take_slot(), Some(11));
+-        assert!(cache.return_slot((1, 1, 1), a).is_ok());
+-        assert_eq!(cache.take_slot(), Some(10));
+-    }
+-
+-    #[derive(Clone)]
++    #[derive(Clone, Debug)]
+     struct FakeWork {
+         live: bool,
++        bytes: usize,
+         releases: Rc<Cell<usize>>,
+         drops: Rc<Cell<usize>>,
+     }
+ 
+     impl FakeWork {
+-        fn new() -> (Self, Rc<Cell<usize>>, Rc<Cell<usize>>) {
++        fn new(bytes: usize) -> (Self, Rc<Cell<usize>>, Rc<Cell<usize>>) {
+             let releases = Rc::new(Cell::new(0));
+             let drops = Rc::new(Cell::new(0));
+             (
+                 Self {
+                     live: true,
++                    bytes,
+                     releases: Rc::clone(&releases),
+                     drops: Rc::clone(&drops),
+                 },
+@@ -561,23 +655,114 @@
+         }
+     }
+ 
++    impl WorkBytes for FakeWork {
++        fn work_bytes(&self) -> usize {
++            self.bytes
++        }
++    }
++
+     impl Drop for FakeWork {
+         fn drop(&mut self) {
+             self.drops.set(self.drops.get() + 1);
+         }
+     }
+ 
++    fn test_batch(pooled: Vec<u32>, raw: Vec<u32>) -> Batch {
++        Batch {
++            multimodal: Vec::new(),
++            input_ids: (20..27).collect(),
++            token_type_ids: vec![0; 7],
++            position_ids: (0..7).collect(),
++            cumulative_seq_lengths: vec![0, 7],
++            max_length: 7,
++            pooled_indices: pooled,
++            raw_indices: raw,
++            compact_input_ids: None,
++            compact_position_ids: None,
++            scatter_unfold: None,
++            fold_gather: None,
++            tokens: Vec::new(),
++            offsets: Vec::new(),
++        }
++    }
++
++    fn validate_test_batch(batch: &Batch) -> Result<usize, BackendError> {
++        crate::validate_qwen35_batch_geometry(batch, 262144, 300000, 2048, 512, 512, 2048)
++    }
++
++    #[test]
++    fn workslots_reuse_returns_and_accounts_bytes() {
++        let mut slots: WorkSlots<FakeWork> = WorkSlots::default();
++        let (first, _, _) = FakeWork::new(64);
++        let (second, _, _) = FakeWork::new(32);
++        slots.install_ready(0, (7, 1, 7), first).unwrap();
++        slots.install_ready(1, (7, 1, 7), second).unwrap();
++        assert_eq!(slots.resident_bytes(), 96);
++        let (index, work) = slots.checkout_ready((7, 1, 7)).unwrap();
++        assert_eq!(index, 0);
++        assert_eq!(slots.resident_bytes(), 96);
++        slots.return_ready(index, (7, 1, 7), work).unwrap();
++        let (index, work) = slots.checkout_ready((7, 1, 7)).unwrap();
++        slots.release_checked_out(index, (7, 1, 7));
++        assert_eq!(slots.resident_bytes(), 32);
++        drop(work);
++    }
++
++    #[test]
++    fn different_key_b_can_use_free_slot_while_a_is_checked_out() {
++        let key_a = (7, 1, 7);
++        let key_b = (8, 1, 8);
++        let mut slots: WorkSlots<FakeWork> = WorkSlots::default();
++        let (a, _, _) = FakeWork::new(70);
++        let (b, _, _) = FakeWork::new(80);
++        slots.install_ready(0, key_a, a).unwrap();
++        let (a_index, a_work) = slots.checkout_ready(key_a).unwrap();
++        slots.install_ready(1, key_b, b).unwrap();
++        let (b_index, b_work) = slots.checkout_ready(key_b).unwrap();
++        assert_ne!(a_index, b_index);
++        assert_eq!(slots.resident_bytes(), 150);
++        slots.return_ready(b_index, key_b, b_work).unwrap();
++        slots.return_ready(a_index, key_a, a_work).unwrap();
++        assert_eq!(slots.resident_bytes(), 150);
++    }
++
++    #[test]
++    fn constructor_failure_retains_a_and_rolls_back_only_idle_slot() {
++        let key_a = (7, 1, 7);
++        let key_b = (8, 1, 8);
++        let key_c = (9, 1, 9);
++        let mut slots: WorkSlots<FakeWork> = WorkSlots::default();
++        let (a, _, _) = FakeWork::new(70);
++        let (idle, _, idle_drops) = FakeWork::new(15);
++        slots.install_ready(0, key_a, a).unwrap();
++        let (a_index, a_work) = slots.checkout_ready(key_a).unwrap();
++        slots.install_ready(1, key_c, idle).unwrap();
++        let error = checkout_work(
++            &mut slots,
++            key_b,
++            || Err(BackendError::Unhealthy),
++            FakeWork::discard,
++        )
++        .unwrap_err();
++        assert!(matches!(error, BackendError::Unhealthy));
++        assert_eq!(idle_drops.get(), 1);
++        assert_eq!(slots.resident_bytes(), 70);
++        slots.return_ready(a_index, key_a, a_work).unwrap();
++        assert_eq!(slots.resident_bytes(), 70);
++    }
++
+     #[test]
+-    fn cached_completed_work_keeps_payload_live_and_is_reusable() {
+-        let key = (1, 1, 1);
+-        let (first, first_releases, first_drops) = FakeWork::new();
+-        let (second, _, _) = FakeWork::new();
+-        let mut cache: WorkCache<FakeWork> = WorkCache::default();
+-        cache.reset(key, first, second);
+-        let work = cache.take_slot().unwrap();
+-        let first_releases = Rc::clone(&first_releases);
++    fn settle_work_caches_live_work_and_releases_only_on_discard() {
++        let key = (7, 1, 7);
++        let mut slots: WorkSlots<FakeWork> = WorkSlots::default();
++        let (first, releases, _) = FakeWork::new(64);
++        let (second, _, _) = FakeWork::new(64);
++        slots.install_ready(0, key, first).unwrap();
++        slots.install_ready(1, key, second).unwrap();
++        let (slot, work) = slots.checkout_ready(key).unwrap();
+         let outcome = settle_work(
+-            &mut cache,
++            &mut slots,
++            slot,
+             key,
+             true,
+             Some(true),
+@@ -586,89 +771,68 @@
+             FakeWork::discard,
+         );
+         assert!(matches!(outcome, WorkSettlement::Cached));
+-        let reused = cache.take_slot().unwrap();
++        assert_eq!(releases.get(), 0);
++        let (reused_index, reused) = slots.checkout_ready(key).unwrap();
+         assert!(reused.live);
+-        assert_eq!(first_releases.get(), 0);
+-        assert_eq!(first_drops.get(), 0);
+-    }
++        slots.release_checked_out(reused_index, key);
++        drop(reused);
+ 
+-    #[test]
+-    fn completed_work_releases_once_only_when_cache_rejects_discard() {
+-        let (work, releases, drops) = FakeWork::new();
+-        let mut cache: WorkCache<FakeWork> = WorkCache::default();
++        let (discard, discard_releases, _) = FakeWork::new(64);
++        slots.install_ready(0, key, discard).unwrap();
++        let (slot, work) = slots.checkout_ready(key).unwrap();
+         let outcome = settle_work(
+-            &mut cache,
+-            (1, 1, 1),
++            &mut slots,
++            slot,
++            (8, 1, 8),
+             true,
+             Some(true),
+             work,
+             FakeWork::release,
+             FakeWork::discard,
+         );
+-        let released = match outcome {
+-            WorkSettlement::Released(work) => work,
+-            _ => panic!("expected release branch"),
+-        };
+-        assert!(!released.live);
+-        assert_eq!(releases.get(), 1);
+-        assert_eq!(drops.get(), 0);
+-        drop(released);
+-        assert_eq!(drops.get(), 1);
++        assert!(matches!(outcome, WorkSettlement::Released(_)));
++        assert_eq!(discard_releases.get(), 1);
+     }
+ 
+     #[test]
+-    fn mismatch_and_started_unproven_quarantine_without_release_or_cache() {
+-        let key = (1, 1, 1);
+-        let (mismatch, mismatch_releases, mismatch_drops) = FakeWork::new();
+-        let mut cache: WorkCache<FakeWork> = WorkCache::default();
+-        let outcome = settle_work(
+-            &mut cache,
+-            key,
+-            true,
+-            Some(false),
+-            mismatch,
+-            FakeWork::release,
+-            FakeWork::discard,
+-        );
+-        let mismatch = match outcome {
+-            WorkSettlement::Quarantined(work) => work,
+-            _ => panic!("expected mismatch quarantine"),
+-        };
+-        assert!(mismatch.live);
+-        assert_eq!(mismatch_releases.get(), 0);
+-        assert!(cache.take_slot().is_none());
+-        std::mem::forget(mismatch);
+-        assert_eq!(mismatch_drops.get(), 0);
+-
+-        let (unproven, unproven_releases, unproven_drops) = FakeWork::new();
+-        let outcome = settle_work(
+-            &mut cache,
+-            key,
+-            true,
+-            None,
+-            unproven,
+-            FakeWork::release,
+-            FakeWork::discard,
+-        );
+-        let unproven = match outcome {
+-            WorkSettlement::Quarantined(work) => work,
+-            _ => panic!("expected unproven quarantine"),
+-        };
+-        assert!(unproven.live);
+-        assert_eq!(unproven_releases.get(), 0);
+-        std::mem::forget(unproven);
+-        assert_eq!(unproven_drops.get(), 0);
++    fn settle_work_quarantines_started_unproven_and_mismatch() {
++        let key = (7, 1, 7);
++        for (proof, started) in [(None, true), (Some(false), true)] {
++            let mut slots: WorkSlots<FakeWork> = WorkSlots::default();
++            let (work, releases, drops) = FakeWork::new(64);
++            slots.install_ready(0, key, work).unwrap();
++            let (slot, work) = slots.checkout_ready(key).unwrap();
++            let outcome = settle_work(
++                &mut slots,
++                slot,
++                key,
++                started,
++                proof,
++                work,
++                FakeWork::release,
++                FakeWork::discard,
++            );
++            let work = match outcome {
++                WorkSettlement::Quarantined(work) => work,
++                _ => panic!("expected quarantine"),
++            };
++            assert!(work.live);
++            assert_eq!(releases.get(), 0);
++            std::mem::forget(work);
++            assert_eq!(drops.get(), 0);
++        }
+     }
+ 
+     #[test]
+-    fn never_queued_work_is_cached_without_release() {
+-        let key = (1, 1, 1);
+-        let (work, releases, _) = FakeWork::new();
+-        let mut cache: WorkCache<FakeWork> = WorkCache::default();
+-        cache.reset(key, work, FakeWork::new().0);
+-        let work = cache.take_slot().unwrap();
++    fn never_queued_work_returns_to_its_exact_slot() {
++        let key = (7, 1, 7);
++        let mut slots: WorkSlots<FakeWork> = WorkSlots::default();
++        let (work, releases, _) = FakeWork::new(64);
++        slots.install_ready(0, key, work).unwrap();
++        let (slot, work) = slots.checkout_ready(key).unwrap();
+         let outcome = settle_work(
+-            &mut cache,
++            &mut slots,
++            slot,
+             key,
+             false,
+             None,
+@@ -677,8 +841,200 @@
+             FakeWork::discard,
+         );
+         assert!(matches!(outcome, WorkSettlement::Cached));
+-        assert!(cache.take_slot().unwrap().live);
+         assert_eq!(releases.get(), 0);
++        let (_, reused) = slots.checkout_ready(key).unwrap();
++        assert!(reused.live);
++    }
++
++    struct TestSlot(u32);
++    impl crate::staging::SlotBytes for TestSlot {
++        fn slot_bytes(&self) -> usize {
++            0
++        }
++    }
++
++    #[test]
++    fn common_pool_blocks_third_and_wakes_after_one_release() {
++        use std::sync::mpsc;
++        use std::time::Duration;
++        let pool = crate::staging::SlotPool::new([TestSlot(1), TestSlot(2)]);
++        let first = pool.acquire().unwrap();
++        let second = pool.acquire().unwrap();
++        let (started, waiting) = mpsc::channel();
++        let (result, receiver) = mpsc::channel();
++        let waiter = {
++            let pool = pool.clone();
++            std::thread::spawn(move || {
++                started.send(()).unwrap();
++                result.send(pool.acquire()).unwrap();
++            })
++        };
++        waiting.recv_timeout(Duration::from_secs(2)).unwrap();
++        assert!(receiver.recv_timeout(Duration::from_millis(30)).is_err());
++        pool.release(second);
++        assert!(wait_for_acquire(&receiver).is_ok());
++        waiter.join().unwrap();
++        pool.release(first);
++    }
++
++    fn wait_for_acquire(
++        receiver: &std::sync::mpsc::Receiver<Result<TestSlot, BackendError>>,
++    ) -> Result<TestSlot, BackendError> {
++        receiver
++            .recv_timeout(std::time::Duration::from_secs(2))
++            .expect("third acquire did not wake")
++    }
++
++    #[test]
++    fn common_pool_close_wakes_waiter_typed_unhealthy() {
++        use std::sync::mpsc;
++        use std::time::Duration;
++        let pool = crate::staging::SlotPool::new([TestSlot(1), TestSlot(2)]);
++        let first = pool.acquire().unwrap();
++        let second = pool.acquire().unwrap();
++        let (started, waiting) = mpsc::channel();
++        let (result, receiver) = mpsc::channel();
++        let waiter = {
++            let pool = pool.clone();
++            std::thread::spawn(move || {
++                started.send(()).unwrap();
++                result.send(pool.acquire()).unwrap();
++            })
++        };
++        waiting.recv_timeout(Duration::from_secs(2)).unwrap();
++        std::thread::sleep(Duration::from_millis(30));
++        pool.close();
++        assert!(matches!(
++            wait_for_acquire(&receiver),
++            Err(BackendError::Unhealthy)
++        ));
++        waiter.join().unwrap();
++        pool.release(first);
++        pool.release(second);
++    }
++
++    #[test]
++    fn duplicate_canonicalization_preserves_last_wins_without_hard_capacity_rejection() {
++        let duplicate_pooled = test_batch(vec![0, 0], Vec::new());
++        assert!(validate_test_batch(&duplicate_pooled).is_ok());
++        let canonical = canonicalize_selection(duplicate_pooled);
++        assert_eq!(canonical.pooled_indices, vec![0]);
++        assert!(canonical.raw_indices.is_empty());
++
++        let duplicate_raw = test_batch(Vec::new(), vec![0, 0]);
++        assert!(validate_test_batch(&duplicate_raw).is_ok());
++        let canonical = canonicalize_selection(duplicate_raw);
++        assert_eq!(canonical.raw_indices, vec![0]);
++
++        let overridden = test_batch(vec![0], vec![0]);
++        assert!(validate_test_batch(&overridden).is_ok());
++        let canonical = canonicalize_selection(overridden);
++        assert!(canonical.pooled_indices.is_empty());
++        assert_eq!(canonical.raw_indices, vec![0]);
++    }
++
++    fn embedding_bits(
++        result: &Embeddings,
++    ) -> std::collections::BTreeMap<usize, (String, Vec<u32>)> {
++        result
++            .iter()
++            .map(|(index, embedding)| {
++                let (kind, values) = match embedding {
++                    infinity_v3_backend_core::Embedding::Pooled(values) => {
++                        ("pooled".to_string(), values.clone())
++                    }
++                    infinity_v3_backend_core::Embedding::All(rows) => (
++                        "raw".to_string(),
++                        rows.iter().flat_map(|row| row.iter().copied()).collect(),
++                    ),
++                };
++                (
++                    *index,
++                    (kind, values.into_iter().map(f32::to_bits).collect()),
++                )
++            })
++            .collect()
++    }
++
++    fn pack_for(batch: &Batch, selected: &[f32]) -> Embeddings {
++        output::pack(
++            selected,
++            2,
++            2,
++            &batch.pooled_indices,
++            &batch.raw_indices,
++            &batch.cumulative_seq_lengths,
++        )
++        .unwrap()
++    }
++
++    #[test]
++    fn duplicate_pooled_canonicalization_preserves_original_embeddings_map() {
++        let original = test_batch(vec![0, 0], Vec::new());
++        let canonical = canonicalize_selection(original.clone());
++        let original_selected = [1.0f32, 2.0, 9.0, 10.0];
++        let canonical_selected = [9.0f32, 10.0];
++        assert_eq!(
++            embedding_bits(&pack_for(&original, &original_selected)),
++            embedding_bits(&pack_for(&canonical, &canonical_selected))
++        );
++    }
++
++    #[test]
++    fn duplicate_raw_canonicalization_preserves_original_embeddings_map() {
++        let original = test_batch(Vec::new(), vec![0, 0]);
++        let canonical = canonicalize_selection(original.clone());
++        let first = (0..14).map(|value| value as f32).collect::<Vec<_>>();
++        let second = (100..114).map(|value| value as f32).collect::<Vec<_>>();
++        let mut original_selected = first;
++        original_selected.extend_from_slice(&second);
++        assert_eq!(
++            embedding_bits(&pack_for(&original, &original_selected)),
++            embedding_bits(&pack_for(&canonical, &second))
++        );
++    }
++
++    #[test]
++    fn raw_override_canonicalization_preserves_original_embeddings_map() {
++        let original = test_batch(vec![0], vec![0]);
++        let canonical = canonicalize_selection(original.clone());
++        let mut original_selected = vec![1.0f32, 2.0];
++        let raw = (10..24).map(|value| value as f32).collect::<Vec<_>>();
++        original_selected.extend_from_slice(&raw);
++        assert_eq!(
++            embedding_bits(&pack_for(&original, &original_selected)),
++            embedding_bits(&pack_for(&canonical, &raw))
++        );
++    }
++
++    #[test]
++    fn original_invalid_requests_are_validated_before_canonicalization() {
++        use std::sync::Arc as StdArc;
++
++        let mut media = test_batch(vec![0, 0], vec![0, 0]);
++        media.multimodal = vec![Some(StdArc::new(
++            infinity_v3_backend_core::MultimodalEncoding {
++                images: Vec::new(),
++                audios: Vec::new(),
++                position_ids: [Vec::new(), Vec::new(), Vec::new()],
++                memory: None,
++            },
++        ))];
++        assert!(validate_test_batch(&media).is_err());
++
++        let mut compact = test_batch(vec![0, 0], vec![0, 0]);
++        compact.compact_input_ids = Some(compact.input_ids.clone());
++        assert!(validate_test_batch(&compact).is_err());
++
++        let empty = Batch {
++            input_ids: Vec::new(),
++            token_type_ids: Vec::new(),
++            position_ids: Vec::new(),
++            cumulative_seq_lengths: vec![0, 0],
++            max_length: 0,
++            ..test_batch(Vec::new(), Vec::new())
++        };
++        assert!(validate_test_batch(&empty).is_err());
+     }
+     #[test]
+     fn factory_error_classification_preserves_backend_overloaded_and_unhealthy() {
+@@ -700,39 +1056,4 @@
+             BackendError::Inference(message) if message == "runtime"
+         ));
+     }
+-    #[test]
+-    fn checked_out_slot_blocks_geometry_key_growth_under_cache_lock() {
+-        let mut cache: WorkCache<u32> = WorkCache::default();
+-        assert!(cache.can_change_key());
+-        cache.reset((1, 1, 1), 10, 11);
+-        assert!(cache.can_change_key());
+-        let held = cache.take_slot().unwrap();
+-        assert!(!cache.can_change_key());
+-        assert!(cache.return_slot((1, 1, 1), held).is_ok());
+-        assert!(cache.can_change_key());
+-    }
+-
+-    #[test]
+-    fn never_queued_mismatched_key_discards_without_release_or_quarantine() {
+-        let (work, releases, drops) = FakeWork::new();
+-        let mut cache: WorkCache<FakeWork> = WorkCache::default();
+-        let outcome = settle_work(
+-            &mut cache,
+-            (2, 2, 2),
+-            false,
+-            None,
+-            work,
+-            FakeWork::release,
+-            FakeWork::discard,
+-        );
+-        let discarded = match outcome {
+-            WorkSettlement::Released(work) => work,
+-            _ => panic!("expected safe never-queued discard"),
+-        };
+-        assert!(!discarded.live);
+-        assert_eq!(releases.get(), 0);
+-        assert_eq!(drops.get(), 0);
+-        drop(discarded);
+-        assert_eq!(drops.get(), 1);
+-    }
+ }

@@ -1,0 +1,4 @@
+28d022df0bd22181a8187bd7329588ae3c9c7453602e0b38c67b1dca4bc5644d  /tmp/oxide-qwen3vl-rope-budget-fix-v1/candidate/libs/infinity-v3/backends/oxide/src/decoder.rs
+921a0e56bdadce4d2c9c921fccf612483d80b4e87964e8b10a9feceb28464aa2  /tmp/oxide-qwen3vl-rope-budget-fix-v1/candidate/libs/infinity-v3/backends/oxide/examples/qwen3_vl_host_consumer.rs
+5ac97a7e119ece22f84a34b692162b1306e1850338c026d555489103817d910a  /tmp/oxide-qwen3vl-rope-budget-fix-v1/candidate/libs/infinity-v3/backends/oxide/src/rotary.rs
+ab4ec5f42e9d949ed8c5cbf3b0debc738c8150c82d02ec9e7345ed6ebd7fa9b9  /tmp/oxide-qwen3vl-rope-budget-fix-v1/build/FUNCTION-DELTA.json

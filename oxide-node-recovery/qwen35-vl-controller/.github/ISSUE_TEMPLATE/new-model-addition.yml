@@ -1,0 +1,27 @@
+name: "\U0001F31F Model support"
+description: Submit a proposal/request to fix a currently not working model
+labels: [ "New model" ]
+
+body:
+  - type: textarea
+    id: description-request
+    validations:
+      required: true
+    attributes:
+      label: Model description
+      description: |
+        Put any and all important information relative to the model
+
+  - type: checkboxes
+    id: information-tasks
+    attributes:
+      label: Open source status & huggingface transformers.
+      description: |
+          Please note that if the model implementation isn't available in huggingface libraries (`transformers`), the model can't be loaded.
+      options:
+        - label: "The model implementation is available on transformers"
+        - label: "The model weights are available on huggingface-hub"
+        - label: "I verified that the model is currently not running in the latest version `pip install infinity_emb[all] --upgrade`"
+        - label: "I made the authors of the model aware that I want to use it with infinity_emb & check if they are aware of the issue."
+
+

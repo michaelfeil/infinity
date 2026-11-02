@@ -1,0 +1,116 @@
+{
+  "schema": "oxide-qwen35vl-pos-interp-check/v1",
+  "scope": "CPU-only, reads only 4 pos_embed rows (6144 bytes) needed by merged visual token 0",
+  "inputs": {
+    "pos_embed_tensor": "model.visual.pos_embed.weight",
+    "shape": [
+      576,
+      768
+    ],
+    "rows_read": [
+      0,
+      1,
+      24,
+      25
+    ],
+    "bytes_read": 6144
+  },
+  "geometry": {
+    "grid_thw": [
+      1,
+      30,
+      40
+    ],
+    "merge": 2,
+    "merged_grid_h_w": [
+      15,
+      20
+    ],
+    "row_scale": 0.7931034564971924,
+    "col_scale": 0.5897436141967773
+  },
+  "recipes": {
+    "native_bf16": "corners.sum(0): float32 accumulation of four bf16 corner products -> one bf16 rounding",
+    "oxide_device_pos_interp": "((p0+p2) rounded) + ((p1+p3) rounded) rounded: three bf16 roundings (F16/exact recipe)",
+    "note": "source: Native qwen3_vl_models.cpp:148-153; Oxide device qwen35vl.rs:~119-139; exact flag false for BF16 at qwen35_vl_device.rs:445"
+  },
+  "merged_token_0_patches": [
+    {
+      "patch_index": 0,
+      "grid_r": 0,
+      "grid_c": 0,
+      "r0": 0,
+      "r1": 0,
+      "c0": 0,
+      "c1": 0,
+      "dr": 0.0,
+      "dc": 0.0,
+      "channels_differ": 0,
+      "channels_total": 768,
+      "frac_differ": 0.0,
+      "max_abs": 0.0,
+      "mean_abs": 0.0,
+      "max_ulp": 0.0,
+      "p99_ulp": 0.0,
+      "cos": 1.0000000480886728
+    },
+    {
+      "patch_index": 1,
+      "grid_r": 0,
+      "grid_c": 1,
+      "r0": 0,
+      "r1": 0,
+      "c0": 0,
+      "c1": 1,
+      "dr": 0.0,
+      "dc": 0.5897436141967773,
+      "channels_differ": 0,
+      "channels_total": 768,
+      "frac_differ": 0.0,
+      "max_abs": 0.0,
+      "mean_abs": 0.0,
+      "max_ulp": 0.0,
+      "p99_ulp": 0.0,
+      "cos": 0.9999999359102004
+    },
+    {
+      "patch_index": 2,
+      "grid_r": 1,
+      "grid_c": 0,
+      "r0": 0,
+      "r1": 1,
+      "c0": 0,
+      "c1": 0,
+      "dr": 0.7931034564971924,
+      "dc": 0.0,
+      "channels_differ": 0,
+      "channels_total": 768,
+      "frac_differ": 0.0,
+      "max_abs": 0.0,
+      "mean_abs": 0.0,
+      "max_ulp": 0.0,
+      "p99_ulp": 0.0,
+      "cos": 0.999999856754739
+    },
+    {
+      "patch_index": 3,
+      "grid_r": 1,
+      "grid_c": 1,
+      "r0": 0,
+      "r1": 1,
+      "c0": 0,
+      "c1": 1,
+      "dr": 0.7931034564971924,
+      "dc": 0.5897436141967773,
+      "channels_differ": 176,
+      "channels_total": 768,
+      "frac_differ": 0.22916666666666666,
+      "max_abs": 0.0078125,
+      "mean_abs": 9.452054897944133e-05,
+      "max_ulp": 14.222222222222221,
+      "p99_ulp": 1.0523291373302115,
+      "cos": 0.9999966154521581
+    }
+  ],
+  "conclusion": "Patch 0 is degenerate (dr=dc=0) and identical; patches 1 and 2 have one degenerate axis (only two nonzero corners) and are also identical. Patch 3 (grid_r=1,grid_c=1) has four nonzero corners and differs in 176/768 channels at ~1 bf16 ulp, so merged visual token 0 (row 15, the first divergent row) is fed a different positional signal. For interior merged tokens all four patches are non-degenerate, so the effect is broad. This is a formula-level BF16 recipe mismatch, not a misindex."
+}

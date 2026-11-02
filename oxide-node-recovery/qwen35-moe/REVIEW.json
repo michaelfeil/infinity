@@ -1,0 +1,15 @@
+{
+  "schema": "oxide-qwen35-moe-factory-successor-review/v3",
+  "verdict": "PASS",
+  "safe_for_optimized_host_build_grant": true,
+  "critical_findings": [],
+  "fixed_since_v2": [
+    "pool shortcut now only Pool::Mean <=65535; Cls/LastToken/Splade use general/typed path"
+  ],
+  "cpu_checks": {
+    "oxide_all_targets": "737 passed, 0 failed, 133 ignored",
+    "qwen35_moe": "48 passed",
+    "clippy": "pass",
+    "fmt": "pass"
+  }
+}

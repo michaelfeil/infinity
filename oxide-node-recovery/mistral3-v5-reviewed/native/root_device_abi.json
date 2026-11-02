@@ -1,0 +1,190 @@
+{
+  "schema": "oxide-mistral3-device-abi/v1",
+  "base_commit": "e582ce90eb1544fcff081a495cb8fd4f3c17b112",
+  "note": "Additive exports for Root device composition coordinator. No FA4 source change; absolute heads are runtime-dynamic.",
+  "exports": [
+    {
+      "name": "infinity_rms_norm_3072_exact_vector",
+      "args": [
+        "u16* input",
+        "u16* weight",
+        "u16* out",
+        "u32 rows",
+        "u32 width",
+        "f32 eps"
+      ],
+      "grid": "(rows,1,1)",
+      "block": "(128,1,1)",
+      "source": "device/src/norm3072_exact_vector.rs"
+    },
+    {
+      "name": "infinity_add_rms_norm_3072_exact_vector",
+      "args": [
+        "u16* input",
+        "u16* residual",
+        "u16* weight",
+        "u16* out",
+        "u16* summed",
+        "u32 rows",
+        "u32 width",
+        "f32 eps"
+      ],
+      "grid": "(rows,1,1)",
+      "block": "(128,1,1)",
+      "source": "device/src/norm3072_exact_vector.rs"
+    },
+    {
+      "name": "infinity_mistral3_rope_tables_scaled_bf16",
+      "args": [
+        "f32* inverse",
+        "f32* cosine",
+        "f32* sine",
+        "u32 positions",
+        "u32 pairs",
+        "f32 scale"
+      ],
+      "grid": "blocks(positions*pairs)",
+      "block": "256",
+      "source": "device/src/mistral3.rs"
+    },
+    {
+      "name": "infinity_mistral3_model_dtype_mean_bf16",
+      "args": [
+        "u16* input",
+        "u32* cu_seqlens",
+        "u32* selected",
+        "f32* out",
+        "u32 count",
+        "u32 width"
+      ],
+      "grid": "(count, ceil(width/256), 1)",
+      "block": "(256,1,1)",
+      "source": "device/src/mistral3_model_mean.rs"
+    },
+    {
+      "name": "infinity_mistral3_llama4_query_scale_bf16",
+      "args": [
+        "u16* q",
+        "u16* scales",
+        "u32* positions",
+        "u32 tokens",
+        "u32 heads",
+        "u32 head_dim",
+        "u64 q_stride"
+      ],
+      "grid": "blocks(tokens*heads*head_dim)",
+      "block": "256",
+      "source": "device/src/mistral3.rs"
+    },
+    {
+      "name": "infinity_mistral3_rope2d_bf16",
+      "args": [
+        "u16* q",
+        "u16* k",
+        "u32* grids",
+        "u32* offsets",
+        "u32 image_count",
+        "u32 tokens",
+        "u32 heads",
+        "u32 head_dim",
+        "f32 theta"
+      ],
+      "source": "device/src/mistral3.rs"
+    },
+    {
+      "name": "infinity_mistral3_add_bf16",
+      "args": [
+        "u16* left",
+        "u16* right",
+        "u16* out",
+        "u32 elements"
+      ],
+      "source": "device/src/mistral3.rs"
+    },
+    {
+      "name": "infinity_mistral3_scatter_features_bf16",
+      "args": [
+        "u16* embeddings",
+        "u16* features",
+        "u32* indices",
+        "u32 rows",
+        "u32 width"
+      ],
+      "source": "device/src/mistral3.rs"
+    },
+    {
+      "name": "infinity_mistral3_pixels_to_bf16",
+      "args": [
+        "f32* pixels",
+        "u16* out",
+        "u32 elements"
+      ],
+      "source": "device/src/mistral3.rs"
+    },
+    {
+      "name": "infinity_mistral3_merge_gather_bf16",
+      "args": [
+        "u16* input",
+        "u32* source_rows",
+        "u16* out",
+        "u32 token_rows",
+        "u32 hidden",
+        "u32 merge"
+      ],
+      "source": "device/src/mistral3.rs"
+    },
+    {
+      "name": "infinity_mistral3_silu_mul_bf16",
+      "args": [
+        "u16* gate",
+        "u16* up",
+        "u16* out",
+        "u32 elements"
+      ],
+      "source": "device/src/mistral3.rs"
+    },
+    {
+      "name": "infinity_mistral3_gelu_bf16",
+      "args": [
+        "u16* input",
+        "u16* out",
+        "u32 elements",
+        "u32 mode"
+      ],
+      "source": "device/src/mistral3.rs"
+    },
+    {
+      "name": "infinity_mistral3_gelu_mul_bf16",
+      "args": [
+        "u16* gate",
+        "u16* up",
+        "u16* out",
+        "u32 elements",
+        "u32 mode"
+      ],
+      "grid": "blocks(elements)",
+      "block": "256",
+      "source": "device/src/mistral3.rs"
+    }
+  ],
+  "reused_public_exports": [
+    "infinity_gemma2_rope_tables_bf16",
+    "infinity_gemma2_mean_pool_bf16",
+    "infinity_rms_norm_rounded",
+    "infinity_add_rms_norm_rounded",
+    "infinity_silu_mul_f32",
+    "infinity_rope_neox",
+    "infinity_rope_neox_hfma",
+    "infinity_rms_norm",
+    "infinity_add_rms_norm",
+    "infinity_rms_norm_4096_vector",
+    "infinity_add_rms_norm_4096_vector",
+    "infinity_silu_mul_bf16_vector8_native"
+  ],
+  "fa4_reuse": {
+    "vision_global_d64": "bert index 0 for any absolute heads with 1:1 grouping and d64",
+    "mistral_global_d128": "causal index 2 / noncausal index 13 for GQA ratio 4 and d128",
+    "local": "same normalized causal-local mask class; extents are runtime scalars",
+    "absolute_heads": "runtime dynamic; not baked"
+  }
+}

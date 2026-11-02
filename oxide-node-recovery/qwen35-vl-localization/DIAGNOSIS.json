@@ -1,0 +1,603 @@
+{
+  "schema": "oxide-qwen35vl-numeric-localization/v1",
+  "scope": "CPU-only localization of the immutable paired Native/Oxide single-cats output; no GPU/Build/Torch.",
+  "inputs": {
+    "native_whole": {
+      "path": "/tmp/oxide-qwen35vl-sdk-map-policy-output/paired-0.8B-single-v4/Qwen3.5-0.8B-single-cats/native/native-whole.json",
+      "bytes": 6454087,
+      "sha256": "6ebdefe941c3811671f25cb1817009496bbe737e6a954d8a4bd90529611e876b"
+    },
+    "oxide": {
+      "path": "/tmp/oxide-qwen35vl-sdk-map-policy-output/paired-0.8B-single-v4/Qwen3.5-0.8B-single-cats/oxide.json",
+      "bytes": 7154967,
+      "sha256": "3f0e2cfd6411f985946fe41c3a80c0436e3c03a498d765bc83b590186e80fc6e"
+    },
+    "root_raw_diagnostic": {
+      "path": "/tmp/oxide-qwen35vl-sdk-map-policy-output/paired-0.8B-single-v4/Qwen3.5-0.8B-single-cats/root-raw-diagnostic.json",
+      "bytes": 366,
+      "sha256": "01c64aa733e456210139609a1d7749cae0a51f8416bab16d728d7fd8ab14595b"
+    },
+    "media": {
+      "path": "/tmp/oxide-qwen35vl-sdk-map-policy-output/paired-0.8B-single-v4/cases/single-cats.media.json",
+      "bytes": 12239,
+      "sha256": "04b39e8c8c042ad96f694dddf8bbdf36e55395af19e0c6392e4483630ecbb1b6"
+    },
+    "controller_report": {
+      "path": "/tmp/oxide-qwen35vl-sdk-map-policy-output/paired-0.8B-single-v4/report.json",
+      "bytes": 9570,
+      "sha256": "b17af85a9fd9d82779fe6fdebeba386b109065071e18f718289d33fafc8e766a"
+    },
+    "config_json": {
+      "path": "/workspace/model-performance/michaelfeil/onejev-perf/backbone-comparison-20261023/models/Qwen3.5-0.8B/config.json",
+      "bytes": 2907,
+      "sha256": "b90b86f35c8e6925ef74ee04d0e758f0a845c83a42089ad82bbaa948de9b4204"
+    },
+    "index_json": {
+      "path": "/workspace/model-performance/michaelfeil/onejev-perf/backbone-comparison-20261023/models/Qwen3.5-0.8B/model.safetensors.index.json",
+      "bytes": 50900,
+      "sha256": "d8a08838a613b025eb7952ed9db11696213e57e76a375661ef5c12f9dd5dcf4e"
+    }
+  },
+  "geometry": {
+    "tokens": 349,
+    "hidden": 1024,
+    "elements": 357376,
+    "input_ids_len": 349,
+    "vision_start_token_input_id": 151652,
+    "image_token_input_id": 151655,
+    "vision_end_token_input_id": 151653,
+    "divergent_from_row": 15,
+    "prefix_exact_rows": 15,
+    "exact_prefix_rows_0_to": 14,
+    "vision_start": 15,
+    "vision_end": 314,
+    "vision_token_count": 300,
+    "grid_thw": [
+      1,
+      30,
+      40
+    ],
+    "merge": 2,
+    "merged_grid_h_w": [
+      15,
+      20
+    ],
+    "visual_mapping": "vis_index = (row-token_start); grid_r=vis//20; grid_c=vis%20 (row-major merged grid)",
+    "suffix_first": 315,
+    "suffix_len": 34
+  },
+  "root_raw_echo": {
+    "scope": "Root diagnostic raw-only correspondence, canonical raw overrides pooled at same index; original controller failure preserved. No pooled parity claim.",
+    "elements": 357376,
+    "max_abs": 29.75,
+    "max_index": 316831,
+    "native_at_max": 29.75,
+    "oxide_at_max": 0.0,
+    "f32_mismatches": 325062,
+    "mean_abs": 0.23519036161011475,
+    "all_finite": true
+  },
+  "coverage": {
+    "native_keys": [
+      "0:all",
+      "0:pooled"
+    ],
+    "oxide_keys": [
+      "0:all"
+    ],
+    "keys_equal": false,
+    "native_only": [
+      "0:pooled"
+    ],
+    "oxide_only": [],
+    "canonical_raw_override_drops": [
+      "0:pooled"
+    ]
+  },
+  "numeric": {
+    "flat_reshape_ok": true,
+    "element_mismatches": 325062,
+    "element_mismatches_visual": 294037,
+    "visual_elements": 307200,
+    "exact_equal_frac_prefix": 1.0,
+    "exact_equal_frac_visual": 0.042848307291666665,
+    "exact_equal_frac_suffix": 0.10888671875,
+    "native_bf16_exact_frac": 1.0,
+    "oxide_bf16_exact_frac": 1.0,
+    "abs_diff_quantiles_visual": {
+      "0.5": 0.125,
+      "0.9": 0.5234375,
+      "0.99": 3.005878906250018,
+      "0.999": 6.889070312499825,
+      "1.0": 29.75
+    },
+    "abs_diff_quantiles_suffix": {
+      "0.5": 0.03515625,
+      "0.9": 0.1015625,
+      "0.99": 0.1875,
+      "1.0": 1.0390625
+    },
+    "ulp_units_visual": {
+      "0.5": 6.063157894736842,
+      "0.9": 46.99516908212561,
+      "0.99": 184.2222857142858,
+      "0.999": 247.55329949238578,
+      "1.0": 256.0
+    }
+  },
+  "ordering_diagnostics": {
+    "row_shift_cos": {
+      "-3": 0.22641015222786387,
+      "-2": 0.25471795629297117,
+      "-1": 0.32578265968273046,
+      "0": 0.9886049401609139,
+      "1": 0.32499398753976405,
+      "2": 0.257318677837932,
+      "3": 0.2265690252563498
+    },
+    "row_shift_argmax": "0",
+    "row_nn_identity_count": 295,
+    "row_nn_total": 300,
+    "row_nn_non_identity": [
+      {
+        "vis_row": 117,
+        "best_vis_row": 244,
+        "best_cos": 0.8719580578476583,
+        "identity_cos": 0.8508311318066172
+      },
+      {
+        "vis_row": 150,
+        "best_vis_row": 170,
+        "best_cos": 0.7054611904638927,
+        "identity_cos": 0.5189665690705738
+      },
+      {
+        "vis_row": 263,
+        "best_vis_row": 73,
+        "best_cos": 0.9199145521703267,
+        "identity_cos": 0.8474120827062086
+      },
+      {
+        "vis_row": 285,
+        "best_vis_row": 291,
+        "best_cos": 0.8758917343428232,
+        "identity_cos": 0.8161356338733706
+      },
+      {
+        "vis_row": 294,
+        "best_vis_row": 296,
+        "best_cos": 0.9284730255333563,
+        "identity_cos": 0.4079105194076085
+      }
+    ],
+    "hidden_col_nn_identity_count": 1024,
+    "hidden_col_total": 1024,
+    "layout_cos": {
+      "identity": 0.9886049401609139,
+      "transpose": 0.2131837859727205,
+      "flip_rows": 0.2910115310620061,
+      "flip_cols": 0.2454245650804619,
+      "reverse_flat": 0.20725312015861247,
+      "reverse_hidden_cols": 0.008258403445880694,
+      "roll_r1": 0.32136082618435136,
+      "roll_c1": 0.3248032575321973
+    },
+    "layout_best": "identity"
+  },
+  "grid_aggregates": {
+    "rows": [
+      {
+        "grid_r": 0,
+        "token_first": 15,
+        "token_last": 34,
+        "mean_abs": 0.08583483807742595,
+        "max_abs": 1.1875,
+        "cos": 0.9994639244828681
+      },
+      {
+        "grid_r": 1,
+        "token_first": 35,
+        "token_last": 54,
+        "mean_abs": 0.143863545358181,
+        "max_abs": 2.953125,
+        "cos": 0.9984469604958621
+      },
+      {
+        "grid_r": 2,
+        "token_first": 55,
+        "token_last": 74,
+        "mean_abs": 0.1945838186889887,
+        "max_abs": 3.6689453125,
+        "cos": 0.9964114256728711
+      },
+      {
+        "grid_r": 3,
+        "token_first": 75,
+        "token_last": 94,
+        "mean_abs": 0.30545740351080897,
+        "max_abs": 11.3125,
+        "cos": 0.9890794559448617
+      },
+      {
+        "grid_r": 4,
+        "token_first": 95,
+        "token_last": 114,
+        "mean_abs": 0.20003961436450482,
+        "max_abs": 3.5859375,
+        "cos": 0.9967186445172835
+      },
+      {
+        "grid_r": 5,
+        "token_first": 115,
+        "token_last": 134,
+        "mean_abs": 0.3383248869329691,
+        "max_abs": 10.0,
+        "cos": 0.9852573088918795
+      },
+      {
+        "grid_r": 6,
+        "token_first": 135,
+        "token_last": 154,
+        "mean_abs": 0.1421214908361435,
+        "max_abs": 1.40625,
+        "cos": 0.9989780342628743
+      },
+      {
+        "grid_r": 7,
+        "token_first": 155,
+        "token_last": 174,
+        "mean_abs": 0.4571411285549402,
+        "max_abs": 15.765625,
+        "cos": 0.9659451169275717
+      },
+      {
+        "grid_r": 8,
+        "token_first": 175,
+        "token_last": 194,
+        "mean_abs": 0.2235719857737422,
+        "max_abs": 8.02734375,
+        "cos": 0.99309884874844
+      },
+      {
+        "grid_r": 9,
+        "token_first": 195,
+        "token_last": 214,
+        "mean_abs": 0.1614557459950447,
+        "max_abs": 3.111328125,
+        "cos": 0.9982218024047071
+      },
+      {
+        "grid_r": 10,
+        "token_first": 215,
+        "token_last": 234,
+        "mean_abs": 0.16104807406663896,
+        "max_abs": 1.875,
+        "cos": 0.9985751040948992
+      },
+      {
+        "grid_r": 11,
+        "token_first": 235,
+        "token_last": 254,
+        "mean_abs": 0.25647079665213823,
+        "max_abs": 7.671875,
+        "cos": 0.9927336512561594
+      },
+      {
+        "grid_r": 12,
+        "token_first": 255,
+        "token_last": 274,
+        "mean_abs": 0.46650942638516424,
+        "max_abs": 11.7783203125,
+        "cos": 0.9767850247042672
+      },
+      {
+        "grid_r": 13,
+        "token_first": 275,
+        "token_last": 294,
+        "mean_abs": 0.40071795135736465,
+        "max_abs": 10.3828125,
+        "cos": 0.9827469292305787
+      },
+      {
+        "grid_r": 14,
+        "token_first": 295,
+        "token_last": 314,
+        "mean_abs": 0.4834761913865805,
+        "max_abs": 29.75,
+        "cos": 0.960077263219597
+      }
+    ],
+    "cols": [
+      {
+        "grid_c": 0,
+        "mean_abs": 0.16083549559116364,
+        "max_abs": 2.07470703125,
+        "cos": 0.9984624115691897
+      },
+      {
+        "grid_c": 1,
+        "mean_abs": 0.2979791772862275,
+        "max_abs": 8.02734375,
+        "cos": 0.9899005357921535
+      },
+      {
+        "grid_c": 2,
+        "mean_abs": 0.15577488740285236,
+        "max_abs": 2.625,
+        "cos": 0.9986198437808808
+      },
+      {
+        "grid_c": 3,
+        "mean_abs": 0.2759330670038859,
+        "max_abs": 10.3828125,
+        "cos": 0.9878229489120837
+      },
+      {
+        "grid_c": 4,
+        "mean_abs": 0.2780478621522586,
+        "max_abs": 11.3125,
+        "cos": 0.9918878907385787
+      },
+      {
+        "grid_c": 5,
+        "mean_abs": 0.2880795240402222,
+        "max_abs": 11.3125,
+        "cos": 0.9856186068729852
+      },
+      {
+        "grid_c": 6,
+        "mean_abs": 0.2196829949816068,
+        "max_abs": 3.5859375,
+        "cos": 0.9962804736391649
+      },
+      {
+        "grid_c": 7,
+        "mean_abs": 0.19238216678301492,
+        "max_abs": 2.8125,
+        "cos": 0.9973947078516122
+      },
+      {
+        "grid_c": 8,
+        "mean_abs": 0.34406218528747556,
+        "max_abs": 8.8828125,
+        "cos": 0.983211649418096
+      },
+      {
+        "grid_c": 9,
+        "mean_abs": 0.2088712235291799,
+        "max_abs": 2.953125,
+        "cos": 0.9975803231943761
+      },
+      {
+        "grid_c": 10,
+        "mean_abs": 0.47083997428417207,
+        "max_abs": 15.765625,
+        "cos": 0.9618151422135633
+      },
+      {
+        "grid_c": 11,
+        "mean_abs": 0.2502450207869212,
+        "max_abs": 7.125,
+        "cos": 0.9914891209530466
+      },
+      {
+        "grid_c": 12,
+        "mean_abs": 0.2872499704360962,
+        "max_abs": 7.3125,
+        "cos": 0.991243514648195
+      },
+      {
+        "grid_c": 13,
+        "mean_abs": 0.17953736086686453,
+        "max_abs": 1.453125,
+        "cos": 0.9982627964000056
+      },
+      {
+        "grid_c": 14,
+        "mean_abs": 0.4162409727772077,
+        "max_abs": 29.75,
+        "cos": 0.9600791616468761
+      },
+      {
+        "grid_c": 15,
+        "mean_abs": 0.2558785614868005,
+        "max_abs": 6.3125,
+        "cos": 0.9946809615940267
+      },
+      {
+        "grid_c": 16,
+        "mean_abs": 0.28797578712304434,
+        "max_abs": 7.828125,
+        "cos": 0.9904983236349054
+      },
+      {
+        "grid_c": 17,
+        "mean_abs": 0.5121463671326637,
+        "max_abs": 11.7783203125,
+        "cos": 0.961441438860046
+      },
+      {
+        "grid_c": 18,
+        "mean_abs": 0.1696243276198705,
+        "max_abs": 1.78125,
+        "cos": 0.9983585182510156
+      },
+      {
+        "grid_c": 19,
+        "mean_abs": 0.10943560401598612,
+        "max_abs": 0.703125,
+        "cos": 0.9993682584561493
+      }
+    ]
+  },
+  "blank_checks": {
+    "zero_rows_native": [],
+    "zero_rows_oxide": [],
+    "zero_cols_native": 0,
+    "zero_cols_oxide": 0,
+    "oxide_zero_native_nonzero": 250,
+    "native_zero_oxide_nonzero": 271,
+    "both_zero": 27
+  },
+  "pooled_semantics": {
+    "max_abs": 0.057477978375716,
+    "mean_abs": 0.003646330753165193,
+    "cos": 0.9999956809635847,
+    "pooled_vs_all_row0_cos": 0.05675767059654429
+  },
+  "pos_interp_evidence": {
+    "geometry_scope": {
+      "patch_total": 1200,
+      "patches_with_both_dr_dc_nonzero": 1064,
+      "patches_with_either_nonzero": 1196,
+      "degenerate_corner_patches": 4,
+      "merged_tokens_with_at_least_one_affected_patch": 280,
+      "merged_tokens_total": 300
+    },
+    "token0_check": {
+      "schema": "oxide-qwen35vl-pos-interp-check/v1",
+      "scope": "CPU-only, reads only 4 pos_embed rows (6144 bytes) needed by merged visual token 0",
+      "inputs": {
+        "pos_embed_tensor": "model.visual.pos_embed.weight",
+        "shape": [
+          576,
+          768
+        ],
+        "rows_read": [
+          0,
+          1,
+          24,
+          25
+        ],
+        "bytes_read": 6144
+      },
+      "geometry": {
+        "grid_thw": [
+          1,
+          30,
+          40
+        ],
+        "merge": 2,
+        "merged_grid_h_w": [
+          15,
+          20
+        ],
+        "row_scale": 0.7931034564971924,
+        "col_scale": 0.5897436141967773
+      },
+      "recipes": {
+        "native_bf16": "corners.sum(0): float32 accumulation of four bf16 corner products -> one bf16 rounding",
+        "oxide_device_pos_interp": "((p0+p2) rounded) + ((p1+p3) rounded) rounded: three bf16 roundings (F16/exact recipe)",
+        "note": "source: Native qwen3_vl_models.cpp:148-153; Oxide device qwen35vl.rs:~119-139; exact flag false for BF16 at qwen35_vl_device.rs:445"
+      },
+      "merged_token_0_patches": [
+        {
+          "patch_index": 0,
+          "grid_r": 0,
+          "grid_c": 0,
+          "r0": 0,
+          "r1": 0,
+          "c0": 0,
+          "c1": 0,
+          "dr": 0.0,
+          "dc": 0.0,
+          "channels_differ": 0,
+          "channels_total": 768,
+          "frac_differ": 0.0,
+          "max_abs": 0.0,
+          "mean_abs": 0.0,
+          "max_ulp": 0.0,
+          "p99_ulp": 0.0,
+          "cos": 1.0000000480886728
+        },
+        {
+          "patch_index": 1,
+          "grid_r": 0,
+          "grid_c": 1,
+          "r0": 0,
+          "r1": 0,
+          "c0": 0,
+          "c1": 1,
+          "dr": 0.0,
+          "dc": 0.5897436141967773,
+          "channels_differ": 0,
+          "channels_total": 768,
+          "frac_differ": 0.0,
+          "max_abs": 0.0,
+          "mean_abs": 0.0,
+          "max_ulp": 0.0,
+          "p99_ulp": 0.0,
+          "cos": 0.9999999359102004
+        },
+        {
+          "patch_index": 2,
+          "grid_r": 1,
+          "grid_c": 0,
+          "r0": 0,
+          "r1": 1,
+          "c0": 0,
+          "c1": 0,
+          "dr": 0.7931034564971924,
+          "dc": 0.0,
+          "channels_differ": 0,
+          "channels_total": 768,
+          "frac_differ": 0.0,
+          "max_abs": 0.0,
+          "mean_abs": 0.0,
+          "max_ulp": 0.0,
+          "p99_ulp": 0.0,
+          "cos": 0.999999856754739
+        },
+        {
+          "patch_index": 3,
+          "grid_r": 1,
+          "grid_c": 1,
+          "r0": 0,
+          "r1": 1,
+          "c0": 0,
+          "c1": 1,
+          "dr": 0.7931034564971924,
+          "dc": 0.5897436141967773,
+          "channels_differ": 176,
+          "channels_total": 768,
+          "frac_differ": 0.22916666666666666,
+          "max_abs": 0.0078125,
+          "mean_abs": 9.452054897944133e-05,
+          "max_ulp": 14.222222222222221,
+          "p99_ulp": 1.0523291373302115,
+          "cos": 0.9999966154521581
+        }
+      ],
+      "conclusion": "Patch 0 is degenerate (dr=dc=0) and identical; patches 1 and 2 have one degenerate axis (only two nonzero corners) and are also identical. Patch 3 (grid_r=1,grid_c=1) has four nonzero corners and differs in 176/768 channels at ~1 bf16 ulp, so merged visual token 0 (row 15, the first divergent row) is fed a different positional signal. For interior merged tokens all four patches are non-degenerate, so the effect is broad. This is a formula-level BF16 recipe mismatch, not a misindex."
+    }
+  },
+  "per_grid_row_csv": "/tmp/oxide-qwen35vl-numeric-localization-v1/per-row.csv",
+  "per_column_csv": "/tmp/oxide-qwen35vl-numeric-localization-v1/per-column.csv",
+  "top_mismatch_csv": "/tmp/oxide-qwen35vl-numeric-localization-v1/top-mismatch.csv",
+  "claims": [
+    "Rows 0..14 are bit-exact; row 15 is the first divergent row and equals vision_start (input_ids[15]=151655).",
+    "Row 15 is merged visual token 0 (grid_r=0,grid_c=0); its mRoPE axes are (15,15,15), identical to a text token at that index, so the only new input causing row-15 divergence is the merged visual embedding 0.",
+    "mRoPE span construction matches across sources: Native media_positions (native_whole_model_policy.py:201-234) and Oxide media_position_ids (qwen35_vl_text.rs:75-164) both map image token (t,r,c) to axes (next+t, next+r, next+c), advance next by max(merged_h,merged_w,t), and give row 15 axes (15,15,15); the CPU plan confirms axes (15..29),(15..34) over the visual span and suffix resumes at 35.",
+    "Reshape/flatten is correct: 349*1024=357376, row 0 bit-exact, hidden-column NN identity 1024/1024.",
+    "No row shift or permutation: shift 0 dominates (cos ~0.9886 vs <=0.33 for +-1); NN identity 295/300; the 5 non-identity rows are the catastrophically divergent rows, not a permutation.",
+    "No layout swap: transpose/flip/reverse all collapse to cos 0.2-0.3.",
+    "No blank rows/columns in either output; the sparse exact zeros are not whole-row/column coverage holes.",
+    "The coverage failure is separate: native rows are {(0,pooled),(0,all)} and oxide rows are {(0,all)}; canonical raw override drops (0,pooled).",
+    "The numeric seed is inside the vision tower / image-embedding path, not the text decoder: the text-only prefix is bit-exact and the fusion is a replace/memcpy.",
+    "Differences are bf16-ulp-scale and spread across the whole visual span; catastrophic tokens are high-magnitude outlier-activation tokens, consistent with numeric amplification.",
+    "Source-level formula divergence found: device pos_interp kernel always uses the F16/exact four-corner grouping (two extra bf16 rounds) while BF16 Native uses corners.sum(0) (single rounding); exact flag is false for BF16 and the device tower admits BF16 only.",
+    "Geometry scope of the pos_interp mismatch: 1064/1200 patches have both dr>0 and dc>0 (the regime where the two recipes differ), only 4 corner patches are degenerate, and 280/300 merged visual tokens contain at least one affected patch.",
+    "Token-0 check with actual checkpoint rows 0,1,24,25: patch 3 differs in 176/768 channels at up to 14 bf16 ulp; patches 0-2 are identical because a degenerate axis leaves only two nonzero corners. Merged visual token 0 (row 15) is therefore fed a different positional signal."
+  ],
+  "next_bounded_probe": {
+    "kind": "ONE bounded Root host later; only after the CPU-ready fix below is applied. No build/GPU now.",
+    "goal": "Confirm the pos_interp BF16 recipe is the dominant seed and bound any residual reduction-order difference.",
+    "cpu_ready_fix": "Oxide device tower admits BF16 only (qwen35_vl_device.rs:425-428 rejects non-BF16), and Native exact_vision requires F16 (qwen3_vl_models.cpp:343-345), so device pos_interp must use the BF16 single-rounded four-corner sum unconditionally. Replace the three-round exact grouping in device/src/qwen35vl.rs pos_interp with one round_bf16(c00+c10+c01+c11). The Rust host reference qwen35_vl_vision.rs:331-345 already implements this BF16 branch.",
+    "steps": [
+      "Apply the CPU-ready device pos_interp change (suggested-pos-interp-fix.md) and add a unit test asserting the device recipe equals the host BF16 branch on the actual four table rows.",
+      "Run exactly ONE paired host on single-cats with the same immutable inputs, then re-run analyze_localize.py on the new paired directory.",
+      "If visual-span max_abs still exceeds tolerance, run the existing tower-only capture (tower_probe vs tower-device) once to isolate residual GEMM-plan/LayerNorm reduction-order differences; do not repeat the full paired GPU run."
+    ],
+    "acceptance": "A single paired host rerun after the fix should collapse the visual-span max_abs from 29.75 toward the bf16-ulp floor; if it does not, the residual is the GEMM-plan/LayerNorm reduction order, not mapping."
+  }
+}

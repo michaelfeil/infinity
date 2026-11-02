@@ -1,0 +1,20 @@
+{
+  "schema": "oxide-qwen3-vl-e582-cpu-preflight/v1",
+  "marker": "QWEN3_VL_E582_CPU_PREFLIGHT_COMPLETE",
+  "container": "infinity-torch214-compare-sdk",
+  "cuda_visible_devices": null,
+  "sdk_checked": false,
+  "b66": null,
+  "b66_sha256": null,
+  "torch": null,
+  "cublaslt_version": null,
+  "abi_sizes": null,
+  "checkpoint": "/workspace/model-performance/michaelfeil/benchmark-overview/models/Qwen--Qwen3-VL-Embedding-8B",
+  "tensor_count": 749,
+  "total_bytes": 16289587680,
+  "fixtures": 8,
+  "native_consumer_sha256": "89bd6274a26c62fa719ad442d8c2dfeb06e195cb0731117cb005437127c1b671",
+  "oxide_consumer_sha256": "bd223911f59b29288c7a7e3f49ad2422ddc107d1b15202339dd4aaa6a82c6023",
+  "failures": [],
+  "status": "passed"
+}

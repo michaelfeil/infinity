@@ -1,0 +1,679 @@
+{
+  "active_process": null,
+  "comparison_progress": {
+    "plain": []
+  },
+  "comparisons": {
+    "plain": [
+      {
+        "cases": 15,
+        "exact_vectors": 714,
+        "pool": "cls",
+        "rows": [
+          {
+            "comparison_sha256": "e89d19d372666b496ec1daab4b4cf3ece0e984d9ecebb67e6121335a460c4c3d",
+            "exact_vectors": 2,
+            "id": "ragged7-pooled",
+            "vectors": 2
+          },
+          {
+            "comparison_sha256": "df21879eceb299dce2211af8e7c4007167df395fc158690ed1d78d001cb0c1a1",
+            "exact_vectors": 1,
+            "id": "single128-pooled",
+            "vectors": 1
+          },
+          {
+            "comparison_sha256": "288e5495dc5c8549596aee28e614fc91be5abe4325e3a16e943a8589da4d0b92",
+            "exact_vectors": 129,
+            "id": "ragged129-mixed",
+            "vectors": 129
+          },
+          {
+            "comparison_sha256": "4fe35ee850e3ed80fdb0d587f91d3e198be802c6c9703efbb8cf5e17d0c2ba61",
+            "exact_vectors": 1,
+            "id": "single1-raw",
+            "vectors": 1
+          },
+          {
+            "comparison_sha256": "787e8f6705f49320e630156b43d7992fdd2066e5a824eddcc2f6c0b574db45ef",
+            "exact_vectors": 7,
+            "id": "ragged7-raw",
+            "vectors": 7
+          },
+          {
+            "comparison_sha256": "40ba65ce5d83f461bb50ba179603d29994dd58eb43e59bba1c06527219c7f555",
+            "exact_vectors": 5,
+            "id": "ragged7-mixed",
+            "vectors": 5
+          },
+          {
+            "comparison_sha256": "be6d04070bd9227380e9af75883a1fd59d171fbc30322a499f123421f6573429",
+            "exact_vectors": 0,
+            "id": "empty-selections",
+            "vectors": 0
+          },
+          {
+            "comparison_sha256": "45126b123cb5250d2c28c22724639dfa7a363ef881afff25a979f83f678f94ee",
+            "exact_vectors": 23,
+            "id": "all-raw",
+            "vectors": 23
+          },
+          {
+            "comparison_sha256": "79b5deefd490793cdadddac93fefc5d6f1bcd96a4559cd54db2dc2a33ecd56b7",
+            "exact_vectors": 2,
+            "id": "subset-duplicate",
+            "vectors": 2
+          },
+          {
+            "comparison_sha256": "929df61901b6b945aedf0c2146b10f8c0191a5f86e7cfb4d80b8331d6c994050",
+            "exact_vectors": 18,
+            "id": "raw-overrides",
+            "vectors": 18
+          },
+          {
+            "comparison_sha256": "ec5aa829c4580f64035540dba48b4cdab96e388b3015e257accf48b02429d72b",
+            "exact_vectors": 5,
+            "id": "types-ignored",
+            "vectors": 5
+          },
+          {
+            "comparison_sha256": "4f25c8a1d7259b132f0110bfda968e568bf1c8dbe8bcbcc995546fd5431a38f4",
+            "exact_vectors": 1,
+            "id": "single33",
+            "vectors": 1
+          },
+          {
+            "comparison_sha256": "e2631d8b2702f5c0ba207126d9a78799b1bd0514d78066cee713c90617a4b8a7",
+            "exact_vectors": 1,
+            "id": "single511",
+            "vectors": 1
+          },
+          {
+            "comparison_sha256": "1de83b341c1911acbd1d323d96159568e2646bd7b4c27326536a1618603356b9",
+            "exact_vectors": 512,
+            "id": "single512-mixed",
+            "vectors": 512
+          },
+          {
+            "comparison_sha256": "c81debfe7736f7493ca74ba9f051d33646ebe629e95ecd8bcac84c84e646f927",
+            "exact_vectors": 7,
+            "id": "position40959",
+            "vectors": 7
+          }
+        ],
+        "vectors": 714
+      },
+      {
+        "cases": 15,
+        "exact_vectors": 714,
+        "pool": "mean",
+        "rows": [
+          {
+            "comparison_sha256": "d83f23ada4da80dfa8c230f68a877a247893cd5e1c6ea71eab42c40753a88504",
+            "exact_vectors": 2,
+            "id": "ragged7-pooled",
+            "vectors": 2
+          },
+          {
+            "comparison_sha256": "1da09ea7fa1a28aec7e4fab6a2482118c793151c9afc39bf66e23cf5516a7e81",
+            "exact_vectors": 1,
+            "id": "single128-pooled",
+            "vectors": 1
+          },
+          {
+            "comparison_sha256": "b71da47b3c6a656490b0a6dd87cc8d880d07c278c9a44710bce3998d7dff1dd1",
+            "exact_vectors": 129,
+            "id": "ragged129-mixed",
+            "vectors": 129
+          },
+          {
+            "comparison_sha256": "7518f53c78b3636fa0c913f93631efcfff3b12abb4288d5bc9bfcc04f69c4f7c",
+            "exact_vectors": 1,
+            "id": "single1-raw",
+            "vectors": 1
+          },
+          {
+            "comparison_sha256": "4cf48ed30db3dc24b25dd4d066bcc86c8500187b53cae0111eafdff84d6c84a9",
+            "exact_vectors": 7,
+            "id": "ragged7-raw",
+            "vectors": 7
+          },
+          {
+            "comparison_sha256": "a4c1cdf326dc2ce929ee3697163d385c853e362f93ff38496794016cee3b995b",
+            "exact_vectors": 5,
+            "id": "ragged7-mixed",
+            "vectors": 5
+          },
+          {
+            "comparison_sha256": "042a62934d8ce15245c61a8e52970556657b083543dfe368981464d83f8618f1",
+            "exact_vectors": 0,
+            "id": "empty-selections",
+            "vectors": 0
+          },
+          {
+            "comparison_sha256": "914fab01ac1287f9ce8b66fa782c8b9c5d5c3bb36b4413b0caba6fe62ba7cae6",
+            "exact_vectors": 23,
+            "id": "all-raw",
+            "vectors": 23
+          },
+          {
+            "comparison_sha256": "3667ad60620ec65946a4ba0d583b18e5ec47db231777ad55d9719bfa69489864",
+            "exact_vectors": 2,
+            "id": "subset-duplicate",
+            "vectors": 2
+          },
+          {
+            "comparison_sha256": "c97017c78a200ece89e916204b775667e0386d3aa79ae7c0e72e782fefcd831a",
+            "exact_vectors": 18,
+            "id": "raw-overrides",
+            "vectors": 18
+          },
+          {
+            "comparison_sha256": "ef20ab2758d6b8c0860df29bb6a164cf88385c5ea5575fda9406640d99d1015d",
+            "exact_vectors": 5,
+            "id": "types-ignored",
+            "vectors": 5
+          },
+          {
+            "comparison_sha256": "fdb15a34103729f9105d20d8ebd07b709049d53d1dfd9f0e51026f24719198d8",
+            "exact_vectors": 1,
+            "id": "single33",
+            "vectors": 1
+          },
+          {
+            "comparison_sha256": "0f574fb705b986d0a760d31b45df060b2adae6674b2629c1c63f9515bc506c93",
+            "exact_vectors": 1,
+            "id": "single511",
+            "vectors": 1
+          },
+          {
+            "comparison_sha256": "71952e1e648faf405ad7627e3c1c9fc0e0b67a8a31b9c0d91b9cc36b29a787d9",
+            "exact_vectors": 512,
+            "id": "single512-mixed",
+            "vectors": 512
+          },
+          {
+            "comparison_sha256": "92b34b5420160e39d575d432ed623784c4ff4aad60cd2216d3ae62d7236d22b2",
+            "exact_vectors": 7,
+            "id": "position40959",
+            "vectors": 7
+          }
+        ],
+        "vectors": 714
+      },
+      {
+        "cases": 15,
+        "exact_vectors": 714,
+        "pool": "last-token",
+        "rows": [
+          {
+            "comparison_sha256": "88e9f1902f64ada03b875b1389ccbb4c2d737e8ff15333e6e24cdff3cbd26786",
+            "exact_vectors": 2,
+            "id": "ragged7-pooled",
+            "vectors": 2
+          },
+          {
+            "comparison_sha256": "c19b183a13dbfd94c8bde9abb1074519cd942ef1d05cef68f3b92918cf33a997",
+            "exact_vectors": 1,
+            "id": "single128-pooled",
+            "vectors": 1
+          },
+          {
+            "comparison_sha256": "ff061a926f1b129320fbfa6843a72d93cd546a0c578f36c4d7828a2c686d538d",
+            "exact_vectors": 129,
+            "id": "ragged129-mixed",
+            "vectors": 129
+          },
+          {
+            "comparison_sha256": "b7ddad0ec8f06d9cf213e96a381d09742dd9f673313ce0714754a9c01206b0ce",
+            "exact_vectors": 1,
+            "id": "single1-raw",
+            "vectors": 1
+          },
+          {
+            "comparison_sha256": "4ef1dddcb109e55b67cd9912739aa2b652576d5276d9d0b8ed65200982281c72",
+            "exact_vectors": 7,
+            "id": "ragged7-raw",
+            "vectors": 7
+          },
+          {
+            "comparison_sha256": "b8a69ba8325875f0689519bd62e009bc9cfc2f6a21dc0c5fa9aa482a5da083e3",
+            "exact_vectors": 5,
+            "id": "ragged7-mixed",
+            "vectors": 5
+          },
+          {
+            "comparison_sha256": "5c29cbf72a0c184506c3b7e704504446b143184886375c3981e8d97dda09f45e",
+            "exact_vectors": 0,
+            "id": "empty-selections",
+            "vectors": 0
+          },
+          {
+            "comparison_sha256": "e86b1f717e45cc0b0bf490f7721470d0b122a4ee45db8532cdc3925b4d06eddb",
+            "exact_vectors": 23,
+            "id": "all-raw",
+            "vectors": 23
+          },
+          {
+            "comparison_sha256": "9ac00bcf9ad5783c9f206a01ff2c0fda47e6639cd82cdad2ec001f53e8f7db44",
+            "exact_vectors": 2,
+            "id": "subset-duplicate",
+            "vectors": 2
+          },
+          {
+            "comparison_sha256": "1d7280ddd49099969a1ad96e85e64216c786d6eb4e9d8cefc6dad16e934be79c",
+            "exact_vectors": 18,
+            "id": "raw-overrides",
+            "vectors": 18
+          },
+          {
+            "comparison_sha256": "32baf2a9a36e524fbd7bb06690df5ed96ba91e0d8d71378ed1bc2eacb9ed1741",
+            "exact_vectors": 5,
+            "id": "types-ignored",
+            "vectors": 5
+          },
+          {
+            "comparison_sha256": "fd54d3c2f75723cb45cce62fa087cea609bba9445a3dc390a04d7dd02ddeaaf7",
+            "exact_vectors": 1,
+            "id": "single33",
+            "vectors": 1
+          },
+          {
+            "comparison_sha256": "4fb07b63e3f9cf080d7f5f6ac1d4033fb42a1a372eb157eff34276db9a5f0f86",
+            "exact_vectors": 1,
+            "id": "single511",
+            "vectors": 1
+          },
+          {
+            "comparison_sha256": "692d2841eb167cc8e2b90313ab14f4bce6143521b4ec57cecb5db43a0abc3e15",
+            "exact_vectors": 512,
+            "id": "single512-mixed",
+            "vectors": 512
+          },
+          {
+            "comparison_sha256": "56806ae424b5829fd042980a2ef04986dd382a692629f7bc2c5ec5b51b532c3e",
+            "exact_vectors": 7,
+            "id": "position40959",
+            "vectors": 7
+          }
+        ],
+        "vectors": 714
+      }
+    ]
+  },
+  "derived_cls": {
+    "case_count": 15,
+    "cases": [
+      {
+        "comparison": "/tmp/oxide-all-model-feature-matrix-v1/qwen3-moe-serving-v1/root-plain-v3/derived/cls/ragged7-pooled-comparison.json",
+        "comparison_sha256": "a66c1a24d909380dced67b495698a09babc28bc36b4a13598d059bc82f1dc0fa",
+        "exact_vectors": 2,
+        "id": "ragged7-pooled",
+        "vectors": 2
+      },
+      {
+        "comparison": "/tmp/oxide-all-model-feature-matrix-v1/qwen3-moe-serving-v1/root-plain-v3/derived/cls/single128-pooled-comparison.json",
+        "comparison_sha256": "1e433e225dec5f05284a405d0ea6d431ee5deb5aafea47a1a09a344fbf1f3dae",
+        "exact_vectors": 1,
+        "id": "single128-pooled",
+        "vectors": 1
+      },
+      {
+        "comparison": "/tmp/oxide-all-model-feature-matrix-v1/qwen3-moe-serving-v1/root-plain-v3/derived/cls/ragged129-mixed-comparison.json",
+        "comparison_sha256": "930908f17b936295b2a6fb490cf93059a2055d431188e07c127c8bda55398f95",
+        "exact_vectors": 129,
+        "id": "ragged129-mixed",
+        "vectors": 129
+      },
+      {
+        "comparison": "/tmp/oxide-all-model-feature-matrix-v1/qwen3-moe-serving-v1/root-plain-v3/derived/cls/single1-raw-comparison.json",
+        "comparison_sha256": "8e259608233827e20e23d287811c8073a05d449d2a850ed011fb46eea49b22a4",
+        "exact_vectors": 1,
+        "id": "single1-raw",
+        "vectors": 1
+      },
+      {
+        "comparison": "/tmp/oxide-all-model-feature-matrix-v1/qwen3-moe-serving-v1/root-plain-v3/derived/cls/ragged7-raw-comparison.json",
+        "comparison_sha256": "d97ab245b4b52032b91219f9d548f8b25fc95829fc8b0ced4a8dbd6ac80bc3f6",
+        "exact_vectors": 7,
+        "id": "ragged7-raw",
+        "vectors": 7
+      },
+      {
+        "comparison": "/tmp/oxide-all-model-feature-matrix-v1/qwen3-moe-serving-v1/root-plain-v3/derived/cls/ragged7-mixed-comparison.json",
+        "comparison_sha256": "f76e12e535b022c3c503b23ddefb2cf094be960f6e0422fc6f1e2344bc476dd6",
+        "exact_vectors": 5,
+        "id": "ragged7-mixed",
+        "vectors": 5
+      },
+      {
+        "comparison": "/tmp/oxide-all-model-feature-matrix-v1/qwen3-moe-serving-v1/root-plain-v3/derived/cls/empty-selections-comparison.json",
+        "comparison_sha256": "3c0cece91c7cb864fb7dab4e63bc75be524981464c73ffa45e2c9f2b0624ecea",
+        "exact_vectors": 0,
+        "id": "empty-selections",
+        "vectors": 0
+      },
+      {
+        "comparison": "/tmp/oxide-all-model-feature-matrix-v1/qwen3-moe-serving-v1/root-plain-v3/derived/cls/all-raw-comparison.json",
+        "comparison_sha256": "3eb40754e11b99a2b611d32894656052b9af43a12af50d64f2545b1f66bd239a",
+        "exact_vectors": 23,
+        "id": "all-raw",
+        "vectors": 23
+      },
+      {
+        "comparison": "/tmp/oxide-all-model-feature-matrix-v1/qwen3-moe-serving-v1/root-plain-v3/derived/cls/subset-duplicate-comparison.json",
+        "comparison_sha256": "d13571feaab32ba6f50d2ce73da6f7b830b21f68ba7d31c62af9d74b84980a6c",
+        "exact_vectors": 2,
+        "id": "subset-duplicate",
+        "vectors": 2
+      },
+      {
+        "comparison": "/tmp/oxide-all-model-feature-matrix-v1/qwen3-moe-serving-v1/root-plain-v3/derived/cls/raw-overrides-comparison.json",
+        "comparison_sha256": "9b3b22f5913c6baad96f42f22fa0297099f2d7b19d2100c077913b42d97ec61c",
+        "exact_vectors": 18,
+        "id": "raw-overrides",
+        "vectors": 18
+      },
+      {
+        "comparison": "/tmp/oxide-all-model-feature-matrix-v1/qwen3-moe-serving-v1/root-plain-v3/derived/cls/types-ignored-comparison.json",
+        "comparison_sha256": "5f9484cdf1decc65f888d49bead08abfa2948d96e24bd444ef90d0c1842a26cd",
+        "exact_vectors": 5,
+        "id": "types-ignored",
+        "vectors": 5
+      },
+      {
+        "comparison": "/tmp/oxide-all-model-feature-matrix-v1/qwen3-moe-serving-v1/root-plain-v3/derived/cls/single33-comparison.json",
+        "comparison_sha256": "8b24706f53f4fbd759d534c796fecab0bf2a8de8cac2fd38fde9ab5659d55860",
+        "exact_vectors": 1,
+        "id": "single33",
+        "vectors": 1
+      },
+      {
+        "comparison": "/tmp/oxide-all-model-feature-matrix-v1/qwen3-moe-serving-v1/root-plain-v3/derived/cls/single511-comparison.json",
+        "comparison_sha256": "f8e48534a05e0c5c5cea9fc48b9b79ce751c9d3d8207c9b74c95268bba9e8265",
+        "exact_vectors": 1,
+        "id": "single511",
+        "vectors": 1
+      },
+      {
+        "comparison": "/tmp/oxide-all-model-feature-matrix-v1/qwen3-moe-serving-v1/root-plain-v3/derived/cls/single512-mixed-comparison.json",
+        "comparison_sha256": "70b6e6798f0364b120226e3d9bb43f41484ca9b705795f8b5049ff8f9ff44b20",
+        "exact_vectors": 512,
+        "id": "single512-mixed",
+        "vectors": 512
+      },
+      {
+        "comparison": "/tmp/oxide-all-model-feature-matrix-v1/qwen3-moe-serving-v1/root-plain-v3/derived/cls/position40959-comparison.json",
+        "comparison_sha256": "a7e82f884ab4e6c29de8e013b7a4fe2d7a4de39826abcec3144af833abee209e",
+        "exact_vectors": 7,
+        "id": "position40959",
+        "vectors": 7
+      }
+    ],
+    "exact_vectors": 714,
+    "failed_vectors": 0,
+    "mode": "initcheck",
+    "original_directory": "/tmp/oxide-all-model-feature-matrix-v1/qwen3-moe-serving-v1/root-initcheck-v2",
+    "original_directory_sha256": "27f8c0cca305c7b84ecaea5ac434648af29da945387ab1c38c1e65990b851a48",
+    "original_immutable": true,
+    "original_proof": "/tmp/oxide-all-model-feature-matrix-v1/qwen3-moe-serving-v1/V3-CLS-DERIVED-PROOF.json",
+    "original_proof_sha256": "a11b0811f7cfd573e4a0e804cbfc84c5c9399f23e256828c9e3311c99e68d200",
+    "pool": "cls",
+    "schema": "qwen3-moe-v3-cpu-derived-cls/v1",
+    "vectors": 714
+  },
+  "mode": "plain",
+  "native_45_rerun": false,
+  "pools": {
+    "plain": [
+      {
+        "command": [
+          "taskset",
+          "-c",
+          "184-191",
+          "/tmp/infinity-oxide-qwen3-moe-serving-v1-unified-target/release/unified_probe",
+          "--model",
+          "/tmp/infinity-oxide-bench/models/Qwen--Qwen3-30B-A3B-ad44e777",
+          "--pool",
+          "cls",
+          "--device",
+          "0",
+          "--dtype",
+          "bfloat16",
+          "--width",
+          "2048",
+          "--cases",
+          "/tmp/oxide-all-model-feature-matrix-v1/qwen3-moe-serving-v1/root-plain-v3/plain/cls/cases.json",
+          "--summary",
+          "/tmp/oxide-all-model-feature-matrix-v1/qwen3-moe-serving-v1/root-plain-v3/plain/cls/summary.json",
+          "--trace"
+        ],
+        "mode": "plain",
+        "parent_pid": 4148502,
+        "pid": 4148575,
+        "pool": "cls",
+        "process": {
+          "argv": [
+            "taskset",
+            "-c",
+            "184-191",
+            "/tmp/infinity-oxide-qwen3-moe-serving-v1-unified-target/release/unified_probe",
+            "--model",
+            "/tmp/infinity-oxide-bench/models/Qwen--Qwen3-30B-A3B-ad44e777",
+            "--pool",
+            "cls",
+            "--device",
+            "0",
+            "--dtype",
+            "bfloat16",
+            "--width",
+            "2048",
+            "--cases",
+            "/tmp/oxide-all-model-feature-matrix-v1/qwen3-moe-serving-v1/root-plain-v3/plain/cls/cases.json",
+            "--summary",
+            "/tmp/oxide-all-model-feature-matrix-v1/qwen3-moe-serving-v1/root-plain-v3/plain/cls/summary.json",
+            "--trace"
+          ],
+          "cwd": "/root",
+          "ended_utc": "2026-11-02T14:08:00Z",
+          "parent_argv": [
+            "/tmp/oxide-all-model-feature-matrix-v1/qwen3-moe-serving-v1/root/run_unified_v3.py",
+            "--mode",
+            "plain",
+            "--cpu-run",
+            "184-191",
+            "--output",
+            "/tmp/oxide-all-model-feature-matrix-v1/qwen3-moe-serving-v1/root-plain-v3"
+          ],
+          "parent_pid": 4148502,
+          "pid": 4148575,
+          "returncode": 0,
+          "started_utc": "2026-11-02T14:07:25Z",
+          "stderr": "/tmp/oxide-all-model-feature-matrix-v1/qwen3-moe-serving-v1/root-plain-v3/plain/cls/plain.stderr",
+          "stdout": "/tmp/oxide-all-model-feature-matrix-v1/qwen3-moe-serving-v1/root-plain-v3/plain/cls/plain.stdout"
+        },
+        "seconds": 34.549,
+        "stderr": "/tmp/oxide-all-model-feature-matrix-v1/qwen3-moe-serving-v1/root-plain-v3/plain/cls/plain.stderr",
+        "stderr_sha256": "a6bd267717c6575a14e09d0c563dfad9e36d10446d3b34c6e6ab76c11a62c2c6",
+        "stdout": "/tmp/oxide-all-model-feature-matrix-v1/qwen3-moe-serving-v1/root-plain-v3/plain/cls/plain.stdout",
+        "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "summary": "/tmp/oxide-all-model-feature-matrix-v1/qwen3-moe-serving-v1/root-plain-v3/plain/cls/summary.json",
+        "summary_sha256": "c6e558b4a33cf2d57b2bb737596f20ee985effa900745a661e89c921bcda015f",
+        "trace_lines": 32
+      },
+      {
+        "command": [
+          "taskset",
+          "-c",
+          "184-191",
+          "/tmp/infinity-oxide-qwen3-moe-serving-v1-unified-target/release/unified_probe",
+          "--model",
+          "/tmp/infinity-oxide-bench/models/Qwen--Qwen3-30B-A3B-ad44e777",
+          "--pool",
+          "mean",
+          "--device",
+          "0",
+          "--dtype",
+          "bfloat16",
+          "--width",
+          "2048",
+          "--cases",
+          "/tmp/oxide-all-model-feature-matrix-v1/qwen3-moe-serving-v1/root-plain-v3/plain/mean/cases.json",
+          "--summary",
+          "/tmp/oxide-all-model-feature-matrix-v1/qwen3-moe-serving-v1/root-plain-v3/plain/mean/summary.json",
+          "--trace"
+        ],
+        "mode": "plain",
+        "parent_pid": 4148502,
+        "pid": 4152667,
+        "pool": "mean",
+        "process": {
+          "argv": [
+            "taskset",
+            "-c",
+            "184-191",
+            "/tmp/infinity-oxide-qwen3-moe-serving-v1-unified-target/release/unified_probe",
+            "--model",
+            "/tmp/infinity-oxide-bench/models/Qwen--Qwen3-30B-A3B-ad44e777",
+            "--pool",
+            "mean",
+            "--device",
+            "0",
+            "--dtype",
+            "bfloat16",
+            "--width",
+            "2048",
+            "--cases",
+            "/tmp/oxide-all-model-feature-matrix-v1/qwen3-moe-serving-v1/root-plain-v3/plain/mean/cases.json",
+            "--summary",
+            "/tmp/oxide-all-model-feature-matrix-v1/qwen3-moe-serving-v1/root-plain-v3/plain/mean/summary.json",
+            "--trace"
+          ],
+          "cwd": "/root",
+          "ended_utc": "2026-11-02T14:08:36Z",
+          "parent_argv": [
+            "/tmp/oxide-all-model-feature-matrix-v1/qwen3-moe-serving-v1/root/run_unified_v3.py",
+            "--mode",
+            "plain",
+            "--cpu-run",
+            "184-191",
+            "--output",
+            "/tmp/oxide-all-model-feature-matrix-v1/qwen3-moe-serving-v1/root-plain-v3"
+          ],
+          "parent_pid": 4148502,
+          "pid": 4152667,
+          "returncode": 0,
+          "started_utc": "2026-11-02T14:08:01Z",
+          "stderr": "/tmp/oxide-all-model-feature-matrix-v1/qwen3-moe-serving-v1/root-plain-v3/plain/mean/plain.stderr",
+          "stdout": "/tmp/oxide-all-model-feature-matrix-v1/qwen3-moe-serving-v1/root-plain-v3/plain/mean/plain.stdout"
+        },
+        "seconds": 34.652,
+        "stderr": "/tmp/oxide-all-model-feature-matrix-v1/qwen3-moe-serving-v1/root-plain-v3/plain/mean/plain.stderr",
+        "stderr_sha256": "2ea0543d698fe2c47e041b3fbd10efabf68b5c782d415baff867351893ab2eb7",
+        "stdout": "/tmp/oxide-all-model-feature-matrix-v1/qwen3-moe-serving-v1/root-plain-v3/plain/mean/plain.stdout",
+        "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "summary": "/tmp/oxide-all-model-feature-matrix-v1/qwen3-moe-serving-v1/root-plain-v3/plain/mean/summary.json",
+        "summary_sha256": "7ffdaa225738f2bcb6a0cc2908d86d63bfc3fd0f08cab3216f2dd7a5f44100a2",
+        "trace_lines": 32
+      },
+      {
+        "command": [
+          "taskset",
+          "-c",
+          "184-191",
+          "/tmp/infinity-oxide-qwen3-moe-serving-v1-unified-target/release/unified_probe",
+          "--model",
+          "/tmp/infinity-oxide-bench/models/Qwen--Qwen3-30B-A3B-ad44e777",
+          "--pool",
+          "last-token",
+          "--device",
+          "0",
+          "--dtype",
+          "bfloat16",
+          "--width",
+          "2048",
+          "--cases",
+          "/tmp/oxide-all-model-feature-matrix-v1/qwen3-moe-serving-v1/root-plain-v3/plain/last-token/cases.json",
+          "--summary",
+          "/tmp/oxide-all-model-feature-matrix-v1/qwen3-moe-serving-v1/root-plain-v3/plain/last-token/summary.json",
+          "--trace"
+        ],
+        "mode": "plain",
+        "parent_pid": 4148502,
+        "pid": 4158392,
+        "pool": "last-token",
+        "process": {
+          "argv": [
+            "taskset",
+            "-c",
+            "184-191",
+            "/tmp/infinity-oxide-qwen3-moe-serving-v1-unified-target/release/unified_probe",
+            "--model",
+            "/tmp/infinity-oxide-bench/models/Qwen--Qwen3-30B-A3B-ad44e777",
+            "--pool",
+            "last-token",
+            "--device",
+            "0",
+            "--dtype",
+            "bfloat16",
+            "--width",
+            "2048",
+            "--cases",
+            "/tmp/oxide-all-model-feature-matrix-v1/qwen3-moe-serving-v1/root-plain-v3/plain/last-token/cases.json",
+            "--summary",
+            "/tmp/oxide-all-model-feature-matrix-v1/qwen3-moe-serving-v1/root-plain-v3/plain/last-token/summary.json",
+            "--trace"
+          ],
+          "cwd": "/root",
+          "ended_utc": "2026-11-02T14:09:11Z",
+          "parent_argv": [
+            "/tmp/oxide-all-model-feature-matrix-v1/qwen3-moe-serving-v1/root/run_unified_v3.py",
+            "--mode",
+            "plain",
+            "--cpu-run",
+            "184-191",
+            "--output",
+            "/tmp/oxide-all-model-feature-matrix-v1/qwen3-moe-serving-v1/root-plain-v3"
+          ],
+          "parent_pid": 4148502,
+          "pid": 4158392,
+          "returncode": 0,
+          "started_utc": "2026-11-02T14:08:37Z",
+          "stderr": "/tmp/oxide-all-model-feature-matrix-v1/qwen3-moe-serving-v1/root-plain-v3/plain/last-token/plain.stderr",
+          "stdout": "/tmp/oxide-all-model-feature-matrix-v1/qwen3-moe-serving-v1/root-plain-v3/plain/last-token/plain.stdout"
+        },
+        "seconds": 33.929,
+        "stderr": "/tmp/oxide-all-model-feature-matrix-v1/qwen3-moe-serving-v1/root-plain-v3/plain/last-token/plain.stderr",
+        "stderr_sha256": "3bd217d4273ab11187a85d922c40adbe154d3c837ffd941dbc5035cfbb330012",
+        "stdout": "/tmp/oxide-all-model-feature-matrix-v1/qwen3-moe-serving-v1/root-plain-v3/plain/last-token/plain.stdout",
+        "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "summary": "/tmp/oxide-all-model-feature-matrix-v1/qwen3-moe-serving-v1/root-plain-v3/plain/last-token/summary.json",
+        "summary_sha256": "1654b135785952ae870ef717f0d97a1447c74363b88c8687ba195f3af093a856",
+        "trace_lines": 32
+      }
+    ]
+  },
+  "preflight": {
+    "binary_sha256": "fd7edfac670edce06998dc7110c338f528854f31f97454b8d6b1020cce799a70",
+    "model_manifest_sha256": "55be60f3bdfa41310a73bde32d2fdd352a3f11c6e4f3c2cc4affa2f16550fc88",
+    "native_report_sha256": "17446c7c4db65b0c58a4a5bc0387102f1c3b165fe81480d2cb407249070fdb83",
+    "probe": {
+      "file_count": 5,
+      "source_sha256": "e8a41b9f108ea8b2a3cc15aba58bf5ad60614fd1e72f701de77db97164e6d321"
+    },
+    "worktree": {
+      "file_count": 653,
+      "source_sha256": "2a5d0a40d9dd0443618bfaba7563e2fd546331446729b8aa94e68a93012039ea"
+    }
+  },
+  "requested_pools": [
+    "cls",
+    "mean",
+    "last-token"
+  ],
+  "reuse_v2_cls": false,
+  "schema": "qwen3-moe-unified-root-run/v3",
+  "seconds": 107.706,
+  "started_utc": "2026-11-02T14:07:24Z",
+  "status": "passed"
+}

@@ -1,0 +1,75 @@
+{
+  "schema": "oxide-qwen35vl-consumer-harness/v1",
+  "status": "built-source-pinned-root-gate-ready",
+  "mode": "owning-lifecycle",
+  "source": {
+    "consumer/src/main.rs": "5d7a75d681a882be7149d4e543b9b861bcd5c674b0e416fd301a7d648f8d2a2b",
+    "consumer/Cargo.toml": "a77cd4ae50ffe935575966c116daa68dc5c616606ce4b190bfbed03324195320",
+    "consumer/Cargo.lock": "88606243e445b08e2976287963ae9ff1b1d6aa880d7082612589c7d2c88671c8"
+  },
+  "built_binary": {
+    "path": "target-opt3-noLTO/release/qwen35-vl-consumer",
+    "sha256": "3780facf61529822f33a4cf1416bc6c8723acc1fa2cd2c778f7bc54f2140d83b",
+    "contains_owning_lifecycle": false,
+    "note": "existing one-grant binary; preserved for paired whole-factory only"
+  },
+  "required_binary": {
+    "path": "/tmp/oxide-all-model-feature-matrix-v1/qwen35-vl-lifecycle-fix-v1/target-opt3-noLTO-harness/release/qwen35-vl-consumer",
+    "sha256": "21c5603ee6e9eff06dae5a4344d83fba43ee8bd0ed9a31d462417970c0bf297a",
+    "contains_owning_lifecycle": true,
+    "built": true,
+    "size_bytes": 5186936,
+    "profile": "release opt-level=3, lto=false, debug=0"
+  },
+  "exact_build_command": "CARGO_TARGET_DIR=target-opt3-noLTO-harness CARGO_BUILD_JOBS=4 CUDA_VISIBLE_DEVICES= CARGO_PROFILE_RELEASE_OPT_LEVEL=3 CARGO_PROFILE_RELEASE_LTO=false taskset -c 88-95 cargo build --release --offline --manifest-path consumer/Cargo.toml",
+  "harness_sequence": [
+    "ordinary factory OxideBackend submit_embed baseline",
+    "hold A and B",
+    "drop A uncalled",
+    "complete B and compare actual vectors",
+    "complete changed-shape valid next",
+    "reject invalid media typed preflight",
+    "complete recovery and compare"
+  ],
+  "non_claims": [
+    "no GPU execution",
+    "no Docker execution",
+    "no Torch CUDA execution",
+    "no device compile",
+    "no runtime quality/fence/canary",
+    "no math quality claim",
+    "no performance claim"
+  ],
+  "build": {
+    "attempts": [
+      {
+        "exit": 101,
+        "wall_seconds": 33.963,
+        "log": "logs/consumer-owning-lifecycle-build-attempt1.log",
+        "note": "compile errors fixed without behavior change"
+      },
+      {
+        "exit": 0,
+        "wall_seconds": 1.672,
+        "log": "logs/consumer-owning-lifecycle-build.log",
+        "note": "successful incremental build"
+      }
+    ],
+    "build_exit": 0,
+    "wall_seconds": 1.672,
+    "source_before_after_unchanged": true,
+    "old_binary_preserved": {
+      "path": "target-opt3-noLTO/release/qwen35-vl-consumer",
+      "sha256": "3780facf61529822f33a4cf1416bc6c8723acc1fa2cd2c778f7bc54f2140d83b",
+      "contains_owning_lifecycle": false,
+      "note": "existing one-grant binary; preserved for paired whole-factory only"
+    }
+  },
+  "history": {
+    "prebuild": {
+      "source_sha256": "0c4b3453ee71d238776009c5354634f6c1c563276834ccf42c330381851f59c8",
+      "status": "source-only-pending-independent-review-and-root-conditional-opt-grant",
+      "built": false
+    }
+  }
+}

@@ -1,0 +1,29 @@
+{
+  "status": "EMERGENCY_SOURCE_CHECKPOINT_REVIEW_PENDING_NO_NEW_WORK",
+  "base": "252789b05ea2e09c14971c04dfcce458f863fead",
+  "worktree": "/tmp/infinity-oxide-qwen3-h5120-public252-v1-worktree",
+  "patch": "/tmp/oxide-h5120-emergency-recovery-v1/h5120-public252-current.patch",
+  "patch_sha256": "0e0a009d969a872fd4e9e6d60e0f473733bdc27dade96c9c05eee37936b54dbb",
+  "changed_files": {
+    "libs/infinity-v3/backends/oxide/device/build.sh": "cec5b0651261f872a6aadddbc31fa9df0635f3c0e363ef30faf7730235887ede",
+    "libs/infinity-v3/backends/oxide/device/rms5120_aten_exports.txt": "c4d846304e6d35c9f165647cabe2fb8f8951423cced5165c98ba48e60d639e79",
+    "libs/infinity-v3/backends/oxide/device/src/main.rs": "3c0a96a7407a969a91a2cb7348f4d48b92396f444c1442110187316f25711a79",
+    "libs/infinity-v3/backends/oxide/device/src/rms5120_aten.rs": "a3fdcbcf538c12ed6eaeb28843e492f3fa7a058d7b631835693ee9e904642b88",
+    "libs/infinity-v3/backends/oxide/device/tests/test_build.py": "206bc50532286cf2d951c184cdcda6cb7347586e7e14dd59d7b082685e4c1653",
+    "libs/infinity-v3/backends/oxide/src/decoder.rs": "79194fcd1f48eb746d53649579fe3bb19f90fb422b3a0012f91450b610413298",
+    "libs/infinity-v3/backends/oxide/src/decoder_model.rs": "62cc9838548aa93c914c951bd3d08f315a61b52fa288da63ad10747e4dff633d"
+  },
+  "shared31_source": "/tmp/oxide-h5120-emergency-recovery-v1/fa4-canonical31-current.rs",
+  "shared31_source_sha256": "a0c939d1891f9bd44f653f8cd80d4ba7decd1a050705f7c17137f26ccf5d1a0e",
+  "shared31_not_yet_composed_into_worktree": true,
+  "host_initial_alltests": "668 passed; one new harness used embedding constructor on classifier and failed; fixed task-aware constructor then focused5/5 PASS",
+  "public_device100_mock13": "PASS",
+  "strict_final_alltargets": "NOT_YET_RUN_AFTER_SHARED31",
+  "optimized_host": "NOT_BUILT_NO_GRANT",
+  "device130_all3_freeze": "/tmp/oxide-device130-all3-v1/freeze.json",
+  "device130_all3_freeze_sha256": "f69175bff1b9ecb7d23fe704af202d61ad0510c6e1ae837f3bb2f103e68e0ce1",
+  "H5120_root20": "ALL20bitexact plain/mem/init perRoot, preserved oldgold",
+  "actual14B32B_weights_cached": false,
+  "no_main_changes": true,
+  "no_GPU_by_agent": true
+}

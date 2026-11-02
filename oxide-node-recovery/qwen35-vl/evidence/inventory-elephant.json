@@ -1,0 +1,16 @@
+{
+  "deepstack": [],
+  "model": "/workspace/model-performance/michaelfeil/elephant-1",
+  "model_type": "qwen3_5",
+  "mrope_section": [
+    11,
+    11,
+    10
+  ],
+  "rotary_dim": 64,
+  "text_model_type": "qwen3_5_text",
+  "text_tensors": 427,
+  "total_tensors": 760,
+  "vision_depth": 27,
+  "vision_tensors": 333
+}

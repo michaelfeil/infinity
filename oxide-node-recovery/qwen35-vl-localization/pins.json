@@ -1,0 +1,154 @@
+{
+  "schema": "oxide-qwen35vl-numeric-localization-pins/v1",
+  "read_only_inputs": {
+    "native_whole": {
+      "path": "/tmp/oxide-qwen35vl-sdk-map-policy-output/paired-0.8B-single-v4/Qwen3.5-0.8B-single-cats/native/native-whole.json",
+      "bytes": 6454087,
+      "sha256": "6ebdefe941c3811671f25cb1817009496bbe737e6a954d8a4bd90529611e876b"
+    },
+    "oxide": {
+      "path": "/tmp/oxide-qwen35vl-sdk-map-policy-output/paired-0.8B-single-v4/Qwen3.5-0.8B-single-cats/oxide.json",
+      "bytes": 7154967,
+      "sha256": "3f0e2cfd6411f985946fe41c3a80c0436e3c03a498d765bc83b590186e80fc6e"
+    },
+    "root_raw_diagnostic": {
+      "path": "/tmp/oxide-qwen35vl-sdk-map-policy-output/paired-0.8B-single-v4/Qwen3.5-0.8B-single-cats/root-raw-diagnostic.json",
+      "bytes": 366,
+      "sha256": "01c64aa733e456210139609a1d7749cae0a51f8416bab16d728d7fd8ab14595b"
+    },
+    "media": {
+      "path": "/tmp/oxide-qwen35vl-sdk-map-policy-output/paired-0.8B-single-v4/cases/single-cats.media.json",
+      "bytes": 12239,
+      "sha256": "04b39e8c8c042ad96f694dddf8bbdf36e55395af19e0c6392e4483630ecbb1b6"
+    },
+    "controller_report": {
+      "path": "/tmp/oxide-qwen35vl-sdk-map-policy-output/paired-0.8B-single-v4/report.json",
+      "bytes": 9570,
+      "sha256": "b17af85a9fd9d82779fe6fdebeba386b109065071e18f718289d33fafc8e766a"
+    },
+    "config_json": {
+      "path": "/workspace/model-performance/michaelfeil/onejev-perf/backbone-comparison-20261023/models/Qwen3.5-0.8B/config.json",
+      "bytes": 2907,
+      "sha256": "b90b86f35c8e6925ef74ee04d0e758f0a845c83a42089ad82bbaa948de9b4204"
+    },
+    "index_json": {
+      "path": "/workspace/model-performance/michaelfeil/onejev-perf/backbone-comparison-20261023/models/Qwen3.5-0.8B/model.safetensors.index.json",
+      "bytes": 50900,
+      "sha256": "d8a08838a613b025eb7952ed9db11696213e57e76a375661ef5c12f9dd5dcf4e"
+    }
+  },
+  "immutability": "All Root-failed outputs and both source trees were opened read-only; no source write, no build, no GPU, no Docker, no network, no Torch.",
+  "source_roots": {
+    "frozen_native_source": "/tmp/oxide-all-model-feature-matrix-v1/qwen35-vl-lifecycle-fix-v1",
+    "owned_oxide_source": "/tmp/oxide-qwen35vl-sdk-map-policy-v1",
+    "unchanged": true
+  },
+  "eight_rust_pins": {
+    "consumer/src/main.rs": {
+      "expected": "5d7a75d681a882be7149d4e543b9b861bcd5c674b0e416fd301a7d648f8d2a2b",
+      "source_sha256": "5d7a75d681a882be7149d4e543b9b861bcd5c674b0e416fd301a7d648f8d2a2b",
+      "owned_sha256": "5d7a75d681a882be7149d4e543b9b861bcd5c674b0e416fd301a7d648f8d2a2b"
+    },
+    "libs/infinity-v3/backends/oxide/src/lib.rs": {
+      "expected": "aeea32e693ea2d5120841fe4c28ae8527b8c1adcb09b008beab2815dde950721",
+      "source_sha256": "aeea32e693ea2d5120841fe4c28ae8527b8c1adcb09b008beab2815dde950721",
+      "owned_sha256": "aeea32e693ea2d5120841fe4c28ae8527b8c1adcb09b008beab2815dde950721"
+    },
+    "libs/infinity-v3/backends/oxide/src/qwen35_vl_device.rs": {
+      "expected": "1910837d81bdb0abc73a34c73c1879219b5baca7fe44bcb81fdb234d904ea5fb",
+      "source_sha256": "1910837d81bdb0abc73a34c73c1879219b5baca7fe44bcb81fdb234d904ea5fb",
+      "owned_sha256": "1910837d81bdb0abc73a34c73c1879219b5baca7fe44bcb81fdb234d904ea5fb"
+    },
+    "libs/infinity-v3/backends/oxide/src/qwen35_vl_engine.rs": {
+      "expected": "83fd2c8b3e233cbb6b42e2442900f809bacdc86d58b6f52932d363c54bb99b00",
+      "source_sha256": "83fd2c8b3e233cbb6b42e2442900f809bacdc86d58b6f52932d363c54bb99b00",
+      "owned_sha256": "83fd2c8b3e233cbb6b42e2442900f809bacdc86d58b6f52932d363c54bb99b00"
+    },
+    "libs/infinity-v3/backends/oxide/src/qwen35_vl_tests.rs": {
+      "expected": "c1f31d1622bdc548c512163a54802a47fe2bea8cd2f444090be32fe471ce5d0b",
+      "source_sha256": "c1f31d1622bdc548c512163a54802a47fe2bea8cd2f444090be32fe471ce5d0b",
+      "owned_sha256": "c1f31d1622bdc548c512163a54802a47fe2bea8cd2f444090be32fe471ce5d0b"
+    },
+    "libs/infinity-v3/backends/oxide/src/qwen35_vl_vision.rs": {
+      "expected": "b12143546b1ff7738cce854c060f33d4fb5db86a57cdfa9759c215d346a4b42e",
+      "source_sha256": "b12143546b1ff7738cce854c060f33d4fb5db86a57cdfa9759c215d346a4b42e",
+      "owned_sha256": "b12143546b1ff7738cce854c060f33d4fb5db86a57cdfa9759c215d346a4b42e"
+    },
+    "libs/infinity-v3/backends/oxide/device/src/main.rs": {
+      "expected": "c19ae20ff2ec668f1983b65f32992c7912ccca52d27b2c18d84b72503d71f6ae",
+      "source_sha256": "c19ae20ff2ec668f1983b65f32992c7912ccca52d27b2c18d84b72503d71f6ae",
+      "owned_sha256": "c19ae20ff2ec668f1983b65f32992c7912ccca52d27b2c18d84b72503d71f6ae"
+    },
+    "libs/infinity-v3/backends/oxide/device/src/qwen35vl.rs": {
+      "expected": "f7fd1a0165c15a8bc043d2c6010951449b17d2100a147e6fb305a89f034a477e",
+      "source_sha256": "f7fd1a0165c15a8bc043d2c6010951449b17d2100a147e6fb305a89f034a477e",
+      "owned_sha256": "f7fd1a0165c15a8bc043d2c6010951449b17d2100a147e6fb305a89f034a477e"
+    }
+  },
+  "binaries": {
+    "paired": {
+      "path": "/tmp/oxide-all-model-feature-matrix-v1/qwen35-vl-lifecycle-fix-v1/target-opt3-noLTO/release/qwen35-vl-consumer",
+      "sha256": "3780facf61529822f33a4cf1416bc6c8723acc1fa2cd2c778f7bc54f2140d83b"
+    },
+    "owning_life": {
+      "path": "/tmp/oxide-all-model-feature-matrix-v1/qwen35-vl-lifecycle-fix-v1/target-opt3-noLTO-harness/release/qwen35-vl-consumer",
+      "sha256": "21c5603ee6e9eff06dae5a4344d83fba43ee8bd0ed9a31d462417970c0bf297a"
+    }
+  },
+  "tools": {
+    "python": "3.12.3",
+    "numpy": "2.5.4",
+    "torch": "not used",
+    "gpu": "not used"
+  },
+  "derived_files": {
+    "DIAGNOSIS.json": {
+      "bytes": 20310,
+      "sha256": "7968a9a5368bf095d200db1b6766984de14a9b7d96d8c41a8e9f6f7c80b2faef"
+    },
+    "analyze_localize.py": {
+      "bytes": 20987,
+      "sha256": "ad7635e318acda186cae826138746ec8d8ae48f6f35cf3c7febd0a50bf27d8af"
+    },
+    "mathnotes.md": {
+      "bytes": 11289,
+      "sha256": "6c47bac7b73a5ef5940870e129fc4e6b42e9e101c46b99495c69b1631c1a2bf6"
+    },
+    "opencode.json": {
+      "bytes": 191,
+      "sha256": "d4c9f02a72edbbc626a8dbf555aee1f6169ec6a8a112f40e366d81163c8d6352"
+    },
+    "per-column.csv": {
+      "bytes": 87705,
+      "sha256": "7dd6234cac8074330d871ae7a318bf507138c6efd6781a2b6d6d6ee2cb6f9deb"
+    },
+    "per-row.csv": {
+      "bytes": 37432,
+      "sha256": "ddc8ca05a64bf305fa75ee5dccc1594a507597bc172017677fe1baeda4e375b1"
+    },
+    "pins.json": {
+      "bytes": 7096,
+      "sha256": "bc583a5e49583bc2699acbd53461b174f31fcd007c3a269a5628752f8bb58e9d"
+    },
+    "pos-interp-token0.json": {
+      "bytes": 3128,
+      "sha256": "86cf4e7cd5d45d84277287383dfb14d5dfaa378010860d1f872d6001a467e32f"
+    },
+    "pos_interp_check.py": {
+      "bytes": 5969,
+      "sha256": "da3a246ddea187e4164c855d9cd7f4d2b7e013032eb92ff3578f839d68f55f09"
+    },
+    "source-worker-vision-ops.md": {
+      "bytes": 18677,
+      "sha256": "ce16cf58c572b2a8b1ee1ec6df95e518f5b668d50fd94ba6bc543be60e1dafc6"
+    },
+    "suggested-pos-interp-fix.md": {
+      "bytes": 4062,
+      "sha256": "67f2d744a7c644e4abd6f5322ab2f9ac416eb4adfb69cf1d7e116d5fbe242704"
+    },
+    "top-mismatch.csv": {
+      "bytes": 2905,
+      "sha256": "9fdcae9ee1c67ac95f3a668146515af92317b5f5440b55da9edcf3e941601d1b"
+    }
+  }
+}

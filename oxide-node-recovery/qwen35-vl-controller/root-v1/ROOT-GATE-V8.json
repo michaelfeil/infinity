@@ -1,0 +1,166 @@
+{
+  "schema": "oxide-qwen35vl-root-gate/v2",
+  "status": "author-postbuild-metadata-ready-root-phases-pending",
+  "source_packet_commit": "2893497d",
+  "reviewed_source_commit": "72659d63a908a9279bccc7c791e182a029d4307e",
+  "source_commit": "2893497d",
+  "controller": {
+    "path": "root-v1/qwen35_vl_bounded_controller.py",
+    "sha256": "5542a8317154a2164df24a8a6090b3a3885056576378b5b868b24cc631444d54",
+    "pins_command": [
+      "python3",
+      "root-v1/qwen35_vl_bounded_controller.py",
+      "--phase",
+      "pins",
+      "--media",
+      "/tmp/oxide-all-model-feature-matrix-v1/qwen3-vl-v3/native-baseline/fixtures/fixtures.json"
+    ],
+    "sdk_controller_v2": {
+      "path": "root-v1/qwen35_vl_sdk_controller_v2.py",
+      "sha256": "9d0abf838cefab5adc1c753309ded37d183fae6803d79f43ac3384a6125dc441",
+      "per_case_retrieval": "checked rc; nonzero fails report before PASS"
+    }
+  },
+  "consumer": {
+    "paired_binary": {
+      "path": "/tmp/oxide-all-model-feature-matrix-v1/qwen35-vl-lifecycle-fix-v1/target-opt3-noLTO/release/qwen35-vl-consumer",
+      "sha256": "3780facf61529822f33a4cf1416bc6c8723acc1fa2cd2c778f7bc54f2140d83b",
+      "contains_owning_lifecycle": false
+    },
+    "life_binary": {
+      "path": "/tmp/oxide-all-model-feature-matrix-v1/qwen35-vl-lifecycle-fix-v1/target-opt3-noLTO-harness/release/qwen35-vl-consumer",
+      "sha256": "21c5603ee6e9eff06dae5a4344d83fba43ee8bd0ed9a31d462417970c0bf297a",
+      "contains_owning_lifecycle": true,
+      "built": true
+    },
+    "source": {
+      "consumer/src/main.rs": "5d7a75d681a882be7149d4e543b9b861bcd5c674b0e416fd301a7d648f8d2a2b",
+      "consumer/Cargo.toml": "a77cd4ae50ffe935575966c116daa68dc5c616606ce4b190bfbed03324195320",
+      "consumer/Cargo.lock": "88606243e445b08e2976287963ae9ff1b1d6aa880d7082612589c7d2c88671c8"
+    },
+    "exact_build_command": "CARGO_TARGET_DIR=target-opt3-noLTO-harness CARGO_BUILD_JOBS=4 CUDA_VISIBLE_DEVICES= CARGO_PROFILE_RELEASE_OPT_LEVEL=3 CARGO_PROFILE_RELEASE_LTO=false taskset -c 88-95 cargo build --release --offline --manifest-path consumer/Cargo.toml",
+    "harness_build": {
+      "record": "device-packet/CONSUMER-HARNESS.json",
+      "exit": 0,
+      "wall_seconds": 1.672,
+      "source_before_after_unchanged": true
+    }
+  },
+  "runtime": {
+    "kernels": {
+      "path": "/tmp/infinity-oxide-parity-20261101/device-union124-all3-v1/kernels",
+      "manifest_sha256": "56863d52270f04e2a72c07f0213295cb78cd003ec111239bef1f78e75ea720c5"
+    },
+    "fa4": {
+      "path": "/tmp/oxide-fa4-canonical26-derived-v4/bundle",
+      "sm_90_manifest_sha256": "0e4af6e1fd40714300649dd98e6eb31a0c59e9e3cb493b377de07d57d63916a9"
+    },
+    "gdn_raw": {
+      "path": "/tmp/infinity-oxide-parity-20261101/qwen35-gdn-foundation-v1/kernels",
+      "manifest_sha256": "f0b2a18d14c80eec9e1e881d87bff80c27408c77a07eb9a1039ed57548b74a7b"
+    },
+    "gdn_provider": {
+      "path": "/tmp/infinity-oxide-parity-20261101/qwen35-gdn-aot-compiled-root-v2"
+    },
+    "gdn_aux": {
+      "path": "/tmp/oxide-qwen35-gdn-aot-pack-v1/kernels"
+    }
+  },
+  "phases": {
+    "cpu_preflight": {
+      "root_only": true,
+      "docker_required": true,
+      "gpu": false,
+      "executed_by_author": false,
+      "command": [
+        "python3",
+        "root-v1/qwen35_vl_bounded_controller.py",
+        "--phase",
+        "cpu",
+        "--run",
+        "--output",
+        "/tmp/oxide-qwen35vl-sdk-output/cpu-postbuild"
+      ],
+      "output": "/tmp/oxide-qwen35vl-sdk-output/cpu-postbuild"
+    },
+    "paired_quality": {
+      "root_only": true,
+      "docker_required": true,
+      "gpu": 0,
+      "executed_by_author": false,
+      "requires": "paired binary whole-factory + Native whole + Oxide whole + strict nonempty comparison",
+      "command": [
+        "python3",
+        "root-v1/qwen35_vl_bounded_controller.py",
+        "--phase",
+        "paired",
+        "--run",
+        "--consumer",
+        "/tmp/oxide-all-model-feature-matrix-v1/qwen35-vl-lifecycle-fix-v1/target-opt3-noLTO/release/qwen35-vl-consumer",
+        "--media",
+        "/tmp/oxide-qwen35vl-sdk-output/cpu-postbuild/cases/single-cats.media.json",
+        "--output",
+        "/tmp/oxide-qwen35vl-sdk-output/paired-postbuild"
+      ],
+      "output": "/tmp/oxide-qwen35vl-sdk-output/paired-postbuild"
+    },
+    "owning_life": {
+      "root_only": true,
+      "docker_required": true,
+      "gpu": 0,
+      "executed_by_author": false,
+      "requires": "rebuilt harness binary (built, pinned below); source/harness PASS by hash",
+      "command": [
+        "python3",
+        "root-v1/qwen35_vl_bounded_controller.py",
+        "--phase",
+        "life",
+        "--run",
+        "--consumer",
+        "/tmp/oxide-all-model-feature-matrix-v1/qwen35-vl-lifecycle-fix-v1/target-opt3-noLTO-harness/release/qwen35-vl-consumer",
+        "--media",
+        "/tmp/oxide-qwen35vl-sdk-output/cpu-postbuild/cases/single-cats.media.json",
+        "--output",
+        "/tmp/oxide-qwen35vl-sdk-output/life-postbuild"
+      ],
+      "output": "/tmp/oxide-qwen35vl-sdk-output/life-postbuild"
+    }
+  },
+  "staging": {
+    "container": "infinity-torch214-compare-sdk",
+    "remote_base": "/tmp/oxide-qwen35vl-bounded",
+    "env_names": [
+      "INFINITY_OXIDE_KERNEL_MODULE",
+      "INFINITY_OXIDE_ATTENTION",
+      "INFINITY_FA4_ROOT",
+      "INFINITY_OXIDE_GDN_RAW_KERNELS",
+      "INFINITY_OXIDE_GDN_PROVIDER",
+      "INFINITY_OXIDE_GDN_AUX_KERNELS"
+    ],
+    "cp_policy": "every docker cp return code checked; consumer/media/fixtures/runtime staged to explicit remote paths; all outputs retrieved"
+  },
+  "non_claims": [
+    "no GPU execution",
+    "no Docker execution",
+    "no Torch CUDA execution",
+    "no device compile",
+    "no runtime quality/fence/canary",
+    "no math quality claim",
+    "no performance claim"
+  ],
+  "host_metadata_checks": {
+    "bounded_pins": "root-v1/out/bounded-pins-v8.json",
+    "bounded_pins_sha256": "b9abd5fa490c2efa05a397fb7fa75a982a1769b5d4cf6dad896e5076cfaba0a6",
+    "root_preflight": "root-v1/out/preflight-v9b.json",
+    "root_preflight_sha256": "ef7e51bc6cc5dbed40ba4336578b203d41b44f240950d7f7e85a19f2bdedce39",
+    "container_only_paths_verified_on_host": false,
+    "note": "b66/vendor are container paths; the SDK CPU phase validates them inside the existing container."
+  },
+  "history": {
+    "prebuild_harness": {
+      "source_sha256": "0c4b3453ee71d238776009c5354634f6c1c563276834ccf42c330381851f59c8",
+      "status": "source-only-pending",
+      "binary_built": false
+    }
+  }
+}

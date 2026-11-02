@@ -1,0 +1,145 @@
+{
+  "schema": "oxide-qwen35vl-lifecycle-fix-handoff/v3",
+  "status": "postbuild-owning-harness-built-root-gate-ready",
+  "predecessor": {
+    "path": "/tmp/oxide-all-model-feature-matrix-v1/qwen35-vl-full-v1",
+    "commit": "f0a868e8612e618d7a7d9ba48cca6f0ef23cbf8c",
+    "preserved": true
+  },
+  "fixes": {
+    "V3-A": "Qwen35VlPrepGuard owns Arc<Mutex<Qwen35VlRuntime>>, engine and io before first tower/rope enqueue; failed fence forgets runtime, closes io and engine.fail_closed",
+    "V3-B": "leaf Decision rejects non-empty Batch.multimodal (media channel is requests)",
+    "V3-C": "Qwen35VlInference records stream fence on Err; proven post-pack errors free normally, only unproven fences forget fusion/runtime",
+    "V3-D": "ensure_open rejects poisoned/closed backends before tower/rope work",
+    "V2-F1": "fusion also captures runtime Arc before enqueue; Drop quarantines rope/pins/spans/runtime on failed fence; runtime failed flag leaks tower/modules on later drop",
+    "V2-F2": "preflight_warm_decision runs before build_fusion in normal and leaf Decision routes",
+    "V2-F3": "removed unchecked ImagePatches::token_count from media preflight",
+    "M1": "Qwen35VL pos_interp rounds scale to BF16 before multiply and uses Native vertical (c00+c10)+(c01+c11) grouping; independent CPU rounding witness passes",
+    "M2": "new qwen35vl device leaf carries SPDX/copyright/attribution header and NOTICE.qwen35vl; build copies notice",
+    "F0/F1/F2/P1": "remain closed",
+    "service": "blocking Backend::submit/SlotPool::acquire preserved; no try_acquire",
+    "V4-F1": "leaf Decision builds fusion/prep under a scoped runtime guard; PrepGuard/Fusion/Owner use Qwen35VlFailure handles and never re-lock the runtime mutex, removing the self-deadlock",
+    "V4-B2": "ensure_open and closed-pool preflight run on normal embed, normal Decision, leaf embed and leaf Decision before tower/rope work",
+    "V4-B3": "leaf Decision rejects non-empty Batch.multimodal; media channel is requests",
+    "V4-B4": "Fusion/Owner failed-fence paths call the failure sink to close io and engine fail_closed, then forget runtime; no Arc leak without quarantine",
+    "V4-B5": "eight CPU tests against the used PrepGuard/Fusion/Qwen35VlInference helpers via FakeFence/FakeSink cover unproven fail-closed, proven no-close, owner unproven/cancel token retention, and proven pack-error token release; no mutex-held execution claim is made. No runtime-relock is source-reviewed: PrepGuard/Fusion/Owner failure paths call Qwen35VlFailure and never acquire the runtime mutex.",
+    "bounded_controller": "new root-v1/qwen35_vl_bounded_controller.py stages consumer/media/fixtures/runtime to explicit remote paths, checks every docker cp, retrieves all outputs, uses actual INFINITY_* env names and pinned union124/FA4/GDN paths; paired phase runs Native whole + Oxide whole + strict nonempty comparison",
+    "owning_lifecycle": "owning-lifecycle uses ordinary factory OxideBackend submit_embed on actual 0.8B config: baseline, hold A/B, uncalled drop A, complete B compare, changed shape, invalid media typed preflight, recovery compare; built postbuild from compile-only fixes (see consumer_harness/build)"
+  },
+  "tests": {
+    "all_targets": "646 passed; 0 failed; 135 ignored",
+    "actual_elephant_route": "pass",
+    "native_position_rounding_witness": "pass",
+    "uncalled_deferred_drop_fence": "pass",
+    "fmt": "pass",
+    "clippy": "pass",
+    "lib": "614 passed; 0 failed; 75 ignored",
+    "lifecycle_guard_witnesses": "8 pass",
+    "slot_pool_close": "covered by existing staging pool close/poison tests; production BackendFailureSink io.close is source-verified",
+    "mutex_self_lock": "source-reviewed only: no runtime mutex re-lock in PrepGuard/Fusion/Owner failure paths; no execution claim",
+    "cargo_log_sha256": "54db23b66e444613bdd08c40bb41c646f14eecc646fae48995bfaf911ea1016e",
+    "clippy_log_sha256": "732186322402325172940531d8d6d7cfac85dc902585b2bef6715ad6839dacfd",
+    "fmt_log_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "optimized_consumer_build": "exit 0; 39 s; binary sha 3780facf..."
+  },
+  "non_claims": [
+    "no GPU execution",
+    "no Docker execution",
+    "no Torch CUDA execution",
+    "no device compile",
+    "no runtime quality/fence/canary",
+    "no math quality claim",
+    "no performance claim"
+  ],
+  "held": "Root SDK CPU preflight, paired quality and owning-life phases pending; no runtime quality/fence/canary claim",
+  "independent_review": {
+    "scope": "normal serving ownership/preflight lifecycle",
+    "status": "SOURCE_PASS",
+    "commit": "72659d63a908a9279bccc7c791e182a029d4307e",
+    "path": "/tmp/oxide-vl-review-successors-qv35-v1/v7/REVIEW.md",
+    "non_claims": [
+      "no GPU quality/life/fence/canary"
+    ]
+  },
+  "optimized_host_consumer": {
+    "schema": "oxide-qwen35vl-consumer-pin/v1",
+    "path": "/tmp/oxide-all-model-feature-matrix-v1/qwen35-vl-lifecycle-fix-v1/target-opt3-noLTO/release/qwen35-vl-consumer",
+    "sha256": "3780facf61529822f33a4cf1416bc6c8723acc1fa2cd2c778f7bc54f2140d83b",
+    "profile": "release opt-level=3, lto=false, debug=0",
+    "build_env": {
+      "CARGO_BUILD_JOBS": "4",
+      "CUDA_VISIBLE_DEVICES": "",
+      "CARGO_PROFILE_RELEASE_OPT_LEVEL": "3",
+      "CARGO_PROFILE_RELEASE_LTO": "false",
+      "offline": true,
+      "cpus": "88-95"
+    },
+    "commands": [
+      "inventory",
+      "plan-full",
+      "whole-factory",
+      "native-whole/oxide-whole/pair-whole",
+      "tower-cpu",
+      "tower-device",
+      "lifetime",
+      "perf"
+    ],
+    "note": "incremental opt3/noLTO rebuild from frozen source 72659d63; build record device-packet/CONSUMER-BUILD.json; old predecessor binary preserved",
+    "build_record": "device-packet/CONSUMER-BUILD.json",
+    "build_exit": 0,
+    "wall_seconds": 39
+  },
+  "root_gate": {
+    "path": "root-v1/ROOT-GATE-V8.json",
+    "sha256": "b5ccaf3a01fe63d057d8597fac54bcc1cc5b28463815920bb596fe61ff61111e",
+    "status": "author-source-cpu-metadata-ready-root-phases-pending",
+    "sdk_pins_sha256": "1cf984892e0aef7c7bbd9d54123db915119d2f8b319ba82ca57a8dbd03313ea1"
+  },
+  "consumer_harness": {
+    "path": "device-packet/CONSUMER-HARNESS.json",
+    "sha256": "afb3854aef143ffe9faf638973d44fe4c1a7a1f118a5ce9d8aa9fb4bc918f1a4",
+    "mode": "owning-lifecycle",
+    "status": "built-source-pinned-root-gate-pending",
+    "required_binary": {
+      "path": "/tmp/oxide-all-model-feature-matrix-v1/qwen35-vl-lifecycle-fix-v1/target-opt3-noLTO-harness/release/qwen35-vl-consumer",
+      "sha256": "21c5603ee6e9eff06dae5a4344d83fba43ee8bd0ed9a31d462417970c0bf297a",
+      "contains_owning_lifecycle": true,
+      "built": true,
+      "size_bytes": 5186936,
+      "profile": "release opt-level=3, lto=false, debug=0"
+    },
+    "source_sha256": "5d7a75d681a882be7149d4e543b9b861bcd5c674b0e416fd301a7d648f8d2a2b"
+  },
+  "bounded_cpu_proof": {
+    "path": "root-v1/out/bounded-packet-cpu-proof.json",
+    "sha256": "75fd4864f5fd7c3db66234418d61bb8542c98f1017f5119c60611401c589f62a",
+    "checks": 17,
+    "status": "passed"
+  },
+  "sdk_controller_v2": {
+    "path": "root-v1/qwen35_vl_sdk_controller_v2.py",
+    "sha256": "9d0abf838cefab5adc1c753309ded37d183fae6803d79f43ac3384a6125dc441",
+    "per_case_retrieval": "checked; nonzero fails report"
+  },
+  "freeze_file_count": 1155,
+  "root_runtime_pins": {
+    "path": "device-packet/ROOT-RUNTIME-PINS.json",
+    "sha256": "c2231d109c0405fffa3c54ac1e576c32e21ce036924c69b0145a3ae78e87bc1a"
+  },
+  "postbuild": {
+    "binary_sha256": "21c5603ee6e9eff06dae5a4344d83fba43ee8bd0ed9a31d462417970c0bf297a",
+    "build_exit": 0,
+    "wall_seconds": 1.672,
+    "attempt1_exit": 101,
+    "attempt1_wall_seconds": 33.963,
+    "compile_fixes_only": true,
+    "old_binary_3780_preserved": true
+  },
+  "history": {
+    "prebuild_harness": {
+      "source_sha256": "0c4b3453ee71d238776009c5354634f6c1c563276834ccf42c330381851f59c8",
+      "status": "source-only-pending-independent-review-and-root-conditional-opt-grant",
+      "binary_built": false
+    }
+  }
+}

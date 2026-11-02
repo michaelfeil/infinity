@@ -1,0 +1,84 @@
+---
+name: libs/infinity_emb CI
+
+on:
+  release:
+    types: [published]
+  push:
+    branches:
+    - main
+    - dev
+    paths:
+      - 'libs/infinity_emb/**'
+      - 'libs/embed_package/**'
+      - '.github/workflows/ci.yaml'
+      - '.github/workflows/linting.yaml'
+      - '.github/workflows/test.yaml'
+      - '.github/workflows/poetry_setup.yaml'
+      - '.github/actions/**'
+  pull_request:
+    branches:
+    - main
+    - dev
+    paths:
+      - 'libs/infinity_emb/**'
+      - 'libs/embed_package/**'
+      - '.github/workflows/ci.yaml'
+      - '.github/workflows/linting.yaml'
+      - '.github/workflows/test.yaml'
+      - '.github/workflows/poetry_setup.yaml'
+      - '.github/actions/**'
+  schedule: # nightly
+    - cron: '0 0 * * *'
+  workflow_dispatch:  # Allows to trigger the workflow manually in GitHub UI
+
+# If another push to the same PR or branch happens while this workflow is still running,
+# cancel the earlier run in favor of the next run.
+#
+# There's no point in testing an outdated version of the code. GitHub only allows
+# a limited number of job runners to be active at the same time, so it's better to cancel
+# pointless jobs early so that more useful jobs can run sooner.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  POETRY_VERSION: "1.8.4"
+  WORKDIR: "libs/infinity_emb"
+
+jobs:
+  lint-infinity_emb:
+    if: github.event_name != 'release' || startsWith(github.event.release.tag_name, '0.') || startsWith(github.event.release.tag_name, 'v0.')
+    uses:
+      ./.github/workflows/linting.yaml
+    with:
+      working-directory: libs/infinity_emb
+    secrets: inherit
+
+  lint-embed_package:
+    if: github.event_name != 'release' || startsWith(github.event.release.tag_name, '0.') || startsWith(github.event.release.tag_name, 'v0.')
+    uses:
+      ./.github/workflows/linting.yaml
+    with:
+      working-directory: libs/embed_package
+      extra_poetry: "--with test,lint,codespell"
+    secrets: inherit
+
+  test-infinity_emb:
+    if: github.event_name != 'release' || startsWith(github.event.release.tag_name, '0.') || startsWith(github.event.release.tag_name, 'v0.')
+    uses:
+      ./.github/workflows/test.yaml
+    with:
+      working-directory: libs/infinity_emb
+      upload_coverage: true
+    secrets: inherit
+  
+  test-embed_package:
+    if: github.event_name != 'release' || startsWith(github.event.release.tag_name, '0.') || startsWith(github.event.release.tag_name, 'v0.')
+    uses:
+      ./.github/workflows/test.yaml
+    with:
+      working-directory: libs/embed_package
+      upload_coverage: false
+      extra_poetry: "--with test"
+    secrets: inherit

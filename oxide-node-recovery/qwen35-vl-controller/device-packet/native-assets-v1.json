@@ -1,0 +1,35 @@
+{
+  "schema": "oxide-qwen35vl-native-assets/v1",
+  "purpose": "Explicit host-to-remote fixture/media asset records. The controller builds each media manifest from the named fixture set, then writes only these named remote pixel paths. No arbitrary JSON path rewriting is performed.",
+  "fixture_set": {
+    "host_path": "/tmp/oxide-all-model-feature-matrix-v1/qwen3-vl-v3/native-baseline/fixtures/fixtures.json",
+    "sha256": "0190631e9389cf65a398534bdce0f4f457b4522dbcd3d192ef7c456321f24374"
+  },
+  "selected_cases": [
+    "single-cats",
+    "two-images",
+    "three-frame-cats"
+  ],
+  "assets": {
+    "single-cats.image0.f32": {
+      "host_path": "/tmp/oxide-all-model-feature-matrix-v1/qwen3-vl-v3/native-baseline/fixtures/single-cats.image0.f32",
+      "remote_name": "single-cats.image0.f32",
+      "sha256": "04f4f43be0af2177407a2733bcad9c94ffdfa8e200d71f29658f91bad0072e0b"
+    },
+    "two-images.image8.f32": {
+      "host_path": "/tmp/oxide-all-model-feature-matrix-v1/qwen3-vl-v3/native-baseline/fixtures/two-images.image8.f32",
+      "remote_name": "two-images.image8.f32",
+      "sha256": "04f4f43be0af2177407a2733bcad9c94ffdfa8e200d71f29658f91bad0072e0b"
+    },
+    "two-images.image9.f32": {
+      "host_path": "/tmp/oxide-all-model-feature-matrix-v1/qwen3-vl-v3/native-baseline/fixtures/two-images.image9.f32",
+      "remote_name": "two-images.image9.f32",
+      "sha256": "5d846b30d5dd1330f1801e6aa1d62966b36fae7b720395952b870096c7e2f5ab"
+    },
+    "three-frame.image0.f32": {
+      "host_path": "/tmp/oxide-all-model-feature-matrix-v1/qwen3-vl-v3/native-baseline/fixtures/three-frame.image0.f32",
+      "remote_name": "three-frame.image0.f32",
+      "sha256": "ea4c9c6c0428986bacfd151860f612b75a914062b45bc7adbfb1858374830d05"
+    }
+  }
+}

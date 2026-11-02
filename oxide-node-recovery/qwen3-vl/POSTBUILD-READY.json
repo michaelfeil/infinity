@@ -1,0 +1,330 @@
+{
+  "schema": "oxide-qwen3vl-rope-budget-postbuild-ready/v1",
+  "status": "READY_FOR_ROOT_RUST_ONLY_COLD_QUALITY_LIFE",
+  "review_pass": {
+    "verdict": "PASS",
+    "review_md": {
+      "path": "/tmp/oxide-qwen3vl-rope-budget-review-v1/REVIEW.md",
+      "sha256": "c883b2431ac12f974c13de875fbb41b317d4bebc799da6f30d18605ef268dec1",
+      "size_bytes": 9210
+    },
+    "review_json": {
+      "path": "/tmp/oxide-qwen3vl-rope-budget-review-v1/REVIEW.json",
+      "sha256": "e92a0ba72855db117c90b78750d31355a236cbd602499eea59e135c48293a646",
+      "size_bytes": 11354
+    },
+    "input_pins": {
+      "path": "/tmp/oxide-qwen3vl-rope-budget-review-v1/INPUT-PINS.json",
+      "sha256": "0936599825f70ddc5ad28b7b667149f0efe69849bcc7b0531949cacdb890b958",
+      "size_bytes": 6772
+    }
+  },
+  "source_freeze": {
+    "source_ready": {
+      "path": "/tmp/oxide-qwen3vl-rope-budget-fix-v1/SOURCE-READY.json",
+      "sha256": "a7953d82d1371edbfbf8619a144c79d0b81cd38509ef88966929b0c5b8c2e224",
+      "size_bytes": 18006
+    },
+    "source_freeze": {
+      "path": "/tmp/oxide-qwen3vl-rope-budget-fix-v1/SOURCE-FREEZE.json",
+      "sha256": "f9c6a6beae114b65e153b3af3d9f561d3de4f20141ccf5061f296eda91b205c8",
+      "size_bytes": 1898
+    },
+    "source_manifest": {
+      "path": "/tmp/oxide-qwen3vl-rope-budget-fix-v1/source-freeze.sha256",
+      "sha256": "0adca4bee57bc38b3b4f76579b96acef0dec66ee3e60d864a753dc46ab461370",
+      "size_bytes": 134525
+    },
+    "source_before": {
+      "decoder.rs": "28d022df0bd22181a8187bd7329588ae3c9c7453602e0b38c67b1dca4bc5644d",
+      "rotary.rs": "5ac97a7e119ece22f84a34b692162b1306e1850338c026d555489103817d910a",
+      "qwen3_vl_host_consumer.rs": "921a0e56bdadce4d2c9c921fccf612483d80b4e87964e8b10a9feceb28464aa2",
+      "SOURCE-READY.json": "a7953d82d1371edbfbf8619a144c79d0b81cd38509ef88966929b0c5b8c2e224",
+      "SOURCE-FREEZE.json": "f9c6a6beae114b65e153b3af3d9f561d3de4f20141ccf5061f296eda91b205c8"
+    },
+    "source_after": {
+      "decoder.rs": "28d022df0bd22181a8187bd7329588ae3c9c7453602e0b38c67b1dca4bc5644d",
+      "rotary.rs": "5ac97a7e119ece22f84a34b692162b1306e1850338c026d555489103817d910a",
+      "qwen3_vl_host_consumer.rs": "921a0e56bdadce4d2c9c921fccf612483d80b4e87964e8b10a9feceb28464aa2",
+      "SOURCE-READY.json": "a7953d82d1371edbfbf8619a144c79d0b81cd38509ef88966929b0c5b8c2e224",
+      "SOURCE-FREEZE.json": "f9c6a6beae114b65e153b3af3d9f561d3de4f20141ccf5061f296eda91b205c8"
+    },
+    "source_unchanged_across_build": true,
+    "no_source_changes_after_pass": true
+  },
+  "build": {
+    "status": "SUCCESS",
+    "first_compiler_failure": null,
+    "first_attempt_success": true,
+    "exit_code": 0,
+    "wall_seconds": 45,
+    "wall_seconds_source": {
+      "path": "/tmp/oxide-qwen3vl-rope-budget-fix-v1/proof/optimized-host-walltime.txt",
+      "sha256": "186433f1863b395353b6ac28246bc7c2c62bc1607a52d8f4fcca7ec6facfb5a1",
+      "size_bytes": 16
+    },
+    "command_array": [
+      "taskset",
+      "-c",
+      "72-79",
+      "cargo",
+      "build",
+      "--offline",
+      "--release",
+      "--config",
+      "profile.release.opt-level=3",
+      "--config",
+      "profile.release.lto=false",
+      "--config",
+      "profile.release.debug=1",
+      "--config",
+      "profile.release.codegen-units=16",
+      "--config",
+      "profile.release.debug-assertions=false",
+      "--config",
+      "profile.release.strip=\"none\"",
+      "-p",
+      "infinity-backend-oxide",
+      "--example",
+      "qwen3_vl_host_consumer"
+    ],
+    "command_script": {
+      "path": "/tmp/oxide-qwen3vl-rope-budget-fix-v1/build_once_after_pass.sh",
+      "sha256": "282653e4bb96183712df6a6b534810d73a34fb8fd433c6964f588577d3173832",
+      "size_bytes": 1461
+    },
+    "environment": {
+      "cpu": "72-79",
+      "jobs": 4,
+      "offline": true,
+      "cuda_visible_devices": "",
+      "target_dir": "/tmp/opencode/qwen3vl-rope-budget-fix-author-opt3-pass1-target",
+      "profile": "opt-level=3, lto=false, debug=1, codegen-units=16, debug-assertions=false, strip=\"none\"",
+      "only_target": "qwen3_vl_host_consumer example; no --all-targets"
+    },
+    "stdout_log": {
+      "path": "/tmp/oxide-qwen3vl-rope-budget-fix-v1/postbuild/build-stdout.log",
+      "sha256": "db458b4fb89bfe96c1f4278bd54c56af9502d048b150b858581e049eacca8d72",
+      "size_bytes": 4069
+    },
+    "build_log": {
+      "path": "/tmp/oxide-qwen3vl-rope-budget-fix-v1/proof/optimized-host-build.log",
+      "sha256": "9837903727195c3c8890df6bba16e4c805081bd9fa450add4f449409d763bd22",
+      "size_bytes": 3884
+    },
+    "binary_metadata": {
+      "path": "/tmp/oxide-qwen3vl-rope-budget-fix-v1/postbuild/binary-metadata.txt",
+      "sha256": "23a1720237ecf1df6a73038f93964cc5963cbac1068f7275a36b613a735fafcd",
+      "size_bytes": 4133
+    },
+    "target_binary": {
+      "path": "/tmp/opencode/qwen3vl-rope-budget-fix-author-opt3-pass1-target/release/examples/qwen3_vl_host_consumer",
+      "sha256": "a2c02adb32445d6bb36fd5d2056ce34d63af629ce83f83598cd64829d63de100",
+      "size_bytes": 24599072
+    }
+  },
+  "artifact": {
+    "unified_consumer": {
+      "path": "/tmp/oxide-qwen3vl-rope-budget-fix-v1/artifacts/qwen3_vl_host_consumer-a2c02adb",
+      "sha256": "a2c02adb32445d6bb36fd5d2056ce34d63af629ce83f83598cd64829d63de100",
+      "size_bytes": 24599072
+    },
+    "sha256": "a2c02adb32445d6bb36fd5d2056ce34d63af629ce83f83598cd64829d63de100",
+    "size_bytes": 24599072,
+    "build_id": "ee2161d7e08268867506db0337303f39bc1b7310",
+    "elf": "ELF 64-bit LSB pie executable, x86-64, dynamically linked, with debug_info, not stripped",
+    "contains_modes": [
+      "gpu-quality-life",
+      "gpu-owning-life",
+      "gpu-quality",
+      "gpu-lifecycle"
+    ],
+    "contains_helper": "decoder::rope_construction_budget"
+  },
+  "controller": {
+    "script": {
+      "path": "/tmp/oxide-qwen3vl-rope-budget-fix-v1/root-controller/controller_qv3_budget_life_v1.py",
+      "sha256": "a68a7ba693828b78f7c39a1f153e3d3d6acfd780c1a1bb8ea024b9eb1e3712c0",
+      "size_bytes": 29150
+    },
+    "pins": {
+      "path": "/tmp/oxide-qwen3vl-rope-budget-fix-v1/root-controller/CONTROLLER-PINS-v1.json",
+      "sha256": "5179e3cb66ca5065bf566897cf877c14d00a5a5568d1379120d3cfd2601627ee",
+      "size_bytes": 31575
+    },
+    "stage_paths": {
+      "path": "/tmp/oxide-qwen3vl-rope-budget-fix-v1/root-controller/STAGE-PATHS-v1.json",
+      "sha256": "9a7c1b707b1dc034e08814cc1297a342ce65cc2ed97c193c3ea73cb8f165aabd",
+      "size_bytes": 13149
+    },
+    "plan": {
+      "path": "/tmp/oxide-qwen3vl-rope-budget-fix-v1/root-controller/plan-quality-life-v1.json",
+      "sha256": "f931ce28dffbbeea705474e2ab8f702574f4174a30fcb116b761a9435824d58a",
+      "size_bytes": 4036
+    },
+    "focused_tests": {
+      "path": "/tmp/oxide-qwen3vl-rope-budget-fix-v1/root-controller/test_controller_qv3_budget_life_v1.py",
+      "sha256": "f77bbed7e00bfbc516c7667853cbc6d6961fb8d7669252d6cd0d54847963e67a",
+      "size_bytes": 6059
+    },
+    "focused_test_log": {
+      "path": "/tmp/oxide-qwen3vl-rope-budget-fix-v1/postbuild/controller-test.log",
+      "sha256": "5e5184a6e609bf4e19e80388a9d9412140230cf059d3411d33e9c556111f6022",
+      "size_bytes": 146
+    },
+    "preflight": {
+      "path": "/tmp/oxide-qwen3vl-rope-budget-fix-v1/postbuild/PREFLIGHT-v1.json",
+      "sha256": "92f07069e83e793826abf63b19a75307ae981ddf4acbc93e2c3759c4861cae15",
+      "size_bytes": 18586
+    },
+    "pins_sha256": "461072e593e83ce63c9e8d9c06aea29c98854a6ce9d770b1d38914e611d4200c",
+    "stage_entries": 41,
+    "stage_copied_entries": 17,
+    "stage_runtime_entries": 24,
+    "jobs": [
+      "quality-life-vectors",
+      "quality-compare-native-v6-gold",
+      "quality-owning-life-contract"
+    ],
+    "mode": "gpu-quality-life",
+    "one_cold_backend_load": true,
+    "no_native_job": true,
+    "no_broad_process_kill": true,
+    "inner_remote_guard": "native-b66-cpu-stage/remote_guard.py with 1800s deadline",
+    "host_deadline_seconds": 1860
+  },
+  "native_reuse": {
+    "native_v6_report": {
+      "path": "/tmp/oxide-qwen3vl-root-quality-v6/report.json",
+      "sha256": "baf895706410a8c253cc92ebf16865ab21de9bf9c48c9c0f174cab55ed9a1821",
+      "size_bytes": 11038
+    },
+    "native_v6_gold_results": {
+      "path": "/tmp/oxide-qwen3vl-root-quality-v6/native-quality/qwen3-vl-8b/results.json",
+      "sha256": "776c66cf0d0bccc6e6f1679ed3a28e197da8dac61135f5b329587558abd67dc2",
+      "size_bytes": 9968
+    },
+    "native_gold_observations": 8,
+    "native_gold_f32_files": 40,
+    "native_gold_dir": "/tmp/oxide-qwen3vl-root-quality-v6/native-quality/qwen3-vl-8b",
+    "native_job_in_plan": false,
+    "native_rerun": false,
+    "gold_reused": true
+  },
+  "runtime_paths": {
+    "proof": {
+      "path": "/tmp/oxide-qwen3vl-runtime-staging-v1/ROOT-STAGING-PROOF.json",
+      "sha256": "25377f58f90930d58e1b5197a9b4da4adde4fcdc2df0e26bd3e85cbfa02d9e1d",
+      "size_bytes": 2478
+    },
+    "count": 24,
+    "verified": true,
+    "kernels": {
+      "path": "/tmp/infinity-oxide-parity-20261101/device-union124-all3-v1/kernels",
+      "manifest_sha256": "56863d52270f04e2a72c07f0213295cb78cd003ec111239bef1f78e75ea720c5"
+    },
+    "fa4": {
+      "root": "/tmp/fa4-root",
+      "sm90_manifest_sha256": "6d4c580ea4965ef94c6379d88c62eb7ee09462409f21dc4fd81f73ee080e566d"
+    }
+  },
+  "failed_capsule_preserved": {
+    "report": {
+      "path": "/tmp/oxide-qwen3vl-root-oxide-quality-v6/report.json",
+      "sha256": "cf9548e94235df635ffa6c7464b63d626a41a36b01593097b05b44acab129959",
+      "size_bytes": 456
+    },
+    "touched": false
+  },
+  "exact_root_command": {
+    "argv": [
+      "python3",
+      "/tmp/oxide-qwen3vl-rope-budget-fix-v1/root-controller/controller_qv3_budget_life_v1.py",
+      "--phase",
+      "quality",
+      "--run",
+      "--run-id",
+      "quality-budget-life-v1-a2c02adb",
+      "--output",
+      "/tmp/oxide-qwen3vl-root-budget-life-v1"
+    ],
+    "shell": "CUDA_VISIBLE_DEVICES=0 python3 /tmp/oxide-qwen3vl-rope-budget-fix-v1/root-controller/controller_qv3_budget_life_v1.py --phase quality --run --run-id quality-budget-life-v1-a2c02adb --output /tmp/oxide-qwen3vl-root-budget-life-v1",
+    "output_must_be_fresh": "/tmp/oxide-qwen3vl-root-budget-life-v1",
+    "runs": "Rust GPU0 first, then host strict Native V6 gold compare, then host owning-life contract check",
+    "native_job": false,
+    "gpu_device": "CUDA_VISIBLE_DEVICES=0 inside the container job"
+  },
+  "constraints_observed": {
+    "no_gpu": true,
+    "no_docker": true,
+    "no_torch": true,
+    "no_network": true,
+    "no_device_compile": true,
+    "no_optimized_build_after_pass_guard": true,
+    "only_one_optimized_author_build": true,
+    "no_all_targets": true,
+    "no_root_main_composition": true,
+    "no_public_252789_apply": true,
+    "no_source_changes_after_pass": true,
+    "failed_capsule_preserved": true,
+    "native_gold_reused": true,
+    "no_performance_claim": true
+  },
+  "next": "Root runs exact_root_command when its GPU is free. Parent QV35 GPU job 67446 remains untouched.",
+  "comparator_tests": {
+    "log": {
+      "path": "/tmp/oxide-qwen3vl-rope-budget-fix-v1/postbuild/compare-tests.log",
+      "sha256": "ed8d0e13fa7abb81f564147088b3ec5f7f7735d097ad758af0b4f8123a5dd12b",
+      "size_bytes": 106
+    },
+    "result": "8 passed",
+    "script": {
+      "path": "/tmp/oxide-all-model-feature-matrix-v1/qwen-vl-current-v1/root-gate/test_compare_quality.py",
+      "sha256": "e25bba9df6bdfae57eede50be88a1817c4d4d10bc7980f0d3b00e20f0f3f862f",
+      "size_bytes": 6971
+    },
+    "no_gpu": true
+  },
+  "preserved_inputs": {
+    "v6_controller": {
+      "path": "/tmp/oxide-qwen3vl-native-loader-fix-v1/controller-v6/controller_v6.py",
+      "sha256": "8d3bae70e929d1b8c542a6cac9457f6101c6c16f57a4d8c28d39f475dbfda6f9",
+      "size_bytes": 19998
+    },
+    "v5_controller": {
+      "path": "/tmp/oxide-all-model-feature-matrix-v1/qwen-vl-current-v1/native-b66-cpu-stage/controller_v5.py",
+      "sha256": "1232f3e83a65fcca99fac3c88fc4e9ad33a8b8bc3d53b211beff81dd91034067",
+      "size_bytes": 19923
+    },
+    "runtime_proof": {
+      "path": "/tmp/oxide-qwen3vl-runtime-staging-v1/ROOT-STAGING-PROOF.json",
+      "sha256": "25377f58f90930d58e1b5197a9b4da4adde4fcdc2df0e26bd3e85cbfa02d9e1d",
+      "size_bytes": 2478
+    },
+    "frozen_snapshot": {
+      "path": "/tmp/oxide-all-model-feature-matrix-v1/qwen-vl-current-v1",
+      "commit": "027b359c6e0c5378cd07398b07b4435af3ee492d",
+      "untouched": true
+    },
+    "public_head": {
+      "path": "/tmp/infinity-plain-cuda",
+      "commit": "252789b05ea2e09c14971c04dfcce458f863fead",
+      "untouched": true
+    },
+    "quality_consumer_13c": {
+      "path": "/tmp/opencode/qwen-vl-host-consumer-quality-target/release/examples/qwen3_vl_host_consumer",
+      "sha256": "13c66c8477b2b894d2416d123d5fbc818a502c1d9895f3efff909952b9d731ce",
+      "size_bytes": 24298504
+    },
+    "root13c_027_immutable": true
+  },
+  "no_implicit_paths": {
+    "stage_manifest_entries": 41,
+    "copied_entries": 17,
+    "runtime_verified_entries": 24,
+    "globs_used": false,
+    "preflight_used_docker": false,
+    "preflight_used_gpu": false,
+    "preflight_path": "/tmp/oxide-qwen3vl-rope-budget-fix-v1/postbuild/PREFLIGHT-v1.json"
+  }
+}

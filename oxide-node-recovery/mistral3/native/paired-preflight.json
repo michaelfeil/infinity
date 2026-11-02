@@ -1,0 +1,37 @@
+{
+  "ok": true,
+  "errors": [],
+  "checkpoint": "/workspace/model-performance/michaelfeil/benchmark-overview/models/nvidia--Nemotron-3.5-Rerank-8B-BF16",
+  "tensor_count": 531,
+  "shard_count": 4,
+  "categories": {
+    "vision": 218,
+    "projector": 4,
+    "language": 308,
+    "score": 1
+  },
+  "config_sha256": "e1f442a21c464cf54259e7ca2ab09f6777f50a61fbf017efed8e6044894b4303",
+  "index_sha256": "e393acf4755990784568ec2bc8de5d67f94f36b86d056c370b090084e80ea51e",
+  "config_preserved_nested": {
+    "rope_parameters": {
+      "beta_fast": 32.0,
+      "beta_slow": 1.0,
+      "factor": 16.0,
+      "llama_4_scaling_beta": 0.1,
+      "mscale": 1.0,
+      "mscale_all_dim": 1.0,
+      "original_max_position_embeddings": 16384,
+      "rope_theta": 1000000.0,
+      "rope_type": "yarn",
+      "type": "yarn",
+      "apply_yarn_scaling": false
+    },
+    "llama_4_scaling": {
+      "beta": 0.1,
+      "original_max_position_embeddings": 16384
+    }
+  },
+  "payload_read": false,
+  "torch_imported": false,
+  "cuda_context_created": false
+}

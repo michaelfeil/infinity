@@ -1,0 +1,74 @@
+{
+  "schema": "oxide-qwen3-vl-v5-seal/v1",
+  "source_commit": "027b359c6e0c5378cd07398b07b4435af3ee492d",
+  "source_patch_sha256": "94965637d760dbfd642a41d36efe3142ad892933f795b37f3c8c80e5630e14ea",
+  "quality_binary": {
+    "path": "/tmp/opencode/qwen-vl-host-consumer-quality-target/release/examples/qwen3_vl_host_consumer",
+    "sha256": "13c66c8477b2b894d2416d123d5fbc818a502c1d9895f3efff909952b9d731ce"
+  },
+  "native_packet_v5": {
+    "path": "/tmp/oxide-all-model-feature-matrix-v1/qwen-vl-current-v1/native-b66-cpu-stage/Root-control-packet.native-v5.json",
+    "sha256": "ac90c550bb0acd068c18dbd5ed35b0b5de577ca663f528100c3a3c2f0ff81244",
+    "bytes": 324866
+  },
+  "native_packet_old_preserved": {
+    "path": "/tmp/oxide-all-model-feature-matrix-v1/qwen-vl-current-v1/root-gate/native/Root-control-packet.native.json",
+    "sha256": "6ba93ad0f3857e012c0ae0a9d5a9add9a21f40e10648be7cc4176bc9c4a49820",
+    "bytes": 324868
+  },
+  "packet_diff": {
+    "path": "/tmp/oxide-all-model-feature-matrix-v1/qwen-vl-current-v1/native-b66-cpu-stage/V5-PACKET-DIFF.json",
+    "sha256": "cd54053673fcab0c83d57f43ff1c112aef0c44b74367cbf92cab482d39279b1c",
+    "bytes": 1247
+  },
+  "controller_v5": {
+    "path": "/tmp/oxide-all-model-feature-matrix-v1/qwen-vl-current-v1/native-b66-cpu-stage/controller_v5.py",
+    "sha256": "1232f3e83a65fcca99fac3c88fc4e9ad33a8b8bc3d53b211beff81dd91034067",
+    "bytes": 19923
+  },
+  "controller_pins_v5": {
+    "path": "/tmp/oxide-all-model-feature-matrix-v1/qwen-vl-current-v1/native-b66-cpu-stage/CONTROLLER-PINS-v5.json",
+    "sha256": "9efb2b3a1138d36e0b819345c6103fa65dc8396ac9885766baead54898965b92",
+    "bytes": 8785
+  },
+  "controller_plan_cpu_v5": {
+    "path": "/tmp/oxide-all-model-feature-matrix-v1/qwen-vl-current-v1/native-b66-cpu-stage/CONTROLLER-PLAN-CPU-v5.json",
+    "sha256": "d4a3399231147fc512bb5ead957e9cabdeca844640beee5b68d864072c3333cc",
+    "bytes": 10110
+  },
+  "controller_plan_quality_v5": {
+    "path": "/tmp/oxide-all-model-feature-matrix-v1/qwen-vl-current-v1/native-b66-cpu-stage/CONTROLLER-PLAN-QUALITY-v5.json",
+    "sha256": "f48ab8709e35a20841ba69fb1e51c3f9d0b5873f7e59a50b45d944a2b3945009",
+    "bytes": 14673
+  },
+  "controller_v4_preserved": {
+    "path": "/tmp/oxide-all-model-feature-matrix-v1/qwen-vl-current-v1/native-b66-cpu-stage/controller_v4.py",
+    "sha256": "52188ae5b19eb6ce94ceb849f00dd315f33721b04baeb74ab9adbd1a39f43cc8",
+    "bytes": 19451
+  },
+  "policy": {
+    "source_required": "unchanged",
+    "native_production_max_tokens": 4096,
+    "native_entries": 4,
+    "native_reuse": 3,
+    "native_max_bytes": 536870912,
+    "native_captures": 8,
+    "oxide_graphs": false
+  },
+  "cpu_tests": {
+    "controller_v5": "5 passed",
+    "controller_v4": "4 passed",
+    "load_probe": "2 passed",
+    "compare_quality": "8 passed"
+  },
+  "root_cpu_fast_jobs": [
+    "cpu-bindings",
+    "cpu-oxide-batch"
+  ],
+  "default_cpu_whole_native_forward": false,
+  "non_claims": [
+    "No GPU/runtime/quality/performance claim by author",
+    "Other Native packets missing",
+    "No source/Rust/binary rebuild"
+  ]
+}

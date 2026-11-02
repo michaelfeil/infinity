@@ -1,0 +1,286 @@
+{
+  "schema": "oxide-qwen3vl-rope-budget-independent-review/v1",
+  "verdict": "PASS",
+  "verified_issues": [],
+  "reviewer": "opencode",
+  "date_utc": "2026-11-02",
+  "mode": "read-only independent source/used-helper/harness CPU review; no compile, GPU, CUDA, query, Torch, Docker, network, or input writes",
+  "inputs": {
+    "candidate": "/tmp/oxide-qwen3vl-rope-budget-fix-v1/candidate",
+    "source_ready": {
+      "path": "/tmp/oxide-qwen3vl-rope-budget-fix-v1/SOURCE-READY.json",
+      "sha256": "a7953d82d1371edbfbf8619a144c79d0b81cd38509ef88966929b0c5b8c2e224"
+    },
+    "source_freeze": {
+      "path": "/tmp/oxide-qwen3vl-rope-budget-fix-v1/SOURCE-FREEZE.json",
+      "sha256": "f9c6a6beae114b65e153b3af3d9f561d3de4f20141ccf5061f296eda91b205c8"
+    },
+    "source_freeze_manifest": {
+      "path": "/tmp/oxide-qwen3vl-rope-budget-fix-v1/source-freeze.sha256",
+      "sha256": "0adca4bee57bc38b3b4f76579b96acef0dec66ee3e60d864a753dc46ab461370",
+      "file_count": 1079,
+      "verified_complete": true
+    },
+    "frozen_snapshot": {
+      "path": "/tmp/oxide-all-model-feature-matrix-v1/qwen-vl-current-v1",
+      "commit": "027b359c6e0c5378cd07398b07b4435af3ee492d"
+    },
+    "public_head": {
+      "path": "/tmp/infinity-plain-cuda",
+      "commit": "252789b05ea2e09c14971c04dfcce458f863fead",
+      "working_tree_clean": true
+    },
+    "failed_report": {
+      "path": "/tmp/oxide-qwen3vl-root-oxide-quality-v6/report.json",
+      "sha256": "cf9548e94235df635ffa6c7464b63d626a41a36b01593097b05b44acab129959",
+      "preserved": true
+    },
+    "failed_consumer": {
+      "path": "/tmp/opencode/qwen-vl-host-consumer-quality-target/release/examples/qwen3_vl_host_consumer",
+      "sha256": "13c66c8477b2b894d2416d123d5fbc818a502c1d9895f3efff909952b9d731ce",
+      "preserved": true
+    },
+    "native_v6_report": {
+      "path": "/tmp/oxide-qwen3vl-root-quality-v6/report.json",
+      "sha256": "baf895706410a8c253cc92ebf16865ab21de9bf9c48c9c0f174cab55ed9a1821",
+      "returncode": 0,
+      "observations": 8,
+      "library_sha256": "b66d70b61b39e1bf0d565aca33bac7c5e21849677396ce5216f5baf73027d37e"
+    },
+    "native_gold_consumer": {
+      "path": "/tmp/opencode/qwen-vl-native-release-target/release/qwen3-vl-b66-consumer",
+      "sha256": "89bd6274a26c62fa719ad442d8c2dfeb06e195cb0731117cb005437127c1b671",
+      "reusable": true
+    }
+  },
+  "failure": {
+    "required_bytes": 134217984,
+    "limit_bytes": 134217728,
+    "geometry": {
+      "positions": 262144,
+      "head_dim": 128,
+      "table_bytes": 134217728,
+      "inverse_metadata_bytes": 256
+    },
+    "cause": "The decoder compared exact table plus inverse-frequency scratch against the bare 128 MiB table cap."
+  },
+  "production_change": {
+    "file": "libs/infinity-v3/backends/oxide/src/decoder.rs",
+    "old_sha256_frozen": "6850cbb961ae75c672eea2820cb8e2f5b3726bb71a56b0007b36cf47a898efe5",
+    "new_sha256_candidate": "28d022df0bd22181a8187bd7329588ae3c9c7453602e0b38c67b1dca4bc5644d",
+    "old_sha256_public": "13dcc849d07ca30f82dc8d51362b98db988614c1d0fcb23ed0ca4917a398fd51",
+    "new_sha256_public_patched": "62a2fcf3cd2e539f5eb2681aec9a7a269d92a1f540ec86f10b760dede85745ad",
+    "helper": "rope_construction_budget(head_dim)",
+    "helper_location": "decoder.rs:52",
+    "constructor_call_site": "decoder.rs:767",
+    "formula": "checked(ROPE_TABLE_BYTE_LIMIT + checked((head_dim / 2) * size_of::<f32>()))",
+    "table_cap_unchanged": true,
+    "allowance_is_exact_checked_metadata_only": true,
+    "overflow_policy": "typed SizeOverflow / Start errors",
+    "math_changed": false,
+    "max_position_changed": false,
+    "dtype_changed": false,
+    "initialization_changed": false,
+    "generic_rotary_helper_changed": false
+  },
+  "budget_math": {
+    "constructor_required": "checked(inverse_bytes + table_bytes)",
+    "effective_budget": "cap + inverse_bytes",
+    "equivalence": "required <= budget iff table_bytes <= cap",
+    "table_cap_bytes": 134217728,
+    "checks": {
+      "exact_262144_d128": {
+        "required": 134217984,
+        "budget": 134217984,
+        "accepted": true
+      },
+      "next_position_262145": {
+        "required": 134218496,
+        "budget": 134217984,
+        "accepted": false
+      },
+      "budget_minus_one": {
+        "required": 134217984,
+        "budget": 134217983,
+        "accepted": false
+      },
+      "multiply_overflow": "typed size error",
+      "add_overflow": "typed size error",
+      "helper_metadata_overflow": "typed error",
+      "tiny_d8_positions10": {
+        "table_bytes": 320,
+        "required": 336,
+        "accepted": true,
+        "payload_byte_identical_to_legacy": true
+      }
+    }
+  },
+  "used_helper": {
+    "failure_string_owner": "rotary.rs RotaryError::ByteBudgetExceeded Display",
+    "actual_helper": "rotary::BaseRopeTables::new",
+    "actual_constructor_private": "decoder::DecoderModel::new",
+    "actual_constructor_public": "decoder::DecoderModel::new_with_classifier",
+    "rotary_rs_sha256_candidate": "5ac97a7e119ece22f84a34b692162b1306e1850338c026d555489103817d910a",
+    "rotary_rs_sha256_frozen": "5ac97a7e119ece22f84a34b692162b1306e1850338c026d555489103817d910a",
+    "rotary_rs_sha256_public": "5ac97a7e119ece22f84a34b692162b1306e1850338c026d555489103817d910a",
+    "rotary_rs_byte_identical": true
+  },
+  "tests": {
+    "location": "decoder.rs",
+    "use_production_helper_and_real_constructor": true,
+    "not_mirrored_into_unused_helper_module": true,
+    "cases": [
+      "boundary 262144 d128 exact table plus 256-byte inverse",
+      "bare table cap still rejects the same table",
+      "one position over cap rejected",
+      "budget-minus-one rejected",
+      "multiplication overflow",
+      "add overflow",
+      "helper metadata overflow",
+      "tiny geometry byte-identical to legacy"
+    ],
+    "existing_gte_budget_test_unchanged": true
+  },
+  "patch_scope": {
+    "private_decoder": {
+      "path": "/tmp/oxide-qwen3vl-rope-budget-fix-v1/patches/decoder-rope-budget-private.patch",
+      "sha256": "8f0fbd782ad5c81db131d33ec85b7a5d4adcd3eb9b4591af8a235c5bf29cac96",
+      "applies_to": "027b359 decoder 6850cbb9",
+      "result_sha256": "28d022df0bd22181a8187bd7329588ae3c9c7453602e0b38c67b1dca4bc5644d"
+    },
+    "public_decoder": {
+      "path": "/tmp/oxide-qwen3vl-rope-budget-fix-v1/patches/decoder-rope-budget-public.patch",
+      "sha256": "63b6c34e9ec5697e5f17a5be4e2804a425f9980a2e745f2048d898ea75623b14",
+      "applies_to": "public 252789 decoder 13dcc849",
+      "result_sha256": "62a2fcf3cd2e539f5eb2681aec9a7a269d92a1f540ec86f10b760dede85745ad",
+      "matches_build_public_decoder": true
+    },
+    "harness": {
+      "path": "/tmp/oxide-qwen3vl-rope-budget-fix-v1/patches/qwen3_vl_host_consumer-owning-life.patch",
+      "sha256": "8fa61be422ec4afd31d8a04ac2eae18e8305c8820dfcf5f6d0d0f5a9cfba15e4",
+      "applies_to": "027b359 consumer bfcd6a0c",
+      "result_sha256": "921a0e56bdadce4d2c9c921fccf612483d80b4e87964e8b10a9feceb28464aa2"
+    },
+    "public_patch_is_function_only": true,
+    "obsolete_private_whole_file_copy": false,
+    "function_delta_sha256": "ab4ec5f42e9d949ed8c5cbf3b0debc738c8150c82d02ec9e7345ed6ebd7fa9b9"
+  },
+  "source_integrity": {
+    "only_intended_files_differ": true,
+    "differing_files": [
+      "libs/infinity-v3/backends/oxide/src/decoder.rs",
+      "libs/infinity-v3/backends/oxide/examples/qwen3_vl_host_consumer.rs"
+    ],
+    "public_head_clean": true,
+    "frozen_production_source_pins_unchanged": true,
+    "rotary_unchanged_in_all_trees": true,
+    "failed_capsule_preserved": true,
+    "no_input_writes_by_reviewer": true
+  },
+  "host_consumer": {
+    "file": "libs/infinity-v3/backends/oxide/examples/qwen3_vl_host_consumer.rs",
+    "sha256_candidate": "921a0e56bdadce4d2c9c921fccf612483d80b4e87964e8b10a9feceb28464aa2",
+    "mode": "gpu-quality-life",
+    "one_cold_model_load": true,
+    "backend_constructions": 1,
+    "quality_contract_unchanged": true,
+    "pools": [
+      "Cls",
+      "Mean",
+      "LastToken"
+    ],
+    "raw_f32": true,
+    "all_8_baseline_vectors": true,
+    "held_a": "single-cats",
+    "held_b": "varying-shapes",
+    "held_geometry_different": true,
+    "drop_a_without_complete": true,
+    "b_bit_exact_against_ordinary_baseline": true,
+    "next_changed_shape_exact_against_its_baseline": true,
+    "zero_selector_invalid_media_typed_preflight": true,
+    "recovery_exact_against_its_baseline": true,
+    "actual_backend_submit_route": "Backend::submit_embed -> Qwen3VlEngine::submit",
+    "fake_gpu_or_tower_only": false,
+    "normal_blocking_slot_pool": true,
+    "third_submit_while_two_held": false,
+    "overloaded_claim": false,
+    "owner_resources_retained_through_drop_and_errors": true,
+    "per_call_weight_reupload": false,
+    "new_branch_and_loop_error_propagation": "all fallible branches use ?; unexpected malformed Ok is completed then still fails the typed check"
+  },
+  "cpu_proof": {
+    "re_executed_by_reviewer": false,
+    "reason": "read-only review; no compile allowed",
+    "logs_match_source_ready": true,
+    "focused_decoder": {
+      "passed": 3,
+      "failed": 0
+    },
+    "oxide_lib": {
+      "passed": 489,
+      "failed": 0,
+      "ignored": 56
+    },
+    "host_consumer_contract": {
+      "passed": 3,
+      "failed": 0
+    },
+    "factory": {
+      "passed": 22,
+      "failed": 0
+    },
+    "real_fixtures": {
+      "passed": 1,
+      "failed": 0
+    },
+    "fmt": "pass",
+    "clippy_all_targets_d_warnings": "pass",
+    "debug_example_build": "pass",
+    "public_head_focused": {
+      "passed": 3,
+      "failed": 0
+    },
+    "public_head_lib": {
+      "passed": 667,
+      "failed": 0,
+      "ignored": 73
+    },
+    "cpu_contracts": "3 tests use actual parse_args, fixture_batch/pack_batch, and OwningLifeEvidence::report helpers; no source-string mirroring",
+    "environment_recorded": {
+      "cpu": "72-79",
+      "jobs": 4,
+      "cuda_visible_devices": "",
+      "offline": true
+    }
+  },
+  "build_state": {
+    "debug_example_already_compiled": true,
+    "optimized_build_executed_for_this_fix": false,
+    "opt3_target_dirs_absent": true,
+    "conditional_script": "/tmp/oxide-qwen3vl-rope-budget-fix-v1/build_once_after_pass.sh",
+    "conditional_script_sha256": "282653e4bb96183712df6a6b534810d73a34fb8fd433c6964f588577d3173832",
+    "guard_requires": "OXIDE_INDEPENDENT_PASS=1",
+    "guard_refusal_proof_present": true,
+    "profile": "opt-level=3, lto=false, debug=1, codegen-units=16, debug-assertions=false, strip=none",
+    "reviewer_built": false
+  },
+  "reuse": {
+    "native_v6_8_observation_pass": true,
+    "native_gold_binary_present_and_pinned": true,
+    "native_b66_library_hash_bound_by_v6_report": true,
+    "native_b66_auxiliary_so_path_present": false,
+    "so_path_affects_reuse": false,
+    "reason": "gold consumer is linked only to libc/libgcc and the V6 report already binds b66d70b6"
+  },
+  "non_claims": [
+    "No GPU execution, CUDA context, device compile, Torch, Docker, or network was used by this review.",
+    "No quality, lifetime, or performance result is claimed by this review.",
+    "Root retains the already-specified single conditional opt3/no-LTO build and GPU execution after this PASS."
+  ],
+  "root_action": {
+    "independent_pass_granted": true,
+    "builds_allowed": 1,
+    "approval_round_required": false,
+    "reviewer_built": false
+  }
+}

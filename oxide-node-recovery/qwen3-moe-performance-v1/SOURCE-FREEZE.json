@@ -1,0 +1,18 @@
+{
+  "file_count": 11,
+  "files": {
+    "controller/run_paired.py": "8543b29aa319724e9906be4af2a0a6bdd4ae004950226390e9114d7966d9391f",
+    "native-perf/native_perf_process.py": "45ab71deca70101a076e24206c028a946ef0f3095d2454fa96fdc209144c1827",
+    "oxide-perf/Cargo.lock": "73d45664f61b9e800f11cb91fe2321e2601601929c7248619fad8591dcc5fdc3",
+    "oxide-perf/Cargo.toml": "e0c968bfa96c47b691a540e4cb3117964bea3f07b2aec58c0fc2e0004c74764d",
+    "oxide-perf/cases/cases.json": "eae4ef449e0c76afd5289fdb5fa82ad304cf3476909c5b2271a4da5d80a7a001",
+    "oxide-perf/cases/ragged129.json": "d9a3e4539b5349fc18a702a1a04f303ede29dbfd0da8793368745f3274cb10d1",
+    "oxide-perf/cases/stable2k.json": "22c0b44d246e8d5920616d3343ba19932bf44af071419371938d8f7318a2125d",
+    "oxide-perf/cases/t7.json": "d310918e4d36acda95d7de58ea212080d46e45bcef0d550193e38b60167a6f8a",
+    "oxide-perf/rust-toolchain.toml": "02dee3b2b81f2c5e7064c6bb118cf19e859100fcc33c220e5ec52ce4b0586b12",
+    "oxide-perf/src/bin/oxide_perf.rs": "e4a8068ba0a9eb7423c4c11d30fac8104a1209c20761f11ccf672e17e91490af",
+    "oxide-perf/src/lib.rs": "c4bb2a549b249a44cdc78275be1ca82ff2999d0f77fae231d50be9d498173d3e"
+  },
+  "schema": "qwen3-moe-paired-performance-freeze/v1",
+  "source_sha256": "85d7d31fea1ad002da20150a762e18361cb4186a7199c72739e30b3bab01e867"
+}

@@ -1,0 +1,357 @@
+diff -ruN a/infinity-v3/backends/oxide/src/qwen35_moe_engine.rs b/infinity-v3/backends/oxide/src/qwen35_moe_engine.rs
+--- a/infinity-v3/backends/oxide/src/qwen35_moe_engine.rs	2026-11-02 08:04:50.753245900 -0800
++++ b/infinity-v3/backends/oxide/src/qwen35_moe_engine.rs	2026-11-02 08:13:39.740208838 -0800
+@@ -406,6 +406,7 @@
+     slot: Option<HostIo>,
+     pool: Arc<SlotPool<HostIo>>,
+     stream: Arc<Stream>,
++    poison: Arc<std::sync::atomic::AtomicBool>,
+     started: bool,
+     recorded: bool,
+     drained: bool,
+@@ -419,12 +420,14 @@
+         slot: HostIo,
+         pool: Arc<SlotPool<HostIo>>,
+         stream: Arc<Stream>,
++        poison: Arc<std::sync::atomic::AtomicBool>,
+     ) -> Self {
+         Self {
+             engine,
+             slot: Some(slot),
+             pool,
+             stream,
++            poison,
+             started: false,
+             recorded: false,
+             drained: false,
+@@ -509,6 +512,8 @@
+     fn latch_failed_fence(&mut self) {
+         self.failed_fence = true;
+         self.drained = true;
++        self.poison
++            .store(true, std::sync::atomic::Ordering::Release);
+         self.pool.close();
+         if let Some(slot) = self.slot.take() {
+             std::mem::forget(slot);
+@@ -529,6 +534,10 @@
+     }
+ 
+     fn prepare(&mut self, input_words: usize, output_elements: usize) -> Result<(), BackendError> {
++        prepare_healthy(
++            self.pool.poisoned(),
++            self.poison.load(std::sync::atomic::Ordering::Acquire),
++        )?;
+         let slot = self
+             .slot
+             .as_mut()
+@@ -613,6 +622,22 @@
+     io_poisoned || work_fence_poisoned
+ }
+ 
++fn prepare_healthy(io_poisoned: bool, work_fence_poisoned: bool) -> Result<(), BackendError> {
++    if engine_unhealthy(io_poisoned, work_fence_poisoned) {
++        Err(BackendError::Unhealthy)
++    } else {
++        Ok(())
++    }
++}
++
++fn admit_healthy(io_poisoned: bool, work_fence_poisoned: bool) -> Result<(), ExperimentalMoeError> {
++    if engine_unhealthy(io_poisoned, work_fence_poisoned) {
++        Err(ExperimentalMoeError::Backend(BackendError::Unhealthy))
++    } else {
++        Ok(())
++    }
++}
++
+ fn validate_moe_batch(
+     batch: &Batch,
+     config: &crate::qwen35_moe_config::Qwen35MoeConfig,
+@@ -772,11 +797,10 @@
+         max_len: usize,
+     ) -> Result<ExperimentalMoEWork, ExperimentalMoeError> {
+         let inner = self.lock()?;
+-        if inner.poison.load(std::sync::atomic::Ordering::Acquire) {
+-            return Err(ExperimentalMoeError::Admission(
+-                "engine is unhealthy".into(),
+-            ));
+-        }
++        admit_healthy(
++            inner.io.poisoned(),
++            inner.poison.load(std::sync::atomic::Ordering::Acquire),
++        )?;
+         ExperimentalMoEWork::new(
+             Arc::clone(&inner.identity),
+             Arc::clone(&inner.poison),
+@@ -793,21 +817,23 @@
+ 
+     /// Acquire one of exactly two pooled host-I/O leases.
+     pub fn lease(&self) -> Result<ExperimentalMoELease, ExperimentalMoeError> {
+-        let (identity, io, stream) = {
++        let (identity, io, stream, poison) = {
+             let inner = self.lock()?;
+-            if inner.poison.load(std::sync::atomic::Ordering::Acquire) {
+-                return Err(ExperimentalMoeError::Admission(
+-                    "engine is unhealthy".into(),
+-                ));
+-            }
++            admit_healthy(
++                inner.io.poisoned(),
++                inner.poison.load(std::sync::atomic::Ordering::Acquire),
++            )?;
+             (
+                 Arc::clone(&inner.identity),
+                 Arc::clone(&inner.io),
+                 Arc::clone(&inner.stream),
++                Arc::clone(&inner.poison),
+             )
+         };
+         let slot = io.acquire()?;
+-        Ok(ExperimentalMoELease::new(identity, slot, io, stream))
++        Ok(ExperimentalMoELease::new(
++            identity, slot, io, stream, poison,
++        ))
+     }
+ 
+     pub fn active_leases(&self) -> Result<usize, ExperimentalMoeError> {
+@@ -829,11 +855,10 @@
+         pool: Pool,
+     ) -> Result<usize, ExperimentalMoeError> {
+         let inner = self.lock()?;
+-        if inner.poison.load(std::sync::atomic::Ordering::Acquire) {
+-            return Err(ExperimentalMoeError::Admission(
+-                "engine is unhealthy".into(),
+-            ));
+-        }
++        admit_healthy(
++            inner.io.poisoned(),
++            inner.poison.load(std::sync::atomic::Ordering::Acquire),
++        )?;
+         if work.payload_released {
+             return Err(ExperimentalMoeError::Admission(
+                 "Work payload was released".into(),
+@@ -1097,6 +1122,10 @@
+ 
+     pub fn validate_batch(&self, batch: &Batch) -> Result<usize, ExperimentalMoeError> {
+         let inner = self.lock()?;
++        admit_healthy(
++            inner.io.poisoned(),
++            inner.poison.load(std::sync::atomic::Ordering::Acquire),
++        )?;
+         validate_moe_batch(batch, &inner.weights.config)
+     }
+ 
+@@ -1124,12 +1153,10 @@
+ 
+     pub fn health_check(&self) -> Result<(), ExperimentalMoeError> {
+         let inner = self.lock()?;
+-        if inner.io.poisoned() || inner.poison.load(std::sync::atomic::Ordering::Acquire) {
+-            return Err(ExperimentalMoeError::Admission(
+-                "engine is unhealthy".into(),
+-            ));
+-        }
+-        Ok(())
++        admit_healthy(
++            inner.io.poisoned(),
++            inner.poison.load(std::sync::atomic::Ordering::Acquire),
++        )
+     }
+ }
+ 
+@@ -2020,4 +2047,24 @@
+         assert_eq!(attempts, 1);
+         assert!(failed);
+     }
++    #[test]
++    fn io_or_engine_poison_maps_to_typed_unhealthy() {
++        for (io, work) in [(true, false), (false, true), (true, true)] {
++            let error = admit_healthy(io, work).unwrap_err();
++            assert!(matches!(
++                error,
++                ExperimentalMoeError::Backend(BackendError::Unhealthy)
++            ));
++        }
++        assert!(admit_healthy(false, false).is_ok());
++        assert!(matches!(
++            prepare_healthy(true, false),
++            Err(BackendError::Unhealthy)
++        ));
++        assert!(matches!(
++            prepare_healthy(false, true),
++            Err(BackendError::Unhealthy)
++        ));
++        assert!(prepare_healthy(false, false).is_ok());
++    }
+ }
+diff -ruN a/infinity-v3/backends/oxide/src/qwen35_moe_factory.rs b/infinity-v3/backends/oxide/src/qwen35_moe_factory.rs
+--- a/infinity-v3/backends/oxide/src/qwen35_moe_factory.rs	2026-11-02 08:05:47.103845940 -0800
++++ b/infinity-v3/backends/oxide/src/qwen35_moe_factory.rs	2026-11-02 08:13:39.740208838 -0800
+@@ -65,6 +65,10 @@
+         self.slots.iter_mut().find_map(|slot| slot.take())
+     }
+ 
++    fn can_change_key(&self) -> bool {
++        self.key.is_none() || self.slots.iter().all(Option::is_some)
++    }
++
+     fn return_slot(&mut self, key: (usize, usize, usize), work: W) -> Result<(), W> {
+         if self.key != Some(key) {
+             return Err(work);
+@@ -91,6 +95,7 @@
+     proof_state: Option<bool>,
+     work: W,
+     mut release: impl FnMut(&mut W) -> Result<(), BackendError>,
++    mut discard_unstarted: impl FnMut(&mut W) -> Result<bool, BackendError>,
+ ) -> WorkSettlement<W> {
+     if started && proof_state != Some(true) {
+         return WorkSettlement::Quarantined(work);
+@@ -104,6 +109,10 @@
+                 WorkSettlement::Released(work)
+             }
+         }
++        Err(mut work) if !started => match discard_unstarted(&mut work) {
++            Ok(true) => WorkSettlement::Released(work),
++            _ => WorkSettlement::Quarantined(work),
++        },
+         Err(work) => WorkSettlement::Quarantined(work),
+     }
+ }
+@@ -206,6 +215,7 @@
+                     Some(proof) => unsafe { work.release_after_completion(proof) },
+                     None => Err(BackendError::Unhealthy),
+                 },
++                |work| unsafe { work.release_if_idle() },
+             ),
+             Err(_) => WorkSettlement::Quarantined(work),
+         };
+@@ -358,6 +368,11 @@
+         }
+         let mut cache = self.work.lock().map_err(|_| BackendError::Unhealthy)?;
+         if cache.key != Some(key) {
++            if !cache.can_change_key() {
++                return Err(BackendError::Overloaded(
++                    "Qwen3.5-MoE geometry growth while a Work is checked out".into(),
++                ));
++            }
+             if self.engine.active_leases().map_err(moe_error)? > 0 {
+                 return Err(BackendError::Overloaded(
+                     "Qwen3.5-MoE geometry growth while a result is held".into(),
+@@ -539,6 +554,11 @@
+             self.releases.set(self.releases.get() + 1);
+             Ok(())
+         }
++
++        fn discard(&mut self) -> Result<bool, BackendError> {
++            self.live = false;
++            Ok(true)
++        }
+     }
+ 
+     impl Drop for FakeWork {
+@@ -556,7 +576,15 @@
+         cache.reset(key, first, second);
+         let work = cache.take_slot().unwrap();
+         let first_releases = Rc::clone(&first_releases);
+-        let outcome = settle_work(&mut cache, key, true, Some(true), work, FakeWork::release);
++        let outcome = settle_work(
++            &mut cache,
++            key,
++            true,
++            Some(true),
++            work,
++            FakeWork::release,
++            FakeWork::discard,
++        );
+         assert!(matches!(outcome, WorkSettlement::Cached));
+         let reused = cache.take_slot().unwrap();
+         assert!(reused.live);
+@@ -575,6 +603,7 @@
+             Some(true),
+             work,
+             FakeWork::release,
++            FakeWork::discard,
+         );
+         let released = match outcome {
+             WorkSettlement::Released(work) => work,
+@@ -599,6 +628,7 @@
+             Some(false),
+             mismatch,
+             FakeWork::release,
++            FakeWork::discard,
+         );
+         let mismatch = match outcome {
+             WorkSettlement::Quarantined(work) => work,
+@@ -611,7 +641,15 @@
+         assert_eq!(mismatch_drops.get(), 0);
+ 
+         let (unproven, unproven_releases, unproven_drops) = FakeWork::new();
+-        let outcome = settle_work(&mut cache, key, true, None, unproven, FakeWork::release);
++        let outcome = settle_work(
++            &mut cache,
++            key,
++            true,
++            None,
++            unproven,
++            FakeWork::release,
++            FakeWork::discard,
++        );
+         let unproven = match outcome {
+             WorkSettlement::Quarantined(work) => work,
+             _ => panic!("expected unproven quarantine"),
+@@ -629,7 +667,15 @@
+         let mut cache: WorkCache<FakeWork> = WorkCache::default();
+         cache.reset(key, work, FakeWork::new().0);
+         let work = cache.take_slot().unwrap();
+-        let outcome = settle_work(&mut cache, key, false, None, work, FakeWork::release);
++        let outcome = settle_work(
++            &mut cache,
++            key,
++            false,
++            None,
++            work,
++            FakeWork::release,
++            FakeWork::discard,
++        );
+         assert!(matches!(outcome, WorkSettlement::Cached));
+         assert!(cache.take_slot().unwrap().live);
+         assert_eq!(releases.get(), 0);
+@@ -654,4 +700,39 @@
+             BackendError::Inference(message) if message == "runtime"
+         ));
+     }
++    #[test]
++    fn checked_out_slot_blocks_geometry_key_growth_under_cache_lock() {
++        let mut cache: WorkCache<u32> = WorkCache::default();
++        assert!(cache.can_change_key());
++        cache.reset((1, 1, 1), 10, 11);
++        assert!(cache.can_change_key());
++        let held = cache.take_slot().unwrap();
++        assert!(!cache.can_change_key());
++        assert!(cache.return_slot((1, 1, 1), held).is_ok());
++        assert!(cache.can_change_key());
++    }
++
++    #[test]
++    fn never_queued_mismatched_key_discards_without_release_or_quarantine() {
++        let (work, releases, drops) = FakeWork::new();
++        let mut cache: WorkCache<FakeWork> = WorkCache::default();
++        let outcome = settle_work(
++            &mut cache,
++            (2, 2, 2),
++            false,
++            None,
++            work,
++            FakeWork::release,
++            FakeWork::discard,
++        );
++        let discarded = match outcome {
++            WorkSettlement::Released(work) => work,
++            _ => panic!("expected safe never-queued discard"),
++        };
++        assert!(!discarded.live);
++        assert_eq!(releases.get(), 0);
++        assert_eq!(drops.get(), 0);
++        drop(discarded);
++        assert_eq!(drops.get(), 1);
++    }
+ }

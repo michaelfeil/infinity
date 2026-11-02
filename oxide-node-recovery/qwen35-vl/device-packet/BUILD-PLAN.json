@@ -1,0 +1,66 @@
+{
+  "schema": "oxide-qwen35vl-device-build-plan/v1",
+  "base_commit": "e582ce90eb1544fcff081a495cb8fd4f3c17b112",
+  "scope": "minimal additive Qwen3.5-VL device leaf; one SM target",
+  "target": {
+    "architecture": "sm_90",
+    "hardware": "H100",
+    "requested_architectures": [
+      "sm_90"
+    ],
+    "complete_target_set": false
+  },
+  "command": "CARGO_OXIDE=${CARGO_OXIDE} CUDA_TOOLKIT_PATH=${CUDA_TOOLKIT_PATH} CARGO_BUILD_JOBS=4 taskset -c 88-95 bash libs/infinity-v3/backends/oxide/device/build.sh ${OUT} --architectures sm_90",
+  "expected_kernel_exports": 106,
+  "old_exports": 86,
+  "foundation_additive_exports": 9,
+  "encoder_activation_additive_exports": 4,
+  "qwen35vl_additive_exports": 7,
+  "qwen35vl_symbols": [
+    "infinity_qwen35vl_add_bf16",
+    "infinity_qwen35vl_bias_bf16",
+    "infinity_qwen35vl_gelu_tanh_bf16",
+    "infinity_qwen35vl_pos_interp",
+    "infinity_qwen35vl_rope2d_bf16",
+    "infinity_qwen35vl_silu_bf16",
+    "infinity_qwen35vl_temporal_slice_bf16"
+  ],
+  "required_checks": [
+    "PTX .target is exactly sm_90",
+    "PTX visible entries equal the 106-name sorted union",
+    "cuobjdump STO_ENTRY equals the same 106 names",
+    "cubin native architecture is sm=90",
+    "old 86 exports are byte/resource preserved against Root OLD86_BUNDLE",
+    "canonical26 FA4 manifest and profile indices are unchanged"
+  ],
+  "not_executed_by_author": [
+    "NVCC",
+    "cargo-oxide",
+    "CUDA context",
+    "device build",
+    "Docker",
+    "GPU"
+  ],
+  "sdk": {
+    "container": "infinity-torch214-compare-sdk",
+    "b66": "/tmp/native214-fa4-mode20/install/lib/libtei_torch.so",
+    "b66_sha256": "b66d70b61b39e1bf0d565aca33bac7c5e21849677396ce5216f5baf73027d37e",
+    "torch_python": "/opt/torch-sdk/bin/python3.12",
+    "torch_version": "2.14.1+cu130",
+    "torch_git": "5c4886908584029761b579af026dcfb627c84070",
+    "torch_root": "/opt/torch-sdk/lib/python3.12/site-packages/torch",
+    "cublaslt": "130200"
+  },
+  "dtype_coverage": {
+    "reference_recipe": "BF16-rounded CPU reference",
+    "device_recipe": "BF16 only",
+    "f16_patch_stem": "source structure only; not F16 device/reference",
+    "f32_device": "not attached",
+    "native_f32_exceptions": [
+      "linear_attn.A_log",
+      "linear_attn.dt_bias"
+    ]
+  },
+  "fa4_request": "device-packet/FA4-REQUEST.json",
+  "normal_factory_proof": "evidence/run-plans.json"
+}

@@ -1,0 +1,48 @@
+{
+  "model": "/workspace/model-performance/michaelfeil/elephant-1",
+  "tokens": 8,
+  "spans": [
+    {
+      "grid": [
+        1,
+        4,
+        4
+      ],
+      "merge": 2,
+      "token_start": 2,
+      "token_count": 4
+    }
+  ],
+  "positions": [
+    [
+      0,
+      1,
+      2,
+      2,
+      2,
+      2,
+      4,
+      5
+    ],
+    [
+      0,
+      1,
+      2,
+      2,
+      3,
+      3,
+      4,
+      5
+    ],
+    [
+      0,
+      1,
+      2,
+      3,
+      2,
+      3,
+      4,
+      5
+    ]
+  ]
+}

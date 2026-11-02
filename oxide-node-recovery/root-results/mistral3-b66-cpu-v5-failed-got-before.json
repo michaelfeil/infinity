@@ -1,0 +1,69 @@
+{
+  "schema": "oxide-native-b66-container-sdk-got/v5",
+  "sdk": "/tmp/native214-fa4-mode20/install/lib/libtei_torch.so",
+  "sdk_sha256": "b66d70b61b39e1bf0d565aca33bac7c5e21849677396ce5216f5baf73027d37e",
+  "expected_sdk_sha256": "b66d70b61b39e1bf0d565aca33bac7c5e21849677396ce5216f5baf73027d37e",
+  "sdk_sha256_matches": true,
+  "sdk_loaded": false,
+  "sdk_load_mode": "RTLD_NOW|RTLD_GLOBAL",
+  "tei_forward_symbol": false,
+  "missing_c_api_symbols": [],
+  "bridge_header": "/tmp/mistral3-native-b66-v5-477437-fa17811c9e53/include/bridge.h",
+  "bridge_header_sha256": "ed5cd44f735cbe21160f43fbdec0f4e003acd477497ab4141e2625c37c5b3b69",
+  "tei_forward_args": 19,
+  "expected_tei_forward_args": 19,
+  "tei_forward_submit_args": 19,
+  "runner": {
+    "path": "/tmp/mistral3-native-b66-v5-477437-fa17811c9e53/mistral3-b66-runner",
+    "exists": true,
+    "sha256": "6df8d725b2835af7e6e2afc004bd376cf016b97caea720026340b640f61f92e5",
+    "needed": [
+      "libtei_torch.so",
+      "libstdc++.so.6",
+      "libm.so.6",
+      "libgcc_s.so.1",
+      "libc.so.6",
+      "ld-linux-x86-64.so.2"
+    ],
+    "needed_tei_torch": true
+  },
+  "cublas_got_targets": [],
+  "cublas_got_target_count": 0,
+  "vendor": {
+    "path": "/tmp/oxide-host-cublas-130200",
+    "libraries": {
+      "libcublasLt.so.13": {
+        "path": "/tmp/oxide-host-cublas-130200/libcublasLt.so.13",
+        "realpath": "/tmp/oxide-host-cublas-130200/libcublasLt.so.13",
+        "exists": true,
+        "sha256": "5cd9d979d72807f61cd22a5583659a3a0e7988a50e9b051416c46d1d8be31cc8",
+        "size_bytes": 544485368
+      },
+      "libcublas.so.13": {
+        "path": "/tmp/oxide-host-cublas-130200/libcublas.so.13",
+        "realpath": "/tmp/oxide-host-cublas-130200/libcublas.so.13",
+        "exists": true,
+        "sha256": "416a07324bf28948db370fa5c547cb2f7e896ac1bbc0038bc3211ccd49b6e88e",
+        "size_bytes": 54190264
+      }
+    },
+    "cublaslt_version": 130200,
+    "expected_cublaslt_version": 130200
+  },
+  "torch_version": "2.14.1+cu130",
+  "torch_git_version": "5c4886908584029761b579af026dcfb627c84070",
+  "expected_torch_prefix": "2.14.1+cu130",
+  "torch_cuda_initialized_before": false,
+  "torch_cuda_initialized_after": false,
+  "cuda_visible_devices": "",
+  "cuda_context_created": false,
+  "engine_created": false,
+  "engine_or_forward_called": false,
+  "ld_bind_now": "1",
+  "ld_preload": "/tmp/oxide-host-cublas-130200/libcublasLt.so.13:/tmp/oxide-host-cublas-130200/libcublas.so.13",
+  "ld_library_path": "/tmp/oxide-host-cublas-130200:/tmp/native214-fa4-mode20/install/lib:/opt/torch-sdk/lib:/opt/torch-sdk/lib/python3.12/site-packages/torch/lib",
+  "errors": [
+    "actual SDK load failed: module 'ctypes' has no attribute 'RTLD_NOW'"
+  ],
+  "ok": false
+}

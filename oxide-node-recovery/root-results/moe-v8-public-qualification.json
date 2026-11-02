@@ -1,0 +1,43 @@
+{
+  "schema": "root-qwen3-moe-public-v8-qualification/v1",
+  "status": "qualified-for-recorded-BF16-checkpoint-scope",
+  "models": [
+    "Qwen3-30B-A3B"
+  ],
+  "runtime_arch": "SM90",
+  "other_archs": "SM100/SM120 compile and CPU ABI queries only",
+  "performance_claim": false,
+  "reports": {
+    "original45_all_san": {
+      "path": "/tmp/oxide-moe-root629-v8-root-all-v1/report.json",
+      "sha256": "6412cff7d166f4b3577b93bc986fb3480bbf0c0b886ce5599581c028f4b6b971"
+    },
+    "lifecycle_all_san": {
+      "path": "/root/infinity-oxide-results/2026-11-02-requested-model-families/moe-v8-lifecycle-report.json",
+      "sha256": "584317ff77f61461cb73b27480c30c929d5d4915cee2e5e32d9b6fbad6e3793f"
+    },
+    "public_repro_gpu45": {
+      "path": "/tmp/oxide-moe-root629-v8-public-repro-plain-v1/report.json",
+      "sha256": "0b775b6823cec3745f596b76995ae31316a0dc24aa5040037a0da9decda07f90"
+    },
+    "public_repro_all3_parity": {
+      "path": "/tmp/oxide-all-model-feature-matrix-v1/qwen3-moe-public-repro-v2/PARITY-V3.json",
+      "sha256": "812d1a04b7c94d7d6b8601e87befec45d7af7d2fc11c22238a5fcb3a68bb1a3d"
+    },
+    "public_repro_all3_build": {
+      "path": "/tmp/oxide-moe-public-repro-all3-v2/BUILD_MANIFEST.json",
+      "sha256": "6e64fc75396f849899cfefd966d7739c89e2a609dda31c962934f6b0b0eaef53"
+    }
+  },
+  "CPU": {
+    "alltargets_passed": 696,
+    "factory_passed": 23,
+    "strict_clippy": "passed",
+    "fmt": "passed",
+    "public_ignored_lifecycle_target": "1CPUtestpass/1GPUignored",
+    "package_checkonly": "passed",
+    "package_build_policy": "passed"
+  },
+  "scope": "Originalqualified sidecar has actual45\u00d7plain/mem/init andlifeall3pools\u00d7plain/mem/init; rebuiltpublicsidecar hasactual45plainexactplusstrictnormalizedSASS/resources/symbolsparityall3 andCPUABIqueries. Noallmodel/allhardware/speedclaim.",
+  "commit": "252789b"
+}

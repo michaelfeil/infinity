@@ -1,0 +1,22 @@
+{
+  "schema": "oxide-qwen3-vl-packaging-v5-fixes/v1",
+  "source_commit": "027b359c6e0c5378cd07398b07b4435af3ee492d",
+  "patch_sha256": "94965637d760dbfd642a41d36efe3142ad892933f795b37f3c8c80e5630e14ea",
+  "findings": [
+    {"id":"Q1","status":"closed","detail":"Plain Qwen3-VL raw output returns final hidden rows unchanged (width=hidden); trained ColQwen/Nemotron readout projection/normalization preserved. Real CPU test raw_output_rows(None,...)."},
+    {"id":"Q2","status":"closed","detail":"compare_quality requires every expected fixture, pool0/pool1/pool2 and raw (with --allow-raw), rejects duplicate native/oxide records and validates width/sequences/cumulative/value counts before metrics. 5 adversarial CPU tests pass."},
+    {"id":"M1","status":"closed","detail":"controller_v3 uses remote consumer paths (host-consumer/native-consumer/quality-consumer) instead of host-absolute /tmp/opencode paths."},
+    {"id":"M2","status":"closed","detail":"quality consumer SHA is read from host-consumer/quality-binary.sha256 when present; absent means explicit pending_build, never a fake sha."},
+    {"id":"M3","status":"closed","detail":"Rust CPU writer/readout test added for plain raw hidden rows; controller pins include controller_v3/tests/compare parser tests."},
+    {"id":"M4","status":"closed","detail":"STAGE/HANDOFF/readiness/controller pins regenerated; stale controller-v2/old quality-pair entries removed from the executable stage."}
+  ],
+  "cpu_tests": {
+    "oxide_lib": "486 passed, 0 failed, 56 ignored",
+    "backend_factory": "22 passed",
+    "controller_v3": "4 passed",
+    "compare_quality": "5 passed",
+    "fmt": "pass",
+    "clippy": "pass"
+  },
+  "optimized_quality_build": "HELD pending independent PASS"
+}

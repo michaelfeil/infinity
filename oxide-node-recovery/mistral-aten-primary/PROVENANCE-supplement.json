@@ -1,0 +1,29 @@
+{
+  "ref": "5c4886908584029761b579af026dcfb627c84070",
+  "files": [
+    {
+      "source": "aten/src/ATen/native/cuda/BinaryDivTrueKernel.cu",
+      "path": "/tmp/oxide-mistral3-aten-5c488-mean-source-v1/BinaryDivTrueKernel.cu",
+      "blob": "c7345633edd15ba66d59a84d9991fb77bf7c7944",
+      "url": "https://github.com/pytorch/pytorch/blob/5c4886908584029761b579af026dcfb627c84070/aten/src/ATen/native/cuda/BinaryDivTrueKernel.cu"
+    },
+    {
+      "source": "aten/src/ATen/native/cuda/BinaryMulKernel.cu",
+      "path": "/tmp/oxide-mistral3-aten-5c488-mean-source-v1/BinaryMulKernel.cu",
+      "blob": "26c4b15a7c6f73136e47ee8a1c921eca9f35a317",
+      "url": "https://github.com/pytorch/pytorch/blob/5c4886908584029761b579af026dcfb627c84070/aten/src/ATen/native/cuda/BinaryMulKernel.cu"
+    },
+    {
+      "source": "c10/util/BFloat16.h",
+      "path": "/tmp/oxide-mistral3-aten-5c488-mean-source-v1/BFloat16.h",
+      "blob": "6d3510cd5be83614320044338c10ab470eae13d4",
+      "url": "https://github.com/pytorch/pytorch/blob/5c4886908584029761b579af026dcfb627c84070/c10/util/BFloat16.h"
+    },
+    {
+      "source": "LICENSE",
+      "path": "/tmp/oxide-mistral3-aten-5c488-mean-source-v1/LICENSE",
+      "blob": "c23172f7aff0254e4f0f163fb2e6e355cbaec5f4",
+      "url": "https://github.com/pytorch/pytorch/blob/5c4886908584029761b579af026dcfb627c84070/LICENSE"
+    }
+  ]
+}

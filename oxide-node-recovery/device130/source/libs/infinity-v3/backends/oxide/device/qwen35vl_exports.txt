@@ -1,0 +1,7 @@
+infinity_qwen35vl_add_bf16
+infinity_qwen35vl_bias_bf16
+infinity_qwen35vl_gelu_tanh_bf16
+infinity_qwen35vl_pos_interp
+infinity_qwen35vl_rope2d_bf16
+infinity_qwen35vl_silu_bf16
+infinity_qwen35vl_temporal_slice_bf16

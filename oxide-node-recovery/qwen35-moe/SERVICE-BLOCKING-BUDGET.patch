@@ -1,0 +1,759 @@
+diff -ruN a/backends/oxide/src/qwen35_moe_engine.rs b/backends/oxide/src/qwen35_moe_engine.rs
+--- a/backends/oxide/src/qwen35_moe_engine.rs	2026-11-02 09:14:01.571027120 -0800
++++ b/backends/oxide/src/qwen35_moe_engine.rs	2026-11-02 09:14:01.572027096 -0800
+@@ -20,8 +20,8 @@
+ use crate::qwen35_execute::{Qwen35AuxKernels, Slabs};
+ use crate::qwen35_moe_config::Qwen35MoeConfig;
+ use crate::qwen35_moe_full::{
+-    allocate_scratch, Qwen35MoeFullDeviceWeights, Qwen35MoeFullHostPlan, Qwen35MoeFullKernels,
+-    Qwen35MoeFullPlan, Qwen35MoeFullScratch,
++    allocate_scratch, scratch_allocation_bytes, Qwen35MoeFullDeviceWeights, Qwen35MoeFullHostPlan,
++    Qwen35MoeFullKernels, Qwen35MoeFullPlan, Qwen35MoeFullScratch,
+ };
+ use crate::qwen35_moe_layout::Qwen35MoeAttentionLayout;
+ use crate::qwen35_moe_provider::Qwen35MoeProvider;
+@@ -616,6 +616,8 @@
+     kernels: Qwen35MoeFullKernels,
+     options: ExperimentalMoEOptions,
+     io: Arc<SlotPool<HostIo>>,
++    gdn_major: i32,
++    gdn_sm_count: i32,
+ }
+ 
+ fn engine_unhealthy(io_poisoned: bool, work_fence_poisoned: bool) -> bool {
+@@ -700,6 +702,13 @@
+             .checked_mul(10)
+             .and_then(|value| value.checked_add(minor))
+             .ok_or_else(|| ExperimentalMoeError::Admission("compute capability overflow".into()))?;
++        let gdn_major = major;
++        let gdn_sm_count = i32::try_from(
++            context
++                .multiprocessor_count()
++                .map_err(|error| ExperimentalMoeError::Cold(error.to_string()))?,
++        )
++        .map_err(|_| ExperimentalMoeError::Admission("SM count overflow".into()))?;
+         let module_path = if options.kernel_module.is_dir() {
+             options
+                 .kernel_module
+@@ -777,6 +786,8 @@
+                 kernels,
+                 options,
+                 io,
++                gdn_major,
++                gdn_sm_count,
+             }),
+         })
+     }
+@@ -809,6 +820,30 @@
+             &inner.weights,
+             &inner.provider,
+             &inner.options,
++            inner.gdn_major,
++            inner.gdn_sm_count,
++            tokens,
++            sequences,
++            max_len,
++        )
++    }
++
++    pub fn work_bytes(
++        &self,
++        tokens: usize,
++        sequences: usize,
++        max_len: usize,
++    ) -> Result<usize, ExperimentalMoeError> {
++        let inner = self.lock()?;
++        admit_healthy(
++            inner.io.poisoned(),
++            inner.poison.load(std::sync::atomic::Ordering::Acquire),
++        )?;
++        ExperimentalMoEWork::allocation_bytes(
++            &inner.weights,
++            &inner.provider,
++            inner.gdn_major,
++            inner.gdn_sm_count,
+             tokens,
+             sequences,
+             max_len,
+@@ -1255,7 +1290,91 @@
+     payload_released: bool,
+ }
+ 
++#[allow(clippy::too_many_arguments)]
++fn work_allocation_bytes(
++    slab_bytes: usize,
++    input_words: usize,
++    tokens: usize,
++    hidden: usize,
++    selected_elements: usize,
++    ffn_scratch_bytes: usize,
++    gdn_device_bytes: usize,
++) -> Result<usize, ExperimentalMoeError> {
++    slab_bytes
++        .checked_add(product(input_words, 4)?)
++        .and_then(|value| value.checked_add(product(product(tokens, hidden).ok()?, 4).ok()?))
++        .and_then(|value| value.checked_add(product(selected_elements, 4).ok()?))
++        .and_then(|value| value.checked_add(ffn_scratch_bytes))
++        .and_then(|value| value.checked_add(gdn_device_bytes))
++        .ok_or_else(|| ExperimentalMoeError::Admission("Work byte count overflow".into()))
++}
++
+ impl ExperimentalMoEWork {
++    fn allocation_bytes(
++        weights: &Qwen35MoeFullDeviceWeights,
++        provider: &Qwen35MoeProvider,
++        gdn_major: i32,
++        gdn_sm_count: i32,
++        tokens: usize,
++        sequences: usize,
++        max_len: usize,
++    ) -> Result<usize, ExperimentalMoeError> {
++        if tokens == 0 || sequences == 0 || max_len == 0 || max_len > tokens {
++            return Err(ExperimentalMoeError::Admission(
++                "invalid Work token/sequence/context geometry".into(),
++            ));
++        }
++        let config = &weights.config;
++        let layout = Qwen35MoeAttentionLayout::new(config, tokens)?;
++        let input_words = product(tokens, 3)?
++            .checked_add(sequences + 1)
++            .and_then(|value| value.checked_add(tokens))
++            .and_then(|value| value.checked_add(tokens))
++            .ok_or_else(|| ExperimentalMoeError::Admission("input capacity overflow".into()))?;
++        let hidden = config.text.hidden_size;
++        let selected_elements = selected_capacity_elements(sequences, tokens, hidden)?;
++        let first = weights
++            .layers
++            .iter()
++            .find_map(|layer| match &layer.attention {
++                crate::qwen35_weights::Qwen35DeviceAttention::Linear { weights, .. } => {
++                    Some(Arc::clone(weights))
++                }
++                _ => None,
++            })
++            .ok_or_else(|| {
++                ExperimentalMoeError::Admission(
++                    "actual MoE geometry requires at least one GDN layer".into(),
++                )
++            })?;
++        let gdn_bytes = GdnPrepared::scratch_bytes_default_dense(
++            first.geometry(),
++            GdnCapacity::new(tokens, sequences, sequences)?,
++            gdn_major,
++            gdn_sm_count,
++        )?
++        .device_bytes;
++        let ffn_scratch_bytes = scratch_allocation_bytes(
++            tokens,
++            hidden,
++            config.moe.moe_intermediate_size,
++            config.moe.shared_expert_intermediate_size,
++            product(config.moe.shared_expert_intermediate_size, 2)?,
++            provider,
++            config.moe.norm_topk_prob,
++        )
++        .map_err(ExperimentalMoeError::Backend)?;
++        work_allocation_bytes(
++            layout.slab_bytes,
++            input_words,
++            tokens,
++            hidden,
++            selected_elements,
++            ffn_scratch_bytes,
++            gdn_bytes,
++        )
++    }
++
+     #[allow(clippy::too_many_arguments)]
+     fn new(
+         engine: Arc<()>,
+@@ -1265,6 +1384,8 @@
+         weights: &Qwen35MoeFullDeviceWeights,
+         provider: &Qwen35MoeProvider,
+         options: &ExperimentalMoEOptions,
++        gdn_major: i32,
++        gdn_sm_count: i32,
+         tokens: usize,
+         sequences: usize,
+         max_len: usize,
+@@ -1281,11 +1402,20 @@
+             .and_then(|value| value.checked_add(tokens))
+             .and_then(|value| value.checked_add(tokens))
+             .ok_or_else(|| ExperimentalMoeError::Admission("input capacity overflow".into()))?;
++        let hidden = config.text.hidden_size;
++        let bytes = Self::allocation_bytes(
++            weights,
++            provider,
++            gdn_major,
++            gdn_sm_count,
++            tokens,
++            sequences,
++            max_len,
++        )?;
+         let input = DeviceBuffer::zeroed(stream, input_words)?;
+         let residual = DeviceBuffer::zeroed(stream, layout.hidden_elements)?;
+         let projection = DeviceBuffer::zeroed(stream, layout.projection_elements)?;
+         let activation = DeviceBuffer::zeroed(stream, layout.activation_elements)?;
+-        let hidden = config.text.hidden_size;
+         let scratch = allocate_scratch(
+             stream,
+             tokens,
+@@ -1313,11 +1443,12 @@
+                     "actual MoE geometry requires at least one GDN layer".into(),
+                 )
+             })?;
++        let gdn_capacity = GdnCapacity::new(tokens, sequences, sequences)?;
+         let kernels = GdnKernelSet::load_bundle(context, &options.gdn_raw_kernels)?;
+         let gdn = GdnPrepared::new_default_dense_with_device_weights(
+             stream,
+             kernels,
+-            GdnCapacity::new(tokens, sequences, sequences)?,
++            gdn_capacity,
+             first,
+             config.text.rms_norm_eps,
+             &options.gdn_provider,
+@@ -1326,20 +1457,6 @@
+         stream.synchronize().map_err(|error| {
+             ExperimentalMoeError::Cold(format!("Work construction fence failed: {error}"))
+         })?;
+-        let bytes = layout
+-            .slab_bytes
+-            .checked_add(product(input_words, 4)?)
+-            .and_then(|value| value.checked_add(product(product(tokens, hidden).ok()?, 4).ok()?))
+-            .and_then(|value| value.checked_add(product(selected_elements, 4).ok()?))
+-            .and_then(|value| value.checked_add(scratch.shared_gate_up_out.len() * 2))
+-            .and_then(|value| value.checked_add(scratch.shared_activated.len() * 2))
+-            .and_then(|value| value.checked_add(scratch.shared_down_out.len() * 2))
+-            .and_then(|value| value.checked_add(scratch.shared_gate_logits.len() * 2))
+-            .and_then(|value| value.checked_add(scratch.routed_logits_bf16.len() * 2))
+-            .and_then(|value| value.checked_add(scratch.routed_logits_f32.len() * 4))
+-            .and_then(|value| value.checked_add(scratch.routed_workspace.len()))
+-            .and_then(|value| value.checked_add(scratch.ffn_output.len() * 2))
+-            .ok_or_else(|| ExperimentalMoeError::Admission("Work byte count overflow".into()))?;
+         Ok(Self {
+             engine,
+             poison,
+@@ -2067,4 +2184,38 @@
+         ));
+         assert!(prepare_healthy(false, false).is_ok());
+     }
++    #[test]
++    fn work_byte_plan_includes_exact_gdn_and_ffn_scratch_against_independent_formula() {
++        let tokens = 7usize;
++        let hidden = 2048usize;
++        let selected = 8usize;
++        let slab = 1000usize;
++        let input_words = 27usize;
++        let workspace = 12_345usize;
++        let ffn = crate::qwen35_moe_full::scratch_allocation_bytes_for_shape(
++            tokens, hidden, 512, 512, 1024, workspace,
++        )
++        .unwrap();
++        let ffn_expected = tokens * 1024 * 2
++            + tokens * 512 * 2
++            + tokens * hidden * 2
++            + tokens * 2
++            + tokens * 256 * 2
++            + tokens * 256 * 4
++            + workspace
++            + tokens * hidden * 2;
++        assert_eq!(ffn, ffn_expected);
++
++        let geometry = crate::gdn_prepared::GdnGeometry::new(16, 48, 4).unwrap();
++        let capacity = GdnCapacity::new(tokens, 1, 1).unwrap();
++        let gdn = GdnPrepared::scratch_bytes_default_dense(geometry, capacity, 9, 132)
++            .unwrap()
++            .device_bytes;
++        assert!(gdn > 0);
++        let total =
++            work_allocation_bytes(slab, input_words, tokens, hidden, selected, ffn, gdn).unwrap();
++        let independent = slab + input_words * 4 + tokens * hidden * 4 + selected * 4 + ffn + gdn;
++        assert_eq!(total, independent);
++        assert!(total > slab + input_words * 4 + tokens * hidden * 4 + selected * 4 + ffn);
++    }
+ }
+diff -ruN a/backends/oxide/src/qwen35_moe_factory.rs b/backends/oxide/src/qwen35_moe_factory.rs
+--- a/backends/oxide/src/qwen35_moe_factory.rs	2026-11-02 09:14:01.577026971 -0800
++++ b/backends/oxide/src/qwen35_moe_factory.rs	2026-11-02 09:14:01.578026946 -0800
+@@ -55,6 +55,10 @@
+ 
+ enum WorkSlot<W> {
+     Empty,
++    Building {
++        key: (usize, usize, usize),
++        bytes: usize,
++    },
+     Ready {
+         key: (usize, usize, usize),
+         work: W,
+@@ -63,11 +67,16 @@
+         key: (usize, usize, usize),
+         bytes: usize,
+     },
++    Retained {
++        key: (usize, usize, usize),
++        bytes: usize,
++    },
+ }
+ 
+ struct WorkSlots<W> {
+     slots: Vec<WorkSlot<W>>,
+     accounted_bytes: usize,
++    byte_budget: usize,
+ }
+ 
+ impl<W> Default for WorkSlots<W> {
+@@ -75,11 +84,22 @@
+         Self {
+             slots: (0..WORK_SLOTS).map(|_| WorkSlot::Empty).collect(),
+             accounted_bytes: 0,
++            byte_budget: crate::cache::BYTE_BUDGET,
+         }
+     }
+ }
+ 
+ impl<W: WorkBytes> WorkSlots<W> {
++    #[cfg(test)]
++    fn with_budget(byte_budget: usize) -> Self {
++        Self {
++            slots: (0..WORK_SLOTS).map(|_| WorkSlot::Empty).collect(),
++            accounted_bytes: 0,
++            byte_budget,
++        }
++    }
++
++    #[cfg(test)]
+     fn resident_bytes(&self) -> usize {
+         self.accounted_bytes
+     }
+@@ -90,6 +110,16 @@
+             .position(|slot| matches!(slot, WorkSlot::Empty))
+     }
+ 
++    fn projected_fits(&self, projected: usize) -> bool {
++        if projected > self.byte_budget {
++            self.accounted_bytes == 0
++        } else {
++            self.accounted_bytes
++                .checked_add(projected)
++                .is_some_and(|total| total <= self.byte_budget)
++        }
++    }
++
+     fn checkout_ready(&mut self, key: (usize, usize, usize)) -> Option<(usize, W)> {
+         for index in 0..self.slots.len() {
+             if matches!(self.slots[index], WorkSlot::Ready { key: slot_key, .. } if slot_key == key)
+@@ -105,6 +135,7 @@
+         None
+     }
+ 
++    #[cfg(test)]
+     fn install_ready(
+         &mut self,
+         index: usize,
+@@ -114,11 +145,78 @@
+         if index >= self.slots.len() || !matches!(self.slots[index], WorkSlot::Empty) {
+             return Err(work);
+         }
+-        self.accounted_bytes = self.accounted_bytes.saturating_add(work.work_bytes());
++        let bytes = work.work_bytes();
++        let Some(total) = self.accounted_bytes.checked_add(bytes) else {
++            return Err(work);
++        };
++        self.accounted_bytes = total;
+         self.slots[index] = WorkSlot::Ready { key, work };
+         Ok(())
+     }
+ 
++    fn begin_build(
++        &mut self,
++        index: usize,
++        key: (usize, usize, usize),
++        projected: usize,
++    ) -> Result<(), BackendError> {
++        if index >= self.slots.len() || !matches!(self.slots[index], WorkSlot::Empty) {
++            return Err(BackendError::Unhealthy);
++        }
++        let total = self.accounted_bytes.checked_add(projected).ok_or_else(|| {
++            BackendError::Overloaded("Qwen3.5-MoE Work byte budget overflow".into())
++        })?;
++        self.accounted_bytes = total;
++        self.slots[index] = WorkSlot::Building {
++            key,
++            bytes: projected,
++        };
++        Ok(())
++    }
++
++    fn finish_build(
++        &mut self,
++        index: usize,
++        key: (usize, usize, usize),
++        projected: usize,
++        actual: usize,
++    ) -> bool {
++        let Some(other) = self.accounted_bytes.checked_sub(projected) else {
++            return false;
++        };
++        let Some(total) = other.checked_add(actual) else {
++            return false;
++        };
++        let fits = if actual > self.byte_budget {
++            other == 0
++        } else {
++            total <= self.byte_budget
++        };
++        if !fits
++            || !matches!(
++                self.slots.get(index),
++                Some(WorkSlot::Building { key: slot_key, bytes }) if *slot_key == key && *bytes == projected
++            )
++        {
++            return false;
++        }
++        self.accounted_bytes = total;
++        self.slots[index] = WorkSlot::CheckedOut { key, bytes: actual };
++        true
++    }
++
++    fn abort_build(&mut self, index: usize, key: (usize, usize, usize), projected: usize) {
++        if matches!(
++            self.slots.get(index),
++            Some(WorkSlot::Building { key: slot_key, bytes }) if *slot_key == key && *bytes == projected
++        ) {
++            if let Some(total) = self.accounted_bytes.checked_sub(projected) {
++                self.accounted_bytes = total;
++                self.slots[index] = WorkSlot::Empty;
++            }
++        }
++    }
++
+     fn return_ready(&mut self, index: usize, key: (usize, usize, usize), work: W) -> Result<(), W> {
+         let valid = matches!(
+             self.slots.get(index),
+@@ -139,8 +237,23 @@
+         {
+             if *slot_key == key {
+                 let bytes = *bytes;
+-                self.accounted_bytes = self.accounted_bytes.saturating_sub(bytes);
+-                self.slots[index] = WorkSlot::Empty;
++                if let Some(total) = self.accounted_bytes.checked_sub(bytes) {
++                    self.accounted_bytes = total;
++                    self.slots[index] = WorkSlot::Empty;
++                }
++            }
++        }
++    }
++
++    fn retain_checked_out(&mut self, index: usize, key: (usize, usize, usize)) {
++        if let Some(WorkSlot::CheckedOut {
++            key: slot_key,
++            bytes,
++        }) = self.slots.get(index)
++        {
++            if *slot_key == key {
++                let bytes = *bytes;
++                self.slots[index] = WorkSlot::Retained { key, bytes };
+             }
+         }
+     }
+@@ -157,7 +270,9 @@
+             if released {
+                 let slot = std::mem::replace(&mut self.slots[index], WorkSlot::Empty);
+                 if let WorkSlot::Ready { work, .. } = slot {
+-                    self.accounted_bytes = self.accounted_bytes.saturating_sub(work.work_bytes());
++                    if let Some(total) = self.accounted_bytes.checked_sub(work.work_bytes()) {
++                        self.accounted_bytes = total;
++                    }
+                     drop(work);
+                 }
+                 return Ok(Some(index));
+@@ -170,23 +285,47 @@
+ fn checkout_work<W: WorkBytes>(
+     slots: &mut WorkSlots<W>,
+     key: (usize, usize, usize),
++    projected_bytes: usize,
+     build: impl FnOnce() -> Result<W, BackendError>,
+     mut evict: impl FnMut(&mut W) -> Result<bool, BackendError>,
+ ) -> Result<(usize, W), BackendError> {
+     if let Some(found) = slots.checkout_ready(key) {
+         return Ok(found);
+     }
+-    let index = match slots.empty_index() {
+-        Some(index) => index,
+-        None => slots
+-            .evict_idle(&mut evict)?
+-            .ok_or(BackendError::Unhealthy)?,
++    loop {
++        if slots.empty_index().is_some() && slots.projected_fits(projected_bytes) {
++            break;
++        }
++        if slots.evict_idle(&mut evict)?.is_none() {
++            return Err(if slots.projected_fits(projected_bytes) {
++                BackendError::Unhealthy
++            } else {
++                BackendError::Overloaded(
++                    "Qwen3.5-MoE resident Work bytes exceed the common byte budget".into(),
++                )
++            });
++        }
++    }
++    let index = slots.empty_index().ok_or(BackendError::Unhealthy)?;
++    slots.begin_build(index, key, projected_bytes)?;
++    let work = match build() {
++        Ok(work) => work,
++        Err(error) => {
++            slots.abort_build(index, key, projected_bytes);
++            return Err(error);
++        }
+     };
+-    let work = build()?;
+-    slots
+-        .install_ready(index, key, work)
+-        .map_err(|_| BackendError::Unhealthy)?;
+-    slots.checkout_ready(key).ok_or(BackendError::Unhealthy)
++    let actual = work.work_bytes();
++    if !slots.finish_build(index, key, projected_bytes, actual) {
++        slots.abort_build(index, key, projected_bytes);
++        let mut work = work;
++        let _ = evict(&mut work);
++        drop(work);
++        return Err(BackendError::Overloaded(
++            "Qwen3.5-MoE actual Work bytes exceed the common byte budget".into(),
++        ));
++    }
++    Ok((index, work))
+ }
+ 
+ fn canonicalize_selection(mut batch: Batch) -> Batch {
+@@ -374,6 +513,9 @@
+         if let Some(engine) = self.engine.as_deref() {
+             engine.poison_after_failed_fence();
+         }
++        if let Ok(mut slots) = self.cache.lock() {
++            slots.retain_checked_out(self.slot, self.key);
++        }
+         if let Some(lease) = self.lease.take() {
+             std::mem::forget(ManuallyDrop::into_inner(lease));
+         }
+@@ -500,12 +642,17 @@
+         // Reuse the common two-slot host-I/O pool as the admission primitive:
+         // acquire() blocks on the condition variable and closes to Unhealthy.
+         // Completion runs on the independent service completion thread.
++        let projected_bytes = self
++            .engine
++            .work_bytes(tokens, sequences, max_len)
++            .map_err(moe_error)?;
+         let lease = self.engine.lease().map_err(moe_error)?;
+         let (slot, work) = {
+             let mut slots = self.work.lock().map_err(|_| BackendError::Unhealthy)?;
+             checkout_work(
+                 &mut slots,
+                 key,
++                projected_bytes,
+                 || {
+                     self.engine
+                         .work(tokens, sequences, max_len)
+@@ -693,6 +840,7 @@
+     #[test]
+     fn workslots_reuse_returns_and_accounts_bytes() {
+         let mut slots: WorkSlots<FakeWork> = WorkSlots::default();
++        assert_eq!(slots.byte_budget, crate::cache::BYTE_BUDGET);
+         let (first, _, _) = FakeWork::new(64);
+         let (second, _, _) = FakeWork::new(32);
+         slots.install_ready(0, (7, 1, 7), first).unwrap();
+@@ -740,6 +888,7 @@
+         let error = checkout_work(
+             &mut slots,
+             key_b,
++            80,
+             || Err(BackendError::Unhealthy),
+             FakeWork::discard,
+         )
+@@ -752,6 +901,120 @@
+     }
+ 
+     #[test]
++    fn work_budget_admits_under_budget_and_rejects_before_allocation() {
++        let key_a = (7, 1, 7);
++        let key_b = (8, 1, 8);
++        let key_c = (9, 1, 9);
++        let mut slots: WorkSlots<FakeWork> = WorkSlots::with_budget(100);
++        let (a, _, _) = FakeWork::new(60);
++        slots.install_ready(0, key_a, a).unwrap();
++        let (a_index, a_work) = slots.checkout_ready(key_a).unwrap();
++        let mut builds = 0usize;
++        let (b_index, b_work) = checkout_work(
++            &mut slots,
++            key_b,
++            30,
++            || {
++                builds += 1;
++                Ok(FakeWork::new(30).0)
++            },
++            FakeWork::discard,
++        )
++        .unwrap();
++        assert_eq!(builds, 1);
++        assert_eq!(slots.resident_bytes(), 90);
++        let error = checkout_work(
++            &mut slots,
++            key_c,
++            20,
++            || {
++                builds += 1;
++                Ok(FakeWork::new(20).0)
++            },
++            FakeWork::discard,
++        )
++        .unwrap_err();
++        assert!(matches!(error, BackendError::Overloaded(_)));
++        assert_eq!(builds, 1);
++        assert_eq!(slots.resident_bytes(), 90);
++        slots.release_checked_out(b_index, key_b);
++        slots.release_checked_out(a_index, key_a);
++        drop(b_work);
++        drop(a_work);
++    }
++
++    #[test]
++    fn one_oversized_active_is_allowed_but_blocks_second_resident_and_retained_counts() {
++        let key_a = (7, 1, 7);
++        let key_b = (8, 1, 8);
++        let mut slots: WorkSlots<FakeWork> = WorkSlots::with_budget(100);
++        let (a_index, a_work) = checkout_work(
++            &mut slots,
++            key_a,
++            150,
++            || Ok(FakeWork::new(150).0),
++            FakeWork::discard,
++        )
++        .unwrap();
++        assert_eq!(slots.resident_bytes(), 150);
++        let mut builds = 0usize;
++        let error = checkout_work(
++            &mut slots,
++            key_b,
++            1,
++            || {
++                builds += 1;
++                Ok(FakeWork::new(1).0)
++            },
++            FakeWork::discard,
++        )
++        .unwrap_err();
++        assert!(matches!(error, BackendError::Overloaded(_)));
++        assert_eq!(builds, 0);
++        slots.retain_checked_out(a_index, key_a);
++        assert_eq!(slots.resident_bytes(), 150);
++        let error = checkout_work(
++            &mut slots,
++            key_b,
++            1,
++            || {
++                builds += 1;
++                Ok(FakeWork::new(1).0)
++            },
++            FakeWork::discard,
++        )
++        .unwrap_err();
++        assert!(matches!(error, BackendError::Overloaded(_)));
++        assert_eq!(builds, 0);
++        std::mem::forget(a_work);
++    }
++
++    #[test]
++    fn budget_evicts_only_ready_idle_and_preserves_checked_out_a() {
++        let key_a = (7, 1, 7);
++        let key_b = (8, 1, 8);
++        let key_c = (9, 1, 9);
++        let mut slots: WorkSlots<FakeWork> = WorkSlots::with_budget(100);
++        let (a, _, _) = FakeWork::new(40);
++        let (idle, _, idle_drops) = FakeWork::new(30);
++        slots.install_ready(0, key_a, a).unwrap();
++        let (a_index, a_work) = slots.checkout_ready(key_a).unwrap();
++        slots.install_ready(1, key_c, idle).unwrap();
++        let (b_index, b_work) = checkout_work(
++            &mut slots,
++            key_b,
++            50,
++            || Ok(FakeWork::new(50).0),
++            FakeWork::discard,
++        )
++        .unwrap();
++        assert_eq!(idle_drops.get(), 1);
++        assert_eq!(slots.resident_bytes(), 90);
++        slots.return_ready(b_index, key_b, b_work).unwrap();
++        slots.return_ready(a_index, key_a, a_work).unwrap();
++    }
++
++    #[test]
+     fn settle_work_caches_live_work_and_releases_only_on_discard() {
+         let key = (7, 1, 7);
+         let mut slots: WorkSlots<FakeWork> = WorkSlots::default();
+diff -ruN a/backends/oxide/src/qwen35_moe_full.rs b/backends/oxide/src/qwen35_moe_full.rs
+--- a/backends/oxide/src/qwen35_moe_full.rs	2026-11-02 09:14:01.583026822 -0800
++++ b/backends/oxide/src/qwen35_moe_full.rs	2026-11-02 09:14:01.584026797 -0800
+@@ -812,6 +812,62 @@
+     }
+ }
+ 
++pub(crate) fn scratch_allocation_bytes_for_shape(
++    tokens: usize,
++    hidden: usize,
++    intermediate: usize,
++    shared_intermediate: usize,
++    two_shared: usize,
++    workspace_bytes: usize,
++) -> Result<usize, BackendError> {
++    let _ = intermediate;
++    if workspace_bytes == 0 {
++        return Err(infer("Qwen3.5-MoE provider workspace is empty"));
++    }
++    let bf16 = std::mem::size_of::<Bf16>();
++    let f32_bytes = std::mem::size_of::<f32>();
++    let mut total = 0usize;
++    for (elements, width) in [
++        (product(tokens, two_shared)?, bf16),
++        (product(tokens, shared_intermediate)?, bf16),
++        (product(tokens, hidden)?, bf16),
++        (tokens, bf16),
++        (product(tokens, ROUTED_EXPERTS)?, bf16),
++        (product(tokens, ROUTED_EXPERTS)?, f32_bytes),
++        (workspace_bytes, 1),
++        (product(tokens, hidden)?, bf16),
++    ] {
++        total = elements
++            .checked_mul(width)
++            .and_then(|bytes| total.checked_add(bytes))
++            .ok_or_else(|| infer("Qwen3.5-MoE scratch byte count overflow"))?;
++    }
++    Ok(total)
++}
++
++#[allow(clippy::too_many_arguments)]
++pub(crate) fn scratch_allocation_bytes(
++    tokens: usize,
++    hidden: usize,
++    intermediate: usize,
++    shared_intermediate: usize,
++    two_shared: usize,
++    provider: &Qwen35MoeProvider,
++    renormalize: bool,
++) -> Result<usize, BackendError> {
++    let workspace_bytes = provider
++        .prepare(tokens, hidden, intermediate, renormalize)?
++        .workspace_bytes();
++    scratch_allocation_bytes_for_shape(
++        tokens,
++        hidden,
++        intermediate,
++        shared_intermediate,
++        two_shared,
++        workspace_bytes,
++    )
++}
++
+ #[allow(clippy::too_many_arguments)]
+ pub(crate) fn allocate_scratch(
+     stream: &Arc<Stream>,

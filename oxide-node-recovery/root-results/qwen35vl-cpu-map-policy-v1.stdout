@@ -1,0 +1,10 @@
+Traceback (most recent call last):
+  File "/tmp/oxide-qwen35vl-sdk-map-policy-v1/qwen35_vl_map_policy_controller.py", line 747, in <module>
+    main()
+  File "/tmp/oxide-qwen35vl-sdk-map-policy-v1/qwen35_vl_map_policy_controller.py", line 743, in main
+    run_phase(args, args.phase)
+  File "/tmp/oxide-qwen35vl-sdk-map-policy-v1/qwen35_vl_map_policy_controller.py", line 662, in run_phase
+    run_container(remote, "", argv, output / f"{label}-sdk.log")
+  File "/tmp/oxide-qwen35vl-sdk-map-policy-v1/qwen35_vl_map_policy_controller.py", line 141, in run_container
+    raise RuntimeError(f"container command failed rc={done.returncode}: {argv}")
+RuntimeError: container command failed rc=126: ['/tmp/oxide-qwen35vl-map-policy/cpu-1793638200711671722/sdk/sdk_map_preflight.py', '--library', '/tmp/native214-fa4-mode20/install/lib/libtei_torch.so', '--torch-python', '/opt/torch-sdk/bin/python3.12', '--vendor', '/tmp/oxide-host-cublas-130200', '--union124', '/tmp/oxide-qwen35vl-map-policy/cpu-1793638200711671722/runtime/kernels', '--model-container', '/bench/michaelfeil/onejev-perf/backbone-comparison-20261023/models/Qwen3.5-0.8B', '--host-model-path', '/workspace/model-performance/michaelfeil/onejev-perf/backbone-comparison-20261023/models/Qwen3.5-0.8B', '--model-name', 'Qwen3.5-0.8B', '--model-format', 'index', '--expected-config-sha256', 'b90b86f35c8e6925ef74ee04d0e758f0a845c83a42089ad82bbaa948de9b4204', '--media', '/tmp/oxide-qwen35vl-map-policy/cpu-1793638200711671722/cases/single-cats.media.json', '--out', '/tmp/oxide-qwen35vl-map-policy/cpu-1793638200711671722/preflight-cpu-Qwen3.5-0.8B-single-cats', '--expected-index-sha256', 'd8a08838a613b025eb7952ed9db11696213e57e76a375661ef5c12f9dd5dcf4e']

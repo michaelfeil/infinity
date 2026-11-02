@@ -1,0 +1,50 @@
+{
+  "schema": "oxide-qwen35vl-root-preflight/v1",
+  "marker": "QWEN35_VL_PREFLIGHT_COMPLETE",
+  "status": "passed",
+  "base_commit": "55380b768cc843c0c21207112dca0c7f678b6344",
+  "container": "infinity-torch214-compare-sdk",
+  "b66": {
+    "path": "/tmp/native214-fa4-mode20/install/lib/libtei_torch.so",
+    "sha256": "b66d70b61b39e1bf0d565aca33bac7c5e21849677396ce5216f5baf73027d37e"
+  },
+  "torch": {
+    "python": "/opt/torch-sdk/bin/python3.12",
+    "version": "2.14.1+cu130",
+    "git": "5c4886908584029761b579af026dcfb627c84070",
+    "root": "/opt/torch-sdk/lib/python3.12/site-packages/torch"
+  },
+  "cublaslt": "130200",
+  "checkpoints": {
+    "Qwen3.5-0.8B": "/workspace/model-performance/michaelfeil/onejev-perf/backbone-comparison-20261023/models/Qwen3.5-0.8B",
+    "Qwen3.5-2B": "/workspace/model-performance/michaelfeil/onejev-perf/backbone-comparison-20261023/models/Qwen3.5-2B",
+    "Qwen3.5-4B": "/workspace/model-performance/michaelfeil/onejev-perf/backbone-comparison-20261023/models/Qwen3.5-4B",
+    "Qwen3.5-35B-A3B": "/workspace/model-performance/michaelfeil/onejev-perf/models/qwen35-35b-a3b",
+    "Elephant-Qwen3.5-VL": "/workspace/model-performance/michaelfeil/elephant-1",
+    "Mammoth-Qwen3.5-VL": "/workspace/model-performance/michaelfeil/onejev-perf/models/mammoth-1"
+  },
+  "old_exports_proof": {
+    "schema": "oxide-qwen35vl-old-exports-proof/v1",
+    "status": "passed",
+    "old_exports": 86,
+    "foundation_additive_exports": 9,
+    "encoder_activation_additive_exports": 4,
+    "qwen35vl_additive_exports": 7,
+    "new_total_exports": 106,
+    "qwen35vl_names": [
+      "infinity_qwen35vl_add_bf16",
+      "infinity_qwen35vl_bias_bf16",
+      "infinity_qwen35vl_gelu_tanh_bf16",
+      "infinity_qwen35vl_pos_interp",
+      "infinity_qwen35vl_rope2d_bf16",
+      "infinity_qwen35vl_silu_bf16",
+      "infinity_qwen35vl_temporal_slice_bf16"
+    ],
+    "old86_pin_sha256": "f80fb666510c3842eabcc8f23b7db1e1be0ad92cc2c478d520e0e30b2d843a24",
+    "build_sha256": "99b6dcd130b277d61cbcc61f99226758a51a7b235ffd2e2377c2478e653f0e37",
+    "qwen35vl_source_sha256": "8eca5fd396ec71aa0cf32b1ee8967459bd8d53b7d09d3758e5c78d73aedb136c",
+    "semantic_cubin_comparison": "Root-only: requires the published old86 bundle",
+    "failures": []
+  },
+  "failures": []
+}

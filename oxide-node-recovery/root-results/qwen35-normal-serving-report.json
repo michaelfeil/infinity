@@ -1,0 +1,75 @@
+{
+  "schema": "oxide-qwen35-normal-serving-root-qualification/v1",
+  "status": "passed",
+  "base_commit": "e582ce90eb1544fcff081a495cb8fd4f3c17b112",
+  "consumed_source_pins_exact": 108,
+  "source_freeze_sha256": "e3c38a48a74ff0f40b0fe37fcfad1f7899951cb2c1abecf0a1fb3fc204a7c604",
+  "reports": {
+    "text": {
+      "path": "/tmp/infinity-oxide-parity-20261101/qwen35-serving-e582-unified-v1/root-text-v1/report.json",
+      "sha256": "65c56da82eb85f8f63a3d16e534c3a578f837c879296398f774a71e75c7cc8b6",
+      "status": "passed"
+    },
+    "decision_and_preserved_initial_lifecycle_failure": {
+      "path": "/tmp/infinity-oxide-parity-20261101/qwen35-serving-e582-unified-v1/root-qualified-v1/report.json",
+      "sha256": "e9d800e92a01af21a36898c144d4409f1e9c3dec86a932eb594a7ff0482387b1",
+      "status": "failed"
+    },
+    "lifecycle": {
+      "path": "/tmp/infinity-oxide-parity-20261101/qwen35-serving-lifecycle-v2/root-qualified-v2/report.json",
+      "sha256": "1026186c58d9d0d9d40117a46fdffc93c9a0512663d75c44e945c1ba91984a78",
+      "status": "passed"
+    },
+    "legacy": {
+      "path": "/tmp/infinity-oxide-parity-20261101/qwen35-serving-e582-unified-v1/root-legacy-v1/report.json",
+      "sha256": "e4529ca12c1a495a6bf6064cbe74cef25bb45c527c775eb5b870ac8379295bdf",
+      "status": "passed"
+    }
+  },
+  "text": {
+    "cases": 42,
+    "vectors": 7443,
+    "F32_values": 19054080,
+    "differing_F32_values": 0
+  },
+  "decision": {
+    "strict_Native_cases": 10
+  },
+  "lifecycle": {
+    "models": [
+      "Elephant",
+      "Mammoth"
+    ],
+    "modes": [
+      "plain",
+      "memcheck",
+      "initcheck"
+    ],
+    "cases": 6,
+    "typed_backpressure_and_exact_recovery": true,
+    "accepted_shape_growth": true
+  },
+  "CPU": {
+    "Rust_backend_lib": 587,
+    "factory": 23,
+    "all_targets": "passed",
+    "device_builder_python": 17,
+    "FA4_builder_python": 14,
+    "clippy_alltargets_Dwarnings": "passed",
+    "fmt_all": "passed"
+  },
+  "compiled_architectures": [
+    "sm_90",
+    "sm_100",
+    "sm_120"
+  ],
+  "runtime_architecture": "H100 SM90 only",
+  "performance_claim": false,
+  "all_models_goal_complete": false,
+  "limitations": [
+    "BF16 dense text and single-question OneJev serving only",
+    "Fanout, persistent prefix cache, media and dynamicFP8 remain separate pending gates",
+    "SM100 block partial-prefix execution remains typed unsupported"
+  ],
+  "historical_failure": "V1life assumed both held large arenas fit; exact Overloaded was correct. V2 proves expected typed rejection/recovery without production guard change."
+}

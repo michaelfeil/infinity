@@ -1,0 +1,54 @@
+{
+  "schema": "qwen3-moe-paired-perf/v1",
+  "windows_order": [
+    "native-1",
+    "oxide-1",
+    "oxide-2",
+    "native-2"
+  ],
+  "pool": "mean",
+  "environment": {
+    "CUDA_VISIBLE_DEVICES": "0",
+    "one_engine_at_a_time": true,
+    "gpu": "0",
+    "vendor_version": 130200,
+    "oxide_graphs": false,
+    "native_graphs": true
+  },
+  "preflight": {
+    "schema": "qwen3-moe-paired-perf-preflight/v1",
+    "status": "cpu-prepared",
+    "public_commit": "252789b05ea2e09c14971c04dfcce458f863fead",
+    "model": {
+      "manifest_sha256": "55be60f3bdfa41310a73bde32d2fdd352a3f11c6e4f3c2cc4affa2f16550fc88",
+      "config_sha256": "2850ddb3bf7aecad20b611e2d44f3077fc8193f4827c93beddd4c02ad63c2297"
+    },
+    "cases": [
+      {
+        "id": "t7",
+        "batch": "/tmp/oxide-qwen3-moe-paired-performance-v2/oxide-perf/cases/t7.json",
+        "sha256": "d310918e4d36acda95d7de58ea212080d46e45bcef0d550193e38b60167a6f8a",
+        "bytes": 370
+      },
+      {
+        "id": "ragged129",
+        "batch": "/tmp/oxide-qwen3-moe-paired-performance-v2/oxide-perf/cases/ragged129.json",
+        "sha256": "d9a3e4539b5349fc18a702a1a04f303ede29dbfd0da8793368745f3274cb10d1",
+        "bytes": 3402
+      },
+      {
+        "id": "stable2k",
+        "batch": "/tmp/oxide-qwen3-moe-paired-performance-v2/oxide-perf/cases/stable2k.json",
+        "sha256": "22c0b44d246e8d5920616d3343ba19932bf44af071419371938d8f7318a2125d",
+        "bytes": 30370
+      }
+    ],
+    "gold": {
+      "t7": {
+        "native_report": "/tmp/infinity-oxide-parity-20261101/qwen3-moe-native-capi-v1/root-native-quality-all-v1/mean/ragged7-pooled.json",
+        "sha256": "02a3fa1fa513d5edf955d32f28332b47906736e29f132b2378cd2efe21916307",
+        "batch_sha256": "d310918e4d36acda95d7de58ea212080d46e45bcef0d550193e38b60167a6f8a"
+      },
+      "ragged129": {
+        "native_report": "/tmp/infinity-oxide-parity-20261101/qwen3-moe-native-capi-v1/root-native-quality-all-v1/mean/ragged129-mixed.json",
+        "sha256": "0eeee85e0f9

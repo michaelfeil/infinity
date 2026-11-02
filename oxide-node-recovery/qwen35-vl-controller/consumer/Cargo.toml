@@ -1,0 +1,16 @@
+[package]
+name = "qwen35-vl-consumer"
+version = "0.1.0"
+edition = "2021"
+publish = false
+license-file = "../LICENSE"
+
+[dependencies]
+infinity-backend-oxide = { path = "../libs/infinity-v3/backends/oxide" }
+infinity_v3-backend-core = { path = "../libs/infinity-v3/backends/core" }
+infinity-v3-config = { path = "../libs/infinity-v3/config" }
+serde_json = "1.0"
+
+[profile.release]
+debug = 0
+opt-level = 2

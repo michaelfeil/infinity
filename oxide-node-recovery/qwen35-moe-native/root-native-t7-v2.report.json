@@ -1,0 +1,55 @@
+{
+  "schema": "q35moe-native-t7-plan/v1",
+  "run": true,
+  "runid": "q35moe-native-light-v2",
+  "case_file": "/tmp/infinity-oxide-parity-20261101/q35moe-runtime-handoff-v1/starter-t7-a-v1.json",
+  "case_sha256": "607d76f3e1f08ebb0b18f6d6659fd1d07135712cf3f92a4b3bf36166d9ab4721",
+  "device": "cuda:0",
+  "step": {
+    "label": "starter-native-v2",
+    "env": {
+      "CUDA_VISIBLE_DEVICES": "0",
+      "CUDA_DEVICE_ORDER": "PCI_BUS_ID",
+      "LD_BIND_NOW": "1",
+      "LD_PRELOAD": "/tmp/oxide-host-cublas-130200/libcublasLt.so.13:/tmp/oxide-host-cublas-130200/libcublas.so.13",
+      "LD_LIBRARY_PATH": "/tmp/oxide-host-cublas-130200",
+      "INFINITY_BENCH_REQUIRE_HOST_VENDOR": "1",
+      "INFINITY_TORCH_CUDA_GRAPHS": "1",
+      "INFINITY_TORCH_CUDA_GRAPH_MAX_CAPTURES": "8",
+      "INFINITY_TORCH_CUDA_GRAPH_ENTRIES": "4",
+      "INFINITY_TORCH_CUDA_GRAPH_REUSE": "3",
+      "INFINITY_TORCH_CUDA_GRAPH_MAX_BYTES": "536870912",
+      "INFINITY_TORCH_CUDA_GRAPH_MAX_TOKENS": "4096",
+      "INFINITY_TORCH_FP8_SCOPE": "mlp"
+    },
+    "copy_back": [
+      "native-gold-t7.json"
+    ],
+    "argv": [
+      "/opt/torch-sdk/bin/python3.12",
+      "/tmp/qwen35-moe-sdk-root-v1/q35moe-native-light-v2/native_gold.py",
+      "--container",
+      "--model",
+      "/bench/michaelfeil/onejev-perf/models/qwen35-35b-a3b",
+      "--library",
+      "/tmp/native214-fa4-mode20/install/lib/libtei_torch.so",
+      "--vendor",
+      "/tmp/oxide-host-cublas-130200",
+      "--bridge-header",
+      "/tmp/qwen35-moe-sdk-root-v1/q35moe-native-light-v2/bridge.h",
+      "--sdk-proof",
+      "/tmp/qwen35-moe-sdk-root-v1/q35moe-native-light-v2/light.json",
+      "--cases",
+      "/tmp/qwen35-moe-sdk-root-v1/q35moe-native-light-v2/cases.json",
+      "--minimal-t7",
+      "--output",
+      "/tmp/qwen35-moe-sdk-root-v1/q35moe-native-light-v2/native-gold-t7.json",
+      "--device",
+      "cuda:0"
+    ]
+  },
+  "engine_limit": 1,
+  "scope": "actual GPU Native T7 mean/fit probe; no CPU model forward",
+  "status": "running",
+  "records": []
+}

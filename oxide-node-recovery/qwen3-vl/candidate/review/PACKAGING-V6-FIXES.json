@@ -1,0 +1,15 @@
+{
+  "schema": "oxide-qwen3-vl-packaging-v6-fixes/v1",
+  "source_commit": "027b359c6e0c5378cd07398b07b4435af3ee492d",
+  "patch_sha256": "94965637d760dbfd642a41d36efe3142ad892933f795b37f3c8c80e5630e14ea",
+  "findings": [
+    {"id":"Q2-extra-native","status":"closed","detail":"Any Native observation whose fixture is outside --fixtures is rejected."},
+    {"id":"Q2-extra-oxide","status":"closed","detail":"Any oxide fixture record outside the expected set is rejected per role before metrics."},
+    {"id":"Q2-exact-native-length","status":"closed","detail":"Native f32 output must equal exactly sequences*pooled_width + tokens*output_width; trailing words fail."},
+    {"id":"M-cpu-evidence","status":"closed","detail":"Readiness cpu_evidence pin now matches the actual evidence file."},
+    {"id":"M-stage-plans","status":"closed","detail":"STAGE controller plan hashes regenerated to current values."},
+    {"id":"M-paths","status":"closed","detail":"Every freeze_and_handoff entry carries an explicit path; compare_quality.py itself is pinned."}
+  ],
+  "cpu_tests": {"compare_quality": "8 passed", "controller_v3": "4 passed", "source_unchanged": "027b359c"},
+  "optimized_quality_build": "HELD pending independent PASS"
+}

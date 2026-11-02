@@ -1,0 +1,206 @@
+{
+  "schema": "oxide-qwen35vl-map-policy-gate/v1",
+  "status": "author-cpu-tests-ready-root-sdk-cpu-pending",
+  "roles": {
+    "source_root_readonly": "/tmp/oxide-all-model-feature-matrix-v1/qwen35-vl-lifecycle-fix-v1",
+    "owned_controller_root": "/tmp/oxide-qwen35vl-sdk-map-policy-v1",
+    "paired_binary_absolute": "/tmp/oxide-all-model-feature-matrix-v1/qwen35-vl-lifecycle-fix-v1/target-opt3-noLTO/release/qwen35-vl-consumer",
+    "owning_life_binary_absolute": "/tmp/oxide-all-model-feature-matrix-v1/qwen35-vl-lifecycle-fix-v1/target-opt3-noLTO-harness/release/qwen35-vl-consumer"
+  },
+  "pins": {
+    "controller": {
+      "path": "qwen35_vl_map_policy_controller.py",
+      "sha256": "e8b13196ec9de9ed4b0840cc8ece42d02a3c808802003e326108319128d51e3f"
+    },
+    "preflight": {
+      "path": "native/sdk/sdk_map_preflight.py",
+      "sha256": "dcbedc7fe309b7b037553c89ccfd73edfaea403ac86f623e1590bf1807a91b58"
+    },
+    "native_policy_helper": {
+      "path": "native/native_whole_model_policy.py",
+      "sha256": "a2a49d25560e0d8d989617fd4215cfeb2ba013839390f6b0ffd7cb82d149079e"
+    },
+    "models": {
+      "path": "device-packet/model-locations-v1.json",
+      "sha256": "38e08589615f080d28b8ec054207ce275339af57ee128e410bdb9d628a636b85"
+    },
+    "assets": {
+      "path": "device-packet/native-assets-v1.json",
+      "sha256": "b6b3ab21f43cff2c96a82bcea1a71168b1aa94903ce03425ded1c2768321ebb1"
+    },
+    "runtime": {
+      "path": "device-packet/runtime-paths-v1.json",
+      "sha256": "2409cc14d3bad325d4267dcaa089c5f6305843179c28d6de9bbb713343e0b1e4"
+    },
+    "tests": {
+      "path": "tests/test_map_policy_packet.py",
+      "sha256": "a0d0e6d7d4afc1f858fdb1325f6dd982b1470145fe1418d0719298d3ce2a73cc"
+    },
+    "paired_binary": {
+      "sha256": "3780facf61529822f33a4cf1416bc6c8723acc1fa2cd2c778f7bc54f2140d83b"
+    },
+    "owning_life_binary": {
+      "sha256": "21c5603ee6e9eff06dae5a4344d83fba43ee8bd0ed9a31d462417970c0bf297a"
+    },
+    "model_manifest": {
+      "path": "device-packet/model-manifest-v1.json",
+      "sha256": "920237b2f74abe544f024cf0ead30789ab923c944938a117431d477c68ec6d9a"
+    },
+    "successor_pins": {
+      "path": "device-packet/successor-pins-v1.json",
+      "sha256": "b066f008430e8d056af08553938979ca64f396b020cafdb64f6c3486289bbdb9"
+    },
+    "native_device_file_routing": {
+      "path": "device-packet/native-device-file-routing-v1.json",
+      "sha256": "7fb0d77597b83ec414411fc0009dd5f5c44a1939cfa6d6835b22eb6df9153a6f"
+    }
+  },
+  "native_policy": {
+    "_cuda_graphs": "true",
+    "_cuda_graph_entries": "4",
+    "_cuda_graph_reuse": "3",
+    "_cuda_graph_max_bytes": "536870912",
+    "_cuda_graph_max_captures": "8",
+    "_cuda_graph_max_tokens": "4096",
+    "_media_cuda_graphs": "false",
+    "oxide_cuda_graphs": false
+  },
+  "model_locations": {
+    "schema": "oxide-qwen35vl-model-locations/v1",
+    "file": "device-packet/model-locations-v1.json",
+    "five_named_checkpoints": [
+      "Qwen3.5-0.8B",
+      "Qwen3.5-2B",
+      "Qwen3.5-4B",
+      "Elephant-Qwen3.5-VL",
+      "Mammoth-Qwen3.5-VL"
+    ],
+    "host_paths_used_for_host_hash_validation": true,
+    "container_paths_used_only_inside_sdk_argv": true
+  },
+  "eight_rust_production_pins": {
+    "consumer/src/main.rs": "5d7a75d681a882be7149d4e543b9b861bcd5c674b0e416fd301a7d648f8d2a2b",
+    "libs/infinity-v3/backends/oxide/src/lib.rs": "aeea32e693ea2d5120841fe4c28ae8527b8c1adcb09b008beab2815dde950721",
+    "libs/infinity-v3/backends/oxide/src/qwen35_vl_device.rs": "1910837d81bdb0abc73a34c73c1879219b5baca7fe44bcb81fdb234d904ea5fb",
+    "libs/infinity-v3/backends/oxide/src/qwen35_vl_engine.rs": "83fd2c8b3e233cbb6b42e2442900f809bacdc86d58b6f52932d363c54bb99b00",
+    "libs/infinity-v3/backends/oxide/src/qwen35_vl_tests.rs": "c1f31d1622bdc548c512163a54802a47fe2bea8cd2f444090be32fe471ce5d0b",
+    "libs/infinity-v3/backends/oxide/src/qwen35_vl_vision.rs": "b12143546b1ff7738cce854c060f33d4fb5db86a57cdfa9759c215d346a4b42e",
+    "libs/infinity-v3/backends/oxide/device/src/main.rs": "c19ae20ff2ec668f1983b65f32992c7912ccca52d27b2c18d84b72503d71f6ae",
+    "libs/infinity-v3/backends/oxide/device/src/qwen35vl.rs": "f7fd1a0165c15a8bc043d2c6010951449b17d2100a147e6fb305a89f034a477e"
+  },
+  "runtime": {
+    "union124": {
+      "host_path": "/tmp/infinity-oxide-parity-20261101/device-union124-all3-v1/kernels",
+      "manifest_sha256": "56863d52270f04e2a72c07f0213295cb78cd003ec111239bef1f78e75ea720c5",
+      "file_count": 20
+    },
+    "fa4": {
+      "host_path": "/tmp/oxide-fa4-canonical26-derived-v4/bundle",
+      "sm_90_manifest_sha256": "0e4af6e1fd40714300649dd98e6eb31a0c59e9e3cb493b377de07d57d63916a9",
+      "file_count": 213,
+      "note": "QV35 canonical26 bundle staged per run; /tmp/fa4-root is not assumed to cover Qwen3.5-VL."
+    },
+    "gdn_raw": {
+      "host_path": "/tmp/infinity-oxide-parity-20261101/qwen35-gdn-foundation-v1/kernels",
+      "manifest_sha256": "f0b2a18d14c80eec9e1e881d87bff80c27408c77a07eb9a1039ed57548b74a7b",
+      "file_count": 6
+    },
+    "gdn_provider": {
+      "host_path": "/tmp/infinity-oxide-parity-20261101/qwen35-gdn-aot-compiled-root-v2",
+      "manifest_sha256": "79b9e8e10d2214d88374254d113917b44dcc5bc326e91c82a115f0c047b5beeb",
+      "file_count": 74
+    },
+    "gdn_aux": {
+      "host_path": "/tmp/oxide-qwen35-gdn-aot-pack-v1/kernels",
+      "manifest_sha256": "d1cd7aab5324ad3f1cc8e961ee33f016caa5a344e440661ec332d089ba904be8",
+      "file_count": 9
+    }
+  },
+  "cpu_test_command": [
+    "cd",
+    "/tmp/oxide-qwen35vl-sdk-map-policy-v1"
+  ],
+  "root_commands": {
+    "cpu": [
+      "env",
+      "CUDA_VISIBLE_DEVICES=",
+      "taskset",
+      "-c",
+      "88-95",
+      "python3",
+      "qwen35_vl_map_policy_controller.py",
+      "--phase",
+      "cpu",
+      "--run",
+      "--model-name",
+      "Qwen3.5-0.8B",
+      "--case",
+      "single-cats",
+      "--output",
+      "/tmp/oxide-qwen35vl-sdk-map-policy-output/cpu-0.8B-single-v1"
+    ],
+    "paired": [
+      "env",
+      "CUDA_VISIBLE_DEVICES=",
+      "taskset",
+      "-c",
+      "88-95",
+      "python3",
+      "qwen35_vl_map_policy_controller.py",
+      "--phase",
+      "paired",
+      "--run",
+      "--model-name",
+      "Qwen3.5-0.8B",
+      "--case",
+      "single-cats",
+      "--consumer",
+      "/tmp/oxide-all-model-feature-matrix-v1/qwen35-vl-lifecycle-fix-v1/target-opt3-noLTO/release/qwen35-vl-consumer",
+      "--output",
+      "/tmp/oxide-qwen35vl-sdk-map-policy-output/paired-0.8B-single-v1"
+    ],
+    "life": [
+      "env",
+      "CUDA_VISIBLE_DEVICES=",
+      "taskset",
+      "-c",
+      "88-95",
+      "python3",
+      "qwen35_vl_map_policy_controller.py",
+      "--phase",
+      "life",
+      "--run",
+      "--model-name",
+      "Qwen3.5-0.8B",
+      "--case",
+      "single-cats",
+      "--life-consumer",
+      "/tmp/oxide-all-model-feature-matrix-v1/qwen35-vl-lifecycle-fix-v1/target-opt3-noLTO-harness/release/qwen35-vl-consumer",
+      "--output",
+      "/tmp/oxide-qwen35vl-sdk-map-policy-output/life-0.8B-single-v1"
+    ]
+  },
+  "non_claims": [
+    "author did not run Docker, GPU, Torch CUDA, NVCC, network, or a device compile",
+    "author did not run a whole-model CPU forward",
+    "Root SDK CPU preflight is pending and must not be claimed closed before the actual retry",
+    "no runtime quality, fence, canary, lifetime, or performance result is claimed"
+  ],
+  "available_unvalidated_commands": {
+    "cpu_all": [
+      "env",
+      "CUDA_VISIBLE_DEVICES=",
+      "taskset",
+      "-c",
+      "88-95",
+      "python3",
+      "qwen35_vl_map_policy_controller.py",
+      "--phase",
+      "cpu",
+      "--run",
+      "--output",
+      "/tmp/oxide-qwen35vl-sdk-map-policy-output/cpu-all-v1"
+    ]
+  },
+  "qualification_scope": "Initial Root qualification is bounded to Qwen3.5-0.8B single-cats. Other checkpoints/cases remain available but are not claimed validated."
+}

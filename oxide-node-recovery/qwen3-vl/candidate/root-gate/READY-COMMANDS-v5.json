@@ -1,0 +1,45 @@
+{
+  "schema": "oxide-qwen3-vl-root-ready-commands/v5",
+  "working_directory": "/tmp/oxide-all-model-feature-matrix-v1/qwen-vl-current-v1",
+  "source_commit": "027b359c6e0c5378cd07398b07b4435af3ee492d",
+  "native_packet": "/tmp/oxide-all-model-feature-matrix-v1/qwen-vl-current-v1/native-b66-cpu-stage/Root-control-packet.native-v5.json",
+  "quality_binary": {
+    "path": "/tmp/opencode/qwen-vl-host-consumer-quality-target/release/examples/qwen3_vl_host_consumer",
+    "sha256": "13c66c8477b2b894d2416d123d5fbc818a502c1d9895f3efff909952b9d731ce"
+  },
+  "cold_sdk_fast_cpu": {
+    "argv": [
+      "python3",
+      "native-b66-cpu-stage/controller_v5.py",
+      "--phase",
+      "cpu",
+      "--run",
+      "--output",
+      "/tmp/qv3-root-cpu-v5"
+    ],
+    "jobs": [
+      "cpu-bindings",
+      "cpu-oxide-batch"
+    ],
+    "note": "No whole-model 8B CPU forward by default."
+  },
+  "native_8b_quality": {
+    "argv": [
+      "python3",
+      "native-b66-cpu-stage/controller_v5.py",
+      "--phase",
+      "quality",
+      "--run",
+      "--output",
+      "/tmp/qv3-root-quality-v5"
+    ],
+    "note": "Native quality only for 8B; ColQwen3-4B/Nemotron-4B packets missing; Nemotron-8B no /bench mapping."
+  },
+  "pins": {
+    "controller_pins": "native-b66-cpu-stage/CONTROLLER-PINS-v5.json",
+    "cpu_plan": "native-b66-cpu-stage/CONTROLLER-PLAN-CPU-v5.json",
+    "quality_plan": "native-b66-cpu-stage/CONTROLLER-PLAN-QUALITY-v5.json",
+    "packet_diff": "native-b66-cpu-stage/V5-PACKET-DIFF.json",
+    "seal": "native-b66-cpu-stage/V5-SEAL.json"
+  }
+}

@@ -1,0 +1,76 @@
+{
+  "schema": "oxide-qwen35vl-native-device-file-routing/v1",
+  "root_cause_fixed": {
+    "previous_device_argument": "cuda",
+    "previous_failure": "raw cuda keeps c10 index -1; weight_reader.device.index() -1; fastsafetensors cudaSetDevice(-1) returned 101",
+    "new_device_argument": "cuda:0",
+    "new_device_cstring_bytes": "Y3VkYTow",
+    "note": "Explicit canonical device index; no bridge/Rust change."
+  },
+  "file_routing": {
+    "config": {
+      "path": "config.json",
+      "validation": "sha256 must equal expected host record"
+    },
+    "index_present": {
+      "path": "model.safetensors.index.json",
+      "validation": "sha256 must equal expected host record",
+      "weights": "sorted unique index weight_map shard paths"
+    },
+    "index_absent": {
+      "path": "model.safetensors",
+      "validation": "exact file must exist",
+      "weights": "exact model.safetensors only"
+    },
+    "no_scan": true,
+    "no_fake_index": true,
+    "load_shard_math_unchanged": true,
+    "single_model": "Elephant-Qwen3.5-VL",
+    "index_models": [
+      "Qwen3.5-0.8B",
+      "Qwen3.5-2B",
+      "Qwen3.5-4B",
+      "Mammoth-Qwen3.5-VL"
+    ]
+  },
+  "native_cuda_graph_policy": {
+    "_cuda_graphs": "true",
+    "_cuda_graph_entries": "4",
+    "_cuda_graph_reuse": "3",
+    "_cuda_graph_max_bytes": "536870912",
+    "_cuda_graph_max_captures": "8",
+    "_cuda_graph_max_tokens": "4096",
+    "_media_cuda_graphs": "false"
+  },
+  "oxide_cuda_graphs": false,
+  "thresholds_unchanged": {
+    "decision_max_abs": 0.015,
+    "embedding_max_abs_base": 0.015,
+    "embedding_max_abs_relative": 0.015
+  },
+  "eight_rust_production_pins": {
+    "consumer/src/main.rs": "5d7a75d681a882be7149d4e543b9b861bcd5c674b0e416fd301a7d648f8d2a2b",
+    "libs/infinity-v3/backends/oxide/src/lib.rs": "aeea32e693ea2d5120841fe4c28ae8527b8c1adcb09b008beab2815dde950721",
+    "libs/infinity-v3/backends/oxide/src/qwen35_vl_device.rs": "1910837d81bdb0abc73a34c73c1879219b5baca7fe44bcb81fdb234d904ea5fb",
+    "libs/infinity-v3/backends/oxide/src/qwen35_vl_engine.rs": "83fd2c8b3e233cbb6b42e2442900f809bacdc86d58b6f52932d363c54bb99b00",
+    "libs/infinity-v3/backends/oxide/src/qwen35_vl_tests.rs": "c1f31d1622bdc548c512163a54802a47fe2bea8cd2f444090be32fe471ce5d0b",
+    "libs/infinity-v3/backends/oxide/src/qwen35_vl_vision.rs": "b12143546b1ff7738cce854c060f33d4fb5db86a57cdfa9759c215d346a4b42e",
+    "libs/infinity-v3/backends/oxide/device/src/main.rs": "c19ae20ff2ec668f1983b65f32992c7912ccca52d27b2c18d84b72503d71f6ae",
+    "libs/infinity-v3/backends/oxide/device/src/qwen35vl.rs": "f7fd1a0165c15a8bc043d2c6010951449b17d2100a147e6fb305a89f034a477e"
+  },
+  "binaries_unchanged": {
+    "paired": {
+      "path": "/tmp/oxide-all-model-feature-matrix-v1/qwen35-vl-lifecycle-fix-v1/target-opt3-noLTO/release/qwen35-vl-consumer",
+      "sha256": "3780facf61529822f33a4cf1416bc6c8723acc1fa2cd2c778f7bc54f2140d83b"
+    },
+    "owning_life": {
+      "path": "/tmp/oxide-all-model-feature-matrix-v1/qwen35-vl-lifecycle-fix-v1/target-opt3-noLTO-harness/release/qwen35-vl-consumer",
+      "sha256": "21c5603ee6e9eff06dae5a4344d83fba43ee8bd0ed9a31d462417970c0bf297a"
+    }
+  },
+  "helper_sha256": "a2a49d25560e0d8d989617fd4215cfeb2ba013839390f6b0ffd7cb82d149079e",
+  "non_claims": [
+    "author did not run Docker/GPU/Torch/engine",
+    "no threshold/weight/config/math edit"
+  ]
+}

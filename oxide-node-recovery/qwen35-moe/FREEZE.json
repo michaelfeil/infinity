@@ -1,0 +1,42 @@
+{
+  "schema": "oxide-qwen35-moe-factory-poison-checkout-freeze/v1",
+  "status": "source-frozen-cpu-strict-pass-awaiting-review",
+  "predecessor_b73": {
+    "path": "/tmp/oxide-all-model-feature-matrix-v1/qwen35-moe-factory-workliveness-successor-v1",
+    "freeze_sha256": "b73e5813267a24fc126bc641552fbc361ca2ae44bd5f1e214f1c8639565744d7"
+  },
+  "fixes": {
+    "P2-1": "key growth rejected under cache lock while any slot checked out; never-queued cache rejection safely discarded via release_if_idle with typed fallback quarantine",
+    "P2-2": "lease shares engine poison; first fence failure poisons engine; work/lease/enqueue/validate/health and prepare fast path reject poisoned/closed state as Backend(Unhealthy)"
+  },
+  "files": {
+    "libs/infinity-v3/backends/src/lib.rs": {
+      "bytes": 82342,
+      "sha256": "45288b236ef2e875c4499aa5e3a25e2d76dcba6f51b0b14f8d31e5ed4ebcf1c4"
+    },
+    "libs/infinity-v3/backends/oxide/src/lib.rs": {
+      "bytes": 366506,
+      "sha256": "7c7b9962e4e4d224963be53155de2807422f2d843c309a126c2f6f5a8f5e1b80"
+    },
+    "libs/infinity-v3/backends/oxide/src/qwen35_moe_factory.rs": {
+      "bytes": 25629,
+      "sha256": "9434db8c2463b4b5e3e78df3cee7f0ee83e878d825ff5d3186004ac66d2bd63e"
+    },
+    "libs/infinity-v3/backends/oxide/src/qwen35_moe_engine.rs": {
+      "bytes": 77773,
+      "sha256": "bf2d3e34a391a75fcb9d1f8ed24c2e4c8d9ee79c603cf03588909629f91fbe86"
+    },
+    "libs/infinity-v3/backends/oxide/src/work_retirement.rs": {
+      "bytes": 19526,
+      "sha256": "6c65a1946e7cbc4480ab98afb95344626e441203367d11218aee27915f372a65"
+    },
+    "libs/infinity-v3/backends/oxide/src/staging.rs": {
+      "bytes": 33274,
+      "sha256": "a9f28855a1d32a57de76ddc842a8b2ddd14c9b24e52d99ce0182f981f7ccabff"
+    },
+    "FACTORY-POISON-CHECKOUT.patch": {
+      "bytes": 12639,
+      "sha256": "85334aa2fecf2831c9aba8daa3f0d71e7dd105dddc12ab125916bf96b80232e0"
+    }
+  }
+}
