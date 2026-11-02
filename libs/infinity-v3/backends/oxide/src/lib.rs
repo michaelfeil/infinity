@@ -43,6 +43,14 @@ pub(crate) mod lt;
 pub mod math;
 mod model;
 mod modern_encoder_model;
+#[allow(dead_code)]
+mod moe_abi;
+#[allow(dead_code)]
+mod moe_api;
+mod moe_artifact;
+#[allow(dead_code)]
+mod moe_model;
+mod moe_runtime;
 mod mpnet;
 mod mpnet_attention;
 #[cfg(test)]
@@ -266,6 +274,21 @@ impl From<ShapeError> for EnqueueError {
 impl From<BackendError> for EnqueueError {
     fn from(error: BackendError) -> Self {
         Self::classify_backend(error)
+    }
+}
+/// Preserve native fatal errors while checked arena-size failures stay recoverable.
+struct WorkspacePreflightError(EnqueueError);
+impl From<BackendError> for WorkspacePreflightError {
+    fn from(error: BackendError) -> Self {
+        Self(EnqueueError::PreflightRejected(error))
+    }
+}
+impl From<ShapeError> for WorkspacePreflightError {
+    fn from(error: ShapeError) -> Self {
+        Self(match error {
+            ShapeError::Rejected(error) => EnqueueError::PreflightRejected(error),
+            ShapeError::Fatal(error) => EnqueueError::classify_backend(error),
+        })
     }
 }
 
@@ -1553,11 +1576,7 @@ impl ExecutableModel {
             ),
             Self::EncoderF16(model) => Work::<F16>::allocation_bytes(key, &model.config),
             Self::Modern(model) => Work::<Bf16>::allocation_bytes(key, &model.config.geometry),
-            Self::Decoder(model) => decoder::DecoderWork::allocation_bytes_with_classifier(
-                key,
-                &model.config,
-                model.classifier_scratch_layout(key)?,
-            ),
+            Self::Decoder(model) => model.workspace_bytes(key),
             Self::Qwen35(model) => model.workspace_bytes(key),
         }
     }
@@ -1580,14 +1599,7 @@ impl ExecutableModel {
                 &model.config.geometry,
                 key,
             )?)),
-            Self::Decoder(model) => Ok(Workspace::Decoder(
-                decoder::DecoderWork::new_with_classifier(
-                    stream,
-                    &model.config,
-                    key,
-                    model.classifier_scratch_layout(key)?,
-                )?,
-            )),
+            Self::Decoder(model) => Ok(Workspace::Decoder(model.workspace(stream, key)?)),
             Self::Qwen35(model) => Ok(Workspace::Qwen35(Box::new(model.workspace(stream, key)?))),
         }
     }
@@ -1955,12 +1967,12 @@ struct WorkspacePreflight {
     reuse_active: bool,
     requested_bytes: Option<usize>,
 }
-fn preflight_workspace(
+fn preflight_workspace<E: From<BackendError>>(
     batch: &Batch,
     active_fits: impl FnOnce(WorkKey) -> bool,
-    bytes_for: impl FnOnce(WorkKey) -> Result<usize, BackendError>,
-) -> Result<WorkspacePreflight, BackendError> {
-    let key = work_key(batch)?;
+    bytes_for: impl FnOnce(WorkKey) -> Result<usize, E>,
+) -> Result<WorkspacePreflight, E> {
+    let key = work_key(batch).map_err(E::from)?;
     let reuse_active = active_fits(key);
     let requested_bytes = if reuse_active {
         None
@@ -2931,9 +2943,17 @@ impl Engine {
         let workspace = preflight_workspace(
             b,
             |key| self.workspace.as_ref().is_some_and(|work| work.fits(key)),
-            |key| self.model.workspace_bytes(key),
+            |key| match &*self.model {
+                ExecutableModel::Decoder(model) => model
+                    .workspace_bytes_typed(key)
+                    .map_err(WorkspacePreflightError::from),
+                _ => self
+                    .model
+                    .workspace_bytes(key)
+                    .map_err(WorkspacePreflightError::from),
+            },
         )
-        .map_err(EnqueueError::PreflightRejected)?;
+        .map_err(|error| error.0)?;
         // Descriptor-only preflight precedes arena allocation/zeroing. The
         // actual-M down metadata is prepared later, after the reserved arena
         // exposes every scratch/weight/bias pointer but before lease.begin.
@@ -4334,6 +4354,34 @@ fn detects_architecture(path: &Path) -> Result<CheckpointArchitecture, BackendEr
     selects_architecture(&head)
 }
 
+fn validate_moe_admission(
+    config: &DecoderConfig,
+    dtype: &str,
+    model_type: &ModelType,
+    candidate: bool,
+) -> Result<(), BackendError> {
+    let routed = config.family == DecoderFamily::Qwen3Moe;
+    if candidate && !routed {
+        return Err(start("Qwen3 MoE candidate constructor requires qwen3_moe"));
+    }
+    if !routed {
+        return Ok(());
+    }
+    if dtype != "bfloat16" {
+        return Err(start("Qwen3 MoE requires the BF16 runtime"));
+    }
+    if !matches!(
+        model_type,
+        ModelType::Embedding(Pool::Cls | Pool::Mean | Pool::LastToken)
+    ) {
+        return Err(start(
+            "Qwen3 MoE supports BF16 pooled CLS/mean/last-token embeddings with raw token outputs",
+        ));
+    }
+    decoder::DecoderMath::select(config)?;
+    Ok(())
+}
+
 pub struct OxideBackend {
     config: LoadedConfig,
     output_width: usize,
@@ -4407,6 +4455,29 @@ impl OxideBackend {
         device_id: usize,
         dense_paths: Option<Vec<String>>,
     ) -> Result<Self, BackendError> {
+        Self::new_internal(path, dtype, model_type, device_id, dense_paths, false)
+    }
+
+    /// Compatibility constructor for pinned Native qualification callers. The
+    /// ordinary serving factory now admits the same BF16 Qwen3 MoE geometry.
+    #[doc(hidden)]
+    pub fn new_qwen3_moe_candidate(
+        path: &Path,
+        dtype: &str,
+        model_type: ModelType,
+        device_id: usize,
+    ) -> Result<Self, BackendError> {
+        Self::new_internal(path, dtype, model_type, device_id, None, true)
+    }
+
+    fn new_internal(
+        path: &Path,
+        dtype: &str,
+        model_type: ModelType,
+        device_id: usize,
+        dense_paths: Option<Vec<String>>,
+        moe_candidate: bool,
+    ) -> Result<Self, BackendError> {
         if qwen35_serving::is_qwen35_checkpoint(path)? {
             return Self::new_qwen35_serving(path, dtype, model_type, device_id, dense_paths);
         }
@@ -4414,8 +4485,15 @@ impl OxideBackend {
             return Err(start("Oxide decisions require a dense Qwen3.5 checkpoint"));
         }
         let precision = EncoderPrecision::from_dtype(dtype)?;
+        let admitted_model_type = model_type.clone();
         let mut deberta_host = None;
         let early_architecture = detects_architecture(path)?;
+        if early_architecture == CheckpointArchitecture::Decoder {
+            let config = DecoderConfig::load(path)?;
+            validate_moe_admission(&config, dtype, &admitted_model_type, moe_candidate)?;
+        } else if moe_candidate {
+            return Err(start("Qwen3 MoE candidate constructor requires qwen3_moe"));
+        }
         if early_architecture == CheckpointArchitecture::Deberta {
             if precision != EncoderPrecision::Bf16 {
                 return Err(start("DeBERTa currently requires bfloat16"));
@@ -4564,6 +4642,7 @@ impl OxideBackend {
                         None => (DecoderWeights::load(path)?, None),
                     };
                     let config = host.config.clone();
+                    validate_moe_admission(&config, dtype, &admitted_model_type, moe_candidate)?;
                     let head_present = head_host.is_some();
                     // The cold classifier bundle already rejected every Dense
                     // module, so it must not read that metadata a second time.
@@ -5718,7 +5797,8 @@ fn validate_decoder(batch: &Batch, c: &DecoderConfig) -> Result<usize, BackendEr
         || batch.compact_position_ids.is_some()
         || batch.scatter_unfold.is_some()
         || batch.fold_gather.is_some()
-        || batch.token_type_ids.iter().any(|&kind| kind != 0)
+        || (c.family != DecoderFamily::Qwen3Moe
+            && batch.token_type_ids.iter().any(|&kind| kind != 0))
     {
         return Err(fail());
     }

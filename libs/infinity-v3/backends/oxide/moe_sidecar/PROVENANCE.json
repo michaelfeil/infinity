@@ -1,0 +1,87 @@
+{
+  "abi_version": 1,
+  "exported_symbols": [
+    "oxide_moe_abi_version",
+    "oxide_moe_query_build",
+    "oxide_moe_query_model",
+    "oxide_moe_query_workspace",
+    "oxide_moe_prepare",
+    "oxide_moe_forward_bf16"
+  ],
+  "notes": [
+    "Public e582 ships the raw CUDA MoE sources and moe_symbols.h but not the ABI shim/header or builder.",
+    "The package reuses those public raw sources in place through --source-root/ROOT.parents[2]; it vendors only the shim/header/builder/docs/licenses.",
+    "Qualified prebuilt sidecars may be reused under Root gates; this package is the reproducible cold-build path."
+  ],
+  "package": "oxide-moe-standalone",
+  "public_repo_commit": "e582ce90eb1544fcff081a495cb8fd4f3c17b112",
+  "qualified_sidecar_build_manifest": "/tmp/infinity-oxide-parity-20261101/moe-standalone-root-build-v1/BUILD_MANIFEST.json",
+  "qualified_sidecar_build_manifest_sha256": "951ae550043c481e1eb3b939c3c2842272b046e175c0790872331ca1d3a431b8",
+  "qualified_source_manifest_sha256": "c5e8750acd87474e35eea1d4c7cb7555ab5d3aa197a8e028483056e03cb2fc5d",
+  "schema": "oxide-moe-sidecar-provenance/v1",
+  "sources": {
+    "include/oxide_moe.h": {
+      "matches_qualified": true,
+      "package_path": "include/oxide_moe.h",
+      "package_sha256": "17b5b0d6f40025fdfadfa6e767146dc97c3607c65c692047817a6294b48c6dd9",
+      "qualified_source_manifest_sha256": "17b5b0d6f40025fdfadfa6e767146dc97c3607c65c692047817a6294b48c6dd9"
+    },
+    "source/backends/libtorch/cpp/kernels/moe_symbols.h": {
+      "matches_public_repo": true,
+      "matches_qualified": true,
+      "package_path": "source/backends/libtorch/cpp/kernels/moe_symbols.h",
+      "package_sha256": "9b08ad05d855f4ad0567f773831a8929d3ba1fbf9fec2bee7ecc12c4acbe9336",
+      "public_repo_path": "libs/infinity-v3/backends/libtorch/cpp/kernels/moe_symbols.h",
+      "public_repo_sha256": "9b08ad05d855f4ad0567f773831a8929d3ba1fbf9fec2bee7ecc12c4acbe9336",
+      "qualified_source_manifest_sha256": "9b08ad05d855f4ad0567f773831a8929d3ba1fbf9fec2bee7ecc12c4acbe9336"
+    },
+    "source/backends/libtorch/cpp/vendor/candle_kernels/kernels/gemma4_moe.cu": {
+      "matches_public_repo": true,
+      "matches_qualified": true,
+      "package_path": "source/backends/libtorch/cpp/vendor/candle_kernels/kernels/gemma4_moe.cu",
+      "package_sha256": "3bb9d2c4070e909b4af5543521de505f4648b9d2ad4a8ca4387e2cf879baf746",
+      "public_repo_path": "libs/infinity-v3/backends/libtorch/cpp/vendor/candle_kernels/kernels/gemma4_moe.cu",
+      "public_repo_sha256": "3bb9d2c4070e909b4af5543521de505f4648b9d2ad4a8ca4387e2cf879baf746",
+      "qualified_source_manifest_sha256": "3bb9d2c4070e909b4af5543521de505f4648b9d2ad4a8ca4387e2cf879baf746"
+    },
+    "source/backends/libtorch/cpp/vendor/candle_kernels/kernels/gemma4_moe_kernels.cuh": {
+      "matches_public_repo": true,
+      "matches_qualified": true,
+      "package_path": "source/backends/libtorch/cpp/vendor/candle_kernels/kernels/gemma4_moe_kernels.cuh",
+      "package_sha256": "247563114a515c596572fe22aa4a864d25be7ff90991eb1346ee44b3997e001c",
+      "public_repo_path": "libs/infinity-v3/backends/libtorch/cpp/vendor/candle_kernels/kernels/gemma4_moe_kernels.cuh",
+      "public_repo_sha256": "247563114a515c596572fe22aa4a864d25be7ff90991eb1346ee44b3997e001c",
+      "qualified_source_manifest_sha256": "247563114a515c596572fe22aa4a864d25be7ff90991eb1346ee44b3997e001c"
+    },
+    "source/backends/libtorch/cpp/vendor/candle_kernels/moe/grouped_gemm.cu": {
+      "matches_public_repo": true,
+      "matches_qualified": true,
+      "package_path": "source/backends/libtorch/cpp/vendor/candle_kernels/moe/grouped_gemm.cu",
+      "package_sha256": "ee239e7c07badce0df39a70f72099f55eda6fd39208049148a45a766c30c13ef",
+      "public_repo_path": "libs/infinity-v3/backends/libtorch/cpp/vendor/candle_kernels/moe/grouped_gemm.cu",
+      "public_repo_sha256": "ee239e7c07badce0df39a70f72099f55eda6fd39208049148a45a766c30c13ef",
+      "qualified_source_manifest_sha256": "ee239e7c07badce0df39a70f72099f55eda6fd39208049148a45a766c30c13ef"
+    },
+    "source/backends/libtorch/cpp/vendor/candle_kernels/moe/grouped_gemm_hopper.cu": {
+      "matches_public_repo": true,
+      "matches_qualified": true,
+      "package_path": "source/backends/libtorch/cpp/vendor/candle_kernels/moe/grouped_gemm_hopper.cu",
+      "package_sha256": "fa3be7620237296027ccef87dd0f1176c8f48738d7470f7af820086b78e72429",
+      "public_repo_path": "libs/infinity-v3/backends/libtorch/cpp/vendor/candle_kernels/moe/grouped_gemm_hopper.cu",
+      "public_repo_sha256": "fa3be7620237296027ccef87dd0f1176c8f48738d7470f7af820086b78e72429",
+      "qualified_source_manifest_sha256": "fa3be7620237296027ccef87dd0f1176c8f48738d7470f7af820086b78e72429"
+    },
+    "src/oxide_moe_shim.cpp": {
+      "matches_qualified": true,
+      "package_path": "src/oxide_moe_shim.cpp",
+      "package_sha256": "3f6f339a9165f263de5e3f85358821796be90c35c7d158a22ca893453181cc22",
+      "qualified_source_manifest_sha256": "3f6f339a9165f263de5e3f85358821796be90c35c7d158a22ca893453181cc22"
+    }
+  },
+  "strict_requirements": {
+    "no_network_no_gpu_query_no_device_compile_in_check_only": true,
+    "no_torch_aten_c10_python_dependency": true,
+    "public_raw_sources_must_match_qualified_and_public_repo": true,
+    "shim_and_header_are_package_owned": true
+  }
+}

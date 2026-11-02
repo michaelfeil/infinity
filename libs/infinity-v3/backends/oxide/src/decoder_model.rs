@@ -1,5 +1,6 @@
 // Copyright Infinity Core Contributors. Licensed under the repository LICENSE.
-//! Staging typed loader for dense Qwen2/Llama pooled embedding backbones.
+//! Staging typed loader for dense Qwen2/Qwen3/Llama and routed Qwen3-MoE
+//! pooled embedding backbones.
 //!
 //! This module validates configuration, sentence-transformers task modules and
 //! checkpoint metadata. It deliberately does not select kernels, upload device
@@ -11,6 +12,7 @@ use crate::decoder_classifier::{
     DecoderClassifierHeadHost,
 };
 use crate::model::{elements, path_present, read_json, Checkpoint, WeightSource};
+use crate::moe_model::{load_routed_layer, RoutedLayerWeights, RoutedMlpConfig};
 use infinity_v3_backend_core::BackendError;
 use serde::Deserialize;
 use std::collections::BTreeMap;
@@ -23,14 +25,16 @@ fn start(error: impl std::fmt::Display) -> BackendError {
 const DEFAULT_LLAMA_THETA: f64 = 10_000.0;
 const DEFAULT_QWEN2_THETA: f64 = 1_000_000.0;
 const DEFAULT_QWEN3_THETA: f64 = 1_000_000.0;
-/// Dense Qwen3 per-head Q/K RMSNorm width. Unported variants with a different
-/// head dimension are rejected by the executor after metadata validation.
+/// Qwen3 and Qwen3-MoE per-head Q/K RMSNorm width. Unported variants with a
+/// different head dimension are rejected by the executor after metadata
+/// validation.
 pub(crate) const QWEN3_QK_NORM_WIDTH: usize = 128;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum DecoderFamily {
     Qwen2,
     Qwen3,
+    Qwen3Moe,
     Llama,
     Mistral,
 }
@@ -39,6 +43,7 @@ impl DecoderFamily {
         match model_type {
             "qwen2" => Some(Self::Qwen2),
             "qwen3" => Some(Self::Qwen3),
+            "qwen3_moe" => Some(Self::Qwen3Moe),
             "llama" => Some(Self::Llama),
             "mistral" => Some(Self::Mistral),
             _ => None,
@@ -54,27 +59,24 @@ impl DecoderFamily {
     /// ported. They must be rejected on the host instead of falling through to
     /// encoder detection. Qwen3.5 remains a separate future Root branch.
     pub(crate) fn is_unsupported_native_decoder_model_type(model_type: &str) -> bool {
-        matches!(
-            model_type,
-            "ministral3" | "llama_bidirec" | "mistral3" | "qwen3_moe"
-        )
+        matches!(model_type, "ministral3" | "llama_bidirec" | "mistral3")
     }
 
     pub(crate) const fn requires_qk_norm(self) -> bool {
-        matches!(self, Self::Qwen3)
+        matches!(self, Self::Qwen3 | Self::Qwen3Moe)
     }
 
     const fn default_theta(self) -> f64 {
         match self {
             Self::Qwen2 => DEFAULT_QWEN2_THETA,
-            Self::Qwen3 => DEFAULT_QWEN3_THETA,
+            Self::Qwen3 | Self::Qwen3Moe => DEFAULT_QWEN3_THETA,
             Self::Llama | Self::Mistral => DEFAULT_LLAMA_THETA,
         }
     }
 
     const fn default_rope(self) -> DecoderRope {
         match self {
-            Self::Qwen2 | Self::Qwen3 => DecoderRope::FullNeoX,
+            Self::Qwen2 | Self::Qwen3 | Self::Qwen3Moe => DecoderRope::FullNeoX,
             Self::Llama | Self::Mistral => DecoderRope::Default,
         }
     }
@@ -83,6 +85,7 @@ impl DecoderFamily {
         let backbone = match self {
             Self::Qwen2 => matches!(architecture, "Qwen2Model" | "Qwen2ForCausalLM"),
             Self::Qwen3 => matches!(architecture, "Qwen3Model" | "Qwen3ForCausalLM"),
+            Self::Qwen3Moe => matches!(architecture, "Qwen3MoeModel" | "Qwen3MoeForCausalLM"),
             Self::Llama => matches!(architecture, "LlamaModel" | "LlamaForCausalLM"),
             Self::Mistral => matches!(architecture, "MistralModel" | "MistralForCausalLM"),
         };
@@ -169,16 +172,20 @@ pub(crate) struct DecoderConfig {
     pub(crate) is_causal: bool,
     pub(crate) attention_window: Option<usize>,
     pub(crate) rope: DecoderRope,
+    /// Validated routed-MLP metadata for `qwen3_moe`; always absent for dense
+    /// families, whose expert keys remain rejected.
+    pub(crate) routed: Option<RoutedMlpConfig>,
 }
 impl DecoderConfig {
     pub(crate) fn load(path: &Path) -> Result<Self, BackendError> {
-        let raw: RawDecoderConfig = read_json(&path.join("config.json"))?;
-        Self::from_raw(raw, false)
+        let value: serde_json::Value = read_json(&path.join("config.json"))?;
+        let raw = RawDecoderConfig::deserialize(&value).map_err(start)?;
+        Self::from_raw(raw, &value, false)
     }
 
     fn from_value(value: serde_json::Value, classifier: bool) -> Result<Self, BackendError> {
-        let raw: RawDecoderConfig = serde_json::from_value(value).map_err(start)?;
-        Self::from_raw(raw, classifier)
+        let raw: RawDecoderConfig = serde_json::from_value(value.clone()).map_err(start)?;
+        Self::from_raw(raw, &value, classifier)
     }
 
     pub(crate) const fn q_width(&self) -> usize {
@@ -189,7 +196,11 @@ impl DecoderConfig {
         self.num_key_value_heads * self.head_dim
     }
 
-    fn from_raw(raw: RawDecoderConfig, classifier: bool) -> Result<Self, BackendError> {
+    fn from_raw(
+        raw: RawDecoderConfig,
+        source: &serde_json::Value,
+        classifier: bool,
+    ) -> Result<Self, BackendError> {
         if raw.model_type == "ministral3" {
             return Err(start(
                 "ministral3 H3072/YaRN/transformers math is not ported; only ordinary Mistral H4096 is supported",
@@ -203,7 +214,7 @@ impl DecoderConfig {
         };
         let family = DecoderFamily::from_model_type(model_type).ok_or_else(|| {
             start(format!(
-                "unsupported model_type {}; expected dense qwen2, qwen3, llama or mistral",
+                "unsupported model_type {}; expected dense qwen2, qwen3, qwen3_moe, llama or mistral",
                 raw.model_type
             ))
         })?;
@@ -326,9 +337,10 @@ impl DecoderConfig {
         } else {
             match family {
                 DecoderFamily::Qwen2 => raw.is_causal.unwrap_or(true),
-                DecoderFamily::Qwen3 | DecoderFamily::Llama | DecoderFamily::Mistral => {
-                    raw.is_causal.unwrap_or(!bidirectional)
-                }
+                DecoderFamily::Qwen3
+                | DecoderFamily::Qwen3Moe
+                | DecoderFamily::Llama
+                | DecoderFamily::Mistral => raw.is_causal.unwrap_or(!bidirectional),
             }
         };
         let attention_window = match family {
@@ -339,6 +351,22 @@ impl DecoderConfig {
             i32::try_from(window)
                 .map_err(|_| start("decoder Mistral sliding_window exceeds CUDA bounds"))?;
         }
+
+        let routed = match family {
+            DecoderFamily::Qwen3Moe => {
+                let routed = RoutedMlpConfig::from_json(source)?;
+                if routed.hidden_size != hidden_size
+                    || routed.intermediate_size != intermediate_size
+                    || routed.num_hidden_layers != num_hidden_layers
+                {
+                    return Err(start(
+                        "qwen3_moe routed MLP metadata does not match decoder geometry",
+                    ));
+                }
+                Some(routed)
+            }
+            _ => None,
+        };
 
         let config = Self {
             family,
@@ -355,6 +383,7 @@ impl DecoderConfig {
             is_causal,
             attention_window,
             rope,
+            routed,
         };
         config.validate(kv_width)?;
         Ok(config)
@@ -392,7 +421,7 @@ fn reject_config_modifiers(
     if raw
         .quantization_config
         .as_ref()
-        .is_some_and(|value| !value.is_null())
+        .is_some_and(|value| !value.is_null() || family != DecoderFamily::Qwen3Moe)
     {
         return Err(start(
             "quantized decoder checkpoints are not supported by this loader",
@@ -461,7 +490,35 @@ fn reject_config_modifiers(
     }
     for key in raw.extra.keys() {
         let key_lower = key.to_ascii_lowercase();
-        let unsupported = key_lower.contains("expert")
+        // `RoutedMlpConfig` validates quantization and shared-expert metadata
+        // from the original JSON for qwen3_moe; dense families keep rejecting.
+        if family == DecoderFamily::Qwen3Moe
+            && matches!(
+                key_lower.as_str(),
+                "quantization"
+                    | "shared_expert_intermediate_size"
+                    | "n_shared_experts"
+                    | "num_shared_experts"
+                    | "shared_expert_gate"
+            )
+        {
+            continue;
+        }
+        // Routed Qwen3-MoE keys are validated by `RoutedMlpConfig` from the
+        // original JSON. Dense families keep rejecting every expert key.
+        let routed_key = key_lower.contains("expert")
+            || matches!(
+                key_lower.as_str(),
+                "moe_intermediate_size" | "router_aux_loss_coef"
+            );
+        let known_routed_key = matches!(
+            key_lower.as_str(),
+            "num_experts"
+                | "num_experts_per_tok"
+                | "moe_intermediate_size"
+                | "router_aux_loss_coef"
+        );
+        let unsupported = (routed_key && !(family == DecoderFamily::Qwen3Moe && known_routed_key))
             || key_lower.contains("quantiz")
             || key_lower.contains("vision")
             || key_lower.contains("audio")
@@ -469,10 +526,7 @@ fn reject_config_modifiers(
             || key_lower.starts_with("mm_")
             || key_lower.starts_with("multi_modal")
             || key_lower.starts_with("linear_")
-            || matches!(
-                key_lower.as_str(),
-                "layer_types" | "moe_intermediate_size" | "router_aux_loss_coef"
-            );
+            || key_lower.as_str() == "layer_types";
         if unsupported {
             return Err(start(format!(
                 "unsupported decoder config modifier {key}; only dense SiLU text backbones are accepted"
@@ -488,21 +542,48 @@ pub(crate) struct DecoderLinear {
     pub(crate) bias: Option<WeightSource>,
 }
 
+/// Layer MLP storage. Dense checkpoints retain the original gate/up/down
+/// projections; routed Qwen3-MoE layers retain only router and expert views and
+/// never allocate placeholder dense tensors.
+// Retained checkpoint views stay inline; this cold carrier does not add an allocation per layer.
+#[allow(clippy::large_enum_variant)]
+#[derive(Clone, Debug)]
+pub(crate) enum DecoderMlpWeights {
+    Dense {
+        gate: DecoderLinear,
+        up: DecoderLinear,
+        down: DecoderLinear,
+    },
+    Routed(RoutedLayerWeights),
+}
+
+impl DecoderMlpWeights {
+    #[cfg(test)]
+    pub(crate) fn dense(
+        &self,
+    ) -> Result<(&DecoderLinear, &DecoderLinear, &DecoderLinear), BackendError> {
+        match self {
+            Self::Dense { gate, up, down } => Ok((gate, up, down)),
+            Self::Routed(_) => Err(start(
+                "decoder layer MLP is routed; dense gate/up/down projections are unavailable",
+            )),
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
 pub(crate) struct DecoderLayerWeights {
     pub(crate) input_norm: WeightSource,
     pub(crate) post_attention_norm: WeightSource,
-    /// Dense Qwen3 per-head Q/K RMSNorm scales. Present only for Qwen3, always
-    /// as a complete pair, and absent for Qwen2/Llama checkpoints.
+    /// Dense Qwen3 per-head Q/K RMSNorm scales. Present only for Qwen3 and
+    /// Qwen3-MoE, always as a complete pair, and absent for Qwen2/Llama.
     pub(crate) q_norm: Option<WeightSource>,
     pub(crate) k_norm: Option<WeightSource>,
     pub(crate) q: DecoderLinear,
     pub(crate) k: DecoderLinear,
     pub(crate) v: DecoderLinear,
     pub(crate) o: DecoderLinear,
-    pub(crate) gate: DecoderLinear,
-    pub(crate) up: DecoderLinear,
-    pub(crate) down: DecoderLinear,
+    pub(crate) mlp: DecoderMlpWeights,
 }
 
 #[derive(Clone, Debug)]
@@ -558,11 +639,27 @@ fn validate_checkpoint_capacity(
     config: &DecoderConfig,
     checkpoint: &Checkpoint,
 ) -> Result<(), BackendError> {
-    let minimum = config
-        .num_hidden_layers
-        .checked_mul(9)
-        .and_then(|count| count.checked_add(2))
+    // Per layer: six attention/norm tensors plus three MLP tensors. A routed
+    // layer with fused experts needs exactly a router plus
+    // `gate_up_proj`/`down_proj`, and separate per-expert storage only adds
+    // names, so this fused lower bound never rejects a valid fused checkpoint.
+    // Q/K RMSNorm scales are demanded later by `fetch_qk_norm`, which reports
+    // the precise missing tensor instead of masking it behind capacity. Only
+    // header names are counted; no tensor payload is read.
+    const ATTENTION_NORMS: usize = 6;
+    const MLP: usize = 3;
+    let per_layer = ATTENTION_NORMS
+        .checked_add(MLP)
         .ok_or_else(|| start("decoder checkpoint capacity overflow"))?;
+    let mut minimum = 2usize;
+    for layer in 0..config.num_hidden_layers {
+        if let Some(routed) = &config.routed {
+            routed.is_routed_layer(layer)?;
+        }
+        minimum = minimum
+            .checked_add(per_layer)
+            .ok_or_else(|| start("decoder checkpoint capacity overflow"))?;
+    }
     let available = checkpoint.names().count();
     if available < minimum {
         return Err(start(format!(
@@ -603,7 +700,7 @@ pub(crate) fn decoder_tensor_shapes(config: &DecoderConfig) -> Vec<(String, Vec<
             (format!("{p}.mlp.down_proj.weight"), vec![h, i]),
             (format!("{p}.mlp.down_proj.bias"), vec![h]),
         ]);
-        if config.family == DecoderFamily::Qwen3 {
+        if config.family.requires_qk_norm() {
             out.extend([
                 (
                     format!("{p}.self_attn.q_norm.weight"),
@@ -631,6 +728,45 @@ fn fetch_linear(
     Ok(DecoderLinear { weight, bias })
 }
 
+/// Fetch the dense gate/up/down projections with the original bias pairing
+/// validation. Routed layers never call this and so never demand dense MLP
+/// weights.
+fn fetch_dense_mlp(
+    checkpoint: &Checkpoint,
+    layer: usize,
+    prefix: &str,
+    hidden: usize,
+    intermediate: usize,
+) -> Result<DecoderMlpWeights, BackendError> {
+    let gate = fetch_linear(
+        checkpoint,
+        prefix,
+        ".mlp.gate_proj",
+        &[intermediate, hidden],
+        &[intermediate],
+    )?;
+    let up = fetch_linear(
+        checkpoint,
+        prefix,
+        ".mlp.up_proj",
+        &[intermediate, hidden],
+        &[intermediate],
+    )?;
+    if gate.bias.is_some() != up.bias.is_some() {
+        return Err(start(format!(
+            "decoder layer {layer} gate/up projection biases must be both present or both absent"
+        )));
+    }
+    let down = fetch_linear(
+        checkpoint,
+        prefix,
+        ".mlp.down_proj",
+        &[hidden, intermediate],
+        &[hidden],
+    )?;
+    Ok(DecoderMlpWeights::Dense { gate, up, down })
+}
+
 fn fetch_qk_norm(
     checkpoint: &Checkpoint,
     layer: usize,
@@ -643,7 +779,7 @@ fn fetch_qk_norm(
         for name in [&q_name, &k_name] {
             if checkpoint.contains(name) {
                 return Err(start(format!(
-                    "decoder layer {layer} has {name}, but Q/K RMSNorm scales are only supported for dense Qwen3"
+                    "decoder layer {layer} has {name}, but Q/K RMSNorm scales are only supported for Qwen3 and Qwen3-MoE"
                 )));
             }
         }
@@ -726,13 +862,15 @@ impl DecoderWeights {
                     "decoder layer {layer} Q/K/V projection biases must be all present or all absent"
                 )));
             }
-            let gate = fetch_linear(checkpoint, &p, ".mlp.gate_proj", &[i, h], &[i])?;
-            let up = fetch_linear(checkpoint, &p, ".mlp.up_proj", &[i, h], &[i])?;
-            if gate.bias.is_some() != up.bias.is_some() {
-                return Err(start(format!(
-                    "decoder layer {layer} gate/up projection biases must be both present or both absent"
-                )));
-            }
+            let mlp = match &config.routed {
+                Some(routed) => {
+                    match load_routed_layer(checkpoint, &format!("{p}."), routed, layer)? {
+                        Some(weights) => DecoderMlpWeights::Routed(weights),
+                        None => fetch_dense_mlp(checkpoint, layer, &p, h, i)?,
+                    }
+                }
+                None => fetch_dense_mlp(checkpoint, layer, &p, h, i)?,
+            };
             let (q_norm, k_norm) = fetch_qk_norm(checkpoint, layer, &p, config.family)?;
             layers.push(DecoderLayerWeights {
                 input_norm: checkpoint.source(&format!("{p}.input_layernorm.weight"), &[h])?,
@@ -744,9 +882,7 @@ impl DecoderWeights {
                 k: k_linear,
                 v: v_linear,
                 o: fetch_linear(checkpoint, &p, ".self_attn.o_proj", &[h, q], &[h])?,
-                gate,
-                up,
-                down: fetch_linear(checkpoint, &p, ".mlp.down_proj", &[h, i], &[h])?,
+                mlp,
             });
         }
         Ok(Self {
@@ -758,7 +894,7 @@ impl DecoderWeights {
     }
 }
 
-fn validate_decoder_modules(path: &Path) -> Result<(), BackendError> {
+pub(crate) fn validate_decoder_modules(path: &Path) -> Result<(), BackendError> {
     let file = path.join("modules.json");
     if !path_present(&file)? {
         return Ok(());
@@ -1097,6 +1233,73 @@ mod tests {
         value
     }
 
+    fn qwen3_moe_config() -> serde_json::Value {
+        with_fields(
+            qwen3_config(),
+            serde_json::json!({
+                "model_type": "qwen3_moe",
+                "architectures": ["Qwen3MoeForCausalLM"],
+                "num_hidden_layers": 2,
+                "decoder_sparse_step": 2,
+                "moe_intermediate_size": 4,
+                "num_experts": 2,
+                "num_experts_per_tok": 1,
+                "mlp_only_layers": [],
+                "norm_topk_prob": true,
+                "router_aux_loss_coef": 0.001,
+                "shared_expert_intermediate_size": null
+            }),
+        )
+    }
+
+    #[test]
+    fn loads_qwen3_235b_a22b_text_config_structurally_without_weights() {
+        let fixture = Fixture::new();
+        fixture.raw_config(serde_json::json!({
+            "architectures": ["Qwen3MoeForCausalLM"],
+            "attention_bias": false,
+            "attention_dropout": 0.0,
+            "decoder_sparse_step": 1,
+            "head_dim": 128,
+            "hidden_act": "silu",
+            "hidden_size": 4096,
+            "intermediate_size": 12288,
+            "max_position_embeddings": 40960,
+            "mlp_only_layers": [],
+            "model_type": "qwen3_moe",
+            "moe_intermediate_size": 1536,
+            "norm_topk_prob": true,
+            "num_attention_heads": 64,
+            "num_experts": 128,
+            "num_experts_per_tok": 8,
+            "num_hidden_layers": 94,
+            "num_key_value_heads": 4,
+            "rms_norm_eps": 1e-6,
+            "rope_scaling": null,
+            "rope_theta": 1000000.0,
+            "torch_dtype": "bfloat16",
+            "vocab_size": 151936
+        }));
+        let config = fixture.config_from_disk();
+        assert_eq!(config.family, DecoderFamily::Qwen3Moe);
+        assert_eq!(config.hidden_size, 4096);
+        assert_eq!(config.intermediate_size, 12288);
+        assert_eq!(
+            (config.num_attention_heads, config.num_key_value_heads),
+            (64, 4)
+        );
+        assert_eq!(config.head_dim, 128);
+        assert_eq!(config.num_hidden_layers, 94);
+        let routed = config.routed.as_ref().unwrap();
+        assert_eq!((routed.num_experts, routed.num_experts_per_tok), (128, 8));
+        assert_eq!(routed.moe_intermediate_size, 1536);
+        assert_eq!(routed.hidden_size, 4096);
+        assert_eq!(
+            crate::decoder::DecoderMath::select(&config).unwrap(),
+            crate::decoder::DecoderMath::Qwen3MoeH4096Ordinary
+        );
+    }
+
     fn entries(config: &DecoderConfig, root: &str, biases: Biases) -> Vec<(String, Vec<usize>)> {
         decoder_tensor_shapes(config)
             .into_iter()
@@ -1128,6 +1331,71 @@ mod tests {
     fn write_weights(fixture: &Fixture, root: &str, biases: Biases, sharded: bool) {
         let config = fixture.config_from_disk();
         fixture.write_entries(&entries(&config, root, biases), sharded);
+    }
+
+    /// Build a real safetensors header for mixed dense/routed Qwen3-MoE layers.
+    /// Routed layers drop their dense gate/up/down names and gain either fused
+    /// `gate_up_proj`/`down_proj` views or per-expert projections.
+    fn moe_entries(
+        config: &DecoderConfig,
+        routed: &RoutedMlpConfig,
+        root: &str,
+        fused: bool,
+    ) -> Vec<(String, Vec<usize>)> {
+        let mut shapes = decoder_tensor_shapes(config);
+        let mut routed_tensors = Vec::new();
+        for layer in 0..config.num_hidden_layers {
+            if !routed.is_routed_layer(layer).unwrap() {
+                continue;
+            }
+            let local = format!("layers.{layer}.mlp.");
+            shapes.retain(|(name, _)| !name.starts_with(&local));
+            let p = format!("{root}layers.{layer}.mlp");
+            routed_tensors.push((
+                format!("{p}.gate.weight"),
+                vec![routed.num_experts, config.hidden_size],
+            ));
+            if fused {
+                routed_tensors.push((
+                    format!("{p}.experts.gate_up_proj"),
+                    vec![
+                        routed.num_experts,
+                        routed.moe_intermediate_size * 2,
+                        config.hidden_size,
+                    ],
+                ));
+                routed_tensors.push((
+                    format!("{p}.experts.down_proj"),
+                    vec![
+                        routed.num_experts,
+                        config.hidden_size,
+                        routed.moe_intermediate_size,
+                    ],
+                ));
+            } else {
+                for expert in 0..routed.num_experts {
+                    let e = format!("{p}.experts.{expert}");
+                    routed_tensors.push((
+                        format!("{e}.gate_proj.weight"),
+                        vec![routed.moe_intermediate_size, config.hidden_size],
+                    ));
+                    routed_tensors.push((
+                        format!("{e}.up_proj.weight"),
+                        vec![routed.moe_intermediate_size, config.hidden_size],
+                    ));
+                    routed_tensors.push((
+                        format!("{e}.down_proj.weight"),
+                        vec![config.hidden_size, routed.moe_intermediate_size],
+                    ));
+                }
+            }
+        }
+        let mut out = shapes
+            .into_iter()
+            .map(|(name, shape)| (format!("{root}{name}"), shape))
+            .collect::<Vec<_>>();
+        out.extend(routed_tensors);
+        out
     }
 
     #[test]
@@ -1162,15 +1430,16 @@ mod tests {
         assert_eq!(loaded.layers[0].k.weight.shape(), &[4, 8]);
         assert_eq!(loaded.layers[0].v.weight.shape(), &[4, 8]);
         assert_eq!(loaded.layers[0].o.weight.shape(), &[8, 8]);
-        assert_eq!(loaded.layers[0].gate.weight.shape(), &[16, 8]);
-        assert_eq!(loaded.layers[0].up.weight.shape(), &[16, 8]);
-        assert_eq!(loaded.layers[0].down.weight.shape(), &[8, 16]);
+        let (gate, up, down) = loaded.layers[0].mlp.dense().unwrap();
+        assert_eq!(gate.weight.shape(), &[16, 8]);
+        assert_eq!(up.weight.shape(), &[16, 8]);
+        assert_eq!(down.weight.shape(), &[8, 16]);
         assert_eq!(loaded.layers[0].q.bias.as_ref().unwrap().shape(), &[8]);
         assert_eq!(loaded.layers[0].k.bias.as_ref().unwrap().shape(), &[4]);
         assert_eq!(loaded.layers[0].v.bias.as_ref().unwrap().shape(), &[4]);
-        assert!(loaded.layers[0].gate.bias.is_none());
+        assert!(gate.bias.is_none());
         assert!(loaded.layers[0].o.bias.is_none());
-        assert!(loaded.layers[0].down.bias.is_none());
+        assert!(down.bias.is_none());
     }
 
     #[test]
@@ -1189,7 +1458,7 @@ mod tests {
         assert!(loaded.layers[0].q.bias.is_none());
         assert!(loaded.layers[0].k.bias.is_none());
         assert!(loaded.layers[0].v.bias.is_none());
-        assert!(loaded.layers[0].gate.bias.is_none());
+        assert!(loaded.layers[0].mlp.dense().unwrap().0.bias.is_none());
     }
 
     #[test]
@@ -1216,7 +1485,109 @@ mod tests {
         assert!(loaded.layers[0].k.bias.is_none());
         assert!(loaded.layers[0].v.bias.is_none());
         assert!(loaded.layers[0].o.bias.is_none());
-        assert!(loaded.layers[0].gate.bias.is_none());
+        assert!(loaded.layers[0].mlp.dense().unwrap().0.bias.is_none());
+    }
+
+    #[test]
+    fn loads_qwen3_moe_mixed_dense_and_routed_layers() {
+        use crate::moe_model::GateUpSources;
+        for fused in [false, true] {
+            let fixture = Fixture::new();
+            fixture.raw_config(qwen3_moe_config());
+            let config = fixture.config_from_disk();
+            assert_eq!(config.family, DecoderFamily::Qwen3Moe);
+            assert_eq!(config.head_dim, 128);
+            assert_eq!(config.q_width(), 256);
+            assert_eq!(config.kv_width(), 128);
+            assert!(config.is_causal);
+            assert_eq!(config.rope, DecoderRope::FullNeoX);
+            assert_eq!(config.rope_theta, 1_000_000.0);
+            let routed = config.routed.as_ref().unwrap();
+            assert_eq!((routed.num_experts, routed.num_experts_per_tok), (2, 1));
+            assert!(!routed.is_routed_layer(0).unwrap());
+            assert!(routed.is_routed_layer(1).unwrap());
+
+            let weights = moe_entries(&config, routed, "model.", fused);
+            fixture.write_entries(&weights, false);
+            let loaded = DecoderWeights::load(&fixture.0).unwrap();
+            assert_eq!(loaded.layers.len(), 2);
+            assert!(matches!(
+                &loaded.layers[0].mlp,
+                DecoderMlpWeights::Dense { .. }
+            ));
+            let (gate, up, down) = loaded.layers[0].mlp.dense().unwrap();
+            assert_eq!(gate.weight.shape(), &[16, 8]);
+            assert_eq!(up.weight.shape(), &[16, 8]);
+            assert_eq!(down.weight.shape(), &[8, 16]);
+            assert_eq!(loaded.layers[1].q.weight.shape(), &[256, 8]);
+            assert_eq!(loaded.layers[1].o.weight.shape(), &[8, 256]);
+            assert_eq!(loaded.layers[1].q_norm.as_ref().unwrap().shape(), &[128]);
+            assert!(loaded.layers[1].mlp.dense().is_err());
+            match &loaded.layers[1].mlp {
+                DecoderMlpWeights::Routed(routed_layer) => {
+                    assert!(routed_layer.expert(1).is_ok());
+                    assert!(routed_layer.expert(2).is_err());
+                    let expert = routed_layer.expert(0).unwrap();
+                    match expert.gate_up {
+                        GateUpSources::Packed(packed) => {
+                            assert!(fused);
+                            assert_eq!(packed.shape(), &[8, 8]);
+                        }
+                        GateUpSources::Separate { gate, up } => {
+                            assert!(!fused);
+                            assert_eq!(gate.shape(), &[4, 8]);
+                            assert_eq!(up.shape(), &[4, 8]);
+                        }
+                    }
+                    assert_eq!(expert.down.shape(), &[8, 4]);
+                }
+                DecoderMlpWeights::Dense { .. } => panic!("layer 1 must be routed"),
+            }
+        }
+    }
+
+    #[test]
+    fn qwen3_moe_malformed_fused_wins_over_valid_separate_experts() {
+        let fixture = Fixture::new();
+        fixture.raw_config(qwen3_moe_config());
+        let config = fixture.config_from_disk();
+        let routed = config.routed.as_ref().unwrap();
+        let mut weights = moe_entries(&config, routed, "model.", false);
+        weights.push((
+            "model.layers.1.mlp.experts.gate_up_proj".into(),
+            vec![routed.num_experts, routed.moe_intermediate_size * 2],
+        ));
+        fixture.write_entries(&weights, false);
+        let error = fixture.error();
+        assert!(error.contains("wrong shape"), "{error}");
+    }
+
+    #[test]
+    fn qwen3_moe_rejects_unsupported_routed_metadata() {
+        for (overrides, needle) in [
+            (
+                serde_json::json!({"num_shared_experts": 1}),
+                "not supported",
+            ),
+            (
+                serde_json::json!({"decoder_sparse_step": 0}),
+                "decoder_sparse_step",
+            ),
+            (
+                serde_json::json!({"mlp_only_layers": [2]}),
+                "mlp_only_layers entry out of range",
+            ),
+            (serde_json::json!({"quantization": {}}), "not supported"),
+            (
+                serde_json::json!({"num_experts_per_tok": 3}),
+                "num_experts_per_tok must not exceed num_experts",
+            ),
+        ] {
+            let fixture = Fixture::new();
+            fixture.raw_config(with_fields(qwen3_moe_config(), overrides));
+            let error = DecoderConfig::load(&fixture.0).unwrap_err().to_string();
+            assert!(error.contains(needle), "{error}");
+        }
     }
 
     #[test]
@@ -1345,7 +1716,7 @@ mod tests {
             ));
             fixture.write_entries(&weights, false);
             let error = fixture.error();
-            assert!(error.contains("only supported for dense Qwen3"), "{error}");
+            assert!(error.contains("only supported for Qwen3"), "{error}");
         }
     }
 
@@ -1386,10 +1757,10 @@ mod tests {
     }
 
     #[test]
-    fn rejects_qwen3_moe_quantized_and_unported_architectures() {
+    fn rejects_quantized_unported_architectures_and_moe_keys_on_dense_families() {
         for (overrides, needle) in [
             (
-                serde_json::json!({"model_type": "qwen3_moe"}),
+                serde_json::json!({"model_type": "qwen2_moe"}),
                 "unsupported model_type",
             ),
             (
@@ -1425,6 +1796,7 @@ mod tests {
         for family in [
             DecoderFamily::Qwen2,
             DecoderFamily::Qwen3,
+            DecoderFamily::Qwen3Moe,
             DecoderFamily::Llama,
             DecoderFamily::Mistral,
         ] {
@@ -1433,6 +1805,7 @@ mod tests {
                     let mut value = match family {
                         DecoderFamily::Qwen2 => qwen2_config(),
                         DecoderFamily::Qwen3 => qwen3_config(),
+                        DecoderFamily::Qwen3Moe => qwen3_moe_config(),
                         DecoderFamily::Llama => llama_config(),
                         DecoderFamily::Mistral => mistral_config(),
                     };
@@ -1448,9 +1821,10 @@ mod tests {
                     let loaded = DecoderConfig::load(&fixture.0).unwrap();
                     let default = match family {
                         DecoderFamily::Qwen2 => true,
-                        DecoderFamily::Qwen3 | DecoderFamily::Llama | DecoderFamily::Mistral => {
-                            !bidirectional.unwrap_or(false)
-                        }
+                        DecoderFamily::Qwen3
+                        | DecoderFamily::Qwen3Moe
+                        | DecoderFamily::Llama
+                        | DecoderFamily::Mistral => !bidirectional.unwrap_or(false),
                     };
                     assert_eq!(
                         loaded.is_causal,
@@ -1567,9 +1941,9 @@ mod tests {
         fixture.write_entries(&optional, false);
         let loaded = DecoderWeights::load(&fixture.0).unwrap();
         assert!(loaded.layers[0].o.bias.is_some());
-        assert!(loaded.layers[0].down.bias.is_none());
+        assert!(loaded.layers[0].mlp.dense().unwrap().2.bias.is_none());
         assert!(loaded.layers[1].o.bias.is_none());
-        assert!(loaded.layers[1].down.bias.is_some());
+        assert!(loaded.layers[1].mlp.dense().unwrap().2.bias.is_some());
     }
 
     #[test]
@@ -1897,9 +2271,12 @@ mod tests {
         assert_eq!(loaded.layers[0].v.weight.shape(), &[256, 1536]);
         assert_eq!(loaded.layers[0].q.bias.as_ref().unwrap().shape(), &[1536]);
         assert_eq!(loaded.layers[0].k.bias.as_ref().unwrap().shape(), &[256]);
-        assert!(loaded.layers[0].gate.bias.is_none());
+        assert!(loaded.layers[0].mlp.dense().unwrap().0.bias.is_none());
         assert!(loaded.layers[0].o.bias.is_none());
-        assert_eq!(loaded.layers[27].down.weight.shape(), &[1536, 8960]);
+        assert_eq!(
+            loaded.layers[27].mlp.dense().unwrap().2.weight.shape(),
+            &[1536, 8960]
+        );
     }
 
     #[test]
@@ -2010,12 +2387,15 @@ mod tests {
         assert!(error.contains("not ported"), "{error}");
         assert_eq!(DecoderFamily::from_model_type("ministral3"), None);
         assert!(DecoderFamily::is_decoder_model_type("ministral3"));
-        for alias in ["ministral3", "llama_bidirec", "mistral3", "qwen3_moe"] {
+        for alias in ["ministral3", "llama_bidirec", "mistral3"] {
             assert!(
                 DecoderFamily::is_unsupported_native_decoder_model_type(alias),
                 "{alias} must fail explicitly on the host"
             );
         }
+        assert!(!DecoderFamily::is_unsupported_native_decoder_model_type(
+            "qwen3_moe"
+        ));
         assert!(!DecoderFamily::is_unsupported_native_decoder_model_type(
             "bidirectional_pplx_qwen3"
         ));
@@ -2038,8 +2418,10 @@ mod tests {
         assert_eq!(loaded.layers[0].k.weight.shape(), &[4, 8]);
         assert_eq!(loaded.layers[0].v.weight.shape(), &[4, 8]);
         assert_eq!(loaded.layers[0].o.weight.shape(), &[8, 8]);
-        assert_eq!(loaded.layers[0].gate.weight.shape(), &[16, 8]);
-        assert_eq!(loaded.layers[0].down.weight.shape(), &[8, 16]);
+        let (gate, up, down) = loaded.layers[0].mlp.dense().unwrap();
+        assert_eq!(gate.weight.shape(), &[16, 8]);
+        assert_eq!(up.weight.shape(), &[16, 8]);
+        assert_eq!(down.weight.shape(), &[8, 16]);
         assert!(loaded.layers[0].q.bias.is_none());
     }
     #[test]

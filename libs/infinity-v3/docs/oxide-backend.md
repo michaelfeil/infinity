@@ -40,6 +40,7 @@ variant of these families.
 | DeBERTa-v2/v3 | BF16 H768, 12 heads, intermediate width 3072, word-only embeddings and learned relative attention. Shared or dedicated relative projections and c2p/p2c combinations are supported. Absolute position/type embeddings, embedding projection and convolution are rejected. Requires FA4. |
 | Qwen2 | Dense SiLU text backbone, full split-half NeoX RoPE, global causal or noncausal attention, and a matching FA4 profile. The H896/d64 native RMS/rotary recipe is rejected. The exercised GTE-Qwen2-1.5B-instruct geometry is H1536, 12 Q/2 KV heads, d128, noncausal. |
 | Qwen3 | BF16 dense SiLU backbones at H1024, H2048, H2560 or H4096, d128 learned Q/K head norms, full NeoX RoPE, and a matching causal or noncausal FA4 profile. Query projection width may differ from hidden width. The `bidirectional_pplx_qwen3` alias follows Native configuration precedence. Qwen3 4B and Embedding 0.6B/8B are exercised; expert models and other normalization widths are rejected. |
+| Qwen3 MoE | BF16 routed SiLU backbones with 128 experts, top-8 routing, d128 Q/K norms and a matching FA4 profile. Qwen3-30B-A3B at H2048 is checkpoint-qualified through the ordinary serving factory, including CLS/mean/last-token and raw/mixed outputs. Requires the architecture-specific MoE library under the kernel bundle's `moe/` directory. Larger geometries and performance remain unqualified. |
 | Mistral | BF16 H4096, 32 Q/8 KV heads at d128, dense SiLU and base RoPE, with global causal attention or a 4096-token sliding window. A positive window stays active even when `use_sliding_window` is false, matching Native. Mistral-7B-v0.1 is exercised. Other geometries, scaled RoPE and config-level average pooling are rejected. |
 | Qwen3.5 dense text | BF16, d256 heads, partial rotary width 64, gated full attention and 128-wide GDN heads. Hidden width is at most 8192; the actual GQA ratio requires a matching FA4 profile. Query width may differ from hidden width. Model geometry is validated structurally rather than by checkpoint name. |
 | Llama | Hidden width 2048, dense SiLU, base unscaled `default` RoPE, causal global attention, and a matching FA4 profile. TinyLlama's 32 Q/4 KV heads at d64 need the appended twentieth profile. H4096, noncausal Llama, and scaled RoPE including Llama3 are rejected. |
@@ -556,6 +557,24 @@ cancellation and recovery runs pass, including GPU memory and initialization
 checking. Mistral mean/last-token outputs also match all 40,960 F32 words across
 4095/4096/4097-token inputs and a ragged 4097+7 batch. Other widths and dtypes
 still need checkpoint qualification; these checks establish no new speed claim.
+
+Qwen3-30B-A3B passes 45 Native comparisons for each of normal execution, GPU
+memory checking and initialization checking: all 2,142 vectors per run match
+F32 words exactly. Separate lifetime checks cover all three pools, two held
+requests, out-of-order completion, cancellation, changing shapes, invalid-input
+recovery and dropping the backend before completing its results. These also
+pass both sanitizers. The MoE library builds independently of LibTorch; its
+reproducible source package is in `backends/oxide/moe_sidecar`. SM100/SM120
+remain compile-only, and no MoE speed improvement is established by these checks.
+
+With the kernel bundle and FA4 roots configured, the MoE lifetime regression
+can be run against the matching checkpoint:
+
+```sh
+INFINITY_OXIDE_TEST_MOE_MODEL=/path/to/Qwen3-30B-A3B \
+  cargo test -p infinity-backend-oxide --test qwen3_moe_lifecycle \
+  -- --ignored --test-threads=1
+```
 
 The fixed-shape controls below use one 128-token sequence, BF16, the documented
 pool, H100 and eight CPU cores. Each backend has two fresh-process windows of

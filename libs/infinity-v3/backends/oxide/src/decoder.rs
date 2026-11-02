@@ -1,5 +1,5 @@
 // Copyright Infinity Core Contributors. Licensed under the repository LICENSE.
-//! Graph-free BF16 dense Qwen2/Llama embedding executor.
+//! Graph-free BF16 text decoder executor with dense and routed MLP methods.
 //!
 //! The loader in `decoder_model` validates configuration and checkpoint
 //! metadata. This module selects concrete kernel/plan geometry once, uploads
@@ -25,11 +25,13 @@ use crate::{
         DecoderClassifierTask, RowPlan, RowPlanKind,
     },
     decoder_model::{
-        DecoderConfig, DecoderFamily, DecoderLayerWeights, DecoderRope, DecoderWeights,
+        DecoderConfig, DecoderFamily, DecoderLayerWeights, DecoderMlpWeights, DecoderRope,
+        DecoderWeights,
     },
     dense::DenseHead,
     lt::ShapeError,
     math::LinearPlan,
+    moe_runtime::{MoeFrame, MoeLayer, MoeProvider, MoeScratch},
     rotary::BaseRopeTables,
     staging,
     tensor::Bf16,
@@ -95,6 +97,8 @@ pub(crate) enum DecoderMath {
     Qwen3H4096Ordinary,
     LlamaH2048Exact,
     MistralH4096Ordinary,
+    Qwen3MoeH2048Exact,
+    Qwen3MoeH4096Ordinary,
 }
 impl DecoderMath {
     pub(crate) fn select(config: &DecoderConfig) -> Result<Self, BackendError> {
@@ -136,6 +140,34 @@ impl DecoderMath {
                     hidden => Err(start(format!(
                         "decoder executor implements only Qwen3 hidden_size 1024, 2048, 2560 or 4096; H{hidden} is deferred"
                     ))),
+                }
+            }
+            DecoderFamily::Qwen3Moe => {
+                let routed = config
+                    .routed
+                    .as_ref()
+                    .ok_or_else(|| start("Missing Qwen3 MoE metadata"))?;
+                if config.head_dim != 128
+                    || !config.is_causal
+                    || config.rope != DecoderRope::FullNeoX
+                    || routed.num_experts != 128
+                    || routed.num_experts_per_tok != 8
+                {
+                    return Err(start(
+                        "Qwen3 MoE requires BF16 d128/causal/E128/top8 and full NeoX RoPE",
+                    ));
+                }
+                match (
+                    config.hidden_size,
+                    config.num_attention_heads,
+                    config.num_key_value_heads,
+                    routed.moe_intermediate_size,
+                ) {
+                    (2048, 32, 4, 768) => Ok(Self::Qwen3MoeH2048Exact),
+                    (4096, 64, 4, 1536) => Ok(Self::Qwen3MoeH4096Ordinary),
+                    _ => Err(start(
+                        "Qwen3 MoE admits only H2048/Q32/KV4/I768 or H4096/Q64/KV4/I1536 with the Native E128/top8 recipe",
+                    )),
                 }
             }
             DecoderFamily::Llama => {
@@ -188,7 +220,8 @@ impl DecoderMath {
             Self::Qwen3H4096Ordinary | Self::MistralH4096Ordinary => {
                 "infinity_rms_norm_4096_vector"
             }
-            Self::LlamaH2048Exact => "infinity_rms_norm_2048_vector",
+            Self::LlamaH2048Exact | Self::Qwen3MoeH2048Exact => "infinity_rms_norm_2048_vector",
+            Self::Qwen3MoeH4096Ordinary => "infinity_rms_norm_4096_vector",
         }
     }
 
@@ -201,7 +234,8 @@ impl DecoderMath {
             Self::Qwen3H4096Ordinary | Self::MistralH4096Ordinary => {
                 "infinity_add_rms_norm_4096_vector"
             }
-            Self::LlamaH2048Exact => "infinity_add_rms_norm_2048_vector",
+            Self::LlamaH2048Exact | Self::Qwen3MoeH2048Exact => "infinity_add_rms_norm_2048_vector",
+            Self::Qwen3MoeH4096Ordinary => "infinity_add_rms_norm_4096_vector",
         }
     }
 
@@ -212,7 +246,9 @@ impl DecoderMath {
             | Self::Qwen3H2048Ordinary
             | Self::Qwen3H2560Ordinary
             | Self::Qwen3H4096Ordinary
-            | Self::MistralH4096Ordinary => "infinity_rope_neox",
+            | Self::MistralH4096Ordinary
+            | Self::Qwen3MoeH2048Exact
+            | Self::Qwen3MoeH4096Ordinary => "infinity_rope_neox",
             Self::LlamaH2048Exact => "infinity_rope_neox_hfma",
         }
     }
@@ -222,7 +258,9 @@ impl DecoderMath {
             Self::Qwen3H1024Candle
             | Self::Qwen3H2048Ordinary
             | Self::Qwen3H2560Ordinary
-            | Self::Qwen3H4096Ordinary => Some("infinity_qk_norm_rope_128_bf16"),
+            | Self::Qwen3H4096Ordinary
+            | Self::Qwen3MoeH2048Exact
+            | Self::Qwen3MoeH4096Ordinary => Some("infinity_qk_norm_rope_128_bf16"),
             Self::Qwen2FullNeox
             | Self::Qwen2H1536FullNeox
             | Self::LlamaH2048Exact
@@ -242,7 +280,9 @@ impl DecoderMath {
             | Self::Qwen3H2560Ordinary
             | Self::Qwen3H4096Ordinary
             | Self::LlamaH2048Exact
-            | Self::MistralH4096Ordinary => "infinity_silu_mul_bf16_vector8_native",
+            | Self::MistralH4096Ordinary
+            | Self::Qwen3MoeH2048Exact
+            | Self::Qwen3MoeH4096Ordinary => "infinity_silu_mul_bf16_vector8_native",
         }
     }
 
@@ -253,10 +293,37 @@ impl DecoderMath {
             | Self::Qwen3H2048Ordinary
             | Self::Qwen3H2560Ordinary
             | Self::Qwen3H4096Ordinary
-            | Self::MistralH4096Ordinary => GENERIC_NORM_GEOMETRY,
+            | Self::MistralH4096Ordinary
+            | Self::Qwen3MoeH4096Ordinary => GENERIC_NORM_GEOMETRY,
             Self::Qwen3H1024Candle => H1024_NORM_GEOMETRY,
-            Self::LlamaH2048Exact => H2048_NORM_GEOMETRY,
+            Self::LlamaH2048Exact | Self::Qwen3MoeH2048Exact => H2048_NORM_GEOMETRY,
         }
+    }
+}
+
+/// Pooled-mean admission for the shared public BF16 export.
+///
+/// Every contiguous BF16 decoder `Pool::Mean` request with at most 65535
+/// pooled rows uses the same BF16 partial-tree/final-F32-widen route. Larger
+/// selection counts keep the existing generic `infinity_pool` F32 reduction;
+/// raw-only requests bypass the pooled kernel entirely.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum MeanPoolRoute {
+    Empty,
+    NativeBf16Tree,
+    F32Fallback,
+}
+
+/// Pure route predicate shared by dense and routed decoder pooling.
+pub(crate) fn mean_pool_route(
+    pool: &Pool,
+    selections: usize,
+) -> Result<MeanPoolRoute, BackendError> {
+    match pool {
+        Pool::Splade => Err(infer("Oxide SPLADE unsupported")),
+        _ if selections == 0 => Ok(MeanPoolRoute::Empty),
+        Pool::Mean if selections <= usize::from(u16::MAX) => Ok(MeanPoolRoute::NativeBf16Tree),
+        Pool::Cls | Pool::Mean | Pool::LastToken => Ok(MeanPoolRoute::F32Fallback),
     }
 }
 
@@ -269,7 +336,7 @@ struct DecoderKernels {
     rope_initializer: Option<Arc<Function>>,
     silu_mul: Function,
     pool: Function,
-    gemma2_mean: Option<Function>,
+    mean_kernel: Option<Function>,
     selected_rows: Function,
     bf16_to_f32: Function,
     norm_geometry: NormGeometry,
@@ -307,14 +374,25 @@ impl DecoderKernels {
         } else {
             None
         };
-        // Cold, once-per-model resolution for every standard BF16 dense recipe.
-        // The public 90-export bundle always carries this export, so a missing
-        // symbol is a typed ABI error rather than a per-request resolver query.
-        let gemma2_mean = Some(module.load_function(PUBLIC_MEAN_EXPORT).map_err(|error| {
-            start(format!(
-                "BF16 dense decoder mean pooling requires the current public 90-export Gemma2 ABI bundle export {PUBLIC_MEAN_EXPORT}: {error}; old private Mistral exports and the unported ATen model-dtype reduction are not accepted"
-            ))
-        })?);
+        let routed = matches!(
+            math,
+            DecoderMath::Qwen3MoeH2048Exact | DecoderMath::Qwen3MoeH4096Ordinary
+        );
+        // Cold, once-per-model resolution. Standard dense recipes require the
+        // public 90-export thinner; routed MoE keeps compatibility with the
+        // already-qualified native sidecar bundle when the public export is absent.
+        let mean_kernel = if routed {
+            module
+                .load_function(PUBLIC_MEAN_EXPORT)
+                .ok()
+                .or_else(|| module.load_function("infinity_mean_pool_bf16_native").ok())
+        } else {
+            Some(module.load_function(PUBLIC_MEAN_EXPORT).map_err(|error| {
+                start(format!(
+                    "BF16 dense decoder mean pooling requires the current public 90-export Gemma2 ABI bundle export {PUBLIC_MEAN_EXPORT}: {error}; old private Mistral exports and the unported ATen model-dtype reduction are not accepted"
+                ))
+            })?)
+        };
         Ok(Self {
             gather: module
                 .load_function("infinity_embedding_gather")
@@ -328,7 +406,7 @@ impl DecoderKernels {
                 .load_function(math.activation_export())
                 .map_err(start)?,
             pool: module.load_function("infinity_pool").map_err(start)?,
-            gemma2_mean,
+            mean_kernel,
             selected_rows: module
                 .load_function("infinity_selected_rows")
                 .map_err(start)?,
@@ -351,8 +429,14 @@ struct DecoderLayer {
     k_norm: Option<DeviceBuffer<Bf16>>,
     qkv: DecoderLinear,
     attention: DecoderLinear,
-    gate_up: DecoderLinear,
-    down: DecoderLinear,
+    mlp: DecoderMlp,
+}
+enum DecoderMlp {
+    Dense {
+        gate_up: DecoderLinear,
+        down: DecoderLinear,
+    },
+    Routed(MoeLayer),
 }
 struct DecoderWeightBuffers {
     embed: DeviceBuffer<Bf16>,
@@ -377,27 +461,43 @@ impl DecoderWeightBuffers {
                     ));
                 }
             };
-            let gate_up_bias = match (&layer.gate.bias, &layer.up.bias) {
-                (Some(gate), Some(up)) => Some(uploader.upload(&[gate, up])?),
-                (None, None) => None,
-                _ => {
-                    return Err(start(
-                        "decoder gate/up projection biases must be both present or both absent",
-                    ));
-                }
-            };
             let attention_bias = layer
                 .o
                 .bias
                 .as_ref()
                 .map(|bias| uploader.upload(&[bias]))
                 .transpose()?;
-            let down_bias = layer
-                .down
-                .bias
-                .as_ref()
-                .map(|bias| uploader.upload(&[bias]))
-                .transpose()?;
+            let mlp = match &layer.mlp {
+                DecoderMlpWeights::Dense { gate, up, down } => {
+                    let bias = match (&gate.bias, &up.bias) {
+                        (Some(gate), Some(up)) => Some(uploader.upload(&[gate, up])?),
+                        (None, None) => None,
+                        _ => return Err(start("decoder gate/up biases must form a complete pair")),
+                    };
+                    DecoderMlp::Dense {
+                        gate_up: DecoderLinear {
+                            weight: uploader.upload(&[&gate.weight, &up.weight])?,
+                            bias,
+                        },
+                        down: DecoderLinear {
+                            weight: uploader.upload(&[&down.weight])?,
+                            bias: down
+                                .bias
+                                .as_ref()
+                                .map(|bias| uploader.upload(&[bias]))
+                                .transpose()?,
+                        },
+                    }
+                }
+                DecoderMlpWeights::Routed(layer) => DecoderMlp::Routed(MoeLayer::upload(
+                    uploader,
+                    layer,
+                    host.config
+                        .routed
+                        .as_ref()
+                        .ok_or_else(|| start("Missing routed config"))?,
+                )?),
+            };
             let (q_norm, k_norm) = match (&layer.q_norm, &layer.k_norm) {
                 (Some(q), Some(k)) => (Some(uploader.upload(&[q])?), Some(uploader.upload(&[k])?)),
                 (None, None) => (None, None),
@@ -422,14 +522,7 @@ impl DecoderWeightBuffers {
                     weight: uploader.upload(&[&layer.o.weight])?,
                     bias: attention_bias,
                 },
-                gate_up: DecoderLinear {
-                    weight: uploader.upload(&[&layer.gate.weight, &layer.up.weight])?,
-                    bias: gate_up_bias,
-                },
-                down: DecoderLinear {
-                    weight: uploader.upload(&[&layer.down.weight])?,
-                    bias: down_bias,
-                },
+                mlp,
             });
         }
         Ok(Self {
@@ -460,12 +553,15 @@ impl BiasSupport {
         for layer in &host.layers {
             support.qkv |= layer.q.bias.is_some();
             support.attention |= layer.o.bias.is_some();
-            support.gate_up |= layer.gate.bias.is_some();
-            support.down |= layer.down.bias.is_some();
-            support.requires_plain |= layer.q.bias.is_none()
-                || layer.o.bias.is_none()
-                || layer.gate.bias.is_none()
-                || layer.down.bias.is_none();
+            match &layer.mlp {
+                DecoderMlpWeights::Dense { gate, down, .. } => {
+                    support.gate_up |= gate.bias.is_some();
+                    support.down |= down.bias.is_some();
+                    support.requires_plain |= gate.bias.is_none() || down.bias.is_none();
+                }
+                DecoderMlpWeights::Routed(_) => support.requires_plain = true,
+            }
+            support.requires_plain |= layer.q.bias.is_none() || layer.o.bias.is_none();
         }
         support
     }
@@ -491,8 +587,8 @@ impl ReadoutBias {
     fn from_last_layer(layer: Option<&DecoderLayerWeights>) -> Self {
         layer.map_or_else(Self::default, |layer| Self {
             attention: layer.o.bias.is_some(),
-            gate_up: layer.gate.bias.is_some(),
-            down: layer.down.bias.is_some(),
+            gate_up: matches!(&layer.mlp, DecoderMlpWeights::Dense { gate, .. } if gate.bias.is_some()),
+            down: matches!(&layer.mlp, DecoderMlpWeights::Dense { down, .. } if down.bias.is_some()),
         })
     }
 }
@@ -666,19 +762,36 @@ impl DecoderPlans {
 }
 
 #[derive(Clone, Copy, Debug)]
-struct DecoderGeometry {
-    hidden: usize,
-    q_width: usize,
-    kv_width: usize,
-    qkv_width: usize,
-    projection_width: usize,
-    activation_width: usize,
-    silu_groups_per_row: usize,
+pub(crate) struct DecoderGeometry {
+    pub(crate) hidden: usize,
+    pub(crate) q_width: usize,
+    pub(crate) kv_width: usize,
+    pub(crate) qkv_width: usize,
+    pub(crate) projection_width: usize,
+    pub(crate) activation_width: usize,
+    pub(crate) silu_groups_per_row: usize,
 }
 impl DecoderGeometry {
     fn new(c: &DecoderConfig) -> Result<Self, BackendError> {
-        let q_width = c.q_width();
-        let kv_width = c.kv_width();
+        Self::from_dimensions(
+            c.hidden_size,
+            c.intermediate_size,
+            c.q_width(),
+            c.kv_width(),
+            c.head_dim,
+        )
+    }
+
+    pub(crate) fn from_dimensions(
+        hidden: usize,
+        intermediate: usize,
+        q_width: usize,
+        kv_width: usize,
+        head_dim: usize,
+    ) -> Result<Self, BackendError> {
+        if [hidden, intermediate, q_width, kv_width, head_dim].contains(&0) {
+            return Err(start("decoder geometry dimensions must be positive"));
+        }
         let qkv_width = q_width
             .checked_add(
                 kv_width
@@ -686,28 +799,27 @@ impl DecoderGeometry {
                     .ok_or_else(|| start("decoder QKV width overflow"))?,
             )
             .ok_or_else(|| start("decoder QKV width overflow"))?;
-        let gate_up_width = c
-            .intermediate_size
+        let gate_up_width = intermediate
             .checked_mul(2)
             .ok_or_else(|| start("decoder gate/up width overflow"))?;
         let projection_width = qkv_width.max(gate_up_width);
-        let activation_width = q_width.max(c.intermediate_size);
+        let activation_width = q_width.max(intermediate);
         i64::try_from(qkv_width).map_err(start)?;
         i64::try_from(q_width).map_err(start)?;
         i64::try_from(kv_width).map_err(start)?;
-        i64::try_from(c.head_dim).map_err(start)?;
+        i64::try_from(head_dim).map_err(start)?;
         Ok(Self {
-            hidden: c.hidden_size,
+            hidden,
             q_width,
             kv_width,
             qkv_width,
             projection_width,
             activation_width,
-            silu_groups_per_row: c.intermediate_size.div_ceil(8),
+            silu_groups_per_row: intermediate.div_ceil(8),
         })
     }
 
-    fn attention_strides(&self, head_dim: usize) -> Result<[i64; 12], BackendError> {
+    pub(crate) fn attention_strides(&self, head_dim: usize) -> Result<[i64; 12], BackendError> {
         let qkv = i64::try_from(self.qkv_width).map_err(start)?;
         let q = i64::try_from(self.q_width).map_err(start)?;
         let d = i64::try_from(head_dim).map_err(start)?;
@@ -726,7 +838,7 @@ pub(crate) enum SelectedReadout {
     LastToken,
 }
 impl SelectedReadout {
-    const fn kernel_mode(self) -> u32 {
+    pub(crate) const fn kernel_mode(self) -> u32 {
         match self {
             Self::Cls => 0,
             Self::LastToken => 1,
@@ -746,43 +858,6 @@ pub(crate) fn selected_readout(pool: &Pool, selections: usize) -> Option<Selecte
         Pool::Cls => Some(SelectedReadout::Cls),
         Pool::LastToken => Some(SelectedReadout::LastToken),
         Pool::Mean | Pool::Splade => None,
-    }
-}
-
-/// Pooled-mean admission for the shared public BF16 export.
-///
-/// The retained native bridge (`bridge.cpp:1478-1490`) sends every contiguous
-/// CUDA BF16 decoder `Pool::Mean` request with at most 65535 pooled rows through
-/// `infinity::packed_mean_pool` (`candle_kernels/pooling/mean_pool.cu`). This
-/// executor binds the already loaded `infinity_gemma2_mean_pool_bf16` export and
-/// `MeanPlan`, whose source performs the same BF16 strided partials, halving
-/// tree, BF16 reciprocal multiply, trailing `+ 0` round and final F32 widening.
-/// That comparison is source-level only: it makes no GPU or numerical claim.
-/// Larger selection counts keep the existing generic `infinity_pool` F32
-/// reduction, while CLS/last/raw work keeps its selected-readout, projection and
-/// workspace arithmetic unchanged.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum MeanPoolRoute {
-    /// No pooled rows were requested; only the raw trailer may be enqueued.
-    Empty,
-    /// Shared public `infinity_gemma2_mean_pool_bf16` arm with `MeanPlan`.
-    NativeBf16Tree,
-    /// Existing generic `infinity_pool` arm (F32 reduction for `Pool::Mean`).
-    F32Fallback,
-}
-
-/// Route predicate called by the actual embedding enqueue. It performs no
-/// driver, allocation or stream work, so its pool/count boundaries are pure CPU
-/// tests of the same decision used on the launch path.
-pub(crate) fn mean_pool_route(
-    pool: &Pool,
-    selections: usize,
-) -> Result<MeanPoolRoute, BackendError> {
-    match pool {
-        Pool::Splade => Err(infer("Oxide SPLADE unsupported")),
-        _ if selections == 0 => Ok(MeanPoolRoute::Empty),
-        Pool::Mean if selections <= usize::from(u16::MAX) => Ok(MeanPoolRoute::NativeBf16Tree),
-        Pool::Cls | Pool::Mean | Pool::LastToken => Ok(MeanPoolRoute::F32Fallback),
     }
 }
 
@@ -822,6 +897,8 @@ pub(crate) struct DecoderModel {
     uses_plain: bool,
     selected_readout_enabled: bool,
     head: Option<DecoderClassifierHead>,
+    moe: Option<MoeProvider>,
+    moe_frame: Option<MoeFrame>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -862,6 +939,15 @@ impl DecoderModel {
         let config = host.config.clone();
         let math = DecoderMath::select(&config)?;
         let geometry = DecoderGeometry::new(&config)?;
+        let moe = config
+            .routed
+            .as_ref()
+            .map(|routed| {
+                let path = crate::moe_artifact::resolve(context)?;
+                // SAFETY: source-controlled deployment sidecar and SHA were validated cold.
+                unsafe { MoeProvider::load(context, &path, routed) }
+            })
+            .transpose()?;
         let attention_spec = attention_spec(&config)?;
         if !fa4::Fa4::supports(&attention_spec) {
             return Err(start(format!(
@@ -928,7 +1014,63 @@ impl DecoderModel {
             uses_plain: bias_support.uses_plain(),
             selected_readout_enabled: math != DecoderMath::MistralH4096Ordinary,
             head,
+            moe,
+            moe_frame: None,
         })
+    }
+
+    pub(crate) fn workspace_bytes_typed(&self, key: WorkKey) -> Result<usize, ShapeError> {
+        let classifier = self
+            .classifier_scratch_layout(key)
+            .map_err(ShapeError::Rejected)?;
+        let base = DecoderWork::allocation_bytes_with_classifier(key, &self.config, classifier)
+            .map_err(ShapeError::Rejected)?;
+        let extra = self
+            .moe
+            .as_ref()
+            .map(|provider| MoeScratch::allocation_bytes_typed(provider, key.0))
+            .transpose()?
+            .unwrap_or(0);
+        base.checked_add(extra)
+            .ok_or_else(|| ShapeError::Rejected(infer("Routed arena byte count overflow")))
+    }
+
+    pub(crate) fn workspace_bytes(&self, key: WorkKey) -> Result<usize, BackendError> {
+        let classifier = self.classifier_scratch_layout(key)?;
+        let base = DecoderWork::allocation_bytes_with_classifier(key, &self.config, classifier)?;
+        let extra = self
+            .moe
+            .as_ref()
+            .map(|provider| MoeScratch::allocation_bytes(provider, key.0))
+            .transpose()?
+            .unwrap_or(0);
+        base.checked_add(extra)
+            .ok_or_else(|| infer("Routed arena byte count overflow"))
+    }
+
+    pub(crate) fn workspace(
+        &self,
+        stream: Arc<Stream>,
+        key: WorkKey,
+    ) -> Result<DecoderWork, BackendError> {
+        let extra = self
+            .moe
+            .as_ref()
+            .map(|provider| MoeScratch::new(provider, stream.clone(), key.0))
+            .transpose()?;
+        let classifier = self.classifier_scratch_layout(key)?;
+        let mut work = DecoderWork::new_with_classifier(stream, &self.config, key, classifier)?;
+        if let Some(extra) = extra {
+            let bytes = extra.bytes();
+            work.bytes = work
+                .bytes
+                .checked_add(bytes)
+                .ok_or_else(|| infer("Routed arena byte count overflow"))?;
+            super::LIVE_ARENA_BYTES.fetch_add(bytes, Ordering::Relaxed);
+            super::record_live_arena_bytes();
+            work.moe = Some(extra);
+        }
+        Ok(work)
     }
 
     pub(crate) fn needs_plain(&self) -> bool {
@@ -1082,12 +1224,20 @@ impl DecoderModel {
         pool: &Pool,
     ) -> Result<(), ShapeError> {
         self.plans.set_rows(provider, batch.input_ids.len())?;
+        if let Some(moe) = self.moe.as_ref() {
+            let tokens = batch.input_ids.len();
+            if self.moe_frame.as_ref().map(MoeFrame::tokens) != Some(tokens) {
+                self.moe_frame = None;
+                self.moe_frame = Some(moe.prepare(tokens)?);
+            }
+        }
         let classifier_sequence = self
             .head
             .as_ref()
             .is_some_and(|head| head.task() == DecoderClassifierTask::Sequence);
         if classifier_sequence
-            || (self.selected_readout_enabled
+            || (self.moe.is_none()
+                && self.selected_readout_enabled
                 && batch.raw_indices.is_empty()
                 && selected_readout(pool, batch.pooled_indices.len()).is_some())
         {
@@ -1171,6 +1321,7 @@ impl DecoderModel {
         // before the final pointwise seam, token heads keep the full T matrix.
         // Ordinary pooled embedding requests keep the canonical-B optimization.
         let readout = if classifier.is_none()
+            && self.moe.is_none()
             && self.selected_readout_enabled
             && batch.raw_indices.is_empty()
         {
@@ -1553,7 +1704,10 @@ impl DecoderModel {
                 let selected_residual = residual_cur;
                 let dead_residual = residual_next_ptr;
 
-                if let Some(bias) = layer.gate_up.bias.as_ref() {
+                let DecoderMlp::Dense { gate_up, down } = &layer.mlp else {
+                    return Err(infer("Routed MoE cannot use selected-row MLP execution"));
+                };
+                if let Some(bias) = gate_up.bias.as_ref() {
                     let plan = self
                         .plans
                         .readout
@@ -1564,7 +1718,7 @@ impl DecoderModel {
                         lt.enqueue(
                             plan,
                             &work.normalized,
-                            &layer.gate_up.weight,
+                            &gate_up.weight,
                             bias,
                             &mut work.projection,
                         )?;
@@ -1576,7 +1730,7 @@ impl DecoderModel {
                         blas.linear(
                             &self.plans.readout.plain_gate_up,
                             &work.normalized,
-                            &layer.gate_up.weight,
+                            &gate_up.weight,
                             &mut work.projection,
                         )?;
                     }
@@ -1597,7 +1751,7 @@ impl DecoderModel {
                         arg(&mut silu_width),
                     ],
                 )?;
-                if let Some(bias) = layer.down.bias.as_ref() {
+                if let Some(bias) = down.bias.as_ref() {
                     let plan = self
                         .plans
                         .readout
@@ -1605,13 +1759,7 @@ impl DecoderModel {
                         .as_ref()
                         .ok_or_else(|| infer("Missing selected down bias plan"))?;
                     unsafe {
-                        lt.enqueue(
-                            plan,
-                            &work.activation,
-                            &layer.down.weight,
-                            bias,
-                            &mut work.branch,
-                        )?;
+                        lt.enqueue(plan, &work.activation, &down.weight, bias, &mut work.branch)?;
                     }
                 } else {
                     let blas = plain_blas
@@ -1620,7 +1768,7 @@ impl DecoderModel {
                         blas.linear(
                             &self.plans.readout.plain_down,
                             &work.activation,
-                            &layer.down.weight,
+                            &down.weight,
                             &mut work.branch,
                         )?;
                     }
@@ -1731,74 +1879,108 @@ impl DecoderModel {
             )?;
             std::mem::swap(&mut residual_cur, &mut residual_next_ptr);
 
-            if let Some(bias) = layer.gate_up.bias.as_ref() {
-                let plan = self
-                    .plans
-                    .bias_gate_up
-                    .as_ref()
-                    .ok_or_else(|| infer("Missing decoder gate/up bias plan"))?;
-                unsafe {
-                    lt.enqueue(
-                        plan,
-                        &work.normalized,
-                        &layer.gate_up.weight,
-                        bias,
-                        &mut work.projection,
+            match &layer.mlp {
+                DecoderMlp::Dense { gate_up, down } => {
+                    if let Some(bias) = gate_up.bias.as_ref() {
+                        let plan = self
+                            .plans
+                            .bias_gate_up
+                            .as_ref()
+                            .ok_or_else(|| infer("Missing decoder gate/up bias plan"))?;
+                        unsafe {
+                            lt.enqueue(
+                                plan,
+                                &work.normalized,
+                                &gate_up.weight,
+                                bias,
+                                &mut work.projection,
+                            )?;
+                        }
+                    } else {
+                        let blas = plain_blas.ok_or_else(|| {
+                            infer("Missing decoder plain cuBLAS projection handle")
+                        })?;
+                        unsafe {
+                            blas.linear(
+                                &self.plans.plain.gate_up,
+                                &work.normalized,
+                                &gate_up.weight,
+                                &mut work.projection,
+                            )?;
+                        }
+                    }
+                    let mut silu_input = projection;
+                    let mut silu_output = activation;
+                    let mut silu_rows = rows;
+                    let mut silu_width = u32_size(c.intermediate_size)?;
+                    launch(
+                        &k.silu_mul,
+                        stream,
+                        full_silu_grid,
+                        0,
+                        &mut [
+                            arg(&mut silu_input),
+                            arg(&mut silu_output),
+                            arg(&mut silu_rows),
+                            arg(&mut silu_width),
+                        ],
                     )?;
+                    if let Some(bias) = down.bias.as_ref() {
+                        let plan = self
+                            .plans
+                            .bias_down
+                            .as_ref()
+                            .ok_or_else(|| infer("Missing decoder down bias plan"))?;
+                        unsafe {
+                            lt.enqueue(
+                                plan,
+                                &work.activation,
+                                &down.weight,
+                                bias,
+                                &mut work.branch,
+                            )?;
+                        }
+                    } else {
+                        let blas = plain_blas.ok_or_else(|| {
+                            infer("Missing decoder plain cuBLAS projection handle")
+                        })?;
+                        unsafe {
+                            blas.linear(
+                                &self.plans.plain.down,
+                                &work.activation,
+                                &down.weight,
+                                &mut work.branch,
+                            )?;
+                        }
+                    }
                 }
-            } else {
-                let blas = plain_blas
-                    .ok_or_else(|| infer("Missing decoder plain cuBLAS projection handle"))?;
-                unsafe {
-                    blas.linear(
-                        &self.plans.plain.gate_up,
-                        &work.normalized,
-                        &layer.gate_up.weight,
-                        &mut work.projection,
-                    )?;
-                }
-            }
-            let mut silu_input = projection;
-            let mut silu_output = activation;
-            let mut silu_rows = rows;
-            let mut silu_width = u32_size(c.intermediate_size)?;
-            launch(
-                &k.silu_mul,
-                stream,
-                full_silu_grid,
-                0,
-                &mut [
-                    arg(&mut silu_input),
-                    arg(&mut silu_output),
-                    arg(&mut silu_rows),
-                    arg(&mut silu_width),
-                ],
-            )?;
-            if let Some(bias) = layer.down.bias.as_ref() {
-                let plan = self
-                    .plans
-                    .bias_down
-                    .as_ref()
-                    .ok_or_else(|| infer("Missing decoder down bias plan"))?;
-                unsafe {
-                    lt.enqueue(
-                        plan,
-                        &work.activation,
-                        &layer.down.weight,
-                        bias,
-                        &mut work.branch,
-                    )?;
-                }
-            } else {
-                let blas = plain_blas
-                    .ok_or_else(|| infer("Missing decoder plain cuBLAS projection handle"))?;
-                unsafe {
-                    blas.linear(
-                        &self.plans.plain.down,
-                        &work.activation,
-                        &layer.down.weight,
-                        &mut work.branch,
-                    )?;
+                DecoderMlp::Routed(layer) => {
+                    let provider = self
+                        .moe
+                        .as_ref()
+                        .ok_or_else(|| infer("Missing routed provider"))?;
+                    let frame = self
+                        .moe_frame
+                        .as_ref()
+                        .ok_or_else(|| infer("Missing token-exact routed plan"))?;
+                    let scratch = work
+                        .moe
+                        .as_mut()
+                        .ok_or_else(|| infer("Missing routed arena"))?;
+                    let blas = plain_blas.ok_or_else(|| infer("Missing router cuBLAS handle"))?;
+                    // SAFETY: Engine binds this context and retains model/work until its stream completes.
+                    unsafe {
+                        provider.forward(
+                            frame,
+                            layer,
+                            blas,
+                            &k.bf16_to_f32,
+                            stream,
+                            &work.normalized,
+                            &mut work.branch,
+                            scratch,
+                        )?;
+                    }
                 }
             }
             if let Some(next) = self.weights.layers.get(index + 1) {
@@ -1872,9 +2054,9 @@ impl DecoderModel {
                     match route {
                         MeanPoolRoute::Empty => {}
                         MeanPoolRoute::NativeBf16Tree => {
-                            let mean = k.gemma2_mean.as_ref().ok_or_else(|| {
+                            let mean = k.mean_kernel.as_ref().ok_or_else(|| {
                                 start(format!(
-                                    "BF16 dense decoder mean pooling requires the public Gemma2 ABI bundle export {PUBLIC_MEAN_EXPORT}"
+                                    "BF16 decoder mean pooling requires the public Gemma2 ABI bundle export {PUBLIC_MEAN_EXPORT} or the qualified routed-native mean export"
                                 ))
                             })?;
                             let plan = crate::gemma2_math::MeanPlan::new(
@@ -1990,7 +2172,7 @@ fn pooled_elements(
 }
 
 pub(crate) struct DecoderWork {
-    stream: Arc<Stream>,
+    pub(crate) stream: Arc<Stream>,
     tokens: usize,
     sequences: usize,
     selections: usize,
@@ -2004,6 +2186,7 @@ pub(crate) struct DecoderWork {
     activation: ManuallyDrop<DeviceBuffer<Bf16>>,
     pooled: Option<ManuallyDrop<DeviceBuffer<f32>>>,
     classifier: Option<Box<DecoderClassifierScratchBuffers>>,
+    moe: Option<MoeScratch>,
     last_completion: Option<CompletionTicket>,
     released: bool,
 }
@@ -2062,8 +2245,8 @@ impl DecoderWork {
     ) -> Result<Self, BackendError> {
         let bytes = Self::allocation_bytes_with_classifier(key, c, classifier_layout)?;
         let (tokens, sequences, selections) = key;
-        let geometry = DecoderGeometry::new(c)?;
         let input_len = staging::input_capacity(key)?;
+        let geometry = DecoderGeometry::new(c)?;
         let hidden = product(tokens, geometry.hidden)?;
         let projection = product(tokens, geometry.projection_width)?;
         let activation = product(tokens, geometry.activation_width)?;
@@ -2122,6 +2305,7 @@ impl DecoderWork {
             activation: ManuallyDrop::new(activation),
             pooled,
             classifier,
+            moe: None,
             last_completion: None,
             released: false,
             stream,
@@ -2203,8 +2387,13 @@ impl DecoderWork {
         }
         self.released = true;
         // SAFETY: exactly one owner drops the payload, and this method is only
-        // called after a completion proof or an actual stream drain.
+        // called after a completion proof or an actual stream drain. The MoE
+        // scratch shares this arena's retained stream and is released first
+        // without a second drain.
         unsafe {
+            if let Some(scratch) = self.moe.as_mut() {
+                scratch.drop_after_drain();
+            }
             ManuallyDrop::drop(&mut self.input);
             ManuallyDrop::drop(&mut self.residual);
             ManuallyDrop::drop(&mut self.residual_next);
@@ -2226,7 +2415,7 @@ impl DecoderWork {
         super::LIVE_ARENA_BYTES.fetch_sub(self.bytes, Ordering::Relaxed);
         super::record_live_arena_bytes();
     }
-    fn check(
+    pub(crate) fn check(
         &self,
         tokens: usize,
         sequences: usize,
@@ -2341,6 +2530,9 @@ impl Drop for DecoderWork {
             // The Work is the single byte owner and already includes the
             // classifier scratch in self.bytes. Retain the scratch and its
             // stream as part of that charge without a second sync/charge.
+            if let Some(scratch) = self.moe.take() {
+                std::mem::forget(scratch);
+            }
             metrics::counter!("oxide_arena_retained_bytes_total").increment(self.bytes as u64);
             if let Some(scratch) = self.classifier.take() {
                 scratch.retain_owned_by_failed_work();
@@ -2403,7 +2595,7 @@ mod tests {
     }
 
     #[test]
-    fn dense_decoder_requires_the_current_public_gemma2_exports_without_private_fallback() {
+    fn mistral_requires_the_current_public_gemma2_exports_without_private_fallback() {
         assert!(crate::gemma2_math::EXPORTS.contains(&MISTRAL_PUBLIC_ROPE_EXPORT));
         assert!(crate::gemma2_math::EXPORTS.contains(&PUBLIC_MEAN_EXPORT));
         assert_eq!(
@@ -3142,7 +3334,51 @@ mod tests {
             is_causal: true,
             attention_window: Some(4096),
             rope: DecoderRope::Default,
+            routed: None,
         }
+    }
+
+    #[test]
+    fn qwen3_moe_h4096_structural_recipe_is_additive_not_blindly_unlocked() {
+        use crate::moe_model::RoutedMlpConfig;
+        use std::collections::BTreeSet;
+        let routed = RoutedMlpConfig {
+            hidden_size: 4096,
+            intermediate_size: 12288,
+            num_hidden_layers: 94,
+            moe_intermediate_size: 1536,
+            num_experts: 128,
+            num_experts_per_tok: 8,
+            decoder_sparse_step: 1,
+            norm_topk_prob: true,
+            mlp_only_layers: BTreeSet::new(),
+        };
+        let c = DecoderConfig {
+            family: DecoderFamily::Qwen3Moe,
+            hidden_size: 4096,
+            intermediate_size: 12288,
+            num_hidden_layers: 94,
+            num_attention_heads: 64,
+            num_key_value_heads: 4,
+            head_dim: 128,
+            vocab_size: 151936,
+            max_position_embeddings: 40960,
+            rms_norm_eps: 1e-6,
+            rope_theta: 1_000_000.0,
+            is_causal: true,
+            attention_window: None,
+            rope: DecoderRope::FullNeoX,
+            routed: Some(routed),
+        };
+        let math = DecoderMath::select(&c).unwrap();
+        assert_eq!(math, DecoderMath::Qwen3MoeH4096Ordinary);
+        assert_eq!(math.rms_export(), "infinity_rms_norm_4096_vector");
+        assert_eq!(math.add_rms_export(), "infinity_add_rms_norm_4096_vector");
+        assert_eq!(
+            math.qk_norm_rope_export(),
+            Some("infinity_qk_norm_rope_128_bf16")
+        );
+        assert_eq!(math.norm_geometry(), GENERIC_NORM_GEOMETRY);
     }
 
     #[test]

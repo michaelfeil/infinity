@@ -14,4 +14,5 @@ cuda-integration-tests-review:
 oxide-tests:
 	python3 -m unittest discover -s backends/oxide/device/tests
 	python3 -m unittest discover -s backends/libtorch/cpp/vendor/infinity_fa4
+	python3 backends/oxide/moe_sidecar/tests/build_policy_tests.py
 	cargo test --locked -p infinity-backend-oxide --all-targets
