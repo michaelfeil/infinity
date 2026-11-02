@@ -224,6 +224,17 @@ minor-version compatibility.
 
 ## Build and run without LibTorch
 
+For CPU-only Oxide correctness tests, run `make oxide-tests` from
+`libs/infinity-v3`. This uses Cargo's incremental test profile. Use `--release`
+for performance measurements; it enables the production optimization settings
+and takes longer to rebuild.
+
+The kernel builder compiles GPU targets concurrently. `CARGO_BUILD_JOBS` limits
+the combined Cargo jobs (default: 3); set it to 1 for a sequential build.
+`CARGO_TARGET_DIR`, when set, is a base directory with one subdirectory per GPU
+architecture. A device-local `.cargo/cuda-oxide.toml` uses sequential compilation
+from the original source directory to preserve its settings.
+
 Run from `libs/infinity-v3`. Install the pinned cuda-oxide producer with its own
 Rust toolchain; do not replace the host's toolchain pin. The producer needs a
 CUDA toolkit with `ptxas` and `cuobjdump`, libclang development headers, and the

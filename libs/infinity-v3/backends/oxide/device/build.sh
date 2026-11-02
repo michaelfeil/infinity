@@ -14,14 +14,63 @@ import re
 import shutil
 import subprocess
 import sys
+import tempfile
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
+import fcntl
 
 root, output = [Path(p).resolve() for p in sys.argv[1:3]]
-compiler = sys.argv[3]
-toolkit = os.environ.get("CUDA_TOOLKIT_PATH", os.environ.get("CUDA_HOME"))
-ptxas = os.environ.get("PTXAS", str(Path(toolkit) / "bin/ptxas") if toolkit else "ptxas")
-cuobjdump = os.environ.get("CUOBJDUMP", str(Path(toolkit) / "bin/cuobjdump") if toolkit else "cuobjdump")
+
+def resolve_from_root(value):
+    path = Path(value).expanduser()
+    return (path if path.is_absolute() else root / path).resolve()
+
+def path_or_command(value):
+    if os.sep in value or (os.altsep and os.altsep in value) or value.startswith("~"):
+        return str(resolve_from_root(value))
+    return value
+
+compiler = path_or_command(sys.argv[3])
+toolkit_value = os.environ.get("CUDA_TOOLKIT_PATH", os.environ.get("CUDA_HOME"))
+toolkit = str(resolve_from_root(toolkit_value)) if toolkit_value else None
+ptxas_value = os.environ.get("PTXAS")
+ptxas = (path_or_command(ptxas_value) if ptxas_value
+         else (str(Path(toolkit) / "bin/ptxas") if toolkit else "ptxas"))
+cuobjdump_value = os.environ.get("CUOBJDUMP")
+cuobjdump = (path_or_command(cuobjdump_value) if cuobjdump_value
+             else (str(Path(toolkit) / "bin/cuobjdump") if toolkit else "cuobjdump"))
 environment = dict(os.environ, RUSTUP_TOOLCHAIN="1.99.1", RUSTC_BOOTSTRAP="1")
+# The compiler now runs from a snapshot; keep any caller-supplied CUDA roots
+# absolute so downstream lookups do not resolve relative to the snapshot.
+for name in ("CUDA_TOOLKIT_PATH", "CUDA_HOME"):
+    if name in os.environ:
+        environment[name] = str(resolve_from_root(os.environ[name]))
+architectures = [("sm_90", "H100"), ("sm_100", "B200"),
+                 ("sm_120", "RTX PRO 6000 Blackwell")]
+jobs_text = os.environ.get("CARGO_BUILD_JOBS", "3")
+try:
+    total_jobs = int(jobs_text)
+except ValueError:
+    raise SystemExit(f"CARGO_BUILD_JOBS must be a positive integer, got {jobs_text!r}")
+if total_jobs < 1:
+    raise SystemExit(f"CARGO_BUILD_JOBS must be a positive integer, got {jobs_text!r}")
+# cargo-oxide reads configuration only from cwd/.cargo/cuda-oxide.toml. A
+# private snapshot would hide a device-local file (including relative backend
+# paths and extra rustflags), so that case falls back to the original root.
+source_lock = os.open(root, os.O_RDONLY)
+fcntl.flock(source_lock, fcntl.LOCK_EX)
+local_config_mode = (root / ".cargo" / "cuda-oxide.toml").is_file()
+if local_config_mode:
+    worker_count = 1
+    job_counts = [total_jobs] * len(architectures)
+    print("Detected device/.cargo/cuda-oxide.toml: compiling architectures "
+          "sequentially from the original source root to preserve local "
+          "cargo-oxide configuration.", flush=True)
+else:
+    worker_count = min(total_jobs, len(architectures))
+    base_jobs, extra_jobs = divmod(total_jobs, worker_count)
+    job_counts = [base_jobs + (index < extra_jobs)
+                  for index in range(len(architectures))]
 symbols = sorted(["infinity_attention", "infinity_embedding_norm", "infinity_embedding_norm_384",
                   "infinity_embedding_norm_768_exact", "infinity_embedding_norm_768_exact_vector",
                   "infinity_embedding_norm_1024_rounded_native",
@@ -89,10 +138,10 @@ symbols = sorted(symbols + encoder_activation_exports)
 def digest(path):
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
-def command(args, log):
+def command(args, log, env, cwd=root):
     start = time.perf_counter()
     with log.open("w") as stream:
-        subprocess.run(args, cwd=root, env=environment, stdout=stream,
+        subprocess.run(args, cwd=cwd, env=env, stdout=stream,
                        stderr=subprocess.STDOUT, check=True)
     return time.perf_counter() - start
 
@@ -124,32 +173,50 @@ for name in ["src/deberta_math.rs", "src/deberta_norm.rs", "src/gelu_exact.rs"]:
     manifest["sources"][name] = digest(root / name)
 manifest["sources"] = dict(sorted(manifest["sources"].items()))
 output.mkdir(parents=True, exist_ok=True)
-# Carry the newly adapted primitive's attribution with standalone bundles.
-shutil.copy2(root / "LICENSE-PyTorch-BSD3", output / "LICENSE-PyTorch-BSD3")
-shutil.copy2(root / "LICENSE-Candle-BSD3", output / "LICENSE-Candle-BSD3")
-shutil.copy2(root.parent / "NOTICE", output / "NOTICE")
-for arch, hardware in [("sm_90", "H100"), ("sm_100", "B200"),
-                       ("sm_120", "RTX PRO 6000 Blackwell")]:
+work_root = (output.parent / (output.name + ".work")).resolve()
+target_base_value = os.environ.get("CARGO_TARGET_DIR")
+target_base = resolve_from_root(target_base_value) if target_base_value else None
+
+def build_arch(index, arch, hardware, source_root):
     directory = output / arch
-    directory.mkdir(exist_ok=True)
+    directory.mkdir(parents=True, exist_ok=True)
+    arch_work = work_root / arch
+    ptx_dir = arch_work / "ptx"
+    target_dir = (target_base / arch) if target_base else (arch_work / "target")
+    # Never accept a stale PTX left by an earlier failed invocation.
+    shutil.rmtree(ptx_dir, ignore_errors=True)
+    ptx_dir.mkdir(parents=True, exist_ok=True)
+    target_dir.mkdir(parents=True, exist_ok=True)
+    job_env = dict(environment, CUDA_OXIDE_PTX_DIR=str(ptx_dir),
+                   CARGO_TARGET_DIR=str(target_dir),
+                   CARGO_BUILD_JOBS=str(job_counts[index]))
     build = [compiler, "build", "--arch", arch]
-    build_seconds = command(build, directory / "build.log")
+    build_seconds = command(build, directory / "build.log", job_env, source_root)
+    produced = ptx_dir / "infinity_oxide_kernels.ptx"
+    if not produced.is_file():
+        raise RuntimeError(f"Compiler did not emit {produced.name} for {arch} in {ptx_dir}")
     ptx, cubin = directory / "kernels.ptx", directory / "kernels.cubin"
-    shutil.copy2(root / "infinity_oxide_kernels.ptx", ptx)
+    shutil.copy2(produced, ptx)
     text = ptx.read_text()
     targets = re.findall(r"^\.target\s+(\w+)", text, re.MULTILINE)
     entries = sorted(re.findall(r"\.visible\s+\.entry\s+(\w+)\s*\(", text))
     if targets != [arch] or entries != symbols:
         raise RuntimeError(f"Incorrect compiler target or kernel exports: {arch}: {targets}, {entries}")
     assemble = [ptxas, "-arch=" + arch, "-v", str(ptx), "-o", str(cubin)]
-    assemble_seconds = command(assemble, directory / "ptxas.log")
+    assemble_seconds = command(assemble, directory / "ptxas.log", environment)
     binary_symbols = subprocess.check_output([cuobjdump, "--dump-elf-symbols", str(cubin)],
                                              text=True, env=environment)
     (directory / "symbols.log").write_text(binary_symbols)
     native_entries = sorted(re.findall(r"STO_ENTRY\s+(\w+)", binary_symbols))
     if native_entries != symbols:
         raise RuntimeError(f"Incorrect native cubin exports for {arch}: {native_entries}")
-    manifest["architectures"].append({
+    elf_text = subprocess.check_output([cuobjdump, "--dump-elf", str(cubin)],
+                                       text=True, env=environment)
+    native_arch = re.search(r"\bsm=(\d+)\b", elf_text)
+    if native_arch is None or f"sm_{native_arch[1]}" != arch:
+        raise RuntimeError(f"Incorrect native cubin architecture for {arch}: "
+                           f"{native_arch[1] if native_arch else 'missing'}")
+    return {
         "architecture": arch, "hardware": hardware,
         "ptx_version": re.search(r"^\.version\s+([\d.]+)", text, re.MULTILINE)[1],
         "ptx": str(ptx.relative_to(output)), "cubin": str(cubin.relative_to(output)),
@@ -157,7 +224,80 @@ for arch, hardware in [("sm_90", "H100"), ("sm_100", "B200"),
         "build_seconds": build_seconds, "assemble_seconds": assemble_seconds,
         "build_command": build, "assemble_command": assemble,
         "symbols_verified": native_entries,
-    })
-    (output / "manifest.json").write_text(json.dumps(manifest, indent=2))
-    print(f"{arch} ({hardware}): all {len(symbols)} Rust kernels compiled and assembled", flush=True)
+    }
+
+def snapshot_arch(invocation_root, arch):
+    # cargo-oxide rewrites <example>/src/main.rs unconditionally. Give every
+    # compiler process a private source copy; it must never touch the real root.
+    destination = invocation_root / arch / "libs/infinity-v3/backends/oxide/device"
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copytree(root / "src", destination / "src")
+    for name in ["Cargo.toml", "Cargo.lock", "rust-toolchain.toml",
+                 "encoder_activation_exports.txt", "LICENSE-Candle-BSD3",
+                 "LICENSE-PyTorch-BSD3"]:
+        shutil.copy2(root / name, destination / name)
+    notice = root.parent / "NOTICE"
+    if notice.is_file():
+        shutil.copy2(notice, destination.parent / "NOTICE")
+    license_file = root.parent.parent.parent / "LICENSE"
+    if license_file.is_file():
+        shutil.copy2(license_file, destination.parent.parent.parent / "LICENSE")
+    return destination
+
+def write_manifest_atomic(path, text):
+    descriptor, temporary = tempfile.mkstemp(prefix=".manifest.", dir=path.parent)
+    try:
+        os.fchmod(descriptor, 0o644)
+        with os.fdopen(descriptor, "w") as stream:
+            stream.write(text)
+        os.replace(temporary, path)
+    except BaseException:
+        try:
+            os.unlink(temporary)
+        except FileNotFoundError:
+            pass
+        raise
+
+work_root.mkdir(parents=True, exist_ok=True)
+work_lock = os.open(work_root, os.O_RDONLY)
+try:
+    fcntl.flock(work_lock, fcntl.LOCK_EX)
+    # Attribution belongs to this output; write it only after the work-dir lock
+    # so a different source root cannot race the same output directory.
+    shutil.copy2(root / "LICENSE-PyTorch-BSD3", output / "LICENSE-PyTorch-BSD3")
+    shutil.copy2(root / "LICENSE-Candle-BSD3", output / "LICENSE-Candle-BSD3")
+    shutil.copy2(root.parent / "NOTICE", output / "NOTICE")
+    manifest_path = output / "manifest.json"
+    manifest_path.unlink(missing_ok=True)
+    if local_config_mode:
+        invocation_root = None
+        source_roots = {arch: root for arch, _hardware in architectures}
+    else:
+        workspace_parent = root / ".oxide-artifacts" / "build-workspaces"
+        workspace_parent.mkdir(parents=True, exist_ok=True)
+        invocation_root = Path(tempfile.mkdtemp(prefix="build-", dir=workspace_parent))
+        source_roots = {arch: snapshot_arch(invocation_root, arch)
+                        for arch, _hardware in architectures}
+    try:
+        results = {}
+        with ThreadPoolExecutor(max_workers=worker_count) as executor:
+            futures = {
+                executor.submit(build_arch, index, arch, hardware, source_roots[arch]):
+                    (arch, hardware)
+                for index, (arch, hardware) in enumerate(architectures)
+            }
+            for future in as_completed(futures):
+                arch, _hardware = futures[future]
+                results[arch] = future.result()
+        manifest["architectures"] = [results[arch] for arch, _hardware in architectures]
+        write_manifest_atomic(manifest_path, json.dumps(manifest, indent=2))
+        for arch, hardware in architectures:
+            print(f"{arch} ({hardware}): all {len(symbols)} Rust kernels compiled and assembled", flush=True)
+    finally:
+        if invocation_root is not None:
+            shutil.rmtree(invocation_root, ignore_errors=True)
+finally:
+    fcntl.flock(work_lock, fcntl.LOCK_UN)
+    os.close(work_lock)
+    os.close(source_lock)
 PY
