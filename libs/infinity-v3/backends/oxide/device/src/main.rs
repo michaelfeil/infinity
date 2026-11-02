@@ -17,6 +17,7 @@ mod encoder_f16;
 mod encoder_prenorm;
 mod gated;
 mod gelu_exact;
+mod gemma2;
 mod jina_code_qk;
 mod mpnet_norm;
 mod nomic_embedding;
@@ -1862,6 +1863,125 @@ mod kernels {
     #[kernel]
     pub unsafe fn infinity_gelu_exact(input: *mut u16, elements: u32) {
         unsafe { crate::gelu_exact::gelu_exact(input, elements) };
+    }
+
+    /// EmbeddingGemma2 DivSqrt norm with F32 scale and no +1.
+    #[kernel]
+    pub unsafe fn infinity_gemma2_norm_bf16_f32scale(
+        input: *const u16,
+        scale: *const f32,
+        out: *mut u16,
+        rows: u32,
+        width: u32,
+        heads: u32,
+        token_stride: u64,
+        eps: f32,
+    ) {
+        unsafe {
+            crate::gemma2::norm_bf16_f32scale(
+                input,
+                scale,
+                out,
+                rows,
+                width,
+                heads,
+                token_stride,
+                eps,
+            )
+        };
+    }
+
+    /// EmbeddingGemma2 residual DivSqrt norm; statistics from input only.
+    #[kernel]
+    pub unsafe fn infinity_gemma2_residual_norm_bf16_f32scale(
+        input: *const u16,
+        residual: *const u16,
+        scale: *const f32,
+        out: *mut u16,
+        rows: u32,
+        width: u32,
+        eps: f32,
+    ) {
+        unsafe {
+            crate::gemma2::residual_norm_bf16_f32scale(
+                input, residual, scale, out, rows, width, eps,
+            )
+        };
+    }
+
+    /// EmbeddingGemma2 unit V norm (F32 ones scale).
+    #[kernel]
+    pub unsafe fn infinity_gemma2_unit_norm_bf16(
+        input: *const u16,
+        out: *mut u16,
+        rows: u32,
+        width: u32,
+        heads: u32,
+        token_stride: u64,
+        eps: f32,
+    ) {
+        unsafe { crate::gemma2::unit_norm_bf16(input, out, rows, width, heads, token_stride, eps) };
+    }
+
+    /// Native gate-first packed BF16 GELU-tanh.
+    #[kernel]
+    pub unsafe fn infinity_gemma2_gated_gelu_bf16(
+        input: *const u16,
+        out: *mut u16,
+        rows: u32,
+        width: u32,
+    ) {
+        unsafe { crate::gemma2::gated_gelu_bf16(input, out, rows, width) };
+    }
+
+    /// Precise GELU on a PLE gate row multiplied by the token's PLE slice.
+    #[kernel]
+    pub unsafe fn infinity_gemma2_ple_gate_bf16(
+        gate: *const u16,
+        ple: *const u16,
+        out: *mut u16,
+        rows: u32,
+        width: u32,
+        layers: u32,
+        layer: u32,
+    ) {
+        unsafe { crate::gemma2::ple_gate_bf16(gate, ple, out, rows, width, layers, layer) };
+    }
+
+    /// BF16 pointwise multiply by one F32 value holding an exact BF16 scalar.
+    #[kernel]
+    pub unsafe fn infinity_gemma2_scale_bf16(
+        input: *const u16,
+        out: *mut u16,
+        count: u32,
+        scale: f32,
+    ) {
+        unsafe { crate::gemma2::scale_bf16(input, out, count, scale) };
+    }
+
+    /// Cold BF16-rounded rotary table initializer.
+    #[kernel]
+    pub unsafe fn infinity_gemma2_rope_tables_bf16(
+        inverse: *const f32,
+        cosine: *mut f32,
+        sine: *mut f32,
+        positions: u32,
+        pairs: u32,
+    ) {
+        unsafe { crate::gemma2::rope_tables_bf16(inverse, cosine, sine, positions, pairs) };
+    }
+
+    /// Native packed BF16 mean pooling widened to F32.
+    #[kernel]
+    pub unsafe fn infinity_gemma2_mean_pool_bf16(
+        input: *const u16,
+        cu_seqlens: *const u32,
+        selected: *const u32,
+        out: *mut f32,
+        count: u32,
+        width: u32,
+    ) {
+        unsafe { crate::gemma2::mean_pool_bf16(input, cu_seqlens, selected, out, count, width) };
     }
 }
 

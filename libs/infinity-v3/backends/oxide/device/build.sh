@@ -67,6 +67,14 @@ symbols = sorted(symbols + [
 symbols = sorted(symbols + ["infinity_classifier_bias_bf16", "infinity_classifier_gather_first_bf16", "infinity_classifier_embedding_norm_384_exact", "infinity_classifier_layer_norm_384_exact"])
 
 symbols = sorted(symbols + ["infinity_embedding_norm_mpnet_768_aten", "infinity_layer_norm_mpnet_768_aten", "infinity_gelu_exact"])
+symbols = sorted(symbols + ["infinity_gemma2_norm_bf16_f32scale",
+                            "infinity_gemma2_residual_norm_bf16_f32scale",
+                            "infinity_gemma2_unit_norm_bf16",
+                            "infinity_gemma2_gated_gelu_bf16",
+                            "infinity_gemma2_ple_gate_bf16",
+                            "infinity_gemma2_scale_bf16",
+                            "infinity_gemma2_rope_tables_bf16",
+                            "infinity_gemma2_mean_pool_bf16"])
 
 def digest(path):
     return hashlib.sha256(path.read_bytes()).hexdigest()
@@ -99,6 +107,7 @@ manifest["sources"]["src/encoder_f16.rs"] = digest(root / "src/encoder_f16.rs")
 manifest["sources"]["src/jina_code_qk.rs"] = digest(root / "src/jina_code_qk.rs")
 manifest["sources"]["src/classifier.rs"] = digest(root / "src/classifier.rs")
 manifest["sources"]["src/classifier_norm384.rs"] = digest(root / "src/classifier_norm384.rs")
+manifest["sources"]["src/gemma2.rs"] = digest(root / "src/gemma2.rs")
 for name in ["src/deberta_math.rs", "src/deberta_norm.rs", "src/gelu_exact.rs"]:
     manifest["sources"][name] = digest(root / name)
 manifest["sources"] = dict(sorted(manifest["sources"].items()))

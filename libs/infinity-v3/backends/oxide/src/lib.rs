@@ -18,6 +18,7 @@ mod fa4;
 mod fa4_alibi;
 mod fa4_deberta;
 pub mod fp8;
+pub mod gemma2_math;
 mod jina_code_encoder_model;
 #[cfg(test)]
 #[path = "jina_code_host_tests.rs"]
