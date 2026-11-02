@@ -1,0 +1,7 @@
+   Compiling infinity-backend-oxide v3.0.2-beta.1 (/tmp/oxide-all-model-feature-matrix-v1/mistral3-v4/libs/infinity-v3/backends/oxide)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 8.32s
+     Running `/tmp/oxide-all-model-feature-matrix-v1/mistral3-v4/.work/target-cpu-debug/debug/examples/mistral3_admission /workspace/model-performance/michaelfeil/benchmark-overview/models/nvidia--Nemotron-3.5-Rerank-8B-BF16`
+vision_tensors=218 projector_tensors=4 text_tensors=308 score_tensors=1 classifier=true text_layers=34 vision_bytes=806610944 projector_bytes=50333696 cold_tensors=222 cold_bytes=856944640
+vision_profile=16heads/16kv/d64 causal=false window=global provider_compile_pending=true
+text_pending=none
+projector_pending=none

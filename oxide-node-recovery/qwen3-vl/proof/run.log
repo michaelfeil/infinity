@@ -1,0 +1,14 @@
+=== fmt ===
+fmt_exit=0
+=== focused decoder tests ===
+decoder_exit=0
+=== full oxide lib tests ===
+lib_exit=0
+=== example contract tests ===
+example_test_exit=0
+=== factory tests ===
+factory_exit=0
+=== real fixtures ===
+fixtures_exit=0
+=== debug example build ===
+build_exit=0

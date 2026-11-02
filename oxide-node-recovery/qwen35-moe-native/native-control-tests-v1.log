@@ -1,0 +1,55 @@
+test_actual_shape_unchanged (test_control.ActualSchemaTests.test_actual_shape_unchanged) ... ok
+test_architecture_class_mismatch (test_control.ActualSchemaTests.test_architecture_class_mismatch) ... ok
+test_canonical_batch_derived_from_requested (test_control.ActualSchemaTests.test_canonical_batch_derived_from_requested) ... ok
+test_case_shape_must_be_2048 (test_control.ActualSchemaTests.test_case_shape_must_be_2048) ... ok
+test_duplicate_json_keys (test_control.ActualSchemaTests.test_duplicate_json_keys) ... ok
+test_engine_count_required (test_control.ActualSchemaTests.test_engine_count_required) ... ok
+test_errors_and_typed_errors_required_empty (test_control.ActualSchemaTests.test_errors_and_typed_errors_required_empty) ... ok
+test_f32_bits_alias_rejected (test_control.ActualSchemaTests.test_f32_bits_alias_rejected) ... ERROR
+test_file_sha_is_retained_not_canonical (test_control.ActualSchemaTests.test_file_sha_is_retained_not_canonical) ... ok
+test_flat_requested_required (test_control.ActualSchemaTests.test_flat_requested_required) ... ok
+test_invalid_cases_excluded_after_validation (test_control.ActualSchemaTests.test_invalid_cases_excluded_after_validation) ... ok
+test_invalid_status_mismatch (test_control.ActualSchemaTests.test_invalid_status_mismatch) ... ok
+test_invalid_variant_mismatch (test_control.ActualSchemaTests.test_invalid_variant_mismatch) ... ok
+test_layer_order_sha_mismatch (test_control.ActualSchemaTests.test_layer_order_sha_mismatch) ... ok
+test_manifest_file_sha_validated (test_control.ActualSchemaTests.test_manifest_file_sha_validated) ... ok
+test_metadata_after_snapshot_mismatch (test_control.ActualSchemaTests.test_metadata_after_snapshot_mismatch) ... ok
+test_metadata_before_after_required_equal (test_control.ActualSchemaTests.test_metadata_before_after_required_equal) ... ok
+test_metadata_flat_config_rejected (test_control.ActualSchemaTests.test_metadata_flat_config_rejected) ... ok
+test_metadata_payload_hashed_rejected (test_control.ActualSchemaTests.test_metadata_payload_hashed_rejected) ... ok
+test_nan_and_missing_vectors (test_control.ActualSchemaTests.test_nan_and_missing_vectors) ... ok
+test_no_torch_dtype_guess (test_control.ActualSchemaTests.test_no_torch_dtype_guess) ... ok
+test_normal_factory_route_required (test_control.ActualSchemaTests.test_normal_factory_route_required) ... ok
+test_reordered_valid_names (test_control.ActualSchemaTests.test_reordered_valid_names) ... ok
+test_report_status_required (test_control.ActualSchemaTests.test_report_status_required) ... ok
+test_signed_zero (test_control.ActualSchemaTests.test_signed_zero) ... ok
+test_text_model_type_mismatch (test_control.ActualSchemaTests.test_text_model_type_mismatch) ... ok
+test_top_level_pool_drives_comparison (test_control.ActualSchemaTests.test_top_level_pool_drives_comparison) ... ok
+test_valid_case_status_required (test_control.ActualSchemaTests.test_valid_case_status_required) ... ok
+test_native_only_phases (test_control.ControllerV4Tests.test_native_only_phases) ... ok
+test_t7_a_selection (test_control.ControllerV4Tests.test_t7_a_selection) ... ok
+test_actual_config_facts (test_control.LightFactsTests.test_actual_config_facts) ... ok
+test_actual_metadata_constants (test_control.LightFactsTests.test_actual_metadata_constants) ... ok
+
+======================================================================
+ERROR: test_f32_bits_alias_rejected (test_control.ActualSchemaTests.test_f32_bits_alias_rejected)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/tmp/infinity-oxide-parity-20261101/q35moe-runtime-handoff-v1/native-control/test_control.py", line 332, in test_f32_bits_alias_rejected
+    result = sc.compare(native_report([native_case("t7_a", [native_pooled()])]),
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/tmp/infinity-oxide-parity-20261101/q35moe-runtime-handoff-v1/native-control/strict_compare.py", line 486, in compare
+    rust = normalize_rust(rust_report, manifest)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/tmp/infinity-oxide-parity-20261101/q35moe-runtime-handoff-v1/native-control/strict_compare.py", line 280, in normalize_rust
+    entries = [_entry(entry, f"rust.case[{name}].output[{position}]")
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/tmp/infinity-oxide-parity-20261101/q35moe-runtime-handoff-v1/native-control/strict_compare.py", line 194, in _entry
+    "values": value["values"], "f32_bits": value["bits_u32"]}
+                                           ~~~~~^^^^^^^^^^^^
+KeyError: 'bits_u32'
+
+----------------------------------------------------------------------
+Ran 32 tests in 0.047s
+
+FAILED (errors=1)

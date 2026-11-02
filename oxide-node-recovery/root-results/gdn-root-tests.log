@@ -1,0 +1,15 @@
+error: cannot publish complete aux bundle to /tmp/tmp3q6_x4tl/aux: synthetic publish failure
+....error: --raw-output must be absent before any compilation: /tmp/tmpc91_o0e3/raw
+error: --raw-output must be absent before any compilation: /tmp/tmp6alizjeo/raw
+error: --raw-output must be absent before any compilation: /tmp/tmpd4v0r5f1/raw
+.error: raw sm_90 compilation failed; argv=['nvcc', '-std=c++17', '-O3', '--cubin', '--fmad=true', '--ftz=false', '--prec-div=true', '--prec-sqrt=true', '-Xptxas', '-v', '-arch=sm_90', '/tmp/tmpl7k9w0lq/.raw.raw-uvzuphn7/qwen35_gdn_native.cu', '-o', '/tmp/tmpl7k9w0lq/.raw.raw-uvzuphn7/sm_90/kernels.cubin']; output=nvcc fatal: synthetic
+....error: required aux source LICENSE is unavailable at /tmp/tmpyvgzpb7t/missing-LICENSE: [Errno 2] No such file or directory: '/tmp/tmpyvgzpb7t/missing-LICENSE'
+....error: --raw-output and --aux-output must be different paths
+error: --raw-output and --aux-output must not be nested
+.error: raw source changed after snapshot, refusing compiled manifest: /tmp/tmpr63qoxvm/.raw.raw-bz1xk1f6/qwen35_gdn_native.cu
+.error: raw sm_90 compiler produced no nonempty cubin
+..
+----------------------------------------------------------------------
+Ran 17 tests in 0.044s
+
+OK

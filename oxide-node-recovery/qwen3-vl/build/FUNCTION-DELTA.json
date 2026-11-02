@@ -1,0 +1,125 @@
+{
+  "schema": "oxide-qwen3vl-rope-budget-function-delta/v1",
+  "public_head": {
+    "commit": "252789b05ea2e09c14971c04dfcce458f863fead",
+    "path": "libs/infinity-v3/backends/oxide/src/decoder.rs",
+    "old_sha256": "13dcc849d07ca30f82dc8d51362b98db988614c1d0fcb23ed0ca4917a398fd51",
+    "patched_sha256": "62a2fcf3cd2e539f5eb2681aec9a7a269d92a1f540ec86f10b760dede85745ad"
+  },
+  "private_snapshot": {
+    "commit": "027b359c6e0c5378cd07398b07b4435af3ee492d",
+    "path": "libs/infinity-v3/backends/oxide/src/decoder.rs",
+    "old_sha256": "6850cbb961ae75c672eea2820cb8e2f5b3726bb71a56b0007b36cf47a898efe5",
+    "patched_sha256": "28d022df0bd22181a8187bd7329588ae3c9c7453602e0b38c67b1dca4bc5644d"
+  },
+  "generic_rotary_helper": {
+    "path": "libs/infinity-v3/backends/oxide/src/rotary.rs",
+    "public_sha256": "5ac97a7e119ece22f84a34b692162b1306e1850338c026d555489103817d910a",
+    "private_sha256": "5ac97a7e119ece22f84a34b692162b1306e1850338c026d555489103817d910a",
+    "candidate_sha256": "5ac97a7e119ece22f84a34b692162b1306e1850338c026d555489103817d910a",
+    "unchanged": true,
+    "BaseRopeTables_new_sha256": "deab6b151eff9ac73e9260802712b7ef1c90a4f95d9e494b97374f7a99615e2b",
+    "BaseRopeTables_new_ntk_sha256": "e917d72bd43fd91e2ed05e0f9d386d923ed56cc4c0f91b4ff91598c5f7911e66"
+  },
+  "public_functions": [
+    {
+      "function": "rope_construction_budget",
+      "old_present": false,
+      "new_present": true,
+      "old_sha256": null,
+      "new_sha256": "4be77f9a60afc727c9097011e4ed53848083511c322333d74ec4fe6d983d2206",
+      "changed": true
+    },
+    {
+      "function": "new_with_classifier",
+      "old_present": true,
+      "new_present": true,
+      "old_sha256": "79c68c14bb8d451886b3b6a2bcb96b999180b004a0333b78d94804a1581bc81a",
+      "new_sha256": "c758a1268b1f86a4f7540c080a0fcc8a09e6d6618fe4699bfde750af9aba5fa7",
+      "changed": true
+    },
+    {
+      "function": "rope_table_budget_has_explicit_room_for_gte_capacity",
+      "old_present": true,
+      "new_present": true,
+      "old_sha256": "e5ce5d139b4c27a601b0a0cbd73980eb5efd416303ac55e0d775b3677a119f87",
+      "new_sha256": "e5ce5d139b4c27a601b0a0cbd73980eb5efd416303ac55e0d775b3677a119f87",
+      "changed": false
+    },
+    {
+      "function": "rope_construction_budget_accepts_exact_128mib_table_plus_d128_metadata",
+      "old_present": false,
+      "new_present": true,
+      "old_sha256": null,
+      "new_sha256": "4560391f7858f2cd9ceb91d901743762c13b2e28f3aad29cbf6828ac626b6bee",
+      "changed": true
+    },
+    {
+      "function": "rope_construction_budget_rejects_multiplication_and_add_overflow",
+      "old_present": false,
+      "new_present": true,
+      "old_sha256": null,
+      "new_sha256": "91b13d691085765d82d39b7720c76e0de6bca9a2c50bfe2d530897af7e30d5af",
+      "changed": true
+    },
+    {
+      "function": "rope_construction_budget_keeps_ordinary_tiny_geometry_unchanged",
+      "old_present": false,
+      "new_present": true,
+      "old_sha256": null,
+      "new_sha256": "17132491025a4b2645c8d04aec1619f864c72a45b67466a09626805001c59a69",
+      "changed": true
+    }
+  ],
+  "private_functions": [
+    {
+      "function": "rope_construction_budget",
+      "old_present": false,
+      "new_present": true,
+      "old_sha256": null,
+      "new_sha256": "4be77f9a60afc727c9097011e4ed53848083511c322333d74ec4fe6d983d2206",
+      "changed": true
+    },
+    {
+      "function": "new",
+      "old_present": true,
+      "new_present": true,
+      "old_sha256": "4183b64a190e23d4bd344fca57a9e73c06edf621043c50d827777bc466c78b47",
+      "new_sha256": "5ef598baa7fbfbb4afa2ce972427d3adc40fdadc7091e5df165d235fbd05d1e2",
+      "changed": true
+    },
+    {
+      "function": "rope_table_budget_has_explicit_room_for_gte_capacity",
+      "old_present": true,
+      "new_present": true,
+      "old_sha256": "e5ce5d139b4c27a601b0a0cbd73980eb5efd416303ac55e0d775b3677a119f87",
+      "new_sha256": "e5ce5d139b4c27a601b0a0cbd73980eb5efd416303ac55e0d775b3677a119f87",
+      "changed": false
+    },
+    {
+      "function": "rope_construction_budget_accepts_exact_128mib_table_plus_d128_metadata",
+      "old_present": false,
+      "new_present": true,
+      "old_sha256": null,
+      "new_sha256": "4560391f7858f2cd9ceb91d901743762c13b2e28f3aad29cbf6828ac626b6bee",
+      "changed": true
+    },
+    {
+      "function": "rope_construction_budget_rejects_multiplication_and_add_overflow",
+      "old_present": false,
+      "new_present": true,
+      "old_sha256": null,
+      "new_sha256": "91b13d691085765d82d39b7720c76e0de6bca9a2c50bfe2d530897af7e30d5af",
+      "changed": true
+    },
+    {
+      "function": "rope_construction_budget_keeps_ordinary_tiny_geometry_unchanged",
+      "old_present": false,
+      "new_present": true,
+      "old_sha256": null,
+      "new_sha256": "17132491025a4b2645c8d04aec1619f864c72a45b67466a09626805001c59a69",
+      "changed": true
+    }
+  ],
+  "note": "Only the decoder constructor budget moved; the generic BaseRopeTables constructor and its math are byte-identical."
+}

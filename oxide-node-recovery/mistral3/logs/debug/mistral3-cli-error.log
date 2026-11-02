@@ -1,0 +1,3 @@
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.26s
+     Running `/tmp/oxide-all-model-feature-matrix-v1/mistral3-v4/.work/target-cpu-debug/debug/examples/mistral3_admission /tmp/mistral3-does-not-exist`
+Could not start backend: Mistral3 needs config.json or params.json: No such file or directory (os error 2)

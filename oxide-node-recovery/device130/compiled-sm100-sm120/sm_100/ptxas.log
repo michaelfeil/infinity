@@ -1,0 +1,683 @@
+ptxas info    : 35 bytes gmem
+ptxas info    : Compiling entry function 'infinity_silu_mul_f32' for 'sm_100'
+ptxas info    : Function properties for infinity_silu_mul_f32
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 18 registers, used 0 barriers
+ptxas info    : Compile time = 14.203 ms
+ptxas info    : Compiling entry function 'infinity_silu_mul_bf16_vector8_native' for 'sm_100'
+ptxas info    : Function properties for infinity_silu_mul_bf16_vector8_native
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 27 registers, used 0 barriers
+ptxas info    : Compile time = 22.717 ms
+ptxas info    : Compiling entry function 'infinity_silu_mul_bf16_pairs_native' for 'sm_100'
+ptxas info    : Function properties for infinity_silu_mul_bf16_pairs_native
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 17 registers, used 0 barriers
+ptxas info    : Compile time = 12.213 ms
+ptxas info    : Compiling entry function 'infinity_silu_mul_bf16_pairs' for 'sm_100'
+ptxas info    : Function properties for infinity_silu_mul_bf16_pairs
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 22 registers, used 0 barriers
+ptxas info    : Compile time = 17.206 ms
+ptxas info    : Compiling entry function 'infinity_silu_mul' for 'sm_100'
+ptxas info    : Function properties for infinity_silu_mul
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 18 registers, used 0 barriers
+ptxas info    : Compile time = 12.466 ms
+ptxas info    : Compiling entry function 'infinity_selected_rows' for 'sm_100'
+ptxas info    : Function properties for infinity_selected_rows
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 24 registers, used 0 barriers
+ptxas info    : Compile time = 10.919 ms
+ptxas info    : Compiling entry function 'infinity_rounded_residual_norm_768_candle' for 'sm_100'
+ptxas info    : Function properties for infinity_rounded_residual_norm_768_candle
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 48 registers, used 0 barriers
+ptxas info    : Compile time = 31.185 ms
+ptxas info    : Compiling entry function 'infinity_rope_neox_hfma' for 'sm_100'
+ptxas info    : Function properties for infinity_rope_neox_hfma
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 26 registers, used 0 barriers
+ptxas info    : Compile time = 10.851 ms
+ptxas info    : Compiling entry function 'infinity_rope_neox' for 'sm_100'
+ptxas info    : Function properties for infinity_rope_neox
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 26 registers, used 0 barriers
+ptxas info    : Compile time = 10.538 ms
+ptxas info    : Compiling entry function 'infinity_rope_interleaved_hfma' for 'sm_100'
+ptxas info    : Function properties for infinity_rope_interleaved_hfma
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 26 registers, used 0 barriers
+ptxas info    : Compile time = 10.177 ms
+ptxas info    : Compiling entry function 'infinity_rope_interleaved' for 'sm_100'
+ptxas info    : Function properties for infinity_rope_interleaved
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 26 registers, used 0 barriers
+ptxas info    : Compile time = 10.378 ms
+ptxas info    : Compiling entry function 'infinity_rms_norm_rounded' for 'sm_100'
+ptxas info    : Function properties for infinity_rms_norm_rounded
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 22 registers, used 1 barriers, 32 bytes smem
+ptxas info    : Compile time = 18.483 ms
+ptxas info    : Compiling entry function 'infinity_rms_norm_5120_aten' for 'sm_100'
+ptxas info    : Function properties for infinity_rms_norm_5120_aten
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 30 registers, used 1 barriers, 32 bytes smem
+ptxas info    : Compile time = 18.665 ms
+ptxas info    : Compiling entry function 'infinity_rms_norm_4096_vector' for 'sm_100'
+ptxas info    : Function properties for infinity_rms_norm_4096_vector
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 32 registers, used 1 barriers, 16448 bytes smem
+ptxas info    : Compile time = 42.048 ms
+ptxas info    : Compiling entry function 'infinity_rms_norm_3072_exact_vector' for 'sm_100'
+ptxas info    : Function properties for infinity_rms_norm_3072_exact_vector
+    96 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 32 registers, used 1 barriers, 96 bytes cumulative stack size, 32 bytes smem
+ptxas info    : Compile time = 28.041 ms
+ptxas info    : Compiling entry function 'infinity_rms_norm_2048_vector' for 'sm_100'
+ptxas info    : Function properties for infinity_rms_norm_2048_vector
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 88 registers, used 0 barriers
+ptxas info    : Compile time = 62.954 ms
+ptxas info    : Function properties for normalizeKb0_EB4_
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Function properties for normalize_vectorKb0_EB4_
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Compiling entry function 'infinity_rms_norm_2048_exact' for 'sm_100'
+ptxas info    : Function properties for infinity_rms_norm_2048_exact
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 80 registers, used 0 barriers
+ptxas info    : Compile time = 37.159 ms
+ptxas info    : Function properties for normalizeKb0_EB4_
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Compiling entry function 'infinity_rms_norm_1536_vector' for 'sm_100'
+ptxas info    : Function properties for infinity_rms_norm_1536_vector
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 28 registers, used 1 barriers, 6208 bytes smem
+ptxas info    : Compile time = 22.650 ms
+ptxas info    : Compiling entry function 'infinity_rms_norm_1536_cached' for 'sm_100'
+ptxas info    : Function properties for infinity_rms_norm_1536_cached
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 22 registers, used 1 barriers, 32 bytes smem
+ptxas info    : Compile time = 10.364 ms
+ptxas info    : Compiling entry function 'infinity_rms_norm_1024_exact_vector' for 'sm_100'
+ptxas info    : Function properties for infinity_rms_norm_1024_exact_vector
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 54 registers, used 0 barriers
+ptxas info    : Compile time = 27.621 ms
+ptxas info    : Compiling entry function 'infinity_rms_norm' for 'sm_100'
+ptxas info    : Function properties for infinity_rms_norm
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 23 registers, used 1 barriers, 32 bytes smem
+ptxas info    : Compile time = 18.096 ms
+ptxas info    : Compiling entry function 'infinity_qwen3vl_silu_bf16' for 'sm_100'
+ptxas info    : Function properties for infinity_qwen3vl_silu_bf16
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 16 registers, used 0 barriers
+ptxas info    : Compile time = 6.937 ms
+ptxas info    : Compiling entry function 'infinity_qwen3vl_rope2d_bf16' for 'sm_100'
+ptxas info    : Function properties for infinity_qwen3vl_rope2d_bf16
+    32 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 32 registers, used 0 barriers, 32 bytes cumulative stack size
+ptxas info    : Compile time = 38.357 ms
+ptxas info    : Compiling entry function 'infinity_qwen3vl_pos_interp' for 'sm_100'
+ptxas info    : Function properties for infinity_qwen3vl_pos_interp
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 32 registers, used 0 barriers
+ptxas info    : Compile time = 29.790 ms
+ptxas info    : Compiling entry function 'infinity_qwen3vl_gelu_tanh_bf16' for 'sm_100'
+ptxas info    : Function properties for infinity_qwen3vl_gelu_tanh_bf16
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 13 registers, used 0 barriers
+ptxas info    : Compile time = 2.294 ms
+ptxas info    : Compiling entry function 'infinity_qwen3vl_add_bf16' for 'sm_100'
+ptxas info    : Function properties for infinity_qwen3vl_add_bf16
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 11 registers, used 0 barriers
+ptxas info    : Compile time = 1.964 ms
+ptxas info    : Compiling entry function 'infinity_qwen35vl_temporal_slice_bf16' for 'sm_100'
+ptxas info    : Function properties for infinity_qwen35vl_temporal_slice_bf16
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 20 registers, used 0 barriers
+ptxas info    : Compile time = 10.603 ms
+ptxas info    : Compiling entry function 'infinity_qwen35vl_silu_bf16' for 'sm_100'
+ptxas info    : Function properties for infinity_qwen35vl_silu_bf16
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 16 registers, used 0 barriers
+ptxas info    : Compile time = 6.821 ms
+ptxas info    : Compiling entry function 'infinity_qwen35vl_rope2d_bf16' for 'sm_100'
+ptxas info    : Function properties for infinity_qwen35vl_rope2d_bf16
+    32 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 38 registers, used 0 barriers, 32 bytes cumulative stack size
+ptxas info    : Compile time = 43.044 ms
+ptxas info    : Compiling entry function 'infinity_qwen35vl_pos_interp' for 'sm_100'
+ptxas info    : Function properties for infinity_qwen35vl_pos_interp
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 32 registers, used 0 barriers
+ptxas info    : Compile time = 31.718 ms
+ptxas info    : Compiling entry function 'infinity_qwen35vl_gelu_tanh_bf16' for 'sm_100'
+ptxas info    : Function properties for infinity_qwen35vl_gelu_tanh_bf16
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 13 registers, used 0 barriers
+ptxas info    : Compile time = 2.233 ms
+ptxas info    : Compiling entry function 'infinity_qwen35vl_bias_bf16' for 'sm_100'
+ptxas info    : Function properties for infinity_qwen35vl_bias_bf16
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 12 registers, used 0 barriers
+ptxas info    : Compile time = 2.493 ms
+ptxas info    : Compiling entry function 'infinity_qwen35vl_add_bf16' for 'sm_100'
+ptxas info    : Function properties for infinity_qwen35vl_add_bf16
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 11 registers, used 0 barriers
+ptxas info    : Compile time = 1.905 ms
+ptxas info    : Compiling entry function 'infinity_qwen35_rope_tables_bf16' for 'sm_100'
+ptxas info    : Function properties for infinity_qwen35_rope_tables_bf16
+    32 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 22 registers, used 0 barriers, 32 bytes cumulative stack size
+ptxas info    : Compile time = 13.634 ms
+ptxas info    : Compiling entry function 'infinity_qwen35_residual_norm_vector_memory_bf16' for 'sm_100'
+ptxas info    : Function properties for infinity_qwen35_residual_norm_vector_memory_bf16
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 38 registers, used 1 barriers, 4096 bytes smem
+ptxas info    : Compile time = 25.184 ms
+ptxas info    : Compiling entry function 'infinity_qwen35_residual_norm_vector_bf16' for 'sm_100'
+ptxas info    : Function properties for infinity_qwen35_residual_norm_vector_bf16
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 28 registers, used 1 barriers, 4096 bytes smem
+ptxas info    : Compile time = 22.182 ms
+ptxas info    : Compiling entry function 'infinity_qwen35_residual_norm_scalar_bf16' for 'sm_100'
+ptxas info    : Function properties for infinity_qwen35_residual_norm_scalar_bf16
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 28 registers, used 1 barriers, 4096 bytes smem
+ptxas info    : Compile time = 16.366 ms
+ptxas info    : Compiling entry function 'infinity_qwen35_partial_rope_256_bf16' for 'sm_100'
+ptxas info    : Function properties for infinity_qwen35_partial_rope_256_bf16
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 24 registers, used 0 barriers
+ptxas info    : Compile time = 9.951 ms
+ptxas info    : Compiling entry function 'infinity_qwen35_norm_vector_memory_bf16' for 'sm_100'
+ptxas info    : Function properties for infinity_qwen35_norm_vector_memory_bf16
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 28 registers, used 1 barriers, 4096 bytes smem
+ptxas info    : Compile time = 23.399 ms
+ptxas info    : Compiling entry function 'infinity_qwen35_norm_vector_bf16' for 'sm_100'
+ptxas info    : Function properties for infinity_qwen35_norm_vector_bf16
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 32 registers, used 1 barriers, 4096 bytes smem
+ptxas info    : Compile time = 21.146 ms
+ptxas info    : Compiling entry function 'infinity_qwen35_norm_scalar_bf16' for 'sm_100'
+ptxas info    : Function properties for infinity_qwen35_norm_scalar_bf16
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 22 registers, used 1 barriers, 4096 bytes smem
+ptxas info    : Compile time = 16.723 ms
+ptxas info    : Compiling entry function 'infinity_qwen35_moe_shared_gate_bf16' for 'sm_100'
+ptxas info    : Function properties for infinity_qwen35_moe_shared_gate_bf16
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 16 registers, used 0 barriers
+ptxas info    : Compile time = 11.868 ms
+ptxas info    : Compiling entry function 'infinity_qwen35_join_ab_bf16' for 'sm_100'
+ptxas info    : Function properties for infinity_qwen35_join_ab_bf16
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 17 registers, used 0 barriers
+ptxas info    : Compile time = 7.365 ms
+ptxas info    : Compiling entry function 'infinity_qwen35_attention_gate_bf16' for 'sm_100'
+ptxas info    : Function properties for infinity_qwen35_attention_gate_bf16
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 20 registers, used 0 barriers
+ptxas info    : Compile time = 12.367 ms
+ptxas info    : Compiling entry function 'infinity_qkv_f16' for 'sm_100'
+ptxas info    : Function properties for infinity_qkv_f16
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 18 registers, used 0 barriers
+ptxas info    : Compile time = 3.563 ms
+ptxas info    : Compiling entry function 'infinity_qkv' for 'sm_100'
+ptxas info    : Function properties for infinity_qkv
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 18 registers, used 0 barriers
+ptxas info    : Compile time = 3.542 ms
+ptxas info    : Compiling entry function 'infinity_qk_norm_rope_256_bf16' for 'sm_100'
+ptxas info    : Function properties for infinity_qk_norm_rope_256_bf16
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 22 registers, used 1 barriers, 544 bytes smem
+ptxas info    : Compile time = 12.252 ms
+ptxas info    : Compiling entry function 'infinity_qk_norm_rope_128_bf16' for 'sm_100'
+ptxas info    : Function properties for infinity_qk_norm_rope_128_bf16
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 40 registers, used 0 barriers
+ptxas info    : Compile time = 41.474 ms
+ptxas info    : Function properties for norm_rope_headKb0_EB4_
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Function properties for norm_rope_headKb1_EB4_
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Compiling entry function 'infinity_pool_f16' for 'sm_100'
+ptxas info    : Function properties for infinity_pool_f16
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 32 registers, used 0 barriers
+ptxas info    : Compile time = 22.415 ms
+ptxas info    : Compiling entry function 'infinity_pool' for 'sm_100'
+ptxas info    : Function properties for infinity_pool
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 32 registers, used 0 barriers
+ptxas info    : Compile time = 19.831 ms
+ptxas info    : Compiling entry function 'infinity_plain_norm_384_f16' for 'sm_100'
+ptxas info    : Function properties for infinity_plain_norm_384_f16
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 32 registers, used 0 barriers
+ptxas info    : Compile time = 12.860 ms
+ptxas info    : Compiling entry function 'infinity_mistral3_silu_mul_bf16' for 'sm_100'
+ptxas info    : Function properties for infinity_mistral3_silu_mul_bf16
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 16 registers, used 0 barriers
+ptxas info    : Compile time = 7.362 ms
+ptxas info    : Compiling entry function 'infinity_mistral3_scatter_features_bf16' for 'sm_100'
+ptxas info    : Function properties for infinity_mistral3_scatter_features_bf16
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 16 registers, used 0 barriers
+ptxas info    : Compile time = 6.548 ms
+ptxas info    : Compiling entry function 'infinity_mistral3_rope_tables_scaled_bf16' for 'sm_100'
+ptxas info    : Function properties for infinity_mistral3_rope_tables_scaled_bf16
+    32 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 22 registers, used 0 barriers, 32 bytes cumulative stack size
+ptxas info    : Compile time = 13.855 ms
+ptxas info    : Compiling entry function 'infinity_mistral3_rope2d_bf16' for 'sm_100'
+ptxas info    : Function properties for infinity_mistral3_rope2d_bf16
+    64 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 28 registers, used 0 barriers, 64 bytes cumulative stack size
+ptxas info    : Compile time = 43.691 ms
+ptxas info    : Compiling entry function 'infinity_mistral3_pixels_to_bf16' for 'sm_100'
+ptxas info    : Function properties for infinity_mistral3_pixels_to_bf16
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 10 registers, used 0 barriers
+ptxas info    : Compile time = 1.570 ms
+ptxas info    : Compiling entry function 'infinity_mistral3_merge_gather_bf16' for 'sm_100'
+ptxas info    : Function properties for infinity_mistral3_merge_gather_bf16
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 26 registers, used 0 barriers
+ptxas info    : Compile time = 8.772 ms
+ptxas info    : Compiling entry function 'infinity_mistral3_llama4_query_scale_bf16' for 'sm_100'
+ptxas info    : Function properties for infinity_mistral3_llama4_query_scale_bf16
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 22 registers, used 0 barriers
+ptxas info    : Compile time = 6.878 ms
+ptxas info    : Compiling entry function 'infinity_mistral3_gelu_bf16' for 'sm_100'
+ptxas info    : Function properties for infinity_mistral3_gelu_bf16
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 16 registers, used 0 barriers
+ptxas info    : Compile time = 9.335 ms
+ptxas info    : Compiling entry function 'infinity_mistral3_add_bf16' for 'sm_100'
+ptxas info    : Function properties for infinity_mistral3_add_bf16
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 11 registers, used 0 barriers
+ptxas info    : Compile time = 1.839 ms
+ptxas info    : Compiling entry function 'infinity_mean_pool_f16' for 'sm_100'
+ptxas info    : Function properties for infinity_mean_pool_f16
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 28 registers, used 1 barriers, 16384 bytes smem
+ptxas info    : Compile time = 26.315 ms
+ptxas info    : Compiling entry function 'infinity_mean_pool_bf16_native' for 'sm_100'
+ptxas info    : Function properties for infinity_mean_pool_bf16_native
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 28 registers, used 1 barriers, 16384 bytes smem
+ptxas info    : Compile time = 11.864 ms
+ptxas info    : Compiling entry function 'infinity_mean_pool' for 'sm_100'
+ptxas info    : Function properties for infinity_mean_pool
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 30 registers, used 1 barriers, 1024 bytes smem
+ptxas info    : Compile time = 13.290 ms
+ptxas info    : Compiling entry function 'infinity_layer_norm_rounded' for 'sm_100'
+ptxas info    : Function properties for infinity_layer_norm_rounded
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 40 registers, used 1 barriers, 32 bytes smem
+ptxas info    : Compile time = 48.590 ms
+ptxas info    : Compiling entry function 'infinity_layer_norm_mpnet_768_aten' for 'sm_100'
+ptxas info    : Function properties for infinity_layer_norm_mpnet_768_aten
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 36 registers, used 1 barriers, 32 bytes smem
+ptxas info    : Compile time = 35.411 ms
+ptxas info    : Compiling entry function 'infinity_layer_norm_768_exact_vector' for 'sm_100'
+ptxas info    : Function properties for infinity_layer_norm_768_exact_vector
+    192 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 64 registers, used 0 barriers, 192 bytes cumulative stack size
+ptxas info    : Compile time = 85.939 ms
+ptxas info    : Function properties for normalize_vector
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Function properties for residual_values
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Compiling entry function 'infinity_layer_norm_768_exact' for 'sm_100'
+ptxas info    : Function properties for infinity_layer_norm_768_exact
+    192 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 40 registers, used 0 barriers, 192 bytes cumulative stack size
+ptxas info    : Compile time = 49.508 ms
+ptxas info    : Compiling entry function 'infinity_layer_norm_512_rounded_native' for 'sm_100'
+ptxas info    : Function properties for infinity_layer_norm_512_rounded_native
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 22 registers, used 1 barriers, 32 bytes smem
+ptxas info    : Compile time = 13.659 ms
+ptxas info    : Compiling entry function 'infinity_layer_norm_384_f16' for 'sm_100'
+ptxas info    : Function properties for infinity_layer_norm_384_f16
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 40 registers, used 0 barriers
+ptxas info    : Compile time = 21.699 ms
+ptxas info    : Function properties for layer_norm_384_f16
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Compiling entry function 'infinity_layer_norm_384' for 'sm_100'
+ptxas info    : Function properties for infinity_layer_norm_384
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 22 registers, used 1 barriers, 32 bytes smem
+ptxas info    : Compile time = 18.560 ms
+ptxas info    : Compiling entry function 'infinity_layer_norm_1024_rounded_native' for 'sm_100'
+ptxas info    : Function properties for infinity_layer_norm_1024_rounded_native
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 28 registers, used 1 barriers, 32 bytes smem
+ptxas info    : Compile time = 16.019 ms
+ptxas info    : Compiling entry function 'infinity_layer_norm' for 'sm_100'
+ptxas info    : Function properties for infinity_layer_norm
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 40 registers, used 1 barriers, 32 bytes smem
+ptxas info    : Compile time = 46.581 ms
+ptxas info    : Compiling entry function 'infinity_jina_code_qk_norm_768' for 'sm_100'
+ptxas info    : Function properties for infinity_jina_code_qk_norm_768
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 56 registers, used 0 barriers
+ptxas info    : Compile time = 18.837 ms
+ptxas info    : Compiling entry function 'infinity_gemma2_unit_norm_bf16' for 'sm_100'
+ptxas info    : Function properties for infinity_gemma2_unit_norm_bf16
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 22 registers, used 1 barriers, 2048 bytes smem
+ptxas info    : Compile time = 22.078 ms
+ptxas info    : Compiling entry function 'infinity_gemma2_scale_bf16' for 'sm_100'
+ptxas info    : Function properties for infinity_gemma2_scale_bf16
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 8 registers, used 0 barriers
+ptxas info    : Compile time = 1.830 ms
+ptxas info    : Compiling entry function 'infinity_gemma2_rope_tables_bf16' for 'sm_100'
+ptxas info    : Function properties for infinity_gemma2_rope_tables_bf16
+    32 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 22 registers, used 0 barriers, 32 bytes cumulative stack size
+ptxas info    : Compile time = 13.688 ms
+ptxas info    : Compiling entry function 'infinity_gemma2_residual_norm_bf16_f32scale' for 'sm_100'
+ptxas info    : Function properties for infinity_gemma2_residual_norm_bf16_f32scale
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 24 registers, used 1 barriers, 2048 bytes smem
+ptxas info    : Compile time = 21.564 ms
+ptxas info    : Compiling entry function 'infinity_gemma2_ple_gate_bf16' for 'sm_100'
+ptxas info    : Function properties for infinity_gemma2_ple_gate_bf16
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 18 registers, used 0 barriers
+ptxas info    : Compile time = 8.729 ms
+ptxas info    : Compiling entry function 'infinity_gemma2_norm_bf16_f32scale' for 'sm_100'
+ptxas info    : Function properties for infinity_gemma2_norm_bf16_f32scale
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 22 registers, used 1 barriers, 2048 bytes smem
+ptxas info    : Compile time = 22.347 ms
+ptxas info    : Compiling entry function 'infinity_gemma2_mean_pool_bf16' for 'sm_100'
+ptxas info    : Function properties for infinity_gemma2_mean_pool_bf16
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 28 registers, used 1 barriers, 16384 bytes smem
+ptxas info    : Compile time = 11.825 ms
+ptxas info    : Compiling entry function 'infinity_gemma2_gated_gelu_bf16' for 'sm_100'
+ptxas info    : Function properties for infinity_gemma2_gated_gelu_bf16
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 16 registers, used 0 barriers
+ptxas info    : Compile time = 8.295 ms
+ptxas info    : Compiling entry function 'infinity_gelu_exact' for 'sm_100'
+ptxas info    : Function properties for infinity_gelu_exact
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 13 registers, used 0 barriers
+ptxas info    : Compile time = 2.653 ms
+ptxas info    : Compiling entry function 'infinity_gelu_bias' for 'sm_100'
+ptxas info    : Function properties for infinity_gelu_bias
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 13 registers, used 0 barriers
+ptxas info    : Compile time = 2.806 ms
+ptxas info    : Compiling entry function 'infinity_gated_gelu_up_first' for 'sm_100'
+ptxas info    : Function properties for infinity_gated_gelu_up_first
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 16 registers, used 0 barriers
+ptxas info    : Compile time = 7.653 ms
+ptxas info    : Compiling entry function 'infinity_f32_to_bf16' for 'sm_100'
+ptxas info    : Function properties for infinity_f32_to_bf16
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 10 registers, used 0 barriers
+ptxas info    : Compile time = 1.672 ms
+ptxas info    : Compiling entry function 'infinity_f16_to_f32' for 'sm_100'
+ptxas info    : Function properties for infinity_f16_to_f32
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 18 registers, used 0 barriers
+ptxas info    : Compile time = 6.902 ms
+ptxas info    : Compiling entry function 'infinity_encoder_activation_tanh_bf16' for 'sm_100'
+ptxas info    : Function properties for infinity_encoder_activation_tanh_bf16
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 16 registers, used 0 barriers
+ptxas info    : Compile time = 8.126 ms
+ptxas info    : Compiling entry function 'infinity_encoder_activation_silu_bf16' for 'sm_100'
+ptxas info    : Function properties for infinity_encoder_activation_silu_bf16
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 18 registers, used 0 barriers
+ptxas info    : Compile time = 12.929 ms
+ptxas info    : Compiling entry function 'infinity_encoder_activation_relu_bf16' for 'sm_100'
+ptxas info    : Function properties for infinity_encoder_activation_relu_bf16
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 16 registers, used 0 barriers
+ptxas info    : Compile time = 7.527 ms
+ptxas info    : Compiling entry function 'infinity_encoder_activation_gelu_tanh_bf16' for 'sm_100'
+ptxas info    : Function properties for infinity_encoder_activation_gelu_tanh_bf16
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 16 registers, used 0 barriers
+ptxas info    : Compile time = 8.354 ms
+ptxas info    : Compiling entry function 'infinity_embedding_word_type_norm_768_exact' for 'sm_100'
+ptxas info    : Function properties for infinity_embedding_word_type_norm_768_exact
+    96 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 56 registers, used 0 barriers, 96 bytes cumulative stack size
+ptxas info    : Compile time = 48.345 ms
+ptxas info    : Compiling entry function 'infinity_embedding_word_type_norm_512_exact' for 'sm_100'
+ptxas info    : Function properties for infinity_embedding_word_type_norm_512_exact
+    64 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 32 registers, used 0 barriers, 64 bytes cumulative stack size
+ptxas info    : Compile time = 23.005 ms
+ptxas info    : Compiling entry function 'infinity_embedding_word_norm_768_candle' for 'sm_100'
+ptxas info    : Function properties for infinity_embedding_word_norm_768_candle
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 40 registers, used 0 barriers
+ptxas info    : Compile time = 16.931 ms
+ptxas info    : Compiling entry function 'infinity_embedding_norm_word_768_aten' for 'sm_100'
+ptxas info    : Function properties for infinity_embedding_norm_word_768_aten
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 32 registers, used 1 barriers, 32 bytes smem
+ptxas info    : Compile time = 27.061 ms
+ptxas info    : Compiling entry function 'infinity_embedding_norm_rounded' for 'sm_100'
+ptxas info    : Function properties for infinity_embedding_norm_rounded
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 40 registers, used 1 barriers, 32 bytes smem
+ptxas info    : Compile time = 48.139 ms
+ptxas info    : Compiling entry function 'infinity_embedding_norm_mpnet_768_aten' for 'sm_100'
+ptxas info    : Function properties for infinity_embedding_norm_mpnet_768_aten
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 33 registers, used 1 barriers, 32 bytes smem
+ptxas info    : Compile time = 32.706 ms
+ptxas info    : Compiling entry function 'infinity_embedding_norm_768_exact_vector' for 'sm_100'
+ptxas info    : Function properties for infinity_embedding_norm_768_exact_vector
+    192 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 56 registers, used 0 barriers, 192 bytes cumulative stack size
+ptxas info    : Compile time = 57.471 ms
+ptxas info    : Compiling entry function 'infinity_embedding_norm_768_exact' for 'sm_100'
+ptxas info    : Function properties for infinity_embedding_norm_768_exact
+    192 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 40 registers, used 0 barriers, 192 bytes cumulative stack size
+ptxas info    : Compile time = 39.320 ms
+ptxas info    : Compiling entry function 'infinity_embedding_norm_384_f16' for 'sm_100'
+ptxas info    : Function properties for infinity_embedding_norm_384_f16
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 40 registers, used 0 barriers
+ptxas info    : Compile time = 22.954 ms
+ptxas info    : Function properties for embedding_norm_384_f16
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Compiling entry function 'infinity_embedding_norm_384' for 'sm_100'
+ptxas info    : Function properties for infinity_embedding_norm_384
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 24 registers, used 1 barriers, 32 bytes smem
+ptxas info    : Compile time = 19.386 ms
+ptxas info    : Compiling entry function 'infinity_embedding_norm_1024_rounded_native' for 'sm_100'
+ptxas info    : Function properties for infinity_embedding_norm_1024_rounded_native
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 22 registers, used 1 barriers, 32 bytes smem
+ptxas info    : Compile time = 14.913 ms
+ptxas info    : Compiling entry function 'infinity_embedding_norm' for 'sm_100'
+ptxas info    : Function properties for infinity_embedding_norm
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 40 registers, used 1 barriers, 32 bytes smem
+ptxas info    : Compile time = 46.479 ms
+ptxas info    : Compiling entry function 'infinity_embedding_gather_scaled' for 'sm_100'
+ptxas info    : Function properties for infinity_embedding_gather_scaled
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 16 registers, used 0 barriers
+ptxas info    : Compile time = 6.847 ms
+ptxas info    : Compiling entry function 'infinity_embedding_gather' for 'sm_100'
+ptxas info    : Function properties for infinity_embedding_gather
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 16 registers, used 0 barriers
+ptxas info    : Compile time = 6.452 ms
+ptxas info    : Compiling entry function 'infinity_dense_tanh_bf16_inplace' for 'sm_100'
+ptxas info    : Function properties for infinity_dense_tanh_bf16_inplace
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 12 registers, used 0 barriers
+ptxas info    : Compile time = 2.125 ms
+ptxas info    : Compiling entry function 'infinity_decoder_rows_bf16' for 'sm_100'
+ptxas info    : Function properties for infinity_decoder_rows_bf16
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 16 registers, used 0 barriers
+ptxas info    : Compile time = 7.252 ms
+ptxas info    : Compiling entry function 'infinity_deberta_unpack_scaled' for 'sm_100'
+ptxas info    : Function properties for infinity_deberta_unpack_scaled
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 18 registers, used 0 barriers
+ptxas info    : Compile time = 8.736 ms
+ptxas info    : Compiling entry function 'infinity_deberta_signed_buckets' for 'sm_100'
+ptxas info    : Function properties for infinity_deberta_signed_buckets
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 19 registers, used 0 barriers
+ptxas info    : Compile time = 9.177 ms
+ptxas info    : Compiling entry function 'infinity_deberta_relative_transpose' for 'sm_100'
+ptxas info    : Function properties for infinity_deberta_relative_transpose
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 16 registers, used 0 barriers
+ptxas info    : Compile time = 6.349 ms
+ptxas info    : Compiling entry function 'infinity_deberta_layer_norm_768' for 'sm_100'
+ptxas info    : Function properties for infinity_deberta_layer_norm_768
+    192 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 40 registers, used 0 barriers, 192 bytes cumulative stack size
+ptxas info    : Compile time = 80.614 ms
+ptxas info    : Compiling entry function 'infinity_deberta_embedding_word_norm_768' for 'sm_100'
+ptxas info    : Function properties for infinity_deberta_embedding_word_norm_768
+    192 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 40 registers, used 0 barriers, 192 bytes cumulative stack size
+ptxas info    : Compile time = 28.176 ms
+ptxas info    : Compiling entry function 'infinity_deberta_divide' for 'sm_100'
+ptxas info    : Function properties for infinity_deberta_divide
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 16 registers, used 0 barriers
+ptxas info    : Compile time = 7.161 ms
+ptxas info    : Compiling entry function 'infinity_classifier_layer_norm_384_exact' for 'sm_100'
+ptxas info    : Function properties for infinity_classifier_layer_norm_384_exact
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 40 registers, used 0 barriers
+ptxas info    : Compile time = 27.135 ms
+ptxas info    : Function properties for layer_norm_384_exact
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Compiling entry function 'infinity_classifier_gather_first_bf16' for 'sm_100'
+ptxas info    : Function properties for infinity_classifier_gather_first_bf16
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 16 registers, used 0 barriers
+ptxas info    : Compile time = 6.813 ms
+ptxas info    : Compiling entry function 'infinity_classifier_embedding_norm_384_exact' for 'sm_100'
+ptxas info    : Function properties for infinity_classifier_embedding_norm_384_exact
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 40 registers, used 0 barriers
+ptxas info    : Compile time = 22.896 ms
+ptxas info    : Function properties for embedding_norm_384_exact
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Compiling entry function 'infinity_classifier_bias_bf16' for 'sm_100'
+ptxas info    : Function properties for infinity_classifier_bias_bf16
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 18 registers, used 0 barriers
+ptxas info    : Compile time = 5.791 ms
+ptxas info    : Compiling entry function 'infinity_bf16_to_f32' for 'sm_100'
+ptxas info    : Function properties for infinity_bf16_to_f32
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 18 registers, used 0 barriers
+ptxas info    : Compile time = 6.850 ms
+ptxas info    : Compiling entry function 'infinity_base_rope_tables_64_bf16' for 'sm_100'
+ptxas info    : Function properties for infinity_base_rope_tables_64_bf16
+    32 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 22 registers, used 0 barriers, 32 bytes cumulative stack size
+ptxas info    : Compile time = 8.387 ms
+ptxas info    : Compiling entry function 'infinity_base_rope_tables_128_scaled_bf16' for 'sm_100'
+ptxas info    : Function properties for infinity_base_rope_tables_128_scaled_bf16
+    32 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 22 registers, used 0 barriers, 32 bytes cumulative stack size
+ptxas info    : Compile time = 8.399 ms
+ptxas info    : Compiling entry function 'infinity_base_rope_tables_128_bf16' for 'sm_100'
+ptxas info    : Function properties for infinity_base_rope_tables_128_bf16
+    32 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 22 registers, used 0 barriers, 32 bytes cumulative stack size
+ptxas info    : Compile time = 8.262 ms
+ptxas info    : Compiling entry function 'infinity_attention' for 'sm_100'
+ptxas info    : Function properties for infinity_attention
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 32 registers, used 1 barriers, 32 bytes smem
+ptxas info    : Compile time = 43.615 ms
+ptxas info    : Compiling entry function 'infinity_add_rms_norm_rounded' for 'sm_100'
+ptxas info    : Function properties for infinity_add_rms_norm_rounded
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 29 registers, used 1 barriers, 32 bytes smem
+ptxas info    : Compile time = 24.292 ms
+ptxas info    : Compiling entry function 'infinity_add_rms_norm_4096_vector' for 'sm_100'
+ptxas info    : Function properties for infinity_add_rms_norm_4096_vector
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 36 registers, used 1 barriers, 16448 bytes smem
+ptxas info    : Compile time = 63.514 ms
+ptxas info    : Compiling entry function 'infinity_add_rms_norm_3072_exact_vector' for 'sm_100'
+ptxas info    : Function properties for infinity_add_rms_norm_3072_exact_vector
+    96 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 39 registers, used 1 barriers, 96 bytes cumulative stack size, 32 bytes smem
+ptxas info    : Compile time = 29.915 ms
+ptxas info    : Compiling entry function 'infinity_add_rms_norm_2048_vector' for 'sm_100'
+ptxas info    : Function properties for infinity_add_rms_norm_2048_vector
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 80 registers, used 0 barriers
+ptxas info    : Compile time = 100.008 ms
+ptxas info    : Function properties for normalizeKb1_EB4_
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Function properties for normalize_vectorKb1_EB4_
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Compiling entry function 'infinity_add_rms_norm_2048_exact' for 'sm_100'
+ptxas info    : Function properties for infinity_add_rms_norm_2048_exact
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 80 registers, used 0 barriers
+ptxas info    : Compile time = 55.491 ms
+ptxas info    : Function properties for normalizeKb1_EB4_
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Compiling entry function 'infinity_add_rms_norm_1536_vector' for 'sm_100'
+ptxas info    : Function properties for infinity_add_rms_norm_1536_vector
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 26 registers, used 1 barriers, 6208 bytes smem
+ptxas info    : Compile time = 27.203 ms
+ptxas info    : Compiling entry function 'infinity_add_rms_norm_1536_cached' for 'sm_100'
+ptxas info    : Function properties for infinity_add_rms_norm_1536_cached
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 23 registers, used 1 barriers, 32 bytes smem
+ptxas info    : Compile time = 11.899 ms
+ptxas info    : Compiling entry function 'infinity_add_rms_norm_1024_exact_vector' for 'sm_100'
+ptxas info    : Function properties for infinity_add_rms_norm_1024_exact_vector
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 48 registers, used 0 barriers
+ptxas info    : Compile time = 44.574 ms
+ptxas info    : Function properties for normalize_scalar_1024Kb1_EB4_
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Function properties for normalize_vector_1024Kb1_EB4_
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Compiling entry function 'infinity_add_rms_norm' for 'sm_100'
+ptxas info    : Function properties for infinity_add_rms_norm
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 29 registers, used 1 barriers, 32 bytes smem
+ptxas info    : Compile time = 21.641 ms

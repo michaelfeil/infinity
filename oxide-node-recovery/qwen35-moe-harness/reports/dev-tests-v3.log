@@ -1,0 +1,37 @@
+   Compiling q35moe-unified-runtime v0.1.0 (/tmp/oxide-q35moe-unified-runtime-v3/consumer)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 2.13s
+     Running unittests src/lib.rs (/tmp/oxide-q35moe-unified-runtime-v3/consumer-target/debug/deps/q35moe_unified_runtime-93d72409e366cf14)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/main.rs (/tmp/oxide-q35moe-unified-runtime-v3/consumer-target/debug/deps/q35moe_unified_runtime-d507a0f351b85628)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/cpu.rs (/tmp/oxide-q35moe-unified-runtime-v3/consumer-target/debug/deps/cpu-67c4673d93ccc21d)
+
+running 11 tests
+test actual_result_pool_exhausts_types_and_recovers_after_drop ... ok
+test canonical_raw_override_identity_is_retained ... ok
+test canonical_serialization_contains_f32_values_and_bits_for_bounded_duplicates ... ok
+test empty_selection_is_semantic_only_not_numeric_vacuous ... ok
+test canonical_fixtures_load_and_invalid_specials_are_typed ... ok
+test strict_cli_rejects_duplicate_unknown_and_missing_pool ... ok
+test typed_unhealthy_envelope_is_not_runtime_fatal_qualification ... ok
+test validate_only_mode_and_flag_need_no_model ... ok
+test metadata_before_after_surface_has_six_exact_envs_and_order_identity ... ok
+test dev_binary_validate_only_parses_actual_cli_without_gpu_or_engine ... ok
+test dev_binary_metadata_reads_headers_only_without_gpu ... ok
+
+test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+   Doc-tests q35moe_unified_runtime
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+

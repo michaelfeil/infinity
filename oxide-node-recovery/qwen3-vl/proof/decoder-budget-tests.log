@@ -1,0 +1,10 @@
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.27s
+     Running unittests src/lib.rs (/tmp/opencode/qwen-vl-current-checks/target/debug/deps/infinity_backend_oxide-7bef44295a29f9d8)
+
+running 3 tests
+test decoder::tests::rope_construction_budget_rejects_multiplication_and_add_overflow ... ok
+test decoder::tests::rope_construction_budget_keeps_ordinary_tiny_geometry_unchanged ... ok
+test decoder::tests::rope_construction_budget_accepts_exact_128mib_table_plus_d128_metadata ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 542 filtered out; finished in 1.54s
+

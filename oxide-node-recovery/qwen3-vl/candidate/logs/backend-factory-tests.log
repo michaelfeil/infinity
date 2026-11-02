@@ -1,0 +1,131 @@
+   Compiling smallvec v1.15.0
+   Compiling synstructure v0.13.1
+   Compiling stable_deref_trait v1.2.0
+   Compiling once_cell v1.21.4
+   Compiling zerovec-derive v0.10.3
+   Compiling bytes v1.10.1
+   Compiling futures-core v0.3.31
+   Compiling displaydoc v0.2.5
+   Compiling zerofrom-derive v0.1.6
+   Compiling yoke-derive v0.7.5
+   Compiling parking_lot_core v0.9.12
+   Compiling slab v0.4.9
+   Compiling futures-sink v0.3.31
+   Compiling parking_lot v0.12.5
+   Compiling socket2 v0.5.9
+   Compiling tokio-macros v2.5.0
+   Compiling zerofrom v0.1.6
+   Compiling litemap v0.7.5
+   Compiling writeable v0.5.5
+   Compiling yoke v0.7.5
+   Compiling zerovec v0.10.4
+   Compiling icu_locid_transform_data v1.5.1
+   Compiling tokio v1.44.2
+   Compiling icu_provider_macros v1.5.0
+   Compiling icu_properties_data v1.5.1
+   Compiling futures-channel v0.3.31
+   Compiling futures-macro v0.3.31
+   Compiling futures-task v0.3.31
+   Compiling log v0.4.27
+   Compiling tinystr v0.7.6
+   Compiling fnv v1.0.7
+   Compiling icu_locid v1.5.0
+   Compiling futures-io v0.3.31
+   Compiling icu_normalizer_data v1.5.1
+   Compiling pin-utils v0.1.0
+   Compiling http v1.3.1
+   Compiling futures-util v0.3.31
+   Compiling icu_provider v1.5.0
+   Compiling icu_locid_transform v1.5.0
+   Compiling icu_collections v1.5.0
+   Compiling icu_properties v1.5.1
+   Compiling tracing-core v0.1.33
+   Compiling tracing-attributes v0.1.28
+   Compiling utf16_iter v1.0.5
+   Compiling utf8_iter v1.0.4
+   Compiling write16 v1.0.0
+   Compiling httparse v1.10.1
+   Compiling icu_normalizer v1.5.0
+   Compiling tracing v0.1.41
+   Compiling bindgen v0.72.1
+   Compiling tokio-util v0.7.14
+   Compiling http-body v1.0.1
+   Compiling atomic-waker v1.1.2
+   Compiling percent-encoding v2.3.1
+   Compiling thiserror v2.0.21
+   Compiling try-lock v0.2.5
+   Compiling want v0.3.1
+   Compiling form_urlencoded v1.2.1
+   Compiling h2 v0.4.9
+   Compiling idna_adapter v1.2.0
+   Compiling getrandom v0.2.15
+   Compiling tower-service v0.3.3
+   Compiling portable-atomic v1.11.0
+   Compiling rand_core v0.6.4
+   Compiling idna v1.0.3
+   Compiling ppv-lite86 v0.2.21
+   Compiling sync_wrapper v1.0.2
+   Compiling tower-layer v0.3.3
+   Compiling option-ext v0.2.0
+   Compiling ryu v1.0.20
+   Compiling unicode-width v0.2.0
+   Compiling serde_urlencoded v0.7.1
+   Compiling console v0.15.11
+   Compiling dirs-sys v0.4.1
+   Compiling ahash v0.8.11
+   Compiling tempfile v3.19.1
+   Compiling tower v0.5.2
+   Compiling hyper v1.6.0
+   Compiling rand_chacha v0.3.1
+   Compiling url v2.5.4
+   Compiling hyper-util v0.1.11
+   Compiling http-body-util v0.1.3
+   Compiling futures-executor v0.3.31
+   Compiling encoding_rs v0.8.35
+   Compiling mime v0.3.17
+   Compiling number_prefix v0.4.0
+   Compiling ipnet v2.11.0
+   Compiling pytorch-reader v0.22.0 (/tmp/opencode/qwen-vl-current-checks/tree/libs/infinity-v3/backends/oxide/vendor/pytorch-reader)
+   Compiling cuda-bindings v0.5.0 (https://github.com/NVIDIA/cuda-rust?rev=999094fe568fc3080f80d49e9c44e3680ad1c968#999094fe)
+   Compiling indicatif v0.17.11
+   Compiling reqwest v0.12.15
+   Compiling infinity_v3-backend-core v3.0.2-beta.1 (/tmp/opencode/qwen-vl-current-checks/tree/libs/infinity-v3/backends/core)
+   Compiling futures v0.3.31
+   Compiling rand v0.8.5
+   Compiling safetensors v0.8.0
+   Compiling metrics v0.23.0
+   Compiling dirs v5.0.1
+   Compiling num_cpus v1.16.0
+   Compiling infinity_v3-backend v3.0.2-beta.1 (/tmp/opencode/qwen-vl-current-checks/tree/libs/infinity-v3/backends)
+   Compiling hf-hub v0.4.2
+   Compiling cuda-core v0.5.0 (https://github.com/NVIDIA/cuda-rust?rev=999094fe568fc3080f80d49e9c44e3680ad1c968#999094fe)
+   Compiling infinity-backend-oxide v3.0.2-beta.1 (/tmp/opencode/qwen-vl-current-checks/tree/libs/infinity-v3/backends/oxide)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 27.28s
+     Running unittests src/lib.rs (/tmp/opencode/qwen-vl-current-checks/target/debug/deps/infinity_v3_backend-8c6c8a7d7fac3e26)
+
+running 22 tests
+test dense_module_tests::explicit_dense_path_works_without_sentence_transformer_metadata ... ok
+test oxide_dense_discovery_tests::explicit_override_that_cannot_be_downloaded_fails_startup ... ok
+test oxide_dense_discovery_tests::fetch_status_classifies_only_genuine_404_as_absent ... ok
+test dense_module_tests::malformed_dense_metadata_is_reported_for_local_overrides ... ok
+test dense_module_tests::local_override_replaces_a_single_discovered_dense_module ... ok
+test dense_module_tests::local_override_is_ignored_for_multiple_dense_modules ... ok
+test completion_tests::overloaded_probe_preserves_health_and_recovers ... ok
+test completion_tests::serving_worker_recovers_after_result_admission_rejection ... ok
+test oxide_dense_discovery_tests::malformed_metadata_and_invalid_dense_paths_fail_before_startup ... ok
+test oxide_dense_discovery_tests::multiple_dense_modules_keep_metadata_order_and_ignore_override ... ok
+test oxide_dense_discovery_tests::non_404_metadata_failure_fails_closed_even_with_override ... ok
+test completion_tests::deferred_completion_does_not_block_model_and_drains_after_cancellation ... ok
+test oxide_dense_discovery_tests::remote_404_with_explicit_override_downloads_and_forwards_it ... ok
+test oxide_dense_discovery_tests::remote_404_without_override_discovers_no_dense ... ok
+test oxide_dense_discovery_tests::zero_dense_metadata_uses_explicit_override_but_auto_empty_stays_none ... ok
+test oxide_dense_discovery_tests::valid_transformer_without_path_and_three_dense_modules_load_in_order ... ok
+test oxide_dense_discovery_tests::single_discovered_dense_module_can_be_overridden ... ok
+test startup_tests::invalid_weight_indexes_fail_without_panicking_or_following_parent_paths ... ok
+test startup_tests::oxide_dtype_factory_defaults_to_bf16_and_admits_explicit_f16 ... ok
+test startup_tests::oxide_rejects_unsupported_options_before_loading_checkpoint_or_driver ... ok
+test startup_tests::normal_oxide_factory_detects_qwen3_vl_aliases_before_dense_admission ... ok
+test startup_tests::oxide_classifier_facade_reaches_task_admission_and_preserves_dtype_rejection ... ok
+
+test result: ok. 22 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+

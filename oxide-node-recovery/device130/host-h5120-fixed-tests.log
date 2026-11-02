@@ -1,0 +1,13 @@
+   Compiling infinity-backend-oxide v3.0.2-beta.1 (/tmp/infinity-oxide-qwen3-h5120-public252-v1-worktree/libs/infinity-v3/backends/oxide)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 5.89s
+     Running unittests src/lib.rs (/tmp/oxide-h5120-public252-v1-debug-target/debug/deps/infinity_backend_oxide-7bef44295a29f9d8)
+
+running 5 tests
+test decoder_model::tests::h5120_classifier_config_uses_the_task_aware_constructor_and_hidden_rows ... ok
+test decoder::tests::qwen3_h5120_workspace_bytes_follow_query_width_and_positive_intermediate ... ok
+test decoder::tests::qwen3_h5120_qualified_aten_rms_keeps_add256_and_checked_qkv_grouping ... ok
+test decoder::tests::qwen3_h5120_admission_is_limited_to_the_two_native_topologies ... ok
+test decoder_model::tests::qwen3_h5120_positive_intermediate_and_independent_query_widths ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 737 filtered out; finished in 0.03s
+

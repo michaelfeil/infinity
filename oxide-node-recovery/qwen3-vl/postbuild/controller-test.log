@@ -1,0 +1,3 @@
+PASS test_life_check_accepts_good_and_rejects_mutations
+PASS test_pins_and_stage_manifest
+PASS test_plan_is_rust_first_then_host_compare_and_life

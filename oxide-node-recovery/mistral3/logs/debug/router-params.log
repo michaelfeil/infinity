@@ -1,0 +1,10 @@
+   Compiling infinity_v3-core v3.0.2-beta.1 (/tmp/oxide-all-model-feature-matrix-v1/mistral3-v4/libs/infinity-v3/core)
+   Compiling infinity_v3-router v3.0.2-beta.1 (/tmp/oxide-all-model-feature-matrix-v1/mistral3-v4/libs/infinity-v3/router)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 5.58s
+     Running unittests src/lib.rs (/tmp/oxide-all-model-feature-matrix-v1/mistral3-v4/.work/target-cpu-debug/debug/deps/infinity_v3_router-86631fe245a97443)
+
+running 1 test
+test auto_dtype_tests::mistral3_params_only_metadata_reaches_the_normal_router_config ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 108 filtered out; finished in 0.00s
+

@@ -1,0 +1,5 @@
+   Compiling infinity-v3-config v3.0.2-beta.1 (/tmp/infinity-plain-cuda/libs/infinity-v3/config)
+    Checking pytorch-reader v0.22.0 (/tmp/infinity-plain-cuda/libs/infinity-v3/backends/oxide/vendor/pytorch-reader)
+    Checking infinity_v3-backend-core v3.0.2-beta.1 (/tmp/infinity-plain-cuda/libs/infinity-v3/backends/core)
+    Checking infinity-backend-oxide v3.0.2-beta.1 (/tmp/infinity-plain-cuda/libs/infinity-v3/backends/oxide)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 13.64s

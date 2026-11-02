@@ -1,0 +1,67 @@
+warning: use of deprecated method `std::sync::atomic::Atomic::<usize>::fetch_update`: renamed to `try_update` for consistency
+  --> /tmp/oxide-all-model-feature-matrix-v1/qwen35-vl-full-v1/libs/infinity-v3/backends/core/src/result_memory.rs:29:14
+   |
+29 |             .fetch_update(Ordering::AcqRel, Ordering::Acquire, |used| {
+   |              ^^^^^^^^^^^^
+   |
+   = note: `#[warn(deprecated)]` on by default
+help: replace the use of the deprecated method
+   |
+29 -             .fetch_update(Ordering::AcqRel, Ordering::Acquire, |used| {
+29 +             .try_update(Ordering::AcqRel, Ordering::Acquire, |used| {
+   |
+
+warning: `infinity_v3-backend-core` (lib) generated 1 warning (run `cargo fix --lib -p infinity_v3-backend-core` to apply 1 suggestion)
+   Compiling infinity-backend-oxide v3.0.2-beta.1 (/tmp/oxide-all-model-feature-matrix-v1/qwen35-vl-full-v1/libs/infinity-v3/backends/oxide)
+warning: use of deprecated method `std::sync::atomic::Atomic::<usize>::fetch_update`: renamed to `try_update` for consistency
+   --> /tmp/oxide-all-model-feature-matrix-v1/qwen35-vl-full-v1/libs/infinity-v3/backends/oxide/src/staging.rs:330:18
+    |
+330 |                 .fetch_update(Ordering::AcqRel, Ordering::Acquire, |total| {
+    |                  ^^^^^^^^^^^^
+    |
+    = note: `#[warn(deprecated)]` on by default
+help: replace the use of the deprecated method
+    |
+330 -                 .fetch_update(Ordering::AcqRel, Ordering::Acquire, |total| {
+330 +                 .try_update(Ordering::AcqRel, Ordering::Acquire, |total| {
+    |
+
+warning: use of deprecated method `std::sync::atomic::Atomic::<usize>::fetch_update`: renamed to `try_update` for consistency
+   --> /tmp/oxide-all-model-feature-matrix-v1/qwen35-vl-full-v1/libs/infinity-v3/backends/oxide/src/staging.rs:338:14
+    |
+338 |             .fetch_update(Ordering::AcqRel, Ordering::Acquire, |bytes| {
+    |              ^^^^^^^^^^^^
+    |
+help: replace the use of the deprecated method
+    |
+338 -             .fetch_update(Ordering::AcqRel, Ordering::Acquire, |bytes| {
+338 +             .try_update(Ordering::AcqRel, Ordering::Acquire, |bytes| {
+    |
+
+warning: use of deprecated method `std::sync::atomic::Atomic::<usize>::fetch_update`: renamed to `try_update` for consistency
+   --> /tmp/oxide-all-model-feature-matrix-v1/qwen35-vl-full-v1/libs/infinity-v3/backends/oxide/src/staging.rs:352:14
+    |
+352 |             .fetch_update(Ordering::AcqRel, Ordering::Acquire, |total| {
+    |              ^^^^^^^^^^^^
+    |
+help: replace the use of the deprecated method
+    |
+352 -             .fetch_update(Ordering::AcqRel, Ordering::Acquire, |total| {
+352 +             .try_update(Ordering::AcqRel, Ordering::Acquire, |total| {
+    |
+
+warning: use of deprecated method `std::sync::atomic::Atomic::<u64>::fetch_update`: renamed to `try_update` for consistency
+  --> /tmp/oxide-all-model-feature-matrix-v1/qwen35-vl-full-v1/libs/infinity-v3/backends/oxide/src/work_retirement.rs:65:14
+   |
+65 |             .fetch_update(Ordering::AcqRel, Ordering::Acquire, |issued| {
+   |              ^^^^^^^^^^^^
+   |
+help: replace the use of the deprecated method
+   |
+65 -             .fetch_update(Ordering::AcqRel, Ordering::Acquire, |issued| {
+65 +             .try_update(Ordering::AcqRel, Ordering::Acquire, |issued| {
+   |
+
+warning: `infinity-backend-oxide` (lib) generated 4 warnings (run `cargo fix --lib -p infinity-backend-oxide` to apply 4 suggestions)
+   Compiling qwen35-vl-consumer v0.1.0 (/tmp/oxide-all-model-feature-matrix-v1/qwen35-vl-full-v1/consumer)
+    Finished `release` profile [optimized] target(s) in 16.53s

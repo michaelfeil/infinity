@@ -1,0 +1,3 @@
+sm_100 (B200): all 130 Rust kernels compiled and assembled
+sm_120 (RTX PRO 6000 Blackwell): all 130 Rust kernels compiled and assembled
+Requested target subset: sm_100, sm_120; manifest complete_target_set=false. This development bundle is not an all-hardware qualification.

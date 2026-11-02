@@ -1,0 +1,18 @@
+{
+  "schema": "central130-all3-machine-proof/v1",
+  "status": "PASS",
+  "failures": [],
+  "check_count": 375,
+  "PTX": {
+    "sm_90": "PASS",
+    "sm_100": "PASS",
+    "sm_120": "PASS"
+  },
+  "old125_per_architecture": true,
+  "intentional_old_change": [
+    "infinity_qwen35vl_pos_interp"
+  ],
+  "SM90_copy_sha_identical": true,
+  "GPU_by_agent": false,
+  "SM100_SM120_runtime_qualified": false
+}

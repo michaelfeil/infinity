@@ -1,0 +1,964 @@
+   Compiling infinity-backend-oxide v3.0.2-beta.1 (/tmp/infinity-plain-cuda/libs/infinity-v3/backends/oxide)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 16.01s
+     Running unittests src/lib.rs (target/debug/deps/infinity_backend_oxide-7bef44295a29f9d8)
+
+running 696 tests
+test cache::tests::exposes_the_same_budget_used_by_reservation_projection ... ok
+test cache::tests::oversized_workspace_is_returned_and_never_evicts_cache ... ok
+test cache::tests::evicts_lru_and_accounts_for_active_reservation ... ok
+test biased_linear::tests::prepared_boundary_mismatches_are_fatal_and_seed_geometry_is_rejected ... ok
+test cache::tests::peek_selects_the_smallest_fit_without_taking_or_changing_accounting ... ok
+test cache::tests::shape_switches_retain_other_cached_workspaces ... ok
+test cache::tests::selects_smallest_fitting_arena_and_charges_its_actual_size ... ok
+test classifier_head::gold_control::trained_heads_match_full_native_default_bf16_stages ... ignored, Root GPU: actual trained head oracle, both model paths and kernels53 required
+test classifier_head::tests::both_readout_modes_accept_only_their_canonical_selection ... ok
+test classifier_head::tests::canonical_indices_override_supplied_selections_and_reject_overflow ... ok
+test classifier_head::tests::canonicalization_reuses_capacity_and_preserves_overflow_rejection ... ok
+test classifier_head::tests::dispatch_matches_native_bias_pointer_shape_gate_including_single_rows ... ok
+test classifier_head::tests::deberta_prediction_mode_matches_its_trained_architecture ... ok
+test classifier_head::tests::gpu_gather_uses_uploaded_device_bounds_and_exact_bf16_bits ... ignored, Requires CUDA device 0 and INFINITY_OXIDE_KERNEL_MODULE with union53 classifier exports
+test classifier_head::tests::gpu_prepared_boundary_rejects_mismatched_output_cross_stream_and_seed_context ... ignored, Requires CUDA device 0 and INFINITY_OXIDE_KERNEL_MODULE with union53 classifier exports
+test classifier_head::tests::gpu_sequence_source_span_and_identity_reject_before_gather_then_recover ... ignored, Root GPU: actual MiniLM classifier and kernels53 required
+test classifier_head::tests::gather_source_admission_covers_ragged_control_extent_and_overflow ... ok
+test classifier_head::tests::host_boundary_spans_are_checked_without_claiming_device_validation ... ok
+test classifier_head::tests::readout_packing_preserves_sequence_and_token_order ... ok
+test classifier_head::tests::ordinary_config_loader_still_rejects_classifier_architectures ... ok
+test classifier_head::tests::scratch_layout_covers_both_readout_modes_and_checked_products ... ok
+test classifier_head::tests::wide_sequence_heads_reserve_the_classifier_destination ... ok
+test classifier_primitives::trained_classifier_down_native_default_matches_both_actual_stage_bits ... ignored, Root GPU: actual both classifier checkpoints and trusted native layer0 stages
+test classifier_primitives::trained_classifier_h384_embedding_residual_and_row_tails_match_native_bits ... ignored, Root GPU: additive55 kernels, actual MiniLM model and trusted native stage files
+test cublas::tests::gpu_blas_splitk_scratch_is_initialized ... ignored, requires CUDA 13 GPU runtime and a device that selects split-K
+test cublas::tests::gpu_linear_precisions_and_padded_strides ... ignored, requires CUDA 13 GPU runtime
+test cublas::tests::native_m1_preflight_classifies_shape_rejected_and_invariants_fatal ... ok
+test cublas::tests::native_m1_prepared_identity_rejects_stream_and_buffer_mismatches ... ok
+test deberta::tests::relative_scratch_rejects_geometry_overflow_before_allocation ... ok
+test deberta::tests::relative_views_preserve_native_head_and_packed_k_coordinates ... ok
+test deberta_encoder_model::tests::actual_trained_checkpoint_admits_without_cuda_or_payload_reads ... ignored, CPU-only actual checkpoint admission; requires INFINITY_DEBERTA_MODEL
+test deberta_encoder_model::tests::architectures_select_head_and_are_unambiguous ... ok
+test classifier_head::tests::classifier_admission_rejects_decoder_before_cuda_and_discovers_dense ... ok
+test deberta_encoder_model::tests::checkpoint_namespace_and_name_families_are_exact ... ok
+test classifier_head::tests::classifier_result_memory_and_workspace_use_width_rows ... ok
+test classifier_head::gold_control::manifest_contract_rejects_each_shape_policy_and_missing_case_error ... ok
+test deberta_encoder_model::tests::dedicated_disabled_terms_are_admitted_but_not_read ... ok
+test classifier_head::gold_control::stage_loader_rejects_corruption_truncation_and_wrong_endianness ... ok
+test deberta_encoder_model::tests::dedicated_relative_names_do_not_mix_namespaces_or_modes ... ok
+test deberta_encoder_model::tests::defaults_select_shared_relative_positions ... ok
+test deberta_encoder_model::tests::harmless_metadata_does_not_change_relative_geometry ... ok
+test deberta_encoder_model::tests::loads_native_shared_projection_names_and_unprefixed_heads_lazily ... ok
+test deberta_encoder_model::tests::dedicated_relative_projection_pairs_are_required ... ok
+test deberta_encoder_model::tests::dedicated_relative_projection_shapes_are_exact ... ok
+test deberta_encoder_model::tests::dedicated_relative_projections_load_enabled_single_term_only ... ok
+test deberta_encoder_model::tests::dedicated_relative_projections_load_both_terms ... ok
+test deberta_encoder_model::tests::malformed_geometry_is_rejected_before_weight_loading ... ok
+test deberta_encoder_model::tests::position_bucket_defaults_and_boundaries ... ok
+test deberta_encoder_model::tests::pos_att_type_accepts_string_and_array_without_duplicates ... ok
+test deberta_encoder_model::tests::share_att_key_defaults_and_nonboolean_values_are_policed ... ok
+test deberta_encoder_model::tests::relative_normalization_modes_are_exact ... ok
+test deberta_encoder_model::tests::shared_relative_projections_clone_content_sources_lazily ... ok
+test deberta_encoder_model::tests::unsupported_arithmetic_and_decoder_modifiers_are_rejected ... ok
+test decision_head::tests::bf16_hidden_rows_and_duplicate_options_preserve_request_order ... ok
+test decision_head::tests::block_requests_validate_the_prefix_and_score_the_last_token ... ok
+test decision_head::tests::pooled_readout_matches_full_rows_only_for_last_token_requests ... ok
+test decision_head::tests::rejects_malformed_metadata_and_unsupported_heads ... ok
+test deberta_encoder_model::tests::public_backend_rejects_missing_dedicated_weights_and_shapes_before_cuda ... ok
+test deberta_encoder_model::tests::malformed_checkpoint_headers_fail_before_any_weight_payload_read ... ok
+test decision_head::tests::rejects_pointer_readout_metadata_but_accepts_causal_onejev ... ok
+test decision_head::tests::rejects_prepared_rows_from_another_batch ... ok
+test decision_head::tests::resolves_external_readouts_and_rejects_them_for_onejev ... ok
+test decision_head::tests::rejects_prepared_rows_from_another_head ... ok
+test decision_head_gpu::tests::f32_projection_uses_native_sgemm_not_bf16_tensor_op ... ok
+test decision_head_gpu::tests::gpu_prepared_head_matches_cpu_selected_row_reference ... ignored, Requires CUDA 0, INFINITY_OXIDE_DECISION_MODEL and INFINITY_OXIDE_KERNEL_MODULE
+test decision_head_gpu::tests::heterogeneous_request_plans_preserve_order_and_duplicates ... ok
+test decision_head_gpu::tests::hidden_busy_error_is_typed ... ok
+test decision_head_gpu::tests::hidden_lease_can_be_reinstalled_after_a_proven_drain ... ok
+test decision_head_gpu::tests::hidden_lease_is_held_after_partial_enqueue_and_released_after_recovery ... ok
+test decision_head_gpu::tests::hidden_lease_is_leaked_when_drain_completion_is_uncertain ... ok
+test decision_head_gpu::tests::hidden_lease_is_released_only_after_proven_drain_drop ... ok
+test decision_head_gpu::tests::hidden_lease_rejects_a_second_install_without_losing_the_first ... ok
+test decision_head_gpu::tests::malformed_request_plan_geometry_is_rejected ... ok
+test decision_head_gpu::tests::pooled_eligibility_rejects_warmup_and_other_heads ... ok
+test decision_head::tests::tied_embeddings_follow_the_native_namespace_fallback ... ok
+test decision_head::tests::transfers_the_validated_bf16_source_for_cold_gpu_upload ... ok
+test decision_head_gpu::tests::production_hidden_lease_uses_real_cuda_allocation_lease ... ok
+test decision_head::tests::rejects_wrong_precision_missing_weights_and_width_mismatch ... ok
+test decision_head_gpu::tests::projection_arguments_are_per_request_and_f32 ... ok
+test decision_head::tests::selects_answer_rows_at_last_real_token_without_qwen_softcap ... ok
+test decision_head_gpu::tests::protocol_sized_batch_keeps_per_request_boundaries ... ok
+test decision_head_gpu::tests::request_plan_rejects_typed_metadata_errors_before_device_use ... ok
+test decoder::tests::classifier_plan_kinds_map_to_distinct_trunk_modes ... ok
+test decoder::tests::classifier_scratch_bytes_are_accounted_and_overflow_is_rejected ... ok
+test decoder::tests::decoder_auto_prefix_keeps_published_and_falls_back_for_appended ... ok
+test decoder::tests::decoder_geometry_and_bytes_follow_actual_slabs_not_bert_formula ... ok
+test decoder::tests::llama_h2048_geometry_tracks_tinyllama_projection_and_activation_widths ... ok
+test decision_head_gpu::tests::real_allocation_lease_orders_cross_stream_read_after_write ... ok
+test decoder::tests::decoder_math_selects_qwen2_and_narrow_llama_h2048_recipes ... ok
+test decoder::tests::geometry_keeps_query_width_separate_from_hidden_width ... ok
+test decoder::tests::mistral_geometry_and_workspace_capacity_follow_actual_slabs ... ok
+test decoder::tests::mistral_h4096_math_and_unported_window_selectors ... ok
+test decoder::tests::mistral_local_window_remains_local_and_supported ... ok
+test decoder::tests::mistral_mean_plan_keeps_short_store_lanes_and_canonical_mix_capacity ... ok
+test decoder::tests::mistral_requires_the_current_public_gemma2_exports_without_private_fallback ... ok
+test decoder::tests::plan_rows_retry_failed_readout_refresh_without_invalidating_full_plans ... ok
+test decoder::tests::qwen3_4b_actual_config_selects_h2560_ordinary_geometry ... ok
+test decoder::tests::qwen3_rejects_unqualified_widths_heads_and_rope_recipes ... ok
+test decoder::tests::qwen3_math_binds_native_and_ordinary_recipes_with_fused_qk_norm ... ok
+test decoder::tests::qwen2_masked_candle_recipe_is_rejected_before_generic_dispatch ... ok
+test decoder::tests::selected_readout_is_cls_or_last_for_any_nonempty_selection_count ... ok
+test decoder::tests::selected_readout_geometry_keeps_independent_attention_and_hidden_widths ... ok
+test decoder_classifier::tests::actual_qwen3_reranker_metadata_resolves_h2560_score2 ... ok
+test decoder::tests::token_classifier_bytes_exclude_the_unused_token_by_hidden_f32_slab ... ok
+test decoder_classifier::tests::cold_classifier_label_bias_and_dense_guards_are_explicit ... ok
+test decoder_classifier::tests::geometry_keeps_projection_rows_distinct_from_hidden_width ... ok
+test decoder_classifier::tests::labels_and_token_bias_follow_native_agreement_rules ... ok
+test decoder_classifier::tests::plan_aware_admission_matches_native_token_and_sequence_rules ... ok
+test decoder_classifier::tests::config_requires_one_exact_family_architecture_and_native_labels ... ok
+test decoder_classifier::tests::null_quantization_is_not_a_quantized_checkpoint ... ok
+test decoder_classifier::tests::readout_admission_and_conflict_names_match_native_contract ... ok
+test decoder_classifier::tests::row_plan_rejects_malformed_empty_and_out_of_bounds_inputs ... ok
+test decoder_classifier::tests::row_plan_selects_last_nonpad_internal_pad_and_allpad_first ... ok
+test decoder_classifier::tests::row_plan_without_pad_and_ragged_boundaries_use_end_rows ... ok
+test decoder_classifier::tests::scratch_drop_plan_charges_partial_once_and_never_the_work_owner ... ok
+test decoder_classifier::tests::scratch_layout_accounts_gather_bf16_logits_and_f32_readback ... ok
+test decoder_classifier::tests::sequence_into_stages_the_same_last_nonpad_ids_without_allocating ... ok
+test decoder_classifier::tests::write_row_ids_only_accepts_explicit_packed_rows ... ok
+test decoder_classifier::tests::unsupported_native_classifier_architectures_fail_on_the_host ... ok
+test decoder_model::tests::classifier_admission_uses_one_config_view_and_alias_routing ... ok
+test decoder_model::tests::admits_dense_entries_for_the_shared_dense_loader ... ok
+test decoder_model::tests::classifier_bundle_loads_backbone_and_root_score_from_one_checkpoint ... ok
+test decoder_model::tests::loads_bias_free_bare_llama_with_causal_and_silu_defaults ... ok
+test decoder_model::tests::loads_embedded_tinyllama_metadata_without_global_paths ... ok
+test decoder_model::tests::loads_gte_qwen2_metadata_from_env_fixture ... ignored, requires INFINITY_OXIDE_TEST_DECODER_MODEL to name a genuine decoder checkpoint
+test decoder_model::tests::honors_explicit_noncausal_qwen2_and_last_token_modules ... ok
+test decoder_model::tests::accepts_explicit_head_dim_distinct_from_hidden_per_head ... ok
+test decoder_model::tests::loads_mistral_weights_from_default_model_namespace ... ok
+test decoder_model::tests::checkpoint_bias_presence_controls_plain_projection_need ... ok
+test decoder_model::tests::loads_qwen2_causal_backbone_with_qkv_biases_and_lm_head_extra ... ok
+test decoder_model::tests::loads_mistral_defaults_and_saved_window_flag_precedence ... ok
+test decoder_model::tests::normalizes_bidirectional_pplx_qwen3_alias_with_native_precedence ... ok
+test decoder_model::tests::loads_sharded_checkpoint_and_enforces_index_ownership ... ok
+test decoder_model::tests::qwen3_geometry_metadata_needs_no_model_weights ... ok
+test decoder_model::tests::loads_qwen3_backbone_with_complete_qk_norm_and_independent_widths ... ok
+test decoder_model::tests::qwen_ignores_rope_scaling_but_rejects_yarn_parameters_and_other_families ... ok
+test decoder_model::tests::rejects_layer_count_beyond_validated_header_capacity ... ok
+test decoder_model::tests::mask_flags_match_native_family_defaults_and_explicit_overrides ... ok
+test decoder_model::tests::rejects_mistral_model_dtype_average_pooling ... ok
+test decoder_model::tests::rejects_malformed_geometry_and_tensor_shapes ... ok
+test decoder_model::tests::rejects_ministral3_instead_of_treating_it_as_ordinary_mistral ... ok
+test decoder_model::tests::rejects_non_last_token_and_custom_sentence_transformer_modules ... ok
+test decoder_model::tests::rejects_positive_native_llama_windows_even_when_flag_is_false ... ok
+test decoder_model::tests::rejects_mixed_ambiguous_and_foreign_checkpoint_roots ... ok
+test decoder_model::tests::rejects_partial_or_malformed_qwen3_qk_norm_weights ... ok
+test decoder_model::tests::rejects_partial_qkv_and_gate_up_biases_but_preserves_o_and_down ... ok
+test decoder_model::tests::rejects_qwen3_moe_quantized_and_unported_architectures ... ok
+test dense::tests::automatic_discovery_with_pathless_transformer_requires_dense_weights ... ok
+test decoder_model::tests::rejects_qk_norm_weights_on_qwen2_and_llama_checkpoints ... ok
+test dense::tests::dense_rows_refresh_retries_after_partial_failure ... ok
+test dense::tests::accepts_modern_dense_namespace_and_missing_activation_default ... ok
+test dense::tests::explicit_paths_use_exact_order_and_override_discovery ... ok
+test dense::tests::explicit_paths_work_without_sentence_transformer_metadata ... ok
+test decoder_model::tests::rejects_unsupported_config_modifiers_and_tasks ... ok
+test dense::tests::dense_bin_reads_nonzero_offset_strided_weight_through_production_source ... ok
+test dense::tests::loads_ordered_chain_with_decreasing_and_increasing_widths ... ok
+test dense::tests::loads_sharded_stored_bin_dense_module_across_shards ... ok
+test dense::tests::module_type_detection_matches_native_last_component ... ok
+test dense::tests::malformed_declared_dense_paths_cannot_be_hidden_by_empty_or_valid_overrides ... ok
+test dense::tests::no_dense_modules_means_no_head ... ok
+test dense::tests::prefers_safetensors_over_stored_bin_for_dense_modules ... ok
+test dense::tests::loads_bin_shard_from_same_repo_cache_blob_and_rejects_foreign_repo ... ok
+test dense::tests::loads_stored_bin_dense_chains_for_all_float_dtypes_with_literal_bits ... ok
+test dense::tests::rejects_bin_wrong_shape_missing_bias_and_unsupported_dtype ... ok
+test dense::tests::rejects_bin_index_traversal_and_shard_symlink_escapes ... ok
+test dense::tests::rejects_oversized_dense_config_before_reading_payload ... ok
+test dense::tests::rejects_discontinuous_widths_and_backbone_mismatch ... ok
+test dense::tests::rejects_path_traversal_absolute_and_symlink_escape ... ok
+test dense::tests::rejects_nonpositive_dimensions_missing_bias_boolean_and_bad_activation ... ok
+test classifier_head::tests::native_pooler_namespace_ignores_unprefixed_pooler_tensors ... ok
+test dense::tests::rejects_wrong_tensor_shapes_missing_bias_and_unsupported_dtype ... ok
+test encoder_activation::tests::exports_are_unique_and_native_named ... ok
+test encoder_activation::tests::gelu_spelling_is_tanh_pointwise_only ... ok
+test encoder_activation::tests::native_pointwise_aliases_map_to_four_recipes ... ok
+test encoder_activation::tests::required_spellings_cover_every_export ... ok
+test dense::tests::rejects_single_and_index_checkpoint_ambiguity_for_dense_modules ... ok
+test encoder_activation_bf16::tests::signed_zero_and_rne_ties_are_preserved ... ok
+test dense::tests::retains_bin_handle_after_path_rename_for_dense_weight_reads ... ok
+test encoder_activation_bf16::tests::finite_round_trip_is_identity ... ok
+test encoder_activation_bf16::tests::nonfinite_classification_survives ... ok
+test encoder_activation_bf16::tests::widening_is_exact ... ok
+test encoder_activation_plan::tests::bad_layouts_are_rejected_cold ... ok
+test encoder_activation_plan::tests::bound_layout_validation_rejects_mismatch_and_context_mix ... ok
+test encoder_activation_prepared::tests::exports_are_unique_and_additive ... ok
+test encoder_activation_plan::tests::padded_layouts_are_exact ... ok
+test encoder_activation_reference::tests::bias_is_broadcast_per_column ... ok
+test encoder_activation_plan::tests::zero_width_and_zero_rows_are_checked ... ok
+test encoder_activation_reference::tests::relu_preserves_signed_zero_and_propagates_nan ... ok
+test encoder_activation_reference::tests::gelu_and_silu_keep_negative_zero ... ok
+test encoder_activation_reference::tests::run_into_ignores_padding_and_preserves_guards ... ok
+test encoder_activation_reference::tests::separate_bias_rounds_once_before_activation ... ok
+test encoder_linear::tests::plain_rows_follow_exact_geometry_and_retain_the_box ... ok
+test encoder_policy::primitive_norm::gpu_modern_biasless_norm_matches_actual_native_bits ... ignored, requires CUDA 13 GPU runtime
+test encoder_linear::tests::rejected_geometry_keeps_valid_rows_and_padding_stays_metadata ... ok
+test encoder_activation_reference::tests::separate_bias_requires_an_explicit_bias_value ... ok
+test encoder_policy::primitive_other::gpu_modern_fa4_local_boundary_and_batch_isolation ... ignored, Root GPU0 and FA4 global/local provider required
+test encoder_policy::primitive_other::gpu_modern_rope_tables_and_hfma_match_actual_native_bits ... ignored, Root GPU0 and exact native Modern reference required
+test encoder_policy::primitive_other::gpu_modern_weight_canonicalization_and_gate_match_actual_native ... ignored, Root GPU0 and exact native Modern GEMM/gate reference required
+test encoder_policy::primitive_schema::native_fixture_shapes_cpu ... ignored, CPU-only schema check requires Root generated native reference fixture
+test encoder_policy::tests::modern_inverse_frequencies_preserve_native_f32_even_dimensions ... ok
+test encoder_policy::primitive_schema::native_oracle_rejects_wrong_sdk_and_initialized_binding_proof_without_cuda ... ok
+test encoder_policy::tests::modern_schedule_starts_global_and_preserves_period ... ok
+test dense::tests::rejects_corrupt_and_compressed_bin_before_dense_bits_are_published ... ok
+test fa4::tests::alibi_exports_are_additive_and_keep_ordinary_modes ... ok
+test fa4::tests::canonical26_modes_are_appended_in_order_and_mode_mask_is_exact ... ok
+test fa4::tests::accepts_runtime_local_extents_of_the_existing_mask_kind ... ok
+test fa4::tests::canonical26_complete_bundle_with_exact_mul_validates_26_modes ... ok
+test fa4::tests::chooses_exact_then_first_declared_duplicate_deterministically ... ok
+test fa4::tests::exact_mul_deberta_exports_are_additive_and_keep_ordinary_modes ... ok
+test fa4::tests::canonical26_gemma4_ratio_is_not_broadened_and_global_d256_is_exact ... ok
+test fa4::tests::exact_mul_deberta_exports_reject_partial_duplicate_and_unknown_entries ... ok
+test fa4::tests::gpu_causal_d64_gqa8_matches_cpu_reference_across_tile_tails ... ignored, requires INFINITY_FA4_ROOT and a matching CUDA device
+test fa4::tests::gpu_every_export_computes_small_ragged_attention ... ignored, requires INFINITY_FA4_ROOT and a matching CUDA device
+test fa4::tests::gpu_loads_every_declared_export ... ignored, requires INFINITY_FA4_ROOT and a matching CUDA device
+test fa4::tests::gpu_local_radius128_boundary_and_changed_heads_match_cpu_reference ... ignored, requires INFINITY_FA4_ROOT and a matching CUDA device
+test fa4::tests::gpu_runtime_head_counts_match_cpu_reference ... ignored, requires INFINITY_FA4_ROOT and a matching CUDA device
+test fa4::tests::gpu_self_attention_matches_cpu_reference ... ignored, requires INFINITY_FA4_ROOT and a matching CUDA device
+test fa4::tests::gpu_separate_qk_boundaries_match_cpu_reference ... ignored, requires INFINITY_FA4_ROOT and a matching CUDA device
+test fa4::tests::exact_mul_deberta_exports_validate_before_dtype_filtering ... ok
+test fa4::tests::canonical26_registry_metadata_is_validated_when_present ... ok
+test fa4::tests::canonical26_selection_is_loaded_prefix_aware_and_typed ... ok
+test fa4::tests::accepts_full_legacy_19_and_appended_20_export_prefixes ... ok
+test fa4::tests::published_auto_guard_keeps_old_prefix_and_falls_back_for_appended_geometry ... ok
+test fa4::tests::local_manifest_identity_remains_exact_while_requests_broaden ... ok
+test fa4::tests::malformed_alibi_manifest_cannot_change_the_score_recipe ... ok
+test fa4::tests::rejects_invalid_runtime_head_grouping ... ok
+test fa4::tests::rejects_reordered_export_order ... ok
+test fa4::tests::rejects_sm100_d256_separate_boundaries_but_allows_sm120 ... ok
+test fa4::tests::rejects_unsafe_local_window_bounds_before_enqueue ... ok
+test fa4::tests::rejects_corrupt_export_metadata ... ok
+test fa4::tests::rejects_mismatched_mask_kinds_and_unsafe_local_extents ... ok
+test fa4::tests::rejects_unsupported_geometry_and_dtype_at_load ... ok
+test fa4::tests::validates_scale_convention_at_load ... ok
+test fa4::tests::matches_every_declared_profile_and_dtype ... ok
+test fa4_alibi::native_flash_recipe_tests::native_flash_has_distinct_abi_and_preserves_all12_slopes_and_bounds ... ok
+test fa4_alibi::native_flash_recipe_tests::native_flash_descriptor_rejects_fallback_bias_rounding_and_wrong_scale ... ok
+test fa4::tests::selects_runtime_head_counts_with_original_manifest_exemplars ... ok
+test fa4_deberta::tests::batch_rejects_bad_geometry_alias_and_overflow ... ok
+test fa4::tests::selects_causal_d64_gqa8_only_for_matching_ratio_dimension_and_mask ... ok
+test fa4_deberta::tests::exact_mul_exports_require_one_complete_valid_pair ... ok
+test fa4_deberta::tests::exact_mul_exports_reject_missing_or_tampered_fields ... ok
+test classifier_head::tests::admits_the_two_audited_classifier_contracts ... ok
+test fa4_deberta::tests::exact_mul_scale_is_exactly_the_two_supported_values ... ok
+test fa4_deberta::tests::manifest_parse_falls_back_to_normalized_without_exact_pair ... ok
+test fa4_deberta::tests::manifest_rejects_tampered_entries ... ok
+test fa4_deberta::tests::manifest_parse_prefers_complete_exact_mul_pair ... ok
+test fa4_deberta::tests::manifest_requires_exactly_one_matching_entry ... ok
+test fp8::tests::fp32_or_quantized_output_and_invalid_feature_geometry_are_rejected ... ok
+test fa4_deberta::tests::exact_mul_divisor_and_reciprocal_are_bound_to_export_symbol ... ok
+test fa4_deberta::tests::manifest_parse_rejects_malformed_exact_pairs ... ok
+test fa4_deberta::tests::manifest_parser_requires_native_kernel_shape_and_single_entry ... ok
+test fp8::tests::real_changing_rows_and_empty_rows_do_not_get_padded_or_hit_a_shape_count_limit ... ok
+test classifier_head::tests::rejects_mismatched_architectures_geometry_and_incomplete_heads ... ok
+test fa4::tests::rejects_truncated_reordered_tampered_and_unknown_exports ... ok
+test gdn_aot_provider::tests::gva_shapes_vh32_and_vh48_are_pure_and_extents_must_not_overlap ... ok
+test gdn_aot_provider::tests::invalid_geometry_and_overflow_are_rejected_before_launch ... ok
+test gdn_aot_provider::tests::workspace_is_selected_by_major_and_overflow_is_rejected ... ok
+test gdn_aot_provider::tests::source_abi2_header_has_the_exact_twenty_arguments_in_order ... ok
+test gdn_prepared::block_frame::tests::block_frames_accept_both_slots_at_one_generation ... ok
+test gdn_prepared::block_frame::tests::block_frames_reject_wrong_owner_slot_and_stale_generation ... ok
+test gdn_prepared::block_frame::tests::byte_ranges_reject_overlap_and_allow_adjacent_targets ... ok
+test gdn_prepared::block_frame::tests::combined_output_requires_ordered_adjacency ... ok
+test gdn_prepared::frame::tests::frame_key_rejects_identity_metadata_and_cached_length_changes ... ok
+test gdn_prepared::frame::tests::scratch_bytes_match_independent_default_dense_totals ... ok
+test gdn_aot_provider::tests::safe_paths_reject_traversal_absolute_and_library_names ... ok
+test gdn_prepared::frame::tests::scratch_bytes_reject_overflow_unsupported_sm_and_bad_counts ... ok
+test gdn_prepared::frame::tests::uploaded_cumulative_requires_exact_extent_four_byte_alignment_and_size ... ok
+test gdn_prepared::tests::aot_capacity_rejects_state_grid_overflow_and_request_overflow ... ok
+test gdn_prepared::tests::aot_layout_covers_head_widths_and_native_grid_extents ... ok
+test gdn_prepared::tests::aot_policy_admits_every_fresh_and_only_native_cached_shapes ... ok
+test gdn_prepared::tests::borrowed_fresh_state_and_cached_metadata_lengths_are_view_independent ... ok
+test gdn_prepared::tests::borrowed_phase_ranges_preserve_offsets_and_reject_wrapping_addresses ... ok
+test gdn_prepared::tests::cached_history_element_extent_maps_to_row_count ... ok
+test gdn_prepared::tests::cached_history_maps_sources_and_final_rows_by_sequence ... ok
+test gdn_prepared::tests::completed_submission_drop_preserves_retention_capacity_for_next_request ... ok
+test gdn_prepared::tests::duplicate_cached_sources_still_map_final_rows_by_sequence ... ok
+test gdn_prepared::tests::failed_drain_quarantines_the_whole_owner_and_retained_inputs ... ok
+test gdn_prepared::tests::ragged_layout_and_request_plan_use_native_token_and_state_extents ... ok
+test gdn_prepared::tests::rejects_invalid_epsilon_and_wrong_bundle_manifests ... ok
+test gdn_prepared::tests::rejects_ragged_qkv_and_noncontiguous_z_layouts ... ok
+test gdn_prepared::tests::rejects_unsupported_head_and_kernel_shapes ... ok
+test gdn_prepared::tests::scratch_layout_enforces_native_extent_bounds ... ok
+test gdn_prepared::tests::sequence_metadata_requires_strict_origin_and_token_bound ... ok
+test gdn_prepared::tests::weight_admission_rejects_wrong_extents_and_nonfinite_values ... ok
+test gemma2_math::tests::cuda_grid_limits_are_rejected_before_a_plan_is_valid ... ok
+test gemma2_math::tests::element_plans_round_counts_to_256_and_catch_overflow ... ok
+test gemma2_math::tests::epsilon_and_scale_require_finite_exact_values ... ok
+test gdn_aot_provider::tests::derived_donor_needs_no_original_producer_manifest ... ok
+test gemma2_math::tests::every_zero_extent_is_rejected_at_admission ... ok
+test gemma2_math::tests::mean_accepts_duplicates_and_arbitrary_order ... ok
+test gemma2_math::tests::mean_short_spans_keep_full_feature_tile_lanes ... ok
+test gemma2_math::tests::mean_rejects_empty_and_out_of_range_spans ... ok
+test gemma2_math::tests::mean_threads_are_power_of_two_and_clamped ... ok
+test gdn_aot_provider::tests::library_digests_sizes_and_regular_files_are_enforced ... ok
+test gemma2_math::tests::norm_widths_and_padded_head_stride_are_exact ... ok
+test gemma2_math::tests::residual_is_width_512_and_contiguous ... ok
+test gemma2_math::tests::ple_layer_must_be_inside_the_declared_layers ... ok
+test input_layout::tests::fake_gpu_prefix_and_trailer_do_not_overlap_packed_bytes ... ok
+test gemma2_math::tests::resolver_reports_a_typed_missing_new_export ... ok
+test gdn_aot_provider::tests::actual_producer_manifest_shape_is_admitted ... ok
+test gemma2_math::tests::source_inventory_keeps_legacy_78_and_appends_exactly_eight ... ok
+test input_layout::tests::packed_sections_use_actual_word_offsets_for_ragged_batches ... ok
+test input_layout::tests::rejects_caller_lengths_overflow_and_confused_units ... ok
+test jina_alibi::gpu_jina_alibi_model_bias_matches_actual_native ... ignored, requires actual GPU plus INFINITY_OXIDE_JINA_REFERENCE and INFINITY_FA4_ROOT
+test jina_code_host_tests::actual_jina_code_checkpoint_admits_all_258_f16_sources_without_cuda ... ignored, CPU-only actual checkpoint admission; requires INFINITY_JINACODE_MODEL
+test input_layout::tests::zero_selection_layout_has_no_selection_words ... ok
+test jina_code_host_tests::alibi_typed_profiles_keep_eight_and_add_twelve_without_changing_the_abi ... ok
+test jina_code_host_tests::alibi_twelve_profile_rejects_incoherent_bias_metadata ... ok
+test jina_code_host_tests::jina_code_root_selection_prefers_bare_then_bert_namespace ... ok
+test jina_alibi::jina_alibi_fixture_rejects_malformed_without_cuda ... ok
+test jina_code_host_tests::full_context_raw_and_mixed_fit_two_host_leases_and_release_large_token_arenas ... ok
+test jina_code_host_tests::jina_code_geometry_owns_the_exact_alibi_post_norm_recipe ... ok
+test gdn_prepared::tests::actual_aot_bundle_validates_and_rejects_mutated_metadata ... ok
+test jina_code_loader_tests::rejects_missing_native_marker ... ok
+test gdn_prepared::tests::actual_v1_bundle_validates_and_rejects_mutated_metadata ... ok
+test jina_code_loader_tests::rejects_non_exact_config_geometry ... ok
+test jina_code_loader_tests::loads_published_258_tensor_inventory_with_bare_root ... ok
+test jina_code_loader_tests::rejects_absolute_position_table ... ok
+test jina_code_loader_tests::accepts_auto_map_marker_without_name_or_path ... ok
+test jina_code_loader_tests::rejects_non_full_width_qk_norm_shape ... ok
+test jina_code_loader_tests::rejects_rotary_config_metadata ... ok
+test jina_code_loader_tests::loads_bert_root_without_pooler ... ok
+test jina_code_loader_tests::rejects_unknown_config_metadata ... ok
+test jina_code_loader_tests::rejects_classifier_tensors ... ok
+test jina_code_loader_tests::rejects_mixed_bare_and_bert_namespace ... ok
+test jina_encoder_model::jina_loader_tests::accepts_exact_pooler_pair_and_rejects_half_or_wrong_shapes ... ok
+test jina_encoder_model::jina_loader_tests::accepts_name_or_path_and_auto_map_markers_with_f16_headers ... ok
+test jina_encoder_model::jina_loader_tests::actual_jina_checkpoint_metadata_cpu ... ignored, CPU-only real checkpoint header check; set INFINITY_OXIDE_TEST_JINA_MODEL
+test jina_encoder_model::jina_loader_tests::binds_type_vocab_rows_and_rejects_learned_positions ... ok
+test jina_encoder_model::jina_loader_tests::canonicalizes_gate_first_geglu_to_up_then_gate ... ok
+test jina_encoder_model::jina_loader_tests::loads_bare_and_bert_prefixed_parts ... ok
+test jina_encoder_model::jina_loader_tests::production_marker_routing_fails_closed_for_qk_post_norm_and_heads ... ok
+test jina_encoder_model::jina_loader_tests::rejects_ambiguous_and_mixed_namespaces ... ok
+test jina_encoder_model::jina_loader_tests::rejects_missing_malformed_and_stray_tensors ... ok
+test jina_encoder_model::jina_loader_tests::rejects_non_jina_and_unsupported_configs ... ok
+test jina_numerics::gpu_jina_gate_first_weights_and_gelu_match_actual_native_bits ... ignored, Root GPU0 and actual matched Jina reference required
+test jina_numerics::gpu_jina_rounded_residual_512_matches_actual_native_bits ... ignored, Root GPU0 and actual matched Jina reference required
+test jina_numerics::gpu_jina_word_type_norm_512_matches_actual_native_bits ... ignored, Root GPU0 and actual matched Jina reference required
+test jina_numerics::jina_f16_to_bf16_canonicalization_rounds_f16_before_bf16 ... ok
+test jina_numerics::jina_native_preactivation_canonicalization_keeps_token_rows_separate ... ok
+test jina_code_loader_tests::rejects_packed_up_projection_bias ... ok
+test jina_primitive_schema::jina_native_fixture_shapes_cpu ... ignored, CPU-only schema check requires Root generated actual matched Jina reference fixture
+test jina_primitive_schema::native_jina_schema_rejects_wrong_sdk_hashes_and_recipe_without_cuda ... ok
+test lt::fp8::tests::heuristic_fallback_is_limited_to_eligibility_not_vendor_faults ... ok
+test lt::fp8::tests::retained_provider_identity_rejects_another_handle_even_for_identical_geometry ... ok
+test lt::tests::abi_matches_the_cuda_13_1_header_probe ... ok
+test lt::tests::failed_descriptor_cleanup_reports_failure_and_still_releases_other_kinds ... ok
+test lt::tests::geometry_preserves_linear_padding_and_rejects_bad_geometry ... ok
+test lt::tests::gpu_fused_bf16_changing_rows_same_algo_and_bias_pointers ... ignored, requires CUDA 13 GPU runtime
+test lt::tests::gpu_fused_f16_changing_rows_same_algo_and_bias_pointers ... ignored, requires CUDA 13 GPU runtime
+test lt::tests::gpu_fused_model_widths_large_rows_share_workspace_and_shrink ... ignored, requires CUDA 13 GPU runtime
+test lt::tests::gpu_native_small_rows_select_prepared_algorithms_and_share_workspace ... ignored, requires CUDA 13 GPU runtime
+test lt::tests::native_default_alignment_matches_the_upstream_256_to_one_halving_rule ... ok
+test lt::tests::native_default_backing_and_preference_are_distinct_and_seeded ... ok
+test lt::tests::native_default_cache_does_not_publish_rejected_pending_entry_or_evict_existing ... ok
+test lt::tests::native_default_cache_reuses_exact_keys_and_stays_bounded ... ok
+test lt::tests::native_default_pending_reuses_cold_keys_without_publishing_and_stays_bounded ... ok
+test lt::tests::native_default_rollback_restores_every_mutable_stage_and_fails_closed ... ok
+test lt::tests::normal_and_partial_plans_use_the_matching_descriptor_destructors ... ok
+test lt::tests::only_bf16_and_f16_claim_a_cublaslt_element_type ... ok
+test lt::tests::prepared_algorithm_check_receives_the_selected_algorithm ... ok
+test lt::tests::provider_and_exclusive_plans_can_move_to_model_and_completion_threads ... ok
+test lt::tests::provider_rejection_hook_is_shape_specific_and_consumed_once ... ok
+test lt::tests::recoverable_shape_rejection_requires_successful_descriptor_rollback ... ok
+test lt::tests::rejected_algorithm_refresh_restores_algorithm_and_workspace ... ok
+test lt::tests::rejected_partial_plan_refresh_recovers_failed_and_previous_shapes ... ok
+test lt::tests::selects_a_successful_zero_workspace_candidate_after_ineligible_results ... ok
+test lt::tests::shape_check_classification_preserves_fatal_status_precedence ... ok
+test jina_code_loader_tests::rejects_partial_pooler_pair ... ok
+test lt::tests::small_row_algorithm_is_first_success_within_the_workspace_bound ... ok
+test lt::tests::small_row_cache_covers_only_actual_rows_one_through_thirty_two ... ok
+test math::tests::contiguous_plans_refresh_rows_without_changing_weight_geometry ... ok
+test math::tests::failed_plan_refresh_retries_all_plans_for_failed_or_previous_shape ... ok
+test math::tests::implemented_storage_formats_select_distinct_blas_types ... ok
+test math::tests::padded_rows_reach_the_correct_blas_leading_dimensions ... ok
+test math::tests::rejects_column_major_input_instead_of_reinterpreting_it ... ok
+test math::tests::rejects_inconsistent_or_unrepresentable_geometry ... ok
+test model::tests::admits_dense_entries_for_the_shared_dense_loader ... ok
+test model::tests::accepts_only_supported_sentence_transformers_pipeline_order ... ok
+test model::tests::backbone_safetensors_single_file_keeps_preference_over_stale_index ... ok
+test model::tests::broken_pipeline_sidecar_cannot_bypass_module_validation ... ok
+test model::tests::converts_source_floats_to_bf16_bits ... ok
+test model::tests::defaults_roberta_family_configs_to_reference_norm_and_type_vocabulary ... ok
+test model::tests::f16_reads_nested_nonzero_safetensors_slices ... ok
+test model::tests::detects_checkpoint_length_changes_on_read ... ok
+test model::tests::f16_reads_safetensors_sources_offsets_and_rejects_nonfinite ... ok
+test model::tests::gpu_streams_f16_multichunk_and_retains_prior_device_buffers ... ignored, requires CUDA 13 GPU runtime
+test model::tests::gpu_streams_multiple_chunks_into_final_packed_weights ... ignored, requires CUDA 13 GPU runtime
+test model::tests::load_time_recipe_distinguishes_exact_biased_and_rounded_arithmetic ... ok
+test model::tests::loads_distilbert_namespaces_aliases_and_zero_token_types ... ok
+test jina_code_loader_tests::rejects_nonfinite_f16_during_bf16_conversion ... ok
+test model::tests::loads_float_precisions_and_bert_prefix ... ok
+test model::tests::f16_target_preserves_every_finite_f16_source_pattern ... ok
+test model::tests::loads_extended_encoder_position_tables_without_checkpoint_specific_caps ... ok
+test model::tests::loads_standard_sharded_bare_checkpoint ... ok
+test model::tests::missing_distilbert_token_type_table_keeps_both_tokenizer_pair_ids_zero ... ok
+test model::tests::loads_roberta_family_namespaces_and_canonical_layers ... ok
+test model::tests::loads_hub_snapshot_weight_symlinks_for_single_and_sharded_models ... ok
+test jina_code_loader_tests::rejects_wrong_dtype ... ok
+test model::tests::opens_nested_module_from_the_same_hub_cache_blob ... ok
+test model::tests::preserves_bf16_and_rounds_ties_to_even ... ok
+test model::tests::reads_bounded_element_ranges ... ok
+test model::tests::preserves_explicit_distilbert_sinusoidal_position_table ... ok
+test model::tests::rejects_ambiguous_encoder_roots ... ok
+test model::tests::rejects_checkpoint_with_missing_or_extra_payload_bytes_at_load ... ok
+test model::tests::refuses_unknown_projection_in_sentence_transformers_pipeline ... ok
+test model::tests::reads_exact_f32_ranges_and_rejects_nonfinite_weights ... ok
+test model::tests::rejects_encoder_position_tables_outside_cuda_lookup_dimensions ... ok
+test model::tests::rejects_incoherent_distilbert_token_type_namespace ... ok
+test model::tests::rejects_mixed_distilbert_layer_namespaces ... ok
+test model::tests::rejects_nested_module_blobs_outside_the_model_cache_repo ... ok
+test model::tests::rejects_incompatible_model_before_checkpoint_or_gpu ... ok
+test model::tests::rejects_module_directory_symlink_outside_the_model_root ... ok
+test model::tests::rejects_oversized_json_before_reading_payload ... ok
+test model::tests::rejects_invalid_or_config_mismatched_distilbert_token_type_tables ... ok
+test model::tests::rejects_shard_traversal_and_absolute_paths ... ok
+test model::tests::rejects_unqualified_distilbert_config_forms ... ok
+test model::tests::rejects_unrelated_weight_symlinks_even_from_a_hub_snapshot ... ok
+test model::tests::rejects_wrong_shape_weights ... ok
+test model::tests::rejects_nonfinite_checkpoint_values_on_read ... ok
+test model::tests::widen_f32_conversion_preserves_half_values_exactly ... ok
+test modern_encoder_model::tests::native_modern_norm_eps_ignores_legacy_fields_and_uses_native_default ... ok
+test modern_encoder_model::tests::parses_reference_modernbert_cache_profile_metadata ... ok
+test model::tests::validates_and_preserves_optional_distilbert_token_type_tables ... ok
+test jina_code_loader_tests::rejects_rotary_tensor ... ok
+test modern_encoder_model::tests::rejects_configs_whose_tensor_shape_products_do_not_fit_u32 ... ok
+test jina_code_loader_tests::rejects_unknown_tensor_metadata ... ok
+test modern_encoder_model::tests::rejects_unsupported_config_fields_before_reading_weights ... ok
+test jina_numerics::jina_packed_gate_weights_are_canonical_up_then_gate_rows ... ok
+test mpnet::tests::actual_reference_config_has_the_expected_position_capacity ... ok
+test mpnet::tests::bias_rounding_and_score_math_keep_fp32_scores ... ok
+test mpnet::tests::integer_bucket_boundaries_match_the_native_f32_log_formula ... ok
+test mpnet::tests::loads_bare_and_prefixed_mpnet_layouts_for_float_precisions ... ok
+test mpnet::tests::model_dtype_biases_are_rounded_once_before_addition ... ok
+test mpnet::tests::rejects_invalid_mpnet_config_contracts ... ok
+test mpnet::tests::rejects_token_types_mixed_roots_and_unknown_tensors ... ok
+test mpnet::tests::rejects_unsupported_weight_dtype_at_load ... ok
+test mpnet::tests::requires_exact_relative_table_and_layer_shapes ... ok
+test mpnet::tests::validates_the_actual_public_mpnet_config_and_header_contract ... ok
+test mpnet_attention::tests::accepts_the_strict_manifest_for_every_supported_architecture ... ok
+test mpnet_attention::tests::accepts_valid_packed_geometry ... ok
+test mpnet_attention::tests::rejects_bad_k_and_v_byte_offsets ... ok
+test mpnet_attention::tests::rejects_int32_and_int64_bound_violations ... ok
+test mpnet_attention::tests::rejects_max_q_above_512_and_invalid_sequence_counts ... ok
+test mpnet_attention::tests::rejects_misaligned_and_zero_pointers ... ok
+test mpnet_attention::tests::rejects_non_fixed_qkv_and_out_widths ... ok
+test mpnet_attention::tests::rejects_wrong_architectures_and_manifest_profiles ... ok
+test mpnet_attention::tests::rejects_wrong_dtype_and_non_bf16_serving ... ok
+test mpnet_attention::tests::repr_c_layouts_match_the_adapter_abi_exactly ... ok
+test mpnet_numerics::gpu_mpnet_exhaustive_gelu_none ... ignored, requires CUDA, INFINITY_OXIDE_KERNEL_MODULE, and INFINITY_OXIDE_MPNET_REFERENCE
+test mpnet_numerics::gpu_mpnet_native_aten_norms ... ignored, requires CUDA, INFINITY_OXIDE_KERNEL_MODULE, and INFINITY_OXIDE_MPNET_REFERENCE
+test mpnet_numerics::gpu_mpnet_native_bucket_attention ... ignored, requires CUDA, INFINITY_OXIDE_MPNET_ATTENTION_ROOT, INFINITY_MPNET_MODEL, and INFINITY_OXIDE_MPNET_REFERENCE
+test mpnet_numerics::packed_native_qkv_preserves_rows_and_alias_free_offsets ... ok
+test mpnet_numerics::packed_native_qkv_rejects_ragged_and_misaligned_rows ... ok
+test mpnet_numerics::packed_reader_accepts_canonical_records ... ok
+test mpnet_numerics::packed_reader_rejects_corrupt_base64 ... ok
+test mpnet_numerics::packed_reader_rejects_endian_shape_and_overflow ... ok
+test mpnet_numerics::packed_reader_rejects_hash_finiteness_and_missing_fields ... ok
+test mpnet_numerics::reference_envelope_binds_public_sdk_and_source_hashes ... ok
+test mpnet_numerics::reference_loader_rejects_missing_environment_or_file ... ok
+test mpnet_numerics::sha256_and_base64_known_vectors ... ok
+test native_rope_tables::decoder_128_tests::decoder_128_budget_is_inclusive_and_capacity_is_not_modern_head64 ... ok
+test native_rope_tables::decoder_128_tests::decoder_128_plan_rejects_zero_overflow_and_invalid_theta ... ok
+test nomic_encoder_model::tests::backend_uses_native_positions_instead_of_frontend_tokenizer_cap ... ok
+test nomic_encoder_model::tests::checkpoint_guards_missing_sources_and_shard_ownership ... ok
+test nomic_encoder_model::tests::loads_sparse_native_bare_root_with_gate_before_up ... ok
+test nomic_encoder_model::tests::native_defaults_and_values_ignore_legacy_aliases ... ok
+test nomic_encoder_model::tests::rejects_ambiguous_and_mixed_checkpoint_namespaces ... ok
+test decoder::tests::rope_table_budget_has_explicit_room_for_gte_capacity ... ok
+test nomic_encoder_model::tests::rejects_missing_tables_norms_wrong_qkv_and_projection_biases ... ok
+test nomic_encoder_model::tests::rejects_invalid_geometry_and_frontend_table_relation ... ok
+test nomic_numerics::gpu_nomic_gate_first_weights_and_silu_match_actual_native_bits ... ignored, Root GPU0 and actual matched Nomic reference required
+test nomic_numerics::gpu_nomic_theta1000_tables_and_rope_match_actual_native_bits ... ignored, Root GPU0 and actual matched Nomic reference required
+test nomic_numerics::gpu_nomic_word_type_norm_matches_actual_native_bits ... ignored, Root GPU0 and actual matched Nomic reference required
+test nomic_primitive_schema::native_fixture_shapes_cpu ... ignored, CPU-only schema check requires Root generated actual matched Nomic reference fixture
+test nomic_primitive_schema::native_oracle_rejects_wrong_sdk_and_initialized_binding_proof_without_cuda ... ok
+test nomic_encoder_model::tests::requires_activation_and_rejects_moe_and_rotary_modifiers ... ok
+test output::tests::mixed_pack_preserves_pooled_then_raw_widths_duplicates_and_precedence ... ok
+test output::tests::mixed_pack_rejects_trailing_short_and_zero_width_payloads ... ok
+test output::tests::mixed_width_geometry_separates_host_and_backbone_payloads ... ok
+test output::tests::ragged_selections_preserve_order_repetition_and_raw_precedence ... ok
+test output::tests::raw_layout_rejects_bad_boundaries_indices_lengths_and_overflow ... ok
+test output::tests::result_bytes_uses_exact_host_geometry_and_pooled_only_reservation ... ok
+test pytorch_checkpoint::tests::backbone_single_bin_keeps_preference_over_stale_index ... ok
+test pytorch_checkpoint::tests::external_trained_bin_matches_safetensors ... ignored, requires INFINITY_OXIDE_EQUIV_DIR with model.safetensors, pytorch_model.bin and config.json
+test pytorch_checkpoint::tests::f16_reads_nested_nonzero_bin_slices ... ok
+test pytorch_checkpoint::tests::legacy_storage_is_explicit_no_checksum_and_not_falsely_verified ... ok
+test pytorch_checkpoint::tests::loads_current_decoder_families_from_bin_metadata ... ok
+test pytorch_checkpoint::tests::loads_indexed_bin_shards_and_rejects_invalid_indices ... ok
+test nomic_primitive_schema::native_oracle_rejects_wrong_type_ids_count_theta_and_table_without_cuda ... ok
+test pytorch_checkpoint::tests::loads_sharded_modern_bin_and_reads_exact_up_gate_slices ... ok
+test pytorch_checkpoint::tests::loads_synthetic_bert_bin_with_safetensors_equivalent_bits ... ok
+test pytorch_checkpoint::tests::loads_tiny_decoder_metadata_from_bin ... ok
+test pytorch_checkpoint::tests::prefers_safetensors_when_both_formats_are_present ... ok
+test pytorch_checkpoint::tests::reads_f16_from_sharded_native_views_offsets_and_rejects_nonfinite ... ok
+test pytorch_checkpoint::tests::reads_noncontiguous_shared_storage_and_matches_contiguous_safetensors ... ok
+test pytorch_checkpoint::tests::retained_source_reads_after_path_rename ... ok
+test pytorch_checkpoint::tests::skips_irrelevant_buffers_and_rejects_unsupported_requested_dtype ... ok
+test pytorch_checkpoint::tests::tar_storage_is_accepted_as_explicit_no_checksum ... ok
+test modern_encoder_model::tests::validates_optional_mlm_header_metadata_when_present ... ok
+test qwen35_block_attention::tests::changed_shape_or_generation_invalidates_the_old_plan ... ok
+test qwen35_block_attention::tests::descriptor_mask_coverage_has_no_cross_sequence_leakage ... ok
+test qwen35_block_attention::tests::packed_int32_boundaries_accept_every_four_byte_residue ... ok
+test qwen35_block_attention::tests::ragged_mixed_lengths_and_prefixes_keep_per_sequence_offsets ... ok
+test qwen35_block_attention::tests::rejects_invalid_sequences_layout_alignment_ranges_and_aliases ... ok
+test qwen35_block_attention::tests::single_sequence_prefix0_full_and_partial_have_exact_halves ... ok
+test qwen35_block_attention::tests::sm100_rejects_partial_prefix_but_accepts_prefix0_and_full ... ok
+test qwen35_block_layout::tests::actual_t2048_p1536_history_and_packed_words_are_exact ... ok
+test qwen35_block_layout::tests::actual_t7_p3_metadata_is_exact ... ok
+test qwen35_block_layout::tests::borrowed_state_metadata_and_combined_row_splits_are_exact ... ok
+test qwen35_block_layout::tests::dynamic_mode_resolves_different_prefixes_at_the_same_tokens ... ok
+test qwen35_block_layout::tests::every_base_word_gets_an_eight_byte_aligned_source_tail ... ok
+test qwen35_block_layout::tests::fixed_mode_is_unchanged_and_rejects_other_request_prefixes ... ok
+test qwen35_block_layout::tests::invalid_request_prefixes_fail_before_any_pack_write ... ok
+test qwen35_block_layout::tests::prefix_only_is_valid_but_suffix_is_never_launched ... ok
+test qwen35_block_layout::tests::undersized_buffers_and_overflowing_bases_leave_canaries_untouched ... ok
+test qwen35_block_layout::tests::zero_bounds_and_mismatched_geometry_are_rejected ... ok
+test qwen35_block_work::tests::checked_layout_rejects_a_bad_prefix_before_any_pack_write ... ok
+test qwen35_block_work::tests::metadata_tail_is_exactly_nine_words_after_ordinary_capacity ... ok
+test qwen35_block_work::tests::prefix_state_is_two_or_three_mebibytes_for_canonical_heads ... ok
+test qwen35_config::tests::accepts_flat_qwen3_5_text_root_and_defaults_kv_heads ... ok
+test qwen35_config::tests::actual_elephant_and_mammoth_config_metadata_are_admitted ... ok
+test qwen35_config::tests::candidate_gate_admits_ordinary_dense_geometries_within_prepared_constraints ... ok
+test qwen35_config::tests::candidate_gate_rejects_geometry_outside_prepared_operator_contracts ... ok
+test qwen35_config::tests::loads_nested_dense_text_geometry_and_ignores_vision_and_mtp_metadata ... ok
+test qwen35_config::tests::rejects_bad_geometry_layers_rope_and_overflow_metadata ... ok
+test pytorch_checkpoint::tests::verifies_whole_backing_storage_before_publishing_ranges ... ok
+test qwen35_config::tests::rejects_conflicting_nested_rope_and_top_level_selectors ... ok
+test qwen35_config::tests::rejects_nonfinite_scalars_from_typed_raw_configuration ... ok
+test pytorch_checkpoint::tests::loads_sharded_gte_bin_and_reads_exact_packed_qkv_slices ... ok
+test qwen35_config::tests::rejects_moe_quantization_bias_activation_and_task_mismatches ... ok
+test qwen35_layout::tests::block_layout_has_exact_elephant_and_mammoth_bytes_at_2048 ... ok
+test qwen35_layout::tests::block_linear_output_is_disjoint_from_inputs_for_actual_rows ... ok
+test qwen35_layout::tests::candidate_capacity_matches_exact_slab_mebibytes ... ok
+test qwen35_layout::tests::copy_span_pointer_math_is_byte_checked ... ok
+test qwen35_layout::tests::capacity_sweep_keeps_all_spans_inside_three_slabs ... ok
+test qwen35_layout::tests::ffn_reuses_projection_after_inputs_and_keeps_residual_dedicated ... ok
+test qwen35_layout::tests::full_attention_query_key_and_output_are_simultaneously_disjoint ... ok
+test qwen35_layout::tests::full_only_configuration_does_not_require_linear_widths ... ok
+test qwen35_layout::tests::linear_normalized_z_and_ab_remain_separate_before_all_projections ... ok
+test qwen35_layout::tests::ordinary_layout_has_no_block_output_and_block_overflow_is_checked ... ok
+test qwen35_layout::tests::overflow_in_capacity_or_phase_width_is_rejected ... ok
+test qwen35_layout::tests::short_actual_rows_fit_capacity_spans_without_padding_tokens ... ok
+test qwen35_main_contract_tests::block_batches_are_single_sequence_before_admission ... ok
+test qwen35_main_contract_tests::dynamic_block_accepts_actual_block_and_full_prefix_warmup_only ... ok
+test qwen35_main_contract_tests::explicit_block_trial_requires_marker_but_ordinary_text_remains_valid ... ok
+test qwen35_model::tests::actual_elephant_metadata_inventory ... ignored, CPU-only actual Elephant metadata/header inventory; set INFINITY_OXIDE_TEST_QWEN35_ELEPHANT
+test qwen35_model::tests::actual_mammoth_metadata_inventory ... ignored, CPU-only actual Mammoth metadata/header inventory; set INFINITY_OXIDE_TEST_QWEN35_MAMMOTH
+test qwen35_main_contract_tests::serving_decisions_remove_selectors_and_preserve_the_physical_batch ... ok
+test qwen35_model::tests::omits_lm_head_for_tied_embeddings ... ok
+test qwen35_model::tests::loads_sharded_mixed_layers_with_query_width_wider_than_hidden ... ok
+test qwen35_model::tests::rejects_missing_and_wrong_mixed_layer_tensors ... ok
+test qwen35_prepared::tests::alias_allows_only_the_exact_contiguous_in_place_layout ... ok
+test qwen35_prepared::tests::alias_rejects_invalid_geometry_and_checked_span_overflow ... ok
+test qwen35_prepared::tests::dispatch_caps_the_tree_and_falls_back_for_misalignment ... ok
+test qwen35_prepared::tests::dispatch_rejects_zero_odd_pointers_null_and_excess_width ... ok
+test qwen35_prepared::tests::dispatch_uses_the_native_row_block_formula ... ok
+test qwen35_prepared::tests::fixed_launch_grids_round_up_and_reject_excess_blocks ... ok
+test qwen35_retirement_root_tests::dynamic_prefix_held_results_survive_same_shape_and_growth ... ignored, Requires CUDA Qwen3.5 kernels/FA4, QWEN35_BLOCK_MODEL, QWEN35_CASES and QWEN35_CONTROL_* sources
+test qwen35_retirement_root_tests::same_shape_submit_under_cache_pressure_retires_held_owner_without_drain ... ignored, Requires CUDA Qwen3.5 kernels/FA4, QWEN35_BLOCK_MODEL, QWEN35_CASES and QWEN35_CONTROL_* sources
+test qwen35_model::tests::rejects_non_native_linear_heads_and_moe ... ok
+test qwen35_runtime::warm_root_tests::mixed_raw_selection_pointer_uses_staged_token_trailer_after_pooled_ids ... ok
+test qwen35_runtime::warm_root_tests::root_warm_decision_holds_a_b_drop_and_shape_lifecycle ... ignored, Requires CUDA Qwen3.5 kernels/FA4, INFINITY_QWEN35_WARM_MODEL and QWEN35_CONTROL_* sources
+test qwen35_runtime::warm_root_tests::root_whole_model_warm_readout_matches_isolated_prepared_head ... ignored, Requires CUDA Qwen3.5 kernels/FA4, INFINITY_QWEN35_WARM_MODEL and QWEN35_CONTROL_* sources
+test qwen35_runtime::warm_root_tests::warm_metadata_key_mismatch_is_rejected_before_binding ... ok
+test qwen35_model::tests::rejects_ambiguous_mixed_and_partial_text_roots ... ok
+test qwen35_serving::tests::block_admission_matches_actual_history_and_projection_layout ... ok
+test qwen35_serving::tests::cold_resources_require_each_explicit_selector ... ok
+test qwen35_serving::tests::dispatch_preserves_text_and_selects_decision_route_from_metadata ... ok
+test qwen35_serving::tests::detects_root_and_text_config_families ... ok
+test qwen35_tables::tests::actual_32768_position_budget ... ok
+test qwen35_tables::tests::actual_native_inverse_frequency_bits ... ignored, CPU-only comparison with actual Native constructor frequencies; set INFINITY_OXIDE_TEST_QWEN35_INVERSE
+test qwen35_tables::tests::byte_budget_is_inclusive_and_bounded_to_128_mib ... ok
+test qwen35_tables::tests::invalid_theta_is_rejected ... ok
+test qwen35_tables::tests::inverse_frequencies_are_finite_and_ordered ... ok
+test qwen35_serving::tests::decision_attention_follows_actual_modeling_overrides ... ok
+test qwen35_tables::tests::launch_blocks_round_up_and_reject_invalid_cuda_grid ... ok
+test qwen35_tables::tests::native_exact_power_of_two_frequencies_preserve_order ... ok
+test qwen35_serving::tests::ordinary_attention_respects_explicit_native_mask_and_rejects_conflicts ... ok
+test qwen35_tables::tests::native_frequency_theta_one_is_exactly_one ... ok
+test qwen35_tables::tests::required_bytes_includes_temporary_inverse ... ok
+test qwen35_tables::tests::positions_must_be_positive_and_fit_u32 ... ok
+test qwen35_tables::tests::rotary_must_be_native_partial_64 ... ok
+test rotary::tests::checks_peak_payload_budget_and_overflow_before_allocating ... ok
+test qwen35_weights::tests::decay_parameters_keep_native_f32_precision_without_a_bf16_roundtrip ... ok
+test rotary::tests::known_power_of_two_phases_match_independent_f64_values ... ok
+test rotary::tests::gte_ntk_stages_match_reference_and_differ_from_unscaled_tables ... ok
+test rotary::tests::rejects_invalid_gte_ntk_numbers_and_exhausted_budgets ... ok
+test rotary::tests::rejects_malformed_geometry_and_nonfinite_theta ... ok
+test rotary::tests::validates_actual_position_ids_without_reordering_or_allocation ... ok
+test rotary::tests::gte_base_phases_follow_f32_stages_with_bf16_coefficients ... ok
+test modern_encoder_model::tests::rejects_ambiguous_and_mixed_checkpoint_roots ... ok
+test modern_encoder_model::tests::requires_backbone_norms_and_rejects_missing_layers ... ok
+test rotary_encoder_model::tests::rejects_unsupported_gte_configurations_before_reading_weights ... ok
+test modern_encoder_model::tests::rejects_wrong_shapes_extra_biases_and_unknown_tensors ... ok
+test staging::tests::canceled_lease_drop_returns_its_slot_and_wakes_a_waiter ... ok
+test staging::tests::closed_pool_drops_free_and_returned_leases_without_reuse ... ok
+test staging::tests::completion_is_published_only_after_a_real_fence ... ok
+test staging::tests::close_and_poison_wake_blocked_acquirers ... ok
+test staging::tests::idle_free_slots_are_shrunk_before_growth_is_charged ... ok
+test staging::tests::modest_slots_are_reused_but_oversized_slots_follow_their_exact_shape ... ok
+test staging::tests::normal_growth_is_bounded_but_exclusive_growth_can_exceed_the_budget ... ok
+test staging::tests::opt_in_input_tail_changes_only_the_request_that_asks_for_it ... ok
+test staging::tests::output_capacity_is_independent_of_the_backbone_key ... ok
+test staging::tests::pinned_accounting_charges_only_the_active_resize ... ok
+test staging::tests::exclusive_growth_blocks_checkout_until_the_lease_returns ... ok
+test staging::tests::pool_hands_out_exactly_two_leases_and_reuses_a_returned_one ... ok
+test tensor::tests::dense_and_padded_layouts_report_exact_metadata ... ok
+test tensor::tests::elements_preserve_storage_and_format_contract ... ok
+test tensor::tests::packed_storage_rounds_odd_logical_counts ... ok
+test tensor::tests::product_and_address_overflows_are_rejected ... ok
+test tensor::tests::scalar_and_broadcast_layouts_stay_bounded ... ok
+test tensor::tests::view_bounds_reject_capacity_and_address_overflow ... ok
+test tensor::tests::zero_extents_span_nothing_without_multiplying_huge_neighbors ... ok
+test tests::allocation_rounding_does_not_expand_linear_rows ... ok
+test tests::arenas_fit_changing_shapes_without_length_in_the_key ... ok
+test tests::classifier_plan_without_head_scratch_is_a_fatal_invariant ... ok
+test tests::cold_factory_routes_trained_modern_nomic_jina_and_aliases_before_bert_validation ... ok
+test tests::cold_workspace_preflight_carries_the_single_checked_estimate ... ok
+test tests::compact_metadata_does_not_touch_the_unused_arena_tail ... ok
+test tests::deberta_word_only_validation_ignores_unused_ids_and_charges_relative_scratch ... ok
+test tests::decoder_duplicate_excess_keeps_the_canonical_readout_fast_path ... ok
+test tests::decoder_gte_deferred_aba_stability_and_drop ... ignored, Requires CUDA, INFINITY_OXIDE_TEST_DECODER_MODEL, FA4_ROOT and oxide decoder kernels
+test tests::decoder_validation_enforces_word_only_positions_and_boundaries ... ok
+test tests::deferred_slots_complete_out_of_order_and_recover_after_drop ... ignored, Requires an NVIDIA GPU, oxide kernels, and INFINITY_OXIDE_TEST_MODEL
+test tests::dense_capacity_tracks_pooled_selections_not_raw_rows_or_backbone_key ... ok
+test tests::embedding_down_policy_preserves_gte_and_standard_profiles ... ok
+test tests::encoder_precision_default_and_unsupported_names_are_explicit ... ok
+test tests::enqueue_classification_keeps_rejections_recoverable_and_fatal_pressure_typed ... ok
+test tests::f16_admission_is_exactly_h384_minilm ... ok
+test tests::f16_arena_and_packed_attention_geometry_match_the_shared_plans ... ok
+test tests::f16_backend_rejects_unsupported_shape_before_the_driver ... ok
+test tests::f16_loaded_weight_metadata_controls_bounds_and_is_revalidated ... ok
+test tests::gpu_and_both_host_slots_are_charged_once ... ok
+test tests::gte_down_cold_rejection_preserves_held_deferred_and_recovers ... ignored, Requires CUDA, an actual GTE INFINITY_OXIDE_TEST_MODEL, and INFINITY_OXIDE_KERNEL_MODULE
+test tests::gte_preflight_rejection_on_fresh_thread_returns_without_recovery_drain ... ignored, Requires CUDA, an actual GTE INFINITY_OXIDE_TEST_MODEL, and INFINITY_OXIDE_KERNEL_MODULE
+test staging::tests::two_lease_aba_schedule_admits_second_a_only_after_first_a_returns ... ok
+test tests::llama_tiny_deferred_aba_drop_subset_and_shape ... ignored, Requires CUDA, INFINITY_OXIDE_TEST_LLAMA_MODEL (TinyLlama checkpoint), INFINITY_OXIDE_KERNEL_MODULE and FA4_ROOT
+test tests::modern_word_only_validation_keeps_lengths_positions_and_bert_type_bounds ... ok
+test tests::negative_gold_checker_rejects_one_corrupted_bf16_bit ... ok
+test tests::nomic_validation_uses_native_positions_and_real_token_types ... ok
+test tests::oversized_gpu_scratch_is_shared_while_host_staging_stays_bounded ... ok
+test tests::gte_request_validation_and_arena_account_for_packed_gates ... ok
+test tests::qwen3_deferred_aba_drop_subset_and_recovery ... ignored, Requires CUDA, INFINITY_OXIDE_TEST_QWEN3_MODEL, FA4_ROOT and oxide Qwen3 kernels
+test tests::raw_and_pooled_trace_outputs_use_actual_widths_and_validate ... ok
+test tests::raw_trace_canonical_map_deduplicates_and_overrides_pooled ... ok
+test tests::rejected_shape_preflight_preserves_arena_and_recovers_same_or_previous_shape ... ignored, Requires CUDA, MiniLM INFINITY_OXIDE_TEST_MODEL and INFINITY_OXIDE_KERNEL_MODULE
+test tests::rejects_bad_ragged_boundaries_and_lookup_ids_before_device_access ... ok
+test tests::rejects_bucket_and_capacity_overflow ... ok
+test tests::retired_owner_bytes_stay_charged_against_the_cache_budget ... ok
+test tests::shared_mpnet_erf_recipe_uses_dense_scratch_and_real_position_capacity ... ok
+test tests::shared_mpnet_stages_plus_two_once_without_changing_source ... ok
+test tests::simt_attention_rejects_oversized_sequence_without_poisoning ... ignored, Requires CUDA, INFINITY_OXIDE_TEST_MODEL (MiniLM) and INFINITY_OXIDE_KERNEL_MODULE
+test tests::stages_actual_metadata_into_padded_sections ... ok
+test tests::trace_encoder_batch ... ignored, Requires CUDA plus INFINITY_OXIDE_TEST_MODEL, INFINITY_OXIDE_TRACE_DIR, and INFINITY_OXIDE_TRACE_BATCH_JSON
+test tests::trace_gte_raw_batch ... ignored, Requires CUDA plus INFINITY_OXIDE_TEST_MODEL, INFINITY_OXIDE_TRACE_DIR, and INFINITY_OXIDE_TRACE_BATCH_JSON
+test tests::trained_gte_down_default_matches_full_bf16_gold ... ignored, Requires CUDA, INFINITY_OXIDE_TEST_MODEL (GTE), INFINITY_OXIDE_GTE_DOWN_INPUT and INFINITY_OXIDE_GTE_DOWN_GOLD
+test tests::trained_qwen3_decoder_sequence_classifier_holds_and_recovers ... ignored, Requires CUDA, an actual Qwen3 reranker checkpoint in INFINITY_OXIDE_TEST_QWEN3_RERANK_MODEL, INFINITY_OXIDE_KERNEL_MODULE and FA4_ROOT
+test tests::trained_sequence_classifier_finite_smoke ... ignored, Requires CUDA, an actual MiniLM6 classifier INFINITY_OXIDE_TEST_MODEL, and INFINITY_OXIDE_KERNEL_MODULE
+test tests::trained_token_classifier_finite_smoke ... ignored, Requires CUDA, an actual NER classifier INFINITY_OXIDE_TEST_MODEL, and INFINITY_OXIDE_KERNEL_MODULE
+test warm_head::tests::capacity_accounting_is_fixed_by_router_caps_not_request_shape ... ok
+test warm_head::tests::caps_and_last_real_token_are_enforced_with_production_types ... ok
+test warm_head::tests::changing_ids_counts_and_boundaries_rebind_checked_records_in_place ... ok
+test warm_head::tests::checked_offsets_reject_overflow_before_device_use ... ok
+test warm_head::tests::gpu_warm_readout_gate_matches_cpu_on_actual_kernels_and_cublas ... ignored, Requires CUDA 0, INFINITY_OXIDE_DECISION_MODEL and INFINITY_OXIDE_KERNEL_MODULE
+test warm_head::tests::invalid_metadata_is_rejected_before_any_binding ... ok
+test warm_head::tests::metadata_tail_is_opt_in_inside_the_existing_input_capacity ... ok
+test warm_head::tests::prepared_metadata_binds_the_exact_legacy_plan_outputs ... ok
+test warm_head::tests::request_specific_host_outputs_materialize_a_and_b_without_sharing ... ok
+test warm_head::tests::reserved_block_prefix_moves_only_metadata_addresses_and_end ... ok
+test warm_head::tests::reserved_prefix_overflow_is_rejected_before_any_write ... ok
+test warm_head::tests::reserved_prefix_pack_keeps_every_old_tail_canary_before_the_shift ... ok
+test warm_head::tests::reserved_zero_planning_parts_match_the_ordinary_records ... ok
+test work_retirement::tests::an_unproven_none_ticket_is_never_released ... ok
+test work_retirement::tests::byte_overflow_returns_the_owned_value ... ok
+test work_retirement::tests::bytes_remain_charged_until_the_actual_proof_is_taken ... ok
+test work_retirement::tests::completed_entries_retire_out_of_order_with_their_own_owners_and_bytes ... ok
+test tests::oversized_workspace_preflight_rejects_without_retiring_the_active_shape ... ok
+test work_retirement::tests::full_queue_returns_the_owned_value_for_failed_submit_rollback ... ok
+test work_retirement::tests::generation_overflow_is_a_typed_error_without_wrapping_or_panicking ... ok
+test work_retirement::tests::old_generation_completion_does_not_complete_a_future_ticket ... ok
+test work_retirement::tests::pending_ticket_does_not_release_the_owner_or_bytes ... ok
+test work_retirement::tests::pop_any_returns_the_owner_and_its_ticket_for_explicit_cleanup ... ok
+test work_retirement::tests::queue_drop_quarantines_unproven_owners_instead_of_dropping_them ... ok
+test workspace_retirement_root_tests::bert_held_owner_survives_cache_pressure_and_releases_by_proof ... ignored, Root CUDA only: set RETIREMENT_BERT_MODEL and INFINITY_FA4_ROOT
+test workspace_retirement_root_tests::classifier_held_owner_retires_nested_scratch_without_drain ... ignored, Root CUDA only: set RETIREMENT_CLASSIFIER_MODEL and INFINITY_FA4_ROOT
+test work_retirement::tests::slot_and_stream_identity_cannot_forge_completion_proof ... ok
+test workspace_retirement_root_tests::deberta_held_owner_retires_deberta_scratch_without_drain ... ignored, Root CUDA only: set RETIREMENT_DEBERTA_MODEL and INFINITY_FA4_ROOT
+test workspace_retirement_root_tests::dense_growth_retires_held_owner_and_releases_by_proof ... ignored, Root CUDA only: set RETIREMENT_DENSE_MODEL and INFINITY_FA4_ROOT
+test workspace_retirement_root_tests::qwen3_decoder_growth_and_pressure_release_held_owner_without_drain ... ignored, Root CUDA only: set RETIREMENT_QWEN3_MODEL and INFINITY_FA4_ROOT
+test modern_encoder_model::tests::loads_two_layers_and_enforces_first_skip_contract ... ok
+test rotary_encoder_model::tests::accepts_f32_conversion_word_only_embeddings_and_ignores_pooler ... ok
+test modern_encoder_model::tests::loads_both_roots_mlm_headers_and_all_float_dtypes ... ok
+test rotary_encoder_model::tests::loads_both_roots_and_splits_distinct_packed_qkv_views ... ok
+test rotary_encoder_model::tests::rejects_ambiguous_incoherent_and_unexpected_checkpoint_tensors ... ok
+test rotary_encoder_model::tests::rejects_missing_bad_shape_and_gate_bias_tensors ... ok
+
+test result: ok. 625 passed; 0 failed; 71 ignored; 0 measured; 0 filtered out; finished in 2.94s
+
+     Running tests/aten_embedding.rs (target/debug/deps/aten_embedding-95990f5f97985634)
+
+running 1 test
+test gpu_word_embedding_norm_matches_actual_native_aten_bits ... ignored, requires GTE kernel bundle and INFINITY_OXIDE_ATEN_EMBEDDING_REFERENCE from the matched native CUDA Torch SDK
+
+test result: ok. 0 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/deberta_lifecycle.rs (target/debug/deps/deberta_lifecycle-8efef7e3a783c09a)
+
+running 10 tests
+test gpu_actual_backend_ragged_a_b_a_is_bit_deterministic ... ignored, Root-only GPU device 0: requires INFINITY_DEBERTA_MODEL
+test gpu_changed_shapes_are_bit_deterministic ... ignored, Root-only GPU device 0: requires INFINITY_DEBERTA_MODEL
+test gpu_deferred_ragged_requests_complete_out_of_order_across_threads ... ignored, Root-only GPU device 0: requires INFINITY_DEBERTA_MODEL
+test gpu_dropped_deferred_request_does_not_disturb_other_completion ... ignored, Root-only GPU device 0: requires INFINITY_DEBERTA_MODEL
+test gpu_duplicate_selectors_are_canonically_overridden_for_sequence_classification ... ignored, Root-only GPU device 0: requires INFINITY_DEBERTA_MODEL
+test gpu_held_deferred_result_completes_after_backend_is_dropped ... ignored, Root-only GPU device 0: requires INFINITY_DEBERTA_MODEL
+test gpu_ignored_position_and_type_values_preserve_result_bits ... ignored, Root-only GPU device 0: requires INFINITY_DEBERTA_MODEL
+test gpu_invalid_input_and_malformed_offsets_leave_held_result_unchanged ... ignored, Root-only GPU device 0: requires INFINITY_DEBERTA_MODEL
+test gpu_native_token_prediction_rejects_before_leases_and_sequence_recovers ... ignored, Root-only GPU device 0: requires INFINITY_DEBERTA_MODEL
+test ragged_fixture_contract_catches_offsets_local_reset_and_ids ... ok
+
+test result: ok. 1 passed; 0 failed; 9 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/deberta_reciprocal.rs (target/debug/deps/deberta_reciprocal-327956b9973f4c16)
+
+running 1 test
+test fixed_reciprocals_preserve_all_bf16_division_results ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/decoder_primitives.rs (target/debug/deps/decoder_primitives-26cf51daacf5c8dd)
+
+running 5 tests
+test embedding_gather_preserves_ids_bits_scale_and_guards ... ignored, requires INFINITY_OXIDE_KERNEL_MODULE with gather exports and a matching CUDA device
+test rms_norm_and_residual_rounding_match_independent_reference ... ignored, requires INFINITY_OXIDE_KERNEL_MODULE with decoder exports and a matching CUDA device
+test rope_preserves_strided_gqa_values_tails_and_rounding ... ignored, requires INFINITY_OXIDE_KERNEL_MODULE with decoder exports and a matching CUDA device
+test selected_rows_and_bf16_cast_preserve_bits_order_tails_and_guards ... ignored, requires INFINITY_OXIDE_KERNEL_MODULE with readout exports and a matching CUDA device
+test silu_mul_preserves_packed_order_and_model_dtype_stages ... ignored, requires INFINITY_OXIDE_KERNEL_MODULE with decoder exports and a matching CUDA device
+
+test result: ok. 0 passed; 0 failed; 5 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/dense_kernels.rs (target/debug/deps/dense_kernels-792c0298133881f7)
+
+running 4 tests
+test dense_tanh_bf16_inplace_matches_cpu_reference_and_guards ... ignored, requires INFINITY_OXIDE_KERNEL_MODULE with Dense exports and a matching CUDA device
+test f32_to_bf16_matches_cpu_rounding_oracle_and_guards ... ignored, requires INFINITY_OXIDE_KERNEL_MODULE with Dense exports and a matching CUDA device
+test cpu_oracle_rounds_f32_to_bf16_round_to_nearest_even ... ok
+test cpu_oracle_tanh_preserves_signed_zero_and_saturates ... ok
+
+test result: ok. 2 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/encoder_f16_lifecycle.rs (target/debug/deps/encoder_f16_lifecycle-353deaf8a73e776c)
+
+running 1 test
+test fp16_minilm_all_pools_raw_mixed_deferred_types_positions_recovery ... ignored, Requires CUDA, INFINITY_OXIDE_TEST_MINILM_F16_MODEL, INFINITY_OXIDE_KERNEL_MODULE, INFINITY_FA4_ROOT and an F16 mha32 profile
+
+test result: ok. 0 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/gated_gelu.rs (target/debug/deps/gated_gelu-4d06bfb4302f9696)
+
+running 5 tests
+test gpu_gated_gelu_up_first_preserves_native_stages_and_row_bounds ... ignored, requires the GTE kernel bundle and INFINITY_OXIDE_GATED_GELU_REFERENCE from the native CUDA pairs oracle
+test tests::finite_edge_inputs_match_fixed_bits ... ok
+test tests::gate_is_read_from_the_second_packed_half ... ok
+test tests::fused_alpha_is_not_rounded_multiply_then_add ... ok
+test tests::disjoint_rows_and_device_tail_match_fixed_bits ... ok
+
+test result: ok. 4 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/jina_lifecycle.rs (target/debug/deps/jina_lifecycle-c938e61d7db72efb)
+
+running 5 tests
+test jina_deferred_raw_mixed_aba_types_positions_and_recovery ... ignored, Requires NVIDIA GPU 0, oxide kernels, and INFINITY_OXIDE_TEST_JINA_MODEL
+test deferred_aba_respects_two_slot_backpressure_without_losing_overlap ... ok
+test actual_config_fixture_uses_native_jina_fields_without_cuda ... ok
+test fixture_constructor_preserves_shapes_positions_types_and_selection ... ok
+test oversized_fixture_is_cpu_constructible_but_exceeds_planner_bucket ... ok
+
+test result: ok. 4 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.04s
+
+     Running tests/modern_lifecycle.rs (target/debug/deps/modern_lifecycle-187c6c6125d2800f)
+
+running 3 tests
+test modern_encoder_deferred_shape_changes_and_rejected_request_recovery ... ignored, Requires NVIDIA GPU 0, oxide kernels, and INFINITY_OXIDE_TEST_MODERN_ENCODER_MODEL
+test fixture_constructor_preserves_shapes_positions_types_and_selection ... ok
+test oversized_fixture_is_cpu_constructible_but_exceeds_device_bucket ... ok
+
+test result: ok. 2 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.03s
+
+     Running tests/nomic_lifecycle.rs (target/debug/deps/nomic_lifecycle-1938102bab839796)
+
+running 4 tests
+test nomic_encoder_deferred_shape_changes_and_rejected_request_recovery ... ignored, Requires NVIDIA GPU 0, oxide kernels, and INFINITY_OXIDE_TEST_NOMIC_ENCODER_MODEL
+test actual_config_fixture_uses_native_nomic_fields_without_cuda ... ok
+test fixture_constructor_preserves_shapes_positions_types_and_selection ... ok
+test oversized_fixture_is_cpu_constructible_but_exceeds_device_bucket ... ok
+
+test result: ok. 3 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+     Running tests/norm1024.rs (target/debug/deps/norm1024-79ab8408e4943de6)
+
+running 3 tests
+test rounded_1024_embedding_matches_native_statistics_and_guards ... ignored, requires INFINITY_OXIDE_KERNEL_MODULE with native 1024 exports and a matching CUDA device
+test rounded_1024_residual_matches_native_statistics_and_guards ... ignored, requires INFINITY_OXIDE_KERNEL_MODULE with native 1024 exports and a matching CUDA device
+test rounded_1024_oracle_uses_global_mean_before_variance ... ok
+
+test result: ok. 1 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/norm768.rs (target/debug/deps/norm768-c618d8b744bd4851)
+
+running 3 tests
+test exact_embedding_768_matches_native_recipe_for_all_cta_shapes ... ignored, requires INFINITY_OXIDE_KERNEL_MODULE with exact 768 exports and a matching CUDA device
+test exact_residual_768_matches_native_recipe_with_bias_and_residual ... ignored, requires INFINITY_OXIDE_KERNEL_MODULE with exact 768 exports and a matching CUDA device
+test reference_uses_global_mean_before_centered_variance ... ok
+
+test result: ok. 1 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/norm768_vector.rs (target/debug/deps/norm768_vector-9a857d7075f8f116)
+
+running 3 tests
+test vector_embedding_norm_768_matches_scalar_for_shapes_and_individual_fallbacks ... ignored, requires INFINITY_OXIDE_KERNEL_MODULE and a matching CUDA device
+test vector_layer_norm_768_matches_scalar_for_shapes_and_recipes ... ignored, requires INFINITY_OXIDE_KERNEL_MODULE and a matching CUDA device
+test vector_layer_norm_768_preserves_individual_fallbacks_and_in_place_aliases ... ignored, requires INFINITY_OXIDE_KERNEL_MODULE and a matching CUDA device
+
+test result: ok. 0 passed; 0 failed; 3 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/qwen3_primitives.rs (target/debug/deps/qwen3_primitives-1268eb984e87a992)
+
+running 8 tests
+test add_rms1024_exact_vector_keeps_unrounded_stats_and_bf16_summed_bits ... ignored, requires CUDA; loads INFINITY_OXIDE_KERNEL_MODULE and native report
+test qk_norm_rope_matches_original_public_native_for_gqa_strides_and_guards ... ignored, requires CUDA; loads INFINITY_OXIDE_KERNEL_MODULE and native report
+test rms1024_aliases_guards_and_two_byte_unaligned_pointers_match_native ... ignored, requires CUDA; loads INFINITY_OXIDE_KERNEL_MODULE and native report
+test rms1024_exact_vector_matches_original_candle_native_bits ... ignored, requires CUDA; loads INFINITY_OXIDE_KERNEL_MODULE and native report
+test rms1024_invalid_width_and_zero_rows_leave_outputs_untouched ... ignored, requires CUDA; loads INFINITY_OXIDE_KERNEL_MODULE
+test table_gather_uses_positions_nonmonotonic_and_bf16_rounding ... ok
+test native_packed_qk_rows_use_head_scaled_token_stride ... ok
+test qk_fixture_layout_retains_guards_padding_v_and_scatter_targets ... ok
+
+test result: ok. 3 passed; 0 failed; 5 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/raw_outputs.rs (target/debug/deps/raw_outputs-999090d3ae151440)
+
+running 1 test
+test raw_token_outputs_and_deferred_leases ... ignored, requires CUDA device 0, INFINITY_OXIDE_TEST_RAW_MODEL, and oxide kernels
+
+test result: ok. 0 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/rms1536.rs (target/debug/deps/rms1536-8191f7c2623c7f08)
+
+running 2 tests
+test cached_rms_matches_generic_bits_with_residuals_aliases_and_changing_rows ... ignored, requires H1536 cubins and a matching GPU
+test cached_rms_rejects_other_widths_and_zero_rows_without_writes ... ignored, requires H1536 cubins and a matching GPU
+
+test result: ok. 0 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/rms1536_vector.rs (target/debug/deps/rms1536_vector-9256354c7e5e3817)
+
+running 4 tests
+test vector_matches_cached_bits_across_rows_fixtures_eps_and_aliases ... ignored, requires H1536 cubins and a matching GPU
+test vector_matches_native_reference_on_aligned_ordinary_and_adversarial_controls ... ignored, requires H1536 cubins, native reference cubin, and a matching GPU
+test vector_rejects_zero_and_invalid_width_without_writes ... ignored, requires H1536 cubins and a matching GPU
+test vector_unaligned_fallbacks_match_cached_and_preserve_guards ... ignored, requires H1536 cubins and a matching GPU
+
+test result: ok. 0 passed; 0 failed; 4 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/rms2048.rs (target/debug/deps/rms2048-1c95c4b069ae1d7f)
+
+running 6 tests
+test exact_add_rms_2048_flushes_subnormals_and_preserves_signed_zero_sums ... ignored, requires INFINITY_OXIDE_KERNEL_MODULE with exact 2048 exports and a matching CUDA device
+test exact_add_rms_2048_keeps_unrounded_statistics_and_bf16_halfway_sums ... ignored, requires INFINITY_OXIDE_KERNEL_MODULE with exact 2048 exports and a matching CUDA device
+test exact_rms_2048_matches_f64_and_f32_recipe_across_cta_shapes ... ignored, requires INFINITY_OXIDE_KERNEL_MODULE with exact 2048 exports and a matching CUDA device
+test ftz_staging_flushes_subnormal_inputs_to_signed_zero ... ok
+test recipe_uses_global_mean_then_restores_mean_square ... ok
+test bf16_halfway_residual_fixture_distinguishes_staging ... ok
+
+test result: ok. 3 passed; 0 failed; 3 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/rms2048_vector.rs (target/debug/deps/rms2048_vector-699c737036f8ca04)
+
+running 4 tests
+test vector_rms_guards_rows_zero_and_wrong_width_without_touching_output ... ignored, requires INFINITY_OXIDE_KERNEL_MODULE on a matching CUDA device
+test vector_rms_in_place_aliases_match_scalar_for_aligned_and_unaligned_partial_ctas ... ignored, requires INFINITY_OXIDE_KERNEL_MODULE on a matching CUDA device
+test vector_rms_matches_all_native_raw_fixtures_and_scalar_export ... ignored, requires INFINITY_OXIDE_KERNEL_MODULE and INFINITY_OXIDE_RMS2048_RAW_DIR on a matching CUDA device
+test vector_rms_unaligned_two_byte_pointers_take_scalar_fallback ... ignored, requires INFINITY_OXIDE_KERNEL_MODULE on a matching CUDA device
+
+test result: ok. 0 passed; 0 failed; 4 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/rms4096_vector.rs (target/debug/deps/rms4096_vector-cde9082635888927)
+
+running 7 tests
+test rms4096_vector_falls_back_to_generic_for_non_4096_widths ... ignored, requires H4096 cubins and a matching GPU
+test rms4096_vector_matches_generic_controls_across_rows_fixtures_eps_and_aliases ... ignored, requires H4096 cubins and a matching GPU
+test rms4096_vector_matches_native_reference_on_aligned_ordinary_and_adversarial_controls ... ignored, requires H4096 cubins, native reference cubin, and a matching GPU
+test rms4096_vector_plain_optional_residual_and_summed_are_ignored ... ignored, requires H4096 cubins and a matching GPU
+test rms4096_vector_unaligned_required_pointers_match_generic_and_preserve_guards ... ignored, requires H4096 cubins and a matching GPU
+test rms4096_vector_zero_width_and_zero_rows_do_not_write ... ignored, requires H4096 cubins and a matching GPU
+test fixtures_keep_finite_unsigned_bf16_bits_for_supported_shapes ... ok
+
+test result: ok. 1 passed; 0 failed; 6 ignored; 0 measured; 0 filtered out; finished in 0.06s
+
+     Running tests/rounded_norms.rs (target/debug/deps/rounded_norms-d68c1b1bbd290b89)
+
+running 2 tests
+test rounded_embedding_matches_independent_reference ... ignored, requires INFINITY_OXIDE_KERNEL_MODULE with rounded exports and a matching CUDA device
+test rounded_residual_matches_independent_reference ... ignored, requires INFINITY_OXIDE_KERNEL_MODULE with rounded exports and a matching CUDA device
+
+test result: ok. 0 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/silu_pairs.rs (target/debug/deps/silu_pairs-8414106903a5f212)
+
+running 4 tests
+test paired_silu_guards_zero_rows_zero_width_and_partial_ctas ... ignored, requires INFINITY_OXIDE_KERNEL_MODULE with decoder exports and a matching CUDA device
+test paired_silu_matches_scalar_export_and_independent_staging ... ignored, requires INFINITY_OXIDE_KERNEL_MODULE with decoder exports and a matching CUDA device
+test paired_silu_matches_scalar_for_every_finite_bf16_gate_with_unit_up ... ignored, requires INFINITY_OXIDE_KERNEL_MODULE with decoder exports and a matching CUDA device
+test paired_silu_unaligned_odd_widths_fall_back_without_oob ... ignored, requires INFINITY_OXIDE_KERNEL_MODULE with decoder exports and a matching CUDA device
+
+test result: ok. 0 passed; 0 failed; 4 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests examples/cache_probe.rs (target/debug/examples/cache_probe-53fe5d9078033388)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests examples/dense_safe_bin_probe.rs (target/debug/examples/dense_safe_bin_probe-003da31698daf270)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests examples/dispatch_bench.rs (target/debug/examples/dispatch_bench-365a46ec8c13de41)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests examples/probe.rs (target/debug/examples/probe-0aeab11c2a8fb7e4)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests examples/qwen35_dynamic_block_decision_probe.rs (target/debug/examples/qwen35_dynamic_block_decision_probe-da53ea0a42472cfb)
+
+running 6 tests
+test tests::batch_constructor_carries_the_parsed_case ... ok
+test tests::boundaries_and_lengths_must_be_exact_b1 ... ok
+test tests::ids_must_be_exact_nonfractional_u32 ... ok
+test tests::prefixes_must_be_positive_and_inside_the_sequence ... ok
+test tests::existing_output_is_never_overwritten ... ok
+test tests::same_tokens_accept_different_actual_prefixes ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests examples/qwen35_text_probe.rs (target/debug/examples/qwen35_text_probe-75bf2660f4cfe767)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+

@@ -1,0 +1,9 @@
+test_docker_env_clears_only_five_selectors_and_preserves_config_proxy_ca (tests.test_controller_v2.ControllerTests.test_docker_env_clears_only_five_selectors_and_preserves_config_proxy_ca) ... ok
+test_remote_guard_cleanup_is_called_in_finally (tests.test_controller_v2.ControllerTests.test_remote_guard_cleanup_is_called_in_finally) ... ok
+test_skip_stable2k_filters_case_before_quality_reference (tests.test_controller_v2.ControllerTests.test_skip_stable2k_filters_case_before_quality_reference) ... ok
+test_stable2k_present_in_default_cases (tests.test_controller_v2.ControllerTests.test_stable2k_present_in_default_cases) ... ok
+
+----------------------------------------------------------------------
+Ran 4 tests in 0.002s
+
+OK

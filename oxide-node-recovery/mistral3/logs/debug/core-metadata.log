@@ -1,0 +1,89 @@
+warning: function `download_safetensors` is never used
+   --> backends/src/lib.rs:892:10
+    |
+892 | async fn download_safetensors(api: Arc<ApiRepo>) -> Result<Vec<PathBuf>, ApiError> {
+    |          ^^^^^^^^^^^^^^^^^^^^
+    |
+    = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: function `safetensor_shards` is never used
+   --> backends/src/lib.rs:929:4
+    |
+929 | fn safetensor_shards(index: &str) -> Result<Vec<String>, std::io::Error> {
+    |    ^^^^^^^^^^^^^^^^^
+
+warning: `infinity_v3-backend` (lib) generated 2 warnings
+   Compiling infinity_v3-core v3.0.2-beta.1 (/tmp/oxide-all-model-feature-matrix-v1/mistral3-v4/libs/infinity-v3/core)
+warning: unused `QueueLease` that must be used
+    --> core/src/queue_actor.rs:1290:17
+     |
+1290 |                 queue.append_group(group).await.unwrap();
+     |                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+     |
+     = note: Hold the lease until inference completes; dropping it releases queue capacity
+     = note: `#[warn(unused_must_use)]` (part of `#[warn(unused)]`) on by default
+help: use `let _ = ...` to ignore the resulting value
+     |
+1290 |                 let _ = queue.append_group(group).await.unwrap();
+     |                 +++++++
+
+warning: unused `QueueLease` that must be used
+    --> core/src/queue_actor.rs:1313:21
+     |
+1313 |                     queue.append_group(vec![a, b]).await.unwrap();
+     |                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+     |
+     = note: Hold the lease until inference completes; dropping it releases queue capacity
+help: use `let _ = ...` to ignore the resulting value
+     |
+1313 |                     let _ = queue.append_group(vec![a, b]).await.unwrap();
+     |                     +++++++
+
+warning: unused `std::result::Result` that must be used
+    --> core/src/queue_actor.rs:1314:21
+     |
+1314 |                     queue.append(single).await;
+     |                     ^^^^^^^^^^^^^^^^^^^^^^^^^^
+     |
+     = note: this `Result` may be an `Err` variant, which should be handled
+help: use `let _ = ...` to ignore the resulting value
+     |
+1314 |                     let _ = queue.append(single).await;
+     |                     +++++++
+
+warning: unused `std::result::Result` that must be used
+    --> core/src/queue_actor.rs:1316:21
+     |
+1316 |                     queue.append(single).await;
+     |                     ^^^^^^^^^^^^^^^^^^^^^^^^^^
+     |
+     = note: this `Result` may be an `Err` variant, which should be handled
+help: use `let _ = ...` to ignore the resulting value
+     |
+1316 |                     let _ = queue.append(single).await;
+     |                     +++++++
+
+warning: unused `QueueLease` that must be used
+    --> core/src/queue_actor.rs:1317:21
+     |
+1317 |                     queue.append_group(vec![a, b]).await.unwrap();
+     |                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+     |
+     = note: Hold the lease until inference completes; dropping it releases queue capacity
+help: use `let _ = ...` to ignore the resulting value
+     |
+1317 |                     let _ = queue.append_group(vec![a, b]).await.unwrap();
+     |                     +++++++
+
+warning: `infinity_v3-core` (lib test) generated 5 warnings
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 2.80s
+     Running unittests src/lib.rs (/tmp/oxide-all-model-feature-matrix-v1/mistral3-v4/.work/target-cpu-debug/debug/deps/infinity_v3_core-88b06928899310b8)
+
+running 4 tests
+test model_metadata::tests::config_json_wins_when_both_files_exist ... ok
+test model_metadata::tests::malformed_or_unreadable_config_never_falls_back_to_params ... ok
+test model_metadata::tests::params_without_vision_is_rejected_instead_of_inventing_pixtral ... ok
+test model_metadata::tests::params_only_14b_metadata_is_reachable ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 99 filtered out; finished in 0.00s
+

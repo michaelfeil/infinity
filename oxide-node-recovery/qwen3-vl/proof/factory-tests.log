@@ -1,0 +1,31 @@
+   Compiling infinity-backend-oxide v3.0.2-beta.1 (/tmp/oxide-qwen3vl-rope-budget-fix-v1/candidate/libs/infinity-v3/backends/oxide)
+   Compiling infinity_v3-backend v3.0.2-beta.1 (/tmp/oxide-qwen3vl-rope-budget-fix-v1/candidate/libs/infinity-v3/backends)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 14.17s
+     Running unittests src/lib.rs (/tmp/opencode/qwen-vl-current-checks/target/debug/deps/infinity_v3_backend-8c6c8a7d7fac3e26)
+
+running 22 tests
+test dense_module_tests::explicit_dense_path_works_without_sentence_transformer_metadata ... ok
+test oxide_dense_discovery_tests::explicit_override_that_cannot_be_downloaded_fails_startup ... ok
+test oxide_dense_discovery_tests::fetch_status_classifies_only_genuine_404_as_absent ... ok
+test dense_module_tests::local_override_replaces_a_single_discovered_dense_module ... ok
+test dense_module_tests::malformed_dense_metadata_is_reported_for_local_overrides ... ok
+test dense_module_tests::local_override_is_ignored_for_multiple_dense_modules ... ok
+test oxide_dense_discovery_tests::malformed_metadata_and_invalid_dense_paths_fail_before_startup ... ok
+test completion_tests::serving_worker_recovers_after_result_admission_rejection ... ok
+test completion_tests::deferred_completion_does_not_block_model_and_drains_after_cancellation ... ok
+test oxide_dense_discovery_tests::multiple_dense_modules_keep_metadata_order_and_ignore_override ... ok
+test oxide_dense_discovery_tests::non_404_metadata_failure_fails_closed_even_with_override ... ok
+test oxide_dense_discovery_tests::valid_transformer_without_path_and_three_dense_modules_load_in_order ... ok
+test completion_tests::overloaded_probe_preserves_health_and_recovers ... ok
+test oxide_dense_discovery_tests::zero_dense_metadata_uses_explicit_override_but_auto_empty_stays_none ... ok
+test oxide_dense_discovery_tests::remote_404_with_explicit_override_downloads_and_forwards_it ... ok
+test oxide_dense_discovery_tests::single_discovered_dense_module_can_be_overridden ... ok
+test oxide_dense_discovery_tests::remote_404_without_override_discovers_no_dense ... ok
+test startup_tests::invalid_weight_indexes_fail_without_panicking_or_following_parent_paths ... ok
+test startup_tests::oxide_dtype_factory_defaults_to_bf16_and_admits_explicit_f16 ... ok
+test startup_tests::oxide_rejects_unsupported_options_before_loading_checkpoint_or_driver ... ok
+test startup_tests::oxide_classifier_facade_reaches_task_admission_and_preserves_dtype_rejection ... ok
+test startup_tests::normal_oxide_factory_detects_qwen3_vl_aliases_before_dense_admission ... ok
+
+test result: ok. 22 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+

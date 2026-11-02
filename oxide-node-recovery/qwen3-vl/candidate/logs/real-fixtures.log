@@ -1,0 +1,9 @@
+   Compiling infinity-backend-oxide v3.0.2-beta.1 (/tmp/opencode/qwen-vl-current-checks/tree/libs/infinity-v3/backends/oxide)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.71s
+     Running tests/qwen3_vl_real_fixtures.rs (/tmp/opencode/qwen-vl-current-checks/target/debug/deps/qwen3_vl_real_fixtures-f042b58fb78fa556)
+
+running 1 test
+test real_processor_fixtures_are_self_consistent ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+

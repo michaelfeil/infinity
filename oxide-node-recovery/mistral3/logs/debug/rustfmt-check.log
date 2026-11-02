@@ -1,0 +1,22 @@
+Diff in /tmp/oxide-all-model-feature-matrix-v1/mistral3-v4/libs/infinity-v3/core/src/download.rs:164:
+     #[test]
+     fn only_actual_404_selects_params_fallback() {
+         assert!(config_not_found_status(Some(404)));
+[31m-        for status in [None, Some(301), Some(401), Some(403), Some(429), Some(500), Some(503)] {
+(B[m[31m-            assert!(!config_not_found_status(status), "{status:?} must propagate");
+(B[m[32m+        for status in [
+(B[m[32m+            None,
+(B[m[32m+            Some(301),
+(B[m[32m+            Some(401),
+(B[m[32m+            Some(403),
+(B[m[32m+            Some(429),
+(B[m[32m+            Some(500),
+(B[m[32m+            Some(503),
+(B[m[32m+        ] {
+(B[m[32m+            assert!(
+(B[m[32m+                !config_not_found_status(status),
+(B[m[32m+                "{status:?} must propagate"
+(B[m[32m+            );
+(B[m         }
+     }
+ }

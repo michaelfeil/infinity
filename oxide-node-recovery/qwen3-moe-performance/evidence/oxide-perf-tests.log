@@ -1,0 +1,124 @@
+   Compiling proc-macro2 v1.0.107
+   Compiling quote v1.0.47
+   Compiling unicode-ident v1.0.27
+   Compiling cfg-if v1.0.5
+   Compiling libc v0.2.191
+   Compiling version_check v0.9.5
+   Compiling glob v0.3.4
+   Compiling prettyplease v0.2.37
+   Compiling equivalent v1.0.3
+   Compiling serde_core v1.0.229
+   Compiling memchr v2.8.3
+   Compiling minimal-lexical v0.2.1
+   Compiling rustix v1.1.6
+   Compiling crc32fast v1.5.2
+   Compiling regex-syntax v0.8.11
+   Compiling libm v0.2.16
+   Compiling linux-raw-sys v0.12.1
+   Compiling zerocopy v0.8.63
+   Compiling bindgen v0.72.1
+   Compiling bitflags v2.13.2
+   Compiling either v1.19.0
+   Compiling hashbrown v0.17.1
+   Compiling autocfg v1.5.1
+   Compiling zmij v1.0.23
+   Compiling parking_lot_core v0.9.12
+   Compiling shlex v1.3.0
+   Compiling serde v1.0.229
+   Compiling log v0.4.35
+   Compiling rustc-hash v2.1.3
+   Compiling typenum v1.20.1
+   Compiling smallvec v1.16.4
+   Compiling object v0.36.7
+   Compiling getrandom v0.4.3
+   Compiling scopeguard v1.2.0
+   Compiling foldhash v0.1.5
+   Compiling serde_json v1.0.154
+   Compiling once_cell v1.21.4
+   Compiling anyhow v1.0.104
+   Compiling zlib-rs v0.6.8
+   Compiling infinity-v3-config v3.0.2-beta.1 (/tmp/infinity-plain-cuda/libs/infinity-v3/config)
+   Compiling thiserror v2.0.21
+   Compiling thiserror v1.0.69
+   Compiling itoa v1.0.18
+   Compiling allocator-api2 v0.2.21
+   Compiling fastrand v2.5.0
+   Compiling cuda-core v0.5.0 (https://github.com/NVIDIA/cuda-rust?rev=999094fe568fc3080f80d49e9c44e3680ad1c968#999094fe)
+   Compiling foldhash v0.2.0
+   Compiling pin-project-lite v0.2.17
+   Compiling typed-path v0.12.4
+   Compiling byteorder v1.5.0
+   Compiling cuda-repr v0.5.0 (https://github.com/NVIDIA/cuda-rust?rev=999094fe568fc3080f80d49e9c44e3680ad1c968#999094fe)
+   Compiling cpufeatures v0.2.17
+   Compiling nohash-hasher v0.2.0
+   Compiling libloading v0.8.9
+   Compiling itertools v0.13.0
+   Compiling generic-array v0.14.7
+   Compiling ahash v0.8.12
+   Compiling hashbrown v0.15.5
+   Compiling clang-sys v1.9.1
+   Compiling lock_api v0.4.14
+   Compiling num-traits v0.2.19
+   Compiling nom v7.1.3
+   Compiling indexmap v2.14.2
+   Compiling syn v2.0.119
+   Compiling syn v3.0.9
+   Compiling regex-automata v0.4.18
+   Compiling block-buffer v0.10.4
+   Compiling crypto-common v0.1.7
+   Compiling digest v0.10.7
+   Compiling errno v0.3.14
+   Compiling filetime v0.2.29
+   Compiling mio v1.2.4
+   Compiling sha2 v0.10.9
+   Compiling signal-hook-registry v1.4.8
+   Compiling parking_lot v0.12.5
+   Compiling xattr v1.7.0
+   Compiling tempfile v3.27.0
+   Compiling tokio v1.54.1
+   Compiling cexpr v0.6.0
+   Compiling tar v0.4.46
+   Compiling hashbrown v0.16.1
+   Compiling regex v1.13.1
+   Compiling serde_derive v1.0.229
+   Compiling bytemuck_derive v1.12.1
+   Compiling thiserror-impl v2.0.21
+   Compiling flate2 v1.1.10
+   Compiling bytemuck v1.25.2
+   Compiling zip v8.6.0
+   Compiling zerocopy-derive v0.8.63
+   Compiling thiserror-impl v1.0.69
+   Compiling oxide-artifacts v0.2.1
+   Compiling cuda-core-derive v0.5.0 (https://github.com/NVIDIA/cuda-rust?rev=999094fe568fc3080f80d49e9c44e3680ad1c968#999094fe)
+   Compiling safetensors v0.8.0
+   Compiling pytorch-reader v0.22.0 (/tmp/infinity-plain-cuda/libs/infinity-v3/backends/oxide/vendor/pytorch-reader)
+   Compiling infinity_v3-backend-core v3.0.2-beta.1 (/tmp/infinity-plain-cuda/libs/infinity-v3/backends/core)
+   Compiling cuda-bindings v0.5.0 (https://github.com/NVIDIA/cuda-rust?rev=999094fe568fc3080f80d49e9c44e3680ad1c968#999094fe)
+   Compiling half v2.7.1
+   Compiling metrics v0.23.1
+   Compiling infinity-backend-oxide v3.0.2-beta.1 (/tmp/infinity-plain-cuda/libs/infinity-v3/backends/oxide)
+   Compiling infinity-oxide-moe-perf v0.1.0 (/tmp/oxide-qwen3-moe-paired-performance-v2/oxide-perf)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 22.11s
+     Running unittests src/lib.rs (target/debug/deps/oxide_moe_perf_lib-57c445398e9319d0)
+
+running 4 tests
+test tests::parser_accepts_float16 ... ok
+test tests::parser_rejects_other_dtypes ... ok
+test tests::parser_defaults_to_bfloat16 ... ok
+test tests::report_metadata_uses_selected_dtype ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/bin/oxide_perf.rs (target/debug/deps/oxide_perf-a831356c931f8586)
+
+running 1 test
+test tests::pack_hash_is_stable_and_detects_value_change ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests oxide_moe_perf_lib
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+

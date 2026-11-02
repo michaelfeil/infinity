@@ -1,0 +1,165 @@
+   Compiling proc-macro2 v1.0.107
+   Compiling unicode-ident v1.0.27
+   Compiling quote v1.0.47
+   Compiling cfg-if v1.0.5
+   Compiling libc v0.2.191
+   Compiling version_check v0.9.5
+   Compiling glob v0.3.4
+   Compiling serde_core v1.0.229
+   Compiling prettyplease v0.2.37
+   Compiling clang-sys v1.9.1
+   Compiling memchr v2.8.3
+   Compiling equivalent v1.0.3
+   Compiling syn v2.0.119
+   Compiling syn v3.0.9
+   Compiling regex-syntax v0.8.11
+   Compiling minimal-lexical v0.2.1
+   Compiling crc32fast v1.5.2
+   Compiling rustix v1.1.6
+   Compiling regex-automata v0.4.18
+   Compiling nom v7.1.3
+   Compiling libloading v0.8.9
+   Compiling generic-array v0.14.7
+   Compiling linux-raw-sys v0.12.1
+   Compiling bindgen v0.72.1
+   Compiling zerocopy v0.8.63
+   Compiling bitflags v2.13.2
+   Compiling autocfg v1.5.1
+   Compiling hashbrown v0.17.1
+   Compiling libm v0.2.16
+   Compiling either v1.19.0
+   Compiling num-traits v0.2.19
+   Compiling indexmap v2.14.2
+   Compiling itertools v0.13.0
+   Compiling zerocopy-derive v0.8.63
+   Compiling regex v1.13.1
+   Compiling cexpr v0.6.0
+   Compiling typenum v1.20.1
+   Compiling zmij v1.0.23
+   Compiling shlex v1.3.0
+   Compiling serde v1.0.229
+   Compiling log v0.4.35
+   Compiling rustc-hash v2.1.3
+   Compiling parking_lot_core v0.9.12
+   Compiling serde_derive v1.0.229
+   Compiling foldhash v0.1.5
+   Compiling serde_json v1.0.154
+   Compiling once_cell v1.21.4
+   Compiling getrandom v0.4.3
+   Compiling scopeguard v1.2.0
+   Compiling object v0.36.7
+   Compiling smallvec v1.16.4
+   Compiling lock_api v0.4.14
+   Compiling hashbrown v0.15.5
+   Compiling bytemuck_derive v1.12.1
+   Compiling errno v0.3.14
+   Compiling ahash v0.8.12
+   Compiling thiserror v1.0.69
+   Compiling infinity-v3-config v3.0.2-beta.1 (/tmp/oxide-all-model-feature-matrix-v1/qwen35-vl-lifecycle-fix-v1/libs/infinity-v3/config)
+   Compiling thiserror v2.0.21
+   Compiling cuda-bindings v0.5.0 (https://github.com/NVIDIA/cuda-rust?rev=999094fe568fc3080f80d49e9c44e3680ad1c968#999094fe)
+   Compiling anyhow v1.0.104
+   Compiling zlib-rs v0.6.8
+   Compiling itoa v1.0.18
+   Compiling bytemuck v1.25.2
+   Compiling signal-hook-registry v1.4.8
+   Compiling flate2 v1.1.10
+   Compiling parking_lot v0.12.5
+   Compiling block-buffer v0.10.4
+   Compiling crypto-common v0.1.7
+   Compiling xattr v1.7.0
+   Compiling thiserror-impl v1.0.69
+   Compiling thiserror-impl v2.0.21
+   Compiling mio v1.2.4
+   Compiling filetime v0.2.29
+   Compiling pin-project-lite v0.2.17
+   Compiling typed-path v0.12.4
+   Compiling cuda-core v0.5.0 (https://github.com/NVIDIA/cuda-rust?rev=999094fe568fc3080f80d49e9c44e3680ad1c968#999094fe)
+   Compiling foldhash v0.2.0
+   Compiling allocator-api2 v0.2.21
+   Compiling fastrand v2.5.0
+   Compiling tempfile v3.27.0
+   Compiling hashbrown v0.16.1
+   Compiling zip v8.6.0
+   Compiling tokio v1.54.1
+   Compiling tar v0.4.46
+   Compiling oxide-artifacts v0.2.1
+   Compiling digest v0.10.7
+   Compiling half v2.7.1
+   Compiling cuda-core-derive v0.5.0 (https://github.com/NVIDIA/cuda-rust?rev=999094fe568fc3080f80d49e9c44e3680ad1c968#999094fe)
+   Compiling byteorder v1.5.0
+   Compiling cuda-repr v0.5.0 (https://github.com/NVIDIA/cuda-rust?rev=999094fe568fc3080f80d49e9c44e3680ad1c968#999094fe)
+   Compiling cpufeatures v0.2.17
+   Compiling nohash-hasher v0.2.0
+   Compiling infinity_v3-backend-core v3.0.2-beta.1 (/tmp/oxide-all-model-feature-matrix-v1/qwen35-vl-lifecycle-fix-v1/libs/infinity-v3/backends/core)
+   Compiling pytorch-reader v0.22.0 (/tmp/oxide-all-model-feature-matrix-v1/qwen35-vl-lifecycle-fix-v1/libs/infinity-v3/backends/oxide/vendor/pytorch-reader)
+warning: use of deprecated method `std::sync::atomic::Atomic::<usize>::fetch_update`: renamed to `try_update` for consistency
+  --> /tmp/oxide-all-model-feature-matrix-v1/qwen35-vl-lifecycle-fix-v1/libs/infinity-v3/backends/core/src/result_memory.rs:29:14
+   |
+29 |             .fetch_update(Ordering::AcqRel, Ordering::Acquire, |used| {
+   |              ^^^^^^^^^^^^
+   |
+   = note: `#[warn(deprecated)]` on by default
+help: replace the use of the deprecated method
+   |
+29 -             .fetch_update(Ordering::AcqRel, Ordering::Acquire, |used| {
+29 +             .try_update(Ordering::AcqRel, Ordering::Acquire, |used| {
+   |
+
+   Compiling sha2 v0.10.9
+warning: `infinity_v3-backend-core` (lib) generated 1 warning (run `cargo fix --lib -p infinity_v3-backend-core` to apply 1 suggestion)
+   Compiling metrics v0.23.1
+   Compiling safetensors v0.8.0
+   Compiling infinity-backend-oxide v3.0.2-beta.1 (/tmp/oxide-all-model-feature-matrix-v1/qwen35-vl-lifecycle-fix-v1/libs/infinity-v3/backends/oxide)
+warning: use of deprecated method `std::sync::atomic::Atomic::<usize>::fetch_update`: renamed to `try_update` for consistency
+   --> /tmp/oxide-all-model-feature-matrix-v1/qwen35-vl-lifecycle-fix-v1/libs/infinity-v3/backends/oxide/src/staging.rs:330:18
+    |
+330 |                 .fetch_update(Ordering::AcqRel, Ordering::Acquire, |total| {
+    |                  ^^^^^^^^^^^^
+    |
+    = note: `#[warn(deprecated)]` on by default
+help: replace the use of the deprecated method
+    |
+330 -                 .fetch_update(Ordering::AcqRel, Ordering::Acquire, |total| {
+330 +                 .try_update(Ordering::AcqRel, Ordering::Acquire, |total| {
+    |
+
+warning: use of deprecated method `std::sync::atomic::Atomic::<usize>::fetch_update`: renamed to `try_update` for consistency
+   --> /tmp/oxide-all-model-feature-matrix-v1/qwen35-vl-lifecycle-fix-v1/libs/infinity-v3/backends/oxide/src/staging.rs:338:14
+    |
+338 |             .fetch_update(Ordering::AcqRel, Ordering::Acquire, |bytes| {
+    |              ^^^^^^^^^^^^
+    |
+help: replace the use of the deprecated method
+    |
+338 -             .fetch_update(Ordering::AcqRel, Ordering::Acquire, |bytes| {
+338 +             .try_update(Ordering::AcqRel, Ordering::Acquire, |bytes| {
+    |
+
+warning: use of deprecated method `std::sync::atomic::Atomic::<usize>::fetch_update`: renamed to `try_update` for consistency
+   --> /tmp/oxide-all-model-feature-matrix-v1/qwen35-vl-lifecycle-fix-v1/libs/infinity-v3/backends/oxide/src/staging.rs:352:14
+    |
+352 |             .fetch_update(Ordering::AcqRel, Ordering::Acquire, |total| {
+    |              ^^^^^^^^^^^^
+    |
+help: replace the use of the deprecated method
+    |
+352 -             .fetch_update(Ordering::AcqRel, Ordering::Acquire, |total| {
+352 +             .try_update(Ordering::AcqRel, Ordering::Acquire, |total| {
+    |
+
+warning: use of deprecated method `std::sync::atomic::Atomic::<u64>::fetch_update`: renamed to `try_update` for consistency
+  --> /tmp/oxide-all-model-feature-matrix-v1/qwen35-vl-lifecycle-fix-v1/libs/infinity-v3/backends/oxide/src/work_retirement.rs:65:14
+   |
+65 |             .fetch_update(Ordering::AcqRel, Ordering::Acquire, |issued| {
+   |              ^^^^^^^^^^^^
+   |
+help: replace the use of the deprecated method
+   |
+65 -             .fetch_update(Ordering::AcqRel, Ordering::Acquire, |issued| {
+65 +             .try_update(Ordering::AcqRel, Ordering::Acquire, |issued| {
+   |
+
+warning: `infinity-backend-oxide` (lib) generated 4 warnings (run `cargo fix --lib -p infinity-backend-oxide` to apply 4 suggestions)
+   Compiling qwen35-vl-consumer v0.1.0 (/tmp/oxide-all-model-feature-matrix-v1/qwen35-vl-lifecycle-fix-v1/consumer)
+    Finished `release` profile [optimized] target(s) in 38.50s

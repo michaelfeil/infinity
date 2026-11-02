@@ -1,0 +1,145 @@
+    Blocking waiting for file lock on package cache
+    Blocking waiting for file lock on package cache
+=========================================
+RUSTC-CODEGEN-CUDA BUILD: device
+=========================================
+
+Building device...
+
+   Compiling proc-macro2 v1.0.107
+   Compiling quote v1.0.47
+   Compiling unicode-ident v1.0.27
+   Compiling serde_core v1.0.229
+   Compiling zmij v1.0.23
+   Compiling syn v3.0.9
+   Compiling serde v1.0.229
+   Compiling thiserror v2.0.21
+   Compiling serde_json v1.0.154
+   Compiling serde_derive v1.0.229
+   Compiling thiserror-impl v2.0.21
+   Compiling itoa v1.0.18
+   Compiling memchr v2.8.3
+   Compiling syn v2.0.119
+   Compiling oxide-tile-export v0.3.0 (https://github.com/NVIDIA/cuda-rust?rev=999094fe568fc3080f80d49e9c44e3680ad1c968#999094fe)
+   Compiling reserved-oxide-symbols v0.3.0 (https://github.com/NVIDIA/cuda-rust?rev=999094fe568fc3080f80d49e9c44e3680ad1c968#999094fe)
+   Compiling libm v0.2.16
+   Compiling cuda-repr v0.5.0 (https://github.com/NVIDIA/cuda-rust?rev=999094fe568fc3080f80d49e9c44e3680ad1c968#999094fe)
+   Compiling bytemuck v1.25.2
+   Compiling cuda-macros v0.3.0 (https://github.com/NVIDIA/cuda-rust?rev=999094fe568fc3080f80d49e9c44e3680ad1c968#999094fe)
+   Compiling cuda-device v0.3.0 (https://github.com/NVIDIA/cuda-rust?rev=999094fe568fc3080f80d49e9c44e3680ad1c968#999094fe)
+   Compiling infinity-oxide-kernels v0.1.0 (/tmp/oxide-device130-all3-v1/source/libs/infinity-v3/backends/oxide/device/.oxide-artifacts/build-workspaces/build-hdzpj3bc/sm_120/libs/infinity-v3/backends/oxide/device)
+warning: `#[inline]` is ignored on externally exported functions
+   --> src/gemma2.rs:322:1
+    |
+322 | #[inline(always)]
+    | ^^^^^^^^^^^^^^^^^
+    |
+    = help: externally exported functions are functions with `#[no_mangle]`, `#[export_name]`, or `#[linkage]`
+    = note: `#[warn(unused_attributes)]` (part of `#[warn(unused)]`) on by default
+
+warning: `#[inline]` is ignored on externally exported functions
+   --> src/gemma2.rs:328:1
+    |
+328 | #[inline(always)]
+    | ^^^^^^^^^^^^^^^^^
+    |
+    = help: externally exported functions are functions with `#[no_mangle]`, `#[export_name]`, or `#[linkage]`
+
+warning: `#[inline]` is ignored on externally exported functions
+   --> src/gemma2.rs:334:1
+    |
+334 | #[inline(always)]
+    | ^^^^^^^^^^^^^^^^^
+    |
+    = help: externally exported functions are functions with `#[no_mangle]`, `#[export_name]`, or `#[linkage]`
+
+warning: `#[inline]` is ignored on externally exported functions
+   --> src/gemma2.rs:340:1
+    |
+340 | #[inline(always)]
+    | ^^^^^^^^^^^^^^^^^
+    |
+    = help: externally exported functions are functions with `#[no_mangle]`, `#[export_name]`, or `#[linkage]`
+
+warning: `#[inline]` is ignored on externally exported functions
+   --> src/gemma2.rs:351:1
+    |
+351 | #[inline(always)]
+    | ^^^^^^^^^^^^^^^^^
+    |
+    = help: externally exported functions are functions with `#[no_mangle]`, `#[export_name]`, or `#[linkage]`
+
+warning: `#[inline]` is ignored on externally exported functions
+  --> src/packed_mean_bf16.rs:23:1
+   |
+23 | #[inline(always)]
+   | ^^^^^^^^^^^^^^^^^
+   |
+   = help: externally exported functions are functions with `#[no_mangle]`, `#[export_name]`, or `#[linkage]`
+
+warning: `#[inline]` is ignored on externally exported functions
+  --> src/packed_mean_bf16.rs:29:1
+   |
+29 | #[inline(always)]
+   | ^^^^^^^^^^^^^^^^^
+   |
+   = help: externally exported functions are functions with `#[no_mangle]`, `#[export_name]`, or `#[linkage]`
+
+warning: `#[inline]` is ignored on externally exported functions
+  --> src/packed_mean_bf16.rs:35:1
+   |
+35 | #[inline(always)]
+   | ^^^^^^^^^^^^^^^^^
+   |
+   = help: externally exported functions are functions with `#[no_mangle]`, `#[export_name]`, or `#[linkage]`
+
+warning: `#[inline]` is ignored on externally exported functions
+  --> src/packed_mean_bf16.rs:43:1
+   |
+43 | #[inline(always)]
+   | ^^^^^^^^^^^^^^^^^
+   |
+   = help: externally exported functions are functions with `#[no_mangle]`, `#[export_name]`, or `#[linkage]`
+
+warning: `#[inline]` is ignored on externally exported functions
+  --> src/packed_mean_bf16.rs:50:1
+   |
+50 | #[inline(always)]
+   | ^^^^^^^^^^^^^^^^^
+   |
+   = help: externally exported functions are functions with `#[no_mangle]`, `#[export_name]`, or `#[linkage]`
+
+warning: `#[inline]` is ignored on externally exported functions
+  --> src/packed_mean_bf16.rs:59:1
+   |
+59 | #[inline(always)]
+   | ^^^^^^^^^^^^^^^^^
+   |
+   = help: externally exported functions are functions with `#[no_mangle]`, `#[export_name]`, or `#[linkage]`
+
+warning: `#[inline]` is ignored on externally exported functions
+  --> src/packed_mean_bf16.rs:84:1
+   |
+84 | #[inline(always)]
+   | ^^^^^^^^^^^^^^^^^
+   |
+   = help: externally exported functions are functions with `#[no_mangle]`, `#[export_name]`, or `#[linkage]`
+
+warning: function `warp_down_sum` is never used
+  --> src/gemma2.rs:48:4
+   |
+48 | fn warp_down_sum(value: f32) -> f32 {
+   |    ^^^^^^^^^^^^^
+   |
+   = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: constant `WARPS` is never used
+  --> src/norm3072_exact_vector.rs:21:7
+   |
+21 | const WARPS: usize = 4;
+   |       ^^^^^
+
+warning: `DynamicSharedArray` returns CUDA dynamic shared memory; make sure the kernel launch config provides enough `shared_mem_bytes`
+
+warning: `infinity-oxide-kernels` (bin "infinity-oxide-kernels") generated 15 warnings
+    Finished `release` profile [optimized] target(s) in 55.74s

@@ -1,0 +1,30 @@
+{
+  "schema": "oxide-native-b66-mistral3-cpu-control/v1",
+  "tensor_count": 531,
+  "shard_count": 4,
+  "categories": {
+    "vision": 218,
+    "projector": 4,
+    "language": 308,
+    "score": 1,
+    "retained": 531,
+    "unclassified": 0
+  },
+  "vision_tensor_names": 218,
+  "projector_tensor_names": 4,
+  "top_level_tensor_names": 9,
+  "shape_validation_passed": true,
+  "shape_checks": 531,
+  "sdk_sha256": "b6607c0025b1bc65d7a2e56951ab28d0c25871da8e7620565f54b9da15d92bd4",
+  "sdk_matches_b66": true,
+  "cuda_visible_devices": "",
+  "cuda_hidden": true,
+  "payload_read": false,
+  "torch_imported": false,
+  "native_library_loaded": false,
+  "outputs": [
+    "original-config.json",
+    "tensor-inventory.json",
+    "CPU-control.json"
+  ]
+}

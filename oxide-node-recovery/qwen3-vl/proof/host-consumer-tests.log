@@ -1,0 +1,11 @@
+   Compiling infinity-backend-oxide v3.0.2-beta.1 (/tmp/oxide-qwen3vl-rope-budget-fix-v1/candidate/libs/infinity-v3/backends/oxide)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.60s
+     Running unittests examples/qwen3_vl_host_consumer.rs (/tmp/opencode/qwen-vl-current-checks/target/debug/examples/qwen3_vl_host_consumer-e7dbcd8f3362daa0)
+
+running 3 tests
+test tests::parser_accepts_owning_life_and_rejects_missing_values ... ok
+test tests::owning_life_report_shape_has_no_fake_claims ... ok
+test tests::real_fixtures_pack_and_empty_selector_media_is_typed ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.93s
+

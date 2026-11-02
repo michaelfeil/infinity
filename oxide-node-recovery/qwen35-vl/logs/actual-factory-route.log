@@ -1,0 +1,8 @@
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.24s
+     Running unittests src/lib.rs (/tmp/oxide-all-model-feature-matrix-v1/qwen35-vl-full-v1/target/debug/deps/infinity_backend_oxide-7bef44295a29f9d8)
+
+running 1 test
+test qwen35_vl_tests::actual_all_checkpoints_use_normal_public_factory_route ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 675 filtered out; finished in 0.14s
+
