@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: MIT
-// Export order is the native mode ABI. Fields: name, Q heads, KV heads, width, causal, local.
+// Canonical26 export order; this file is the native mode ABI.
+// Fields: name, Q heads, KV heads, width, causal, local.
+// Modes 0..19 are published and must not change. Modes 20..25 are append-only.
 FA4_PROFILE(bert, 16, 16, 64, 0, 0)
 FA4_PROFILE(modern_local, 12, 12, 64, 0, 1)
 FA4_PROFILE(qwen, 32, 8, 128, 1, 0)
@@ -20,3 +22,9 @@ FA4_PROFILE(wide_gqa6, 24, 4, 256, 0, 0)
 FA4_PROFILE(causal_wide6, 24, 4, 256, 1, 0)
 FA4_PROFILE(causal_wide4, 16, 4, 256, 1, 0)
 FA4_PROFILE(causal_gqa8_d64, 32, 4, 64, 1, 0)
+FA4_PROFILE(mistral_local4096, 32, 8, 128, 1, 1)
+FA4_PROFILE(gemma3_local512, 4, 1, 256, 1, 1)
+FA4_PROFILE(causal_gqa8, 32, 4, 128, 1, 0)
+FA4_PROFILE(embedding_gemma2_local256, 4, 2, 256, 0, 1)
+FA4_PROFILE(gemma4_local256_causal, 8, 1, 256, 1, 1)
+FA4_PROFILE(gemma4_local256_noncausal, 8, 1, 256, 0, 1)

@@ -3,12 +3,19 @@
 //!
 //! Profile order and exported windows mirror the repository's ABI7
 //! `vendor/infinity_fa4/profiles.inc` and `build.py`. A bundle is accepted only
-//! when its manifest exports the full legacy-19 or appended-20 mode prefix in
-//! that known order for the selected dtype. Absolute head counts are runtime
-//! tensor dimensions; selection uses the exported Q/KV grouping with the exact
+//! when its manifest exports a declared prefix of the canonical append registry
+//! (legacy19, published20, private23, registry24, or canonical26) in that known
+//! order for the selected dtype. Absolute head counts are runtime tensor
+//! dimensions; selection uses the exported Q/KV grouping with the exact ratio,
 //! dimension and mask kind. Global masks stay exact. Local profiles may serve
 //! safe runtime extents of the same causal/local kind because FA4 passes the
 //! left/right bounds as runtime scalars.
+//!
+//! Selection is loaded-prefix aware: it considers only the manifest's declared
+//! ordinary prefix. Exact extents are preferred inside that prefix, then a
+//! compatible local profile from the same prefix, otherwise a typed
+//! missing-profile error. An appended exact window must never hide a compatible
+//! older local export.
 //!
 //! Softcap, relative-bias and DeBERTa score modifiers are not represented by
 //! [`AttentionSpec`], so they fail selection at load instead of falling back to
@@ -210,9 +217,14 @@ impl Profile {
 }
 
 // Exact ABI7 export order. Local windows follow build.py: noncausal locals are
-// `[64, 64]` and causal locals are `[64, 0]`.
+// `[64, 64]` and causal locals are `[64, 0]`, except Mistral `[4095, 0]`,
+// Gemma3 `[511, 0]`, and EmbeddingGemma2 `[512, 512]`.
 const LEGACY_PROFILE_COUNT: usize = 19;
-const PROFILES: [Profile; 20] = [
+const PUBLISHED_PROFILE_COUNT: usize = 20;
+const PRIVATE23_PROFILE_COUNT: usize = 23;
+const REGISTRY24_PROFILE_COUNT: usize = 24;
+const CANONICAL26_PROFILE_COUNT: usize = 26;
+const PROFILES: [Profile; CANONICAL26_PROFILE_COUNT] = [
     Profile::new("bert", 16, 16, 64, false, Window::Global),
     Profile::new(
         "modern_local",
@@ -260,6 +272,126 @@ const PROFILES: [Profile; 20] = [
     Profile::new("causal_wide6", 24, 4, 256, true, Window::Global),
     Profile::new("causal_wide4", 16, 4, 256, true, Window::Global),
     Profile::new("causal_gqa8_d64", 32, 4, 64, true, Window::Global),
+    // Private23 prefix, preserved as-is. These are the canonical mode indices
+    // shared by every descendant packet; standalone packets that put other
+    // profiles here are rejected by strict export-order validation.
+    Profile::new(
+        "mistral_local4096",
+        32,
+        8,
+        128,
+        true,
+        Window::Local {
+            left: 4095,
+            right: 0,
+        },
+    ),
+    Profile::new(
+        "gemma3_local512",
+        4,
+        1,
+        256,
+        true,
+        Window::Local {
+            left: 511,
+            right: 0,
+        },
+    ),
+    Profile::new("causal_gqa8", 32, 4, 128, true, Window::Global),
+    // Registry24: EmbeddingGemma2 d256 noncausal local GQA2 at +/-512.
+    Profile::new(
+        "embedding_gemma2_local256",
+        4,
+        2,
+        256,
+        false,
+        Window::Local {
+            left: 512,
+            right: 512,
+        },
+    ),
+    // Canonical26: Gemma4 E2B d256 local Q8/KV1. The published profile and
+    // manifest carry the exact canonical extents, not an internal compile hint:
+    // causal [511, 0] and noncausal [256, 256]. FA4 passes these left/right
+    // values as runtime scalars, so exact preference and provenance agree.
+    // Scale is explicit 1.0 at the model call site; provider scale remains a
+    // runtime argument.
+    Profile::new(
+        "gemma4_local256_causal",
+        8,
+        1,
+        256,
+        true,
+        Window::Local {
+            left: 511,
+            right: 0,
+        },
+    ),
+    Profile::new(
+        "gemma4_local256_noncausal",
+        8,
+        1,
+        256,
+        false,
+        Window::Local {
+            left: 256,
+            right: 256,
+        },
+    ),
+];
+const _: () = assert!(LEGACY_PROFILE_COUNT < PUBLISHED_PROFILE_COUNT);
+const _: () = assert!(PUBLISHED_PROFILE_COUNT < PRIVATE23_PROFILE_COUNT);
+const _: () = assert!(PRIVATE23_PROFILE_COUNT < REGISTRY24_PROFILE_COUNT);
+const _: () = assert!(REGISTRY24_PROFILE_COUNT < CANONICAL26_PROFILE_COUNT);
+const _: () = assert!(PROFILES.len() == CANONICAL26_PROFILE_COUNT);
+
+// Exact manifest registry identity for every legal declared ordinary prefix.
+// The fingerprint is the SHA-256 of the canonical profile sequence
+// "mode:name:heads:kv_heads:head_dim:causal:local" joined by '|'. A manifest
+// that chooses to publish registry metadata must match both the namespace and
+// this prefix-specific fingerprint; geometry itself is already checked by the
+// strict ordered `kernel_matches` scan above.
+const REGISTRY_PREFIX_IDENTITIES: &[(usize, &str, &str)] = &[
+    (
+        19,
+        "legacy19",
+        "064e20f61405380889e1d88511d3f52d01caf654a2df983aa407f4bc5e737ea3",
+    ),
+    (
+        20,
+        "published20",
+        "827958cc0e82a0bccf0cf2ac96d25492a9fb40e7e36c54843618eaaf26807ebd",
+    ),
+    (
+        21,
+        "private23",
+        "b7d9e06b0fa290812b4e0018d8ff919af29762a47dd68ea525799a86b81ec0fa",
+    ),
+    (
+        22,
+        "private23",
+        "7ca9a15773f4aae33b55bb17619afa65edb9bf2c14b25d7e89338c7d8907e490",
+    ),
+    (
+        23,
+        "private23",
+        "268db2182d75fcda41f7d6e52b35dc967c1e9652ac5ad86e543ceed922fe7f80",
+    ),
+    (
+        24,
+        "registry24",
+        "99c39dc70c2cd22532df08d4edbb6a3f62cfd10a910c1da66321cbb434a233b6",
+    ),
+    (
+        25,
+        "canonical26",
+        "8443cd2fefe5c627da27c305442f5aff1a1d7cdfb1ffc1cbbd19149f6cde4245",
+    ),
+    (
+        26,
+        "canonical26",
+        "3b214841c169c3bcaad0574ee9df917c9fc8a05be1e64602cf5b91d99a67ff1e",
+    ),
 ];
 
 fn start(e: impl std::fmt::Display) -> BackendError {
@@ -401,7 +533,63 @@ fn validate_profile_order(
             dtype.name()
         )));
     }
+    validate_registry_metadata(manifest, seen)?;
     Ok(seen)
+}
+
+/// Optional canonical registry metadata. Old bundles may omit it; when present
+/// it must match the exact namespace and prefix-specific sequence fingerprint
+/// for the declared ordinary prefix. Geometry was already verified by the
+/// strict ordered `kernel_matches` scan, so this closes the remaining namespace
+/// collision without pretending to hash at runtime.
+fn validate_registry_metadata(
+    manifest: &serde_json::Value,
+    declared: usize,
+) -> Result<(), BackendError> {
+    let Some(registry) = manifest.get("registry") else {
+        return Ok(());
+    };
+    let Some(&(_, expected_namespace, expected_fingerprint)) = REGISTRY_PREFIX_IDENTITIES
+        .iter()
+        .find(|(count, _, _)| *count == declared)
+    else {
+        return Err(start("registry metadata for an unknown prefix length"));
+    };
+    let namespace = registry
+        .get("namespace")
+        .and_then(serde_json::Value::as_str)
+        .ok_or_else(|| start("registry metadata lacks a namespace"))?;
+    if namespace != expected_namespace {
+        return Err(start(format!(
+            "registry namespace {namespace} != {expected_namespace} for declared prefix {declared}"
+        )));
+    }
+    let mode_count = registry
+        .get("mode_count")
+        .and_then(serde_json::Value::as_u64)
+        .ok_or_else(|| start("registry metadata lacks mode_count"))?;
+    if usize::try_from(mode_count).ok() != Some(declared) {
+        return Err(start("registry mode_count differs from declared exports"));
+    }
+    if let Some(mask) = registry
+        .get("mode_mask")
+        .and_then(serde_json::Value::as_str)
+    {
+        let expected = mode_mask(declared)?;
+        if mask != format!("{expected:#x}") {
+            return Err(start("registry mode_mask differs from declared exports"));
+        }
+    }
+    let fingerprint = registry
+        .get("profile_sequence_sha256")
+        .and_then(serde_json::Value::as_str)
+        .ok_or_else(|| start("registry metadata lacks profile_sequence_sha256"))?;
+    if fingerprint != expected_fingerprint {
+        return Err(start(
+            "registry profile_sequence_sha256 differs from the canonical prefix",
+        ));
+    }
+    Ok(())
 }
 
 fn mode_mask(declared: usize) -> Result<i32, BackendError> {
@@ -420,20 +608,28 @@ fn validate_mode_mask(declared: usize, modes: i32) -> Result<(), BackendError> {
     Ok(())
 }
 
+fn missing_profile(dtype: DType, declared: usize, spec: &AttentionSpec) -> BackendError {
+    start(format!(
+        "missing-profile: no compatible {} export in declared prefix {declared} for Q{}xKV{} d{} causal={} window={:?}",
+        dtype.name(),
+        spec.heads,
+        spec.kv_heads,
+        spec.head_dim,
+        spec.causal,
+        spec.window
+    ))
+}
+
 fn profile_selection(
     manifest: &serde_json::Value,
     spec: &AttentionSpec,
 ) -> Result<(usize, usize), BackendError> {
-    let mode = profile_index(spec).ok_or_else(|| {
-        start("selected attention grouping, dimension or mask has no ABI7 export")
-    })?;
+    // The manifest's declared ordinary prefix is authoritative. Selecting from
+    // the full registry first would let an appended exact profile hide an older
+    // compatible export in a truncated bundle.
     let declared = validate_profile_order(manifest, spec.dtype)?;
-    if mode >= declared {
-        return Err(start(format!(
-            "manifest lacks the selected {} export",
-            spec.dtype.name()
-        )));
-    }
+    let mode = select_profile_index(&PROFILES[..declared], spec)
+        .ok_or_else(|| missing_profile(spec.dtype, declared, spec))?;
     Ok((mode, declared))
 }
 
@@ -471,12 +667,19 @@ fn contiguous_strides(spec: &AttentionSpec) -> Option<[i64; 12]> {
 fn separate_qk_forbidden(
     capability: i32,
     head_dim: usize,
+    local: bool,
     q_tokens: usize,
     k_tokens: usize,
     q_offsets: u64,
     k_offsets: u64,
 ) -> bool {
-    capability / 10 == 10 && head_dim == 256 && (q_tokens != k_tokens || q_offsets != k_offsets)
+    // The dedicated SM100 d256 two-CTA global kernel requires shared Q/K
+    // boundaries. Local d256 is compiled through the generic one-CTA path,
+    // which carries independent offset_q/offset_k.
+    capability / 10 == 10
+        && head_dim == 256
+        && !local
+        && (q_tokens != k_tokens || q_offsets != k_offsets)
 }
 
 fn valid_stride(stride: &[i64], width: i64, head_dim: i64) -> bool {
@@ -563,12 +766,15 @@ fn check_batch(
     if separate_qk_forbidden(
         capability,
         spec.head_dim,
+        matches!(spec.window, Window::Local { .. }),
         batch.q_tokens,
         batch.k_tokens,
         batch.q_offsets,
         batch.k_offsets,
     ) {
-        return Err(infer("SM100 d256 attention requires shared Q/K boundaries"));
+        return Err(infer(
+            "SM100 d256 global attention requires shared Q/K boundaries",
+        ));
     }
     Ok(())
 }
@@ -610,6 +816,14 @@ unsafe impl Send for Fa4 {}
 impl Fa4 {
     pub(crate) fn supports(spec: &AttentionSpec) -> bool {
         profile_index(spec).is_some() && resolve_scale(spec).is_ok()
+    }
+
+    /// Conservative guard for published auto routing. Appended canonical26
+    /// profiles remain available to explicit constructors and to the
+    /// manifest-driven loader, but old auto paths keep the published prefix.
+    pub(crate) fn supports_published(spec: &AttentionSpec) -> bool {
+        Self::supports(spec)
+            && select_profile_index(&PROFILES[..PUBLISHED_PROFILE_COUNT], spec).is_some()
     }
     pub(crate) fn new(
         context: Arc<Context>,
@@ -1080,6 +1294,34 @@ mod tests {
     }
 
     #[test]
+    fn published_auto_guard_keeps_old_prefix_and_falls_back_for_appended_geometry() {
+        for dtype in [DType::F16, DType::Bf16] {
+            for profile in PROFILES.iter().take(PUBLISHED_PROFILE_COUNT) {
+                let spec = spec_for(profile, dtype);
+                assert!(Fa4::supports(&spec));
+                assert!(Fa4::supports_published(&spec));
+            }
+            // Mistral's exact 4095 window remains serviceable by the older
+            // compatible local prefix, matching the previous auto behavior.
+            let mistral = spec_for(&PROFILES[20], dtype);
+            assert!(Fa4::supports(&mistral));
+            assert!(Fa4::supports_published(&mistral));
+            assert_eq!(
+                select_profile_index(&PROFILES[..PUBLISHED_PROFILE_COUNT], &mistral),
+                Some(15)
+            );
+            assert_eq!(select_profile_index(&PROFILES, &mistral), Some(20));
+            // Appended geometries with no published-prefix match must stay on
+            // the old auto fallback path.
+            for mode in [21, 22, 23, 24, 25] {
+                let spec = spec_for(&PROFILES[mode], dtype);
+                assert!(Fa4::supports(&spec));
+                assert!(!Fa4::supports_published(&spec));
+            }
+        }
+    }
+
+    #[test]
     fn accepts_runtime_local_extents_of_the_existing_mask_kind() {
         let manifest = manifest_for(&[DType::F16, DType::Bf16]);
         for dtype in [DType::F16, DType::Bf16] {
@@ -1099,7 +1341,9 @@ mod tests {
             ultrabert_alias.kv_heads = 12;
             assert_eq!(select_profile(&manifest, &ultrabert_alias).ok(), Some(10));
 
-            // Mistral: 32/8 d128 causal local, radius 4095.
+            // Mistral: 32/8 d128 causal local, radius 4095. The full
+            // canonical26 prefix contains the exact mode20; the published20
+            // prefix can only offer the compatible mode15 fallback.
             let mut mistral = spec_for(&PROFILES[15], dtype);
             mistral.heads = 32;
             mistral.kv_heads = 8;
@@ -1107,12 +1351,15 @@ mod tests {
                 left: 4095,
                 right: 0,
             };
-            assert_eq!(select_profile(&manifest, &mistral).ok(), Some(15));
+            assert_eq!(select_profile(&manifest, &mistral).ok(), Some(20));
+            let published = manifest_prefix(&[dtype], PUBLISHED_PROFILE_COUNT);
+            assert_eq!(select_profile(&published, &mistral).ok(), Some(15));
 
             let mut mistral_alias = mistral;
             mistral_alias.heads = 16;
             mistral_alias.kv_heads = 4;
-            assert_eq!(select_profile(&manifest, &mistral_alias).ok(), Some(15));
+            assert_eq!(select_profile(&manifest, &mistral_alias).ok(), Some(20));
+            assert_eq!(select_profile(&published, &mistral_alias).ok(), Some(15));
 
             // Asymmetric noncausal windows stay local and noncausal.
             let mut asymmetric = spec_for(&PROFILES[10], dtype);
@@ -1375,9 +1622,214 @@ mod tests {
         .is_err());
         assert!(validate_mode_mask(
             PROFILES.len(),
-            mode_mask(PROFILES.len()).expect("appended mode mask") | (1 << 25)
+            mode_mask(PROFILES.len()).expect("appended mode mask")
+                | (1 << CANONICAL26_PROFILE_COUNT)
         )
         .is_err());
+    }
+
+    #[test]
+    fn canonical26_modes_are_appended_in_order_and_mode_mask_is_exact() {
+        assert_eq!(PROFILES.len(), 26);
+        assert_eq!(PUBLISHED_PROFILE_COUNT, 20);
+        assert_eq!(PRIVATE23_PROFILE_COUNT, 23);
+        assert_eq!(REGISTRY24_PROFILE_COUNT, 24);
+        assert_eq!(CANONICAL26_PROFILE_COUNT, 26);
+        assert_eq!(PROFILES[20].name, "mistral_local4096");
+        assert_eq!(PROFILES[21].name, "gemma3_local512");
+        assert_eq!(PROFILES[22].name, "causal_gqa8");
+        assert_eq!(PROFILES[23].name, "embedding_gemma2_local256");
+        assert_eq!(PROFILES[24].name, "gemma4_local256_causal");
+        assert_eq!(PROFILES[25].name, "gemma4_local256_noncausal");
+        assert_eq!(
+            PROFILES[23].window,
+            Window::Local {
+                left: 512,
+                right: 512
+            }
+        );
+        assert_eq!(
+            PROFILES[24].window,
+            Window::Local {
+                left: 511,
+                right: 0
+            }
+        );
+        assert_eq!(
+            PROFILES[25].window,
+            Window::Local {
+                left: 256,
+                right: 256
+            }
+        );
+
+        let mask = mode_mask(CANONICAL26_PROFILE_COUNT).expect("canonical26 mask");
+        assert_eq!(mask, 0x03ff_ffff);
+        assert_eq!(mask.count_ones(), 26);
+        assert!(validate_mode_mask(PROFILES.len(), mask).is_ok());
+        assert!(validate_mode_mask(
+            PROFILES.len(),
+            mode_mask(REGISTRY24_PROFILE_COUNT).expect("registry24 mask")
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn canonical26_selection_is_loaded_prefix_aware_and_typed() {
+        let full = manifest_for(&[DType::F16, DType::Bf16]);
+        for dtype in [DType::F16, DType::Bf16] {
+            let mistral = spec_for(&PROFILES[20], dtype);
+            let gemma3 = spec_for(&PROFILES[21], dtype);
+            let eg2 = spec_for(&PROFILES[23], dtype);
+            let gemma4_causal = spec_for(&PROFILES[24], dtype);
+            let gemma4_noncausal = spec_for(&PROFILES[25], dtype);
+
+            // Published20 cannot see any appended d256 profile. Mistral's exact
+            // extents fall back to the declared causal-local d128 kernel.
+            let p20 = manifest_prefix(&[dtype], PUBLISHED_PROFILE_COUNT);
+            assert_eq!(select_profile(&p20, &mistral).ok(), Some(15));
+            assert!(select_profile(&p20, &gemma3).is_err());
+            assert!(select_profile(&p20, &eg2).is_err());
+            assert!(select_profile(&p20, &gemma4_causal).is_err());
+            assert!(select_profile(&p20, &gemma4_noncausal).is_err());
+            assert!(
+                format!("{}", select_profile(&p20, &gemma4_causal).unwrap_err())
+                    .contains("missing-profile")
+            );
+
+            // Private23 sees Mistral/Gemma3/causal_gqa8 but not d256 Q8/KV1
+            // local or EG2, and must reject instead of approximating.
+            let p23 = manifest_prefix(&[dtype], PRIVATE23_PROFILE_COUNT);
+            assert_eq!(select_profile(&p23, &mistral).ok(), Some(20));
+            assert_eq!(select_profile(&p23, &gemma3).ok(), Some(21));
+            assert!(select_profile(&p23, &eg2).is_err());
+            assert!(select_profile(&p23, &gemma4_causal).is_err());
+            assert!(select_profile(&p23, &gemma4_noncausal).is_err());
+
+            // Registry24 adds EG2 (noncausal d256 GQA2 local) but still has no
+            // Gemma4 Q8/KV1 d256 local profile.
+            let p24 = manifest_prefix(&[dtype], REGISTRY24_PROFILE_COUNT);
+            assert_eq!(select_profile(&p24, &eg2).ok(), Some(23));
+            assert!(select_profile(&p24, &gemma4_causal).is_err());
+            assert!(select_profile(&p24, &gemma4_noncausal).is_err());
+
+            // Prefix25 exposes the causal Gemma4 mode only.
+            let p25 = manifest_prefix(&[dtype], CANONICAL26_PROFILE_COUNT - 1);
+            assert_eq!(select_profile(&p25, &gemma4_causal).ok(), Some(24));
+            assert!(select_profile(&p25, &gemma4_noncausal).is_err());
+
+            // Full canonical26 exposes both exact modes.
+            assert_eq!(select_profile(&full, &gemma4_causal).ok(), Some(24));
+            assert_eq!(select_profile(&full, &gemma4_noncausal).ok(), Some(25));
+        }
+    }
+
+    #[test]
+    fn canonical26_gemma4_ratio_is_not_broadened_and_global_d256_is_exact() {
+        let manifest = manifest_for(&[DType::F16, DType::Bf16]);
+        for dtype in [DType::F16, DType::Bf16] {
+            let profile = PROFILES[24];
+            // Absolute heads are runtime for the same exported ratio 8.
+            for (heads, kv_heads) in [(8, 1), (16, 2), (32, 4), (64, 8)] {
+                let mut spec = spec_for(&profile, dtype);
+                spec.heads = heads;
+                spec.kv_heads = kv_heads;
+                assert_eq!(select_profile(&manifest, &spec).ok(), Some(24));
+            }
+            // A different ratio must not alias mode24. Ratio 4 d256 causal
+            // local is the separate Gemma3 mode21, not a broadened Gemma4 hit.
+            for (heads, kv_heads) in [(12, 2), (6, 1), (24, 4)] {
+                let mut spec = spec_for(&profile, dtype);
+                spec.heads = heads;
+                spec.kv_heads = kv_heads;
+                assert!(select_profile(&manifest, &spec).is_err());
+            }
+            let mut ratio4 = spec_for(&profile, dtype);
+            ratio4.heads = 16;
+            ratio4.kv_heads = 4;
+            assert_eq!(select_profile(&manifest, &ratio4).ok(), Some(21));
+            // Global d256 masks stay exact: ratio-4 noncausal is mode6, while a
+            // ratio-8 global d256 request has no compiled profile.
+            let mut global_ratio4 = spec_for(&profile, dtype);
+            global_ratio4.heads = 16;
+            global_ratio4.kv_heads = 4;
+            global_ratio4.causal = false;
+            global_ratio4.window = Window::Global;
+            assert_eq!(select_profile(&manifest, &global_ratio4).ok(), Some(6));
+            let mut global_ratio8 = global_ratio4;
+            global_ratio8.heads = 16;
+            global_ratio8.kv_heads = 2;
+            assert!(select_profile(&manifest, &global_ratio8).is_err());
+        }
+    }
+
+    #[test]
+    fn canonical26_complete_bundle_with_exact_mul_validates_26_modes() {
+        let mut manifest = manifest_for(&[DType::F16, DType::Bf16]);
+        for dtype in [DType::F16, DType::Bf16] {
+            manifest["kernels"]
+                .as_array_mut()
+                .expect("test manifest has kernels")
+                .push(deberta_kernel(dtype));
+        }
+        push_exact_mul_deberta_pair(&mut manifest);
+        for dtype in [DType::F16, DType::Bf16] {
+            assert_eq!(
+                validate_profile_order(&manifest, dtype).ok(),
+                Some(CANONICAL26_PROFILE_COUNT)
+            );
+            assert_eq!(
+                select_profile(&manifest, &spec_for(&PROFILES[25], dtype)).ok(),
+                Some(25)
+            );
+        }
+    }
+
+    #[test]
+    fn canonical26_registry_metadata_is_validated_when_present() {
+        let baseline = manifest_for(&[DType::F16, DType::Bf16]);
+        let mut manifest = baseline.clone();
+        manifest["registry"] = json!({
+            "namespace": "canonical26",
+            "mode_count": 26,
+            "mode_mask": "0x3ffffff",
+            "profile_sequence_sha256": "3b214841c169c3bcaad0574ee9df917c9fc8a05be1e64602cf5b91d99a67ff1e",
+        });
+        for dtype in [DType::F16, DType::Bf16] {
+            assert_eq!(validate_profile_order(&manifest, dtype).ok(), Some(26));
+        }
+        for (field, value) in [
+            ("mode_count", json!(25)),
+            ("mode_mask", json!("0x1ffffff")),
+            ("namespace", json!("standalone")),
+            ("namespace", json!("published20")),
+            ("profile_sequence_sha256", json!("not-a-hash")),
+            // A well-formed 64-hex fingerprint from a different prefix.
+            (
+                "profile_sequence_sha256",
+                json!("827958cc0e82a0bccf0cf2ac96d25492a9fb40e7e36c54843618eaaf26807ebd"),
+            ),
+        ] {
+            let mut wrong = manifest.clone();
+            wrong["registry"][field] = value;
+            assert!(
+                validate_profile_order(&wrong, DType::F16).is_err(),
+                "{field}"
+            );
+        }
+
+        // Prefix-specific metadata is accepted for the matching prefix.
+        let mut prefix24 = manifest_prefix(&[DType::F16, DType::Bf16], REGISTRY24_PROFILE_COUNT);
+        prefix24["registry"] = json!({
+            "namespace": "registry24",
+            "mode_count": 24,
+            "mode_mask": "0xffffff",
+            "profile_sequence_sha256": "99c39dc70c2cd22532df08d4edbb6a3f62cfd10a910c1da66321cbb434a233b6",
+        });
+        assert_eq!(
+            validate_profile_order(&prefix24, DType::F16).ok(),
+            Some(REGISTRY24_PROFILE_COUNT)
+        );
     }
 
     #[test]
@@ -1402,8 +1854,12 @@ mod tests {
                 spec.kv_heads = kv_heads;
                 assert!(select_profile(&manifest, &spec).is_err());
             }
+            // d128 ratio8 causal global is now the canonical mode22 append.
+            let mut wider_dim = spec_for(&profile, dtype);
+            wider_dim.head_dim = 128;
+            assert_eq!(select_profile(&manifest, &wider_dim).ok(), Some(22));
             let mut wrong_dim = spec_for(&profile, dtype);
-            wrong_dim.head_dim = 128;
+            wrong_dim.head_dim = 32;
             assert!(select_profile(&manifest, &wrong_dim).is_err());
             let mut noncausal = spec_for(&profile, dtype);
             noncausal.causal = false;
@@ -1597,6 +2053,17 @@ mod tests {
         let mha32 = spec_for(&mha32(), DType::Bf16);
         let separate = fake_batch(&mha32, 8, 16);
         assert!(check_batch(&mha32, 100, &separate).is_ok());
+
+        // SM100 d256 local uses the generic one-CTA kernel and carries separate
+        // Q/K offsets; only the dedicated global two-CTA path is restricted.
+        let local = spec_for(&PROFILES[24], DType::Bf16);
+        let separate_local = fake_batch(&local, 8, 16);
+        assert!(check_batch(&local, 100, &separate_local).is_ok());
+        let mut split_local = separate_local;
+        split_local.k_offsets = 0x6000;
+        assert!(check_batch(&local, 100, &split_local).is_ok());
+        let global = spec_for(&PROFILES[6], DType::Bf16);
+        assert!(check_batch(&global, 100, &fake_batch(&global, 8, 16)).is_err());
     }
 
     #[test]

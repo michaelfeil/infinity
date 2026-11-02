@@ -5,13 +5,12 @@
 Use the tested FA4 revision e9cf2c1651d2303191eb40a739a3c135fda00999 and
 nvidia-cutlass-dsl 4.7.1 in an isolated environment. Pass the CuTe runtime
 library directory (cu12/lib for CUDA12 serving) and the tvm_ffi package root.
-Use --compile-only --export-only for fake-tensor AOT export, then --link-only inside the deployment
+Use --compile-only --export-only without a GPU, then --link-only inside the deployment
 build container to avoid requiring a newer libstdc++ than the serving image.
 The LibTorch build consumes a parent directory of sm_NN bundles through
 INFINITY_FA4_ROOT and installs them beside libtei_torch.so.
 """
 import argparse
-import contextlib
 import os
 import hashlib
 import importlib.metadata
@@ -20,6 +19,7 @@ import pathlib
 import shutil
 import subprocess
 from portable_host import export_portable, host_target, validate_host_object
+import build_contract
 
 
 p = argparse.ArgumentParser(description=__doc__)
@@ -46,68 +46,129 @@ a.output.mkdir(parents=True, exist_ok=True)
 def digest(path):
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
+def registry_metadata():
+    rows = []
+    for line in pathlib.Path(__file__).with_name("profiles.inc").read_text().splitlines():
+        if not line.startswith("FA4_PROFILE("):
+            continue
+        name, *fields = line.removeprefix("FA4_PROFILE(").removesuffix(")").split(",")
+        h, hk, d, causal, local = map(int, fields)
+        rows.append((name.strip(), h, hk, d, bool(causal), bool(local)))
+    namespaces = {19: "legacy19", 20: "published20", 21: "private23", 22: "private23",
+                  23: "private23", 24: "registry24", 25: "canonical26", 26: "canonical26"}
+    namespace = namespaces.get(len(rows))
+    if namespace is None:
+        raise RuntimeError(f"unsupported canonical profile count {len(rows)}")
+    sequence = "|".join(
+        f"{index}:{name}:{h}:{hk}:{d}:{int(causal)}:{int(local)}"
+        for index, (name, h, hk, d, causal, local) in enumerate(rows))
+    return {
+        "namespace": namespace,
+        "mode_count": len(rows),
+        "mode_mask": f"{(1 << len(rows)) - 1:#x}",
+        "profile_sequence_sha256": hashlib.sha256(sequence.encode()).hexdigest(),
+    }
+
+def compile_isolated(label, compile_fn):
+    # A noncausal d256 local profile can reuse an earlier generic kernel cache
+    # entry. Clear before every export so a cache hit never masquerades as a
+    # fresh compile, and require exactly one entry for this profile.
+    cache = interface._flash_attn_fwd.compile_cache.cache
+    cache.clear()
+    if len(cache) != 0:
+        raise RuntimeError(f"{label}: compile cache did not clear")
+    compile_fn()
+    if len(cache) != 1:
+        raise RuntimeError(f"Unexpected compilation count for {label}: {len(cache)}")
+    return next(iter(cache.values()))
+
+def clear_compile_cache(label):
+    cache = interface._flash_attn_fwd.compile_cache.cache
+    cache.clear()
+    if len(cache) != 0:
+        raise RuntimeError(f"{label}: compile cache did not clear after export")
+
 if not a.link_only:
-    # The manifest must describe the generated code, including when the caller
-    # inherited architecture overrides from an earlier build.
+    # Canonical26 is an AOT source build. Reject a visible GPU, a persistent
+    # JIT cache, and external ptxas before importing torch/flash_attn.
+    export_env = build_contract.validate_compile_env(os.environ, a.compile_only)
+    if a.runtime_dir is None or a.ffi_root is None:
+        p.error("canonical26 export requires --runtime-dir and --ffi-root")
+    profiles_inc = pathlib.Path(__file__).with_name("profiles.inc")
+    profile_rows = build_contract.validate_profiles_inc(profiles_inc)
     os.environ["FLASH_ATTENTION_ARCH"] = a.arch
     os.environ["CUTE_DSL_ARCH"] = a.arch
-    if a.compile_only:
-        os.environ["FLASH_ATTENTION_NUM_SMS"] = str({80: 108, 86: 72, 89: 58, 90: 132, 100: 148, 120: 188}[capability])
-    else:
-        os.environ.pop("FLASH_ATTENTION_NUM_SMS", None)
-    if a.compile_only:
-        # External-ptxas hooks can load foreign-target cubins during AOT export.
-        os.environ.pop("CUTE_DSL_PTXAS_PATH", None)
+    os.environ["FLASH_ATTENTION_NUM_SMS"] = str({80: 108, 86: 72, 89: 58, 90: 132, 100: 148, 120: 188}[capability])
     from fa4_source import stage_fa4_sources
     staged_source, softmax_backport = stage_fa4_sources()
+    gemma_local_patch = None
+    if capability == 100:
+        from gemma_sm100_local import patch_interface
+        gemma_local_patch = patch_interface(pathlib.Path(staged_source.name) / 'flash_attn/cute/interface.py')
+    lock_path = pathlib.Path(__file__).with_name("fa4_source_lock.json")
+    source_lock = build_contract.load_source_lock(lock_path)
+    if softmax_backport != source_lock["softmax_policy"]:
+        raise RuntimeError("staged FA4 softmax policy differs from the source lock")
+    source_identity_before = build_contract.verify_source_identity(
+        pathlib.Path(staged_source.name) / "flash_attn/cute", capability, source_lock)
     import torch
+    def require_no_cuda(label):
+        if torch.cuda.is_initialized():
+            raise RuntimeError(f"CUDA context initialized unexpectedly: {label}")
+    require_no_cuda("after torch import")
     import flash_attn.cute.interface as interface
-    if a.compile_only:
-        from compile_only import install_export_only_compile
-        compile_only_state = install_export_only_compile(interface.cute)
-    if not a.compile_only and torch.cuda.get_device_capability() != divmod(capability, 10):
-        raise RuntimeError(f"Exporting {a.arch} requires a matching GPU or --compile-only")
+    require_no_cuda("after flash_attn import")
+    source_identity_after = build_contract.verify_source_identity(
+        pathlib.Path(interface.__file__).parent, capability, source_lock)
     if importlib.metadata.version("nvidia-cutlass-dsl") != "4.7.1":
         raise RuntimeError("The private export API is validated with cutlass-dsl 4.7.1 only")
     a.output.mkdir(parents=True, exist_ok=True)
+    from compile_only import install_export_only_compile
+    compile_only_state = install_export_only_compile(interface.cute)
     objects, kernels = [], []
     from torch._subclasses.fake_tensor import FakeTensorMode
-    with FakeTensorMode() if a.compile_only else contextlib.nullcontext():
+    with FakeTensorMode():
         cu = torch.tensor([0, 127, 256], device="cuda", dtype=torch.int32)
         for dtype_name, dtype in [("fp16", torch.float16), ("bf16", torch.bfloat16)]:
             profiles = []
-            for line in pathlib.Path(__file__).with_name("profiles.inc").read_text().splitlines():
-                if line.startswith("FA4_PROFILE("):
-                    name, *fields = line.removeprefix("FA4_PROFILE(").removesuffix(")").split(",")
-                    h, hk, d, causal, local = map(int, fields)
-                    window = (64, 0) if causal and local else (64, 64) if local else (None, None)
-                    profiles.append((name.strip(), h, hk, d, bool(causal), window))
-            for name, h, hk, d, causal, window in profiles:
+            for mode, row in enumerate(profile_rows):
+                name, h, hk, d, causal, _local = row
+                window = build_contract.canonical_window(mode, name, causal, _local)
+                profiles.append((mode, name, h, hk, d, causal, window))
+            for mode, name, h, hk, d, causal, window in profiles:
                 q = torch.zeros((256, h, d), device="cuda", dtype=dtype)
                 k = torch.zeros((256, hk, d), device="cuda", dtype=dtype)
-                previous = set(interface._flash_attn_fwd.compile_cache.cache)
-                if d == 256 and capability in (80, 86, 89, 120):
-                    # 64x64 fits the 99 KiB shared-memory budget of SM86/89/120.
-                    interface._flash_attn_fwd(q, k, k, cu_seqlens_q=cu, cu_seqlens_k=cu,
-                                             max_seqlen_q=129, max_seqlen_k=129,
-                                             tile_mn=(64, 64), causal=causal,
-                                             window_size_left=window[0], window_size_right=window[1],
-                                             disable_scheduler_metadata=True)
-                else:
-                    interface.flash_attn_varlen_func(q, k, k, cu_seqlens_q=cu, cu_seqlens_k=cu,
-                                                    max_seqlen_q=129, max_seqlen_k=129,
-                                                    causal=causal, window_size=window,
-                                                    disable_scheduler_metadata=True)
-                fresh = set(interface._flash_attn_fwd.compile_cache.cache) - previous
-                if len(fresh) != 1:
-                    raise RuntimeError(f"Unexpected compilation count for {name}: {len(fresh)}")
-                compiled = interface._flash_attn_fwd.compile_cache.cache[fresh.pop()]
+                def compile_profile():
+                    # SM100 d256 local must use the generic one-CTA path; the
+                    # dedicated two-CTA hd256 kernel rejects local windows. This
+                    # covers Gemma3, EmbeddingGemma2 and Gemma4 local d256 profiles.
+                    if d == 256 and window[0] is not None and capability == 100:
+                        interface._flash_attn_fwd(q, k, k, cu_seqlens_q=cu, cu_seqlens_k=cu,
+                                                 max_seqlen_q=129, max_seqlen_k=129, tile_mn=(128, 64),
+                                                 num_splits=1, pack_gqa=False, causal=causal,
+                                                 window_size_left=window[0], window_size_right=window[1],
+                                                 disable_scheduler_metadata=True)
+                    elif d == 256 and capability in (80, 86, 89, 120):
+                        # 64x64 fits the 99 KiB shared-memory budget of SM86/89/120.
+                        interface._flash_attn_fwd(q, k, k, cu_seqlens_q=cu, cu_seqlens_k=cu,
+                                                 max_seqlen_q=129, max_seqlen_k=129,
+                                                 tile_mn=(64, 64), causal=causal,
+                                                 window_size_left=window[0], window_size_right=window[1],
+                                                 disable_scheduler_metadata=True)
+                    else:
+                        interface.flash_attn_varlen_func(q, k, k, cu_seqlens_q=cu, cu_seqlens_k=cu,
+                                                        max_seqlen_q=129, max_seqlen_k=129,
+                                                        causal=causal, window_size=window,
+                                                        disable_scheduler_metadata=True)
+                compiled = compile_isolated(name, compile_profile)
                 symbol = f"fa4_{name}_{dtype_name}"
                 obj = a.output / f"{symbol}.o"
                 export_portable(compiled, obj, symbol)
+                require_no_cuda(f"after export {symbol}")
+                clear_compile_cache(name)
                 objects.append(str(obj))
-                kernels.append(dict(symbol=symbol, heads=h, kv_heads=hk, d=d,
-                                    causal=causal, window=window, dtype=dtype_name))
+                kernels.append(build_contract.profile_kernel(
+                    mode, name, h, hk, d, causal, window, dtype_name))
         if a.deberta:
             # SM90 varlen scheduling derives its grid from runtime tensor sizes and
             # cumulative lengths. The 129 below is an export example, not a bound
@@ -118,18 +179,17 @@ if not a.link_only:
                 q = torch.zeros((256, 12, 64), device="cuda", dtype=dtype)
                 rel = torch.zeros((12, 256, 512), device="cuda", dtype=dtype)
                 lut = torch.zeros(257, device="cuda", dtype=torch.int32)
-                previous = set(interface._flash_attn_fwd.compile_cache.cache)
-                interface.flash_attn_varlen_func(q, q, q, cu_seqlens_q=cu, cu_seqlens_k=cu,
-                    max_seqlen_q=129, max_seqlen_k=129, softmax_scale=1.,
-                    score_mod=deberta_score, aux_tensors=[rel, rel, lut],
-                    disable_scheduler_metadata=True)
-                fresh = set(interface._flash_attn_fwd.compile_cache.cache) - previous
-                if len(fresh) != 1:
-                    raise RuntimeError("Unexpected DeBERTa compilation count")
-                compiled = interface._flash_attn_fwd.compile_cache.cache[fresh.pop()]
+                def compile_deberta():
+                    interface.flash_attn_varlen_func(q, q, q, cu_seqlens_q=cu, cu_seqlens_k=cu,
+                        max_seqlen_q=129, max_seqlen_k=129, softmax_scale=1.,
+                        score_mod=deberta_score, aux_tensors=[rel, rel, lut],
+                        disable_scheduler_metadata=True)
+                compiled = compile_isolated(f"deberta_{dtype_name}", compile_deberta)
                 symbol = f"fa4_deberta_{dtype_name}"
                 obj = a.output / f"{symbol}.o"
                 export_portable(compiled, obj, symbol)
+                require_no_cuda(f"after export {symbol}")
+                clear_compile_cache(f"deberta_{dtype_name}")
                 objects.append(str(obj))
                 kernels.append(dict(symbol=symbol, heads=12, kv_heads=12, d=64,
                                     causal=False, window=[None, None], dtype=dtype_name))
@@ -141,18 +201,17 @@ if not a.link_only:
                 q = torch.zeros((256, 12, 64), device="cuda", dtype=torch.bfloat16)
                 rel = torch.zeros((12, 256, 512), device="cuda", dtype=torch.bfloat16)
                 lut = torch.zeros(257, device="cuda", dtype=torch.int32)
-                previous = set(interface._flash_attn_fwd.compile_cache.cache)
-                interface.flash_attn_varlen_func(q, q, q, cu_seqlens_q=cu, cu_seqlens_k=cu,
-                    max_seqlen_q=129, max_seqlen_k=129, softmax_scale=1.,
-                    score_mod=callback, aux_tensors=[rel, rel, lut],
-                    disable_scheduler_metadata=True)
-                fresh = set(interface._flash_attn_fwd.compile_cache.cache) - previous
-                if len(fresh) != 1:
-                    raise RuntimeError("Unexpected exact-mul DeBERTa compilation count")
-                compiled = interface._flash_attn_fwd.compile_cache.cache[fresh.pop()]
+                def compile_exact_mul():
+                    interface.flash_attn_varlen_func(q, q, q, cu_seqlens_q=cu, cu_seqlens_k=cu,
+                        max_seqlen_q=129, max_seqlen_k=129, softmax_scale=1.,
+                        score_mod=callback, aux_tensors=[rel, rel, lut],
+                        disable_scheduler_metadata=True)
+                compiled = compile_isolated(f"deberta_exact_mul_{name}", compile_exact_mul)
                 symbol = f"fa4_deberta_exact_mul_{name}_bf16"
                 obj = a.output / f"{symbol}.o"
                 export_portable(compiled, obj, symbol)
+                require_no_cuda(f"after export {symbol}")
+                clear_compile_cache(f"deberta_exact_mul_{name}")
                 objects.append(str(obj))
                 kernels.append(dict(symbol=symbol, heads=12, kv_heads=12, d=64,
                                     causal=False, window=[None, None], dtype="bf16",
@@ -170,18 +229,17 @@ if not a.link_only:
                     ("bf16", torch.bfloat16, alibi_model_bias_bf16)]:
                 q = torch.zeros((256, 8, 64), device="cuda", dtype=dtype)
                 slopes = torch.zeros(8, device="cuda", dtype=torch.float32)
-                previous = set(interface._flash_attn_fwd.compile_cache.cache)
-                interface.flash_attn_varlen_func(q, q, q, cu_seqlens_q=cu, cu_seqlens_k=cu,
-                    max_seqlen_q=129, max_seqlen_k=129, softmax_scale=1.,
-                    score_mod=score_mod, aux_tensors=[slopes],
-                    disable_scheduler_metadata=True)
-                fresh = set(interface._flash_attn_fwd.compile_cache.cache) - previous
-                if len(fresh) != 1:
-                    raise RuntimeError("Unexpected ALiBi compilation count")
-                compiled = interface._flash_attn_fwd.compile_cache.cache[fresh.pop()]
+                def compile_alibi():
+                    interface.flash_attn_varlen_func(q, q, q, cu_seqlens_q=cu, cu_seqlens_k=cu,
+                        max_seqlen_q=129, max_seqlen_k=129, softmax_scale=1.,
+                        score_mod=score_mod, aux_tensors=[slopes],
+                        disable_scheduler_metadata=True)
+                compiled = compile_isolated(f"alibi_{dtype_name}", compile_alibi)
                 symbol = f"fa4_alibi_model_bias_{dtype_name}"
                 obj = a.output / f"{symbol}.o"
                 export_portable(compiled, obj, symbol)
+                require_no_cuda(f"after export {symbol}")
+                clear_compile_cache(f"alibi_{dtype_name}")
                 objects.append(str(obj))
                 kernels.append(dict(symbol=symbol, heads=8, kv_heads=8, d=64,
                                     causal=False, window=[None, None], dtype=dtype_name,
@@ -200,18 +258,17 @@ if not a.link_only:
                 k = packed[:, 768:1536].view(256, 12, 64)
                 v = packed[:, 1536:].view(256, 12, 64)
                 slopes = torch.zeros(12, device="cuda", dtype=torch.float32)
-                previous = set(interface._flash_attn_fwd.compile_cache.cache)
-                interface.flash_attn_varlen_func(q, k, v, cu_seqlens_q=cu, cu_seqlens_k=cu,
-                    max_seqlen_q=129, max_seqlen_k=129, softmax_scale=1.,
-                    score_mod=score_mod, aux_tensors=[slopes],
-                    disable_scheduler_metadata=True)
-                fresh = set(interface._flash_attn_fwd.compile_cache.cache) - previous
-                if len(fresh) != 1:
-                    raise RuntimeError("Unexpected native JinaCode compilation count")
-                compiled = interface._flash_attn_fwd.compile_cache.cache[fresh.pop()]
+                def compile_jinacode():
+                    interface.flash_attn_varlen_func(q, k, v, cu_seqlens_q=cu, cu_seqlens_k=cu,
+                        max_seqlen_q=129, max_seqlen_k=129, softmax_scale=1.,
+                        score_mod=score_mod, aux_tensors=[slopes],
+                        disable_scheduler_metadata=True)
+                compiled = compile_isolated(f"jinacode_{dtype_name}", compile_jinacode)
                 symbol = f"fa4_jinacode_flash_alibi_{dtype_name}"
                 obj = a.output / f"{symbol}.o"
                 export_portable(compiled, obj, symbol)
+                require_no_cuda(f"after export {symbol}")
+                clear_compile_cache(f"jinacode_{dtype_name}")
                 objects.append(str(obj))
                 kernels.append(dict(symbol=symbol, heads=12, kv_heads=12, d=64,
                                     causal=False, window=[None, None], dtype=dtype_name,
@@ -219,13 +276,50 @@ if not a.link_only:
                                     score_abi=1, qk_scale=0.125, external_softmax_scale=1.0,
                                     bias_rounding="float32_fma_unscaled_then_pow2_scale",
                                     alibi_heads=12, alibi_slope_count=12))
+    require_no_cuda("after all exports")
+    profile_names = [row[0] for row in profile_rows]
+    kernel_flags = {
+        "include_deberta": a.deberta,
+        "include_deberta_exact_mul": a.deberta_exact_mul,
+        "include_alibi": a.alibi,
+        "include_jinacode": a.jinacode,
+    }
+    kernels = build_contract.canonical_metadata_order(
+        kernels, profile_names, **kernel_flags)
+    expected_symbols = build_contract.validate_kernel_order(
+        kernels, profile_names, **kernel_flags)
+    build_contract.validate_window_contract(kernels, profile_names)
+    link_object_order = [
+        f"{symbol}.o" for symbol in build_contract.expected_link_symbols(
+            profile_names, **kernel_flags)]
+    exported_object_order = [pathlib.Path(obj).name for obj in objects]
+    if exported_object_order != link_object_order:
+        raise RuntimeError(
+            "canonical26 export/link object order changed: "
+            f"expected={link_object_order} actual={exported_object_order}")
+    export_runtime_pins = build_contract.runtime_pins(a.ffi_root, a.runtime_dir)
     manifest = {
         "abi_version": 7,
+        "registry": registry_metadata(),
+        "gemma_sm100_local_source_patch": gemma_local_patch,
         "host_target": host_target(),
         "softmax_backport": softmax_backport,
         "architecture": a.arch,
-        "executed_during_export": not a.compile_only,
-        "target_sm_count": int(os.environ["FLASH_ATTENTION_NUM_SMS"]) if a.compile_only else torch.cuda.get_device_properties(torch.cuda.current_device()).multi_processor_count,
+        "executed_during_export": False,
+        "target_sm_count": int(os.environ["FLASH_ATTENTION_NUM_SMS"]),
+        "export_env": export_env,
+        "persistent_jit_cache_disabled": True,
+        "fa4_source_lock_sha256": digest(lock_path),
+        "fa4_source_identity": {
+            "before_import": source_identity_before,
+            "after_import": source_identity_after,
+        },
+        "export_runtime_pins": export_runtime_pins,
+        "canonical26_inventory": {
+            "exact_order": True,
+            "symbols": expected_symbols,
+        },
+        "link_object_order": link_object_order,
         "deberta_score_sha256": digest(pathlib.Path(__file__).with_name("deberta_score.py")) if a.deberta else None,
         "kernels": kernels,
         "fa4_python_sources": {str(f.relative_to(pathlib.Path(interface.__file__).parent)): digest(f)
@@ -234,22 +328,44 @@ if not a.link_only:
         "tvm_ffi": importlib.metadata.version("apache-tvm-ffi"),
         "objects": {pathlib.Path(obj).name: digest(pathlib.Path(obj)) for obj in objects},
     }
-    if a.compile_only:
-        manifest["compile_only_engine_control"] = compile_only_state
-    if a.deberta_exact_mul:
-        manifest["deberta_mul_score_sha256"] = digest(pathlib.Path(__file__).with_name("deberta_mul_score.py"))
     if a.alibi:
         manifest["alibi_score_sha256"] = digest(pathlib.Path(__file__).with_name("alibi_score.py"))
     if a.jinacode:
         manifest["alibi12_native_score_sha256"] = digest(pathlib.Path(__file__).with_name("alibi12_native_score.py"))
+    if a.deberta_exact_mul:
+        manifest["deberta_mul_score_sha256"] = digest(pathlib.Path(__file__).with_name("deberta_mul_score.py"))
+    if a.compile_only:
+        if len(compile_only_state["calls"]) != len(kernels):
+            raise RuntimeError(
+                f"compile callback count {len(compile_only_state['calls'])} != kernel count {len(kernels)}")
+        manifest["compile_only_engine_control"] = compile_only_state
+        manifest["compile_cache_isolation"] = {
+            "policy": "clear-cache-before-and-after-every-export",
+            "exports": len(kernels),
+            "compile_callbacks": len(compile_only_state["calls"]),
+            "cache_entries_after_each_compile": 1,
+        }
+    build_contract.validate_manifest_inventory(
+        manifest, profile_rows, require_all_helpers=False)
     (a.output / "manifest.json").write_text(json.dumps(manifest, indent=2))
 else:
     manifest = json.loads((a.output / "manifest.json").read_text())
+    if manifest["architecture"] != a.arch:
+        raise RuntimeError("Link target differs from the exported architecture")
+    for package, field in [("nvidia-cutlass-dsl", "cutlass_dsl"), ("apache-tvm-ffi", "tvm_ffi")]:
+        if importlib.metadata.version(package) != manifest[field]:
+            raise RuntimeError("Link runtime/compiler version differs from export: " + package)
+    if a.ffi_root is None or a.runtime_dir is None:
+        raise RuntimeError("Linking requires --runtime-dir and --ffi-root")
     if manifest.get("abi_version") != 7:
         raise RuntimeError("Re-export the native bundle for ABI version 7")
     if manifest.get("host_target") != host_target():
         raise RuntimeError("Re-export FA4 with the portable host target before linking")
-    objects = [str(a.output / (k["symbol"] + ".o")) for k in manifest["kernels"]]
+    profiles_inc = pathlib.Path(__file__).with_name("profiles.inc")
+    profile_rows = build_contract.validate_profiles_inc(profiles_inc)
+    link_object_order = build_contract.validate_manifest_inventory(
+        manifest, profile_rows)["link_object_order"]
+    objects = [str(a.output / name) for name in link_object_order]
     for obj in objects:
         path = pathlib.Path(obj)
         if digest(path) != manifest["objects"][path.name]:
@@ -261,6 +377,7 @@ if a.export_only:
     raise SystemExit(0)
 if a.runtime_dir is None or a.ffi_root is None:
     p.error("Linking requires --runtime-dir and --ffi-root")
+build_contract.verify_runtime_pins(manifest, a.ffi_root, a.runtime_dir)
 if manifest["architecture"] not in ["sm_80", "sm_86", "sm_89", "sm_90a", "sm_100a", "sm_120"]:
     raise RuntimeError("Unsupported bundle architecture")
 capability = int(manifest["architecture"].removeprefix("sm_").removesuffix("a"))
@@ -273,8 +390,17 @@ else:
     link_defines = ["-DFA4_DEBERTA"] if any(k["symbol"].startswith("fa4_deberta_") for k in manifest["kernels"]) else []
 if any(k["symbol"].startswith("fa4_deberta_exact_mul_") for k in manifest["kernels"]):
     link_defines.append("-DFA4_DEBERTA_EXACT_MUL")
+registry = manifest.get("registry") or {}
+registry_defines = []
+if "mode_count" in registry:
+    registry_defines.append(f"-DFA4_REGISTRY_MODE_COUNT={int(registry['mode_count'])}")
+if "namespace" in registry:
+    registry_defines.append(f'-DFA4_REGISTRY_NAMESPACE="{registry["namespace"]}"')
+if not a.link_only:
+    require_no_cuda("before link")
 subprocess.run([a.cxx, "-std=c++17", "-O2", "-fPIC", "-shared", str(bridge),
                 *objects, "-DINFINITY_FA4_PORTABLE_HOST=1", f"-DFA4_COMPUTE_CAPABILITY={capability}", f"-I{a.ffi_root / 'include'}",
+                *registry_defines,
                 f"-L{a.runtime_dir}", "-lcute_dsl_runtime",
                 f"-L{a.ffi_root / 'lib'}", "-ltvm_ffi",
                 "-Wl,-rpath,$ORIGIN", "-Wl,-z,defs",
@@ -304,6 +430,7 @@ manifest.update({
     "bridge_source_sha256": digest(bridge),
     "cxx": subprocess.check_output([a.cxx, "--version"], text=True).splitlines()[0],
     "libraries": {f.name: digest(f) for f in sorted(a.output.glob("*.so"))},
+    "runtime_pins_verified_on_link": True,
 })
 (a.output / "manifest.json").write_text(json.dumps(manifest, indent=2))
 print(f"Linked {len(manifest['kernels'])} kernels and native bridge in {a.output}", flush=True)

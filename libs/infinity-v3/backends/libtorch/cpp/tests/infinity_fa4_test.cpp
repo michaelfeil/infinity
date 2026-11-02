@@ -95,6 +95,9 @@ constexpr Profile profiles[] = {
 #include "vendor/infinity_fa4/profiles.inc"
 #undef FA4_PROFILE
 };
+constexpr size_t native_profile_count = 20;
+static_assert(native_profile_count <= std::size(profiles),
+              "Native test bound exceeds compiled profiles");
 
 void standard(at::ScalarType dtype, int mode, bool cross, int64_t span = 0) {
   const auto& profile = profiles[mode];
@@ -427,7 +430,7 @@ int main(int argc, char** argv) {
   auto stream = c10::cuda::getStreamFromPool();
   c10::cuda::CUDAStreamGuard guard(stream);
   for (auto dtype : {at::kHalf, at::kBFloat16}) {
-    for (size_t mode = 0; mode < std::size(profiles); ++mode)
+    for (size_t mode = 0; mode < native_profile_count; ++mode)
       for (bool cross : {false, true})
         standard(dtype, mode, cross);
     deberta(dtype);

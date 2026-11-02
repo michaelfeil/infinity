@@ -694,7 +694,7 @@ impl DecoderModel {
             dtype: fa4::DType::Bf16,
             scale: fa4::Scale::RsqrtHeadDim,
         };
-        if !fa4::Fa4::supports(&attention_spec) {
+        if !fa4::Fa4::supports_published(&attention_spec) {
             return Err(start(format!(
                 "decoder attention H{} KV{} d{} causal={} has no qualified ABI7 FA4 export",
                 config.num_attention_heads,
@@ -1965,6 +1965,31 @@ mod tests {
                 }));
             }
         }
+    }
+
+    #[test]
+    fn decoder_auto_prefix_keeps_published_and_falls_back_for_appended() {
+        let published = fa4::AttentionSpec {
+            heads: 32,
+            kv_heads: 8,
+            head_dim: 128,
+            causal: true,
+            window: fa4::Window::Local { left: 64, right: 0 },
+            dtype: fa4::DType::Bf16,
+            scale: fa4::Scale::RsqrtHeadDim,
+        };
+        assert!(fa4::Fa4::supports_published(&published));
+        let appended = fa4::AttentionSpec {
+            heads: 32,
+            kv_heads: 4,
+            head_dim: 128,
+            causal: true,
+            window: fa4::Window::Global,
+            dtype: fa4::DType::Bf16,
+            scale: fa4::Scale::RsqrtHeadDim,
+        };
+        assert!(fa4::Fa4::supports(&appended));
+        assert!(!fa4::Fa4::supports_published(&appended));
     }
 
     #[test]

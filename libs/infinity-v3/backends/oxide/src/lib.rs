@@ -3731,7 +3731,7 @@ fn encoder_model<E: UploadElement>(
             }
             "auto"
                 if fa4_root.is_some()
-                    && (alibi_family || fa4::Fa4::supports(&attention_spec))
+                    && (alibi_family || fa4::Fa4::supports_published(&attention_spec))
                     && packed.is_some() =>
             {
                 let root = fa4_root.as_ref().ok_or_else(|| start("Missing FA4 root"))?;

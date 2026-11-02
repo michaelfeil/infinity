@@ -26,6 +26,19 @@ constexpr Profile profiles[] = {
 #undef FA4_PROFILE
 };
 constexpr int attention_modes = sizeof(profiles) / sizeof(profiles[0]);
+// The linked profile table is the native mode ABI. A manifest may only publish
+// the registry prefix it was linked against; the link passes the manifest's
+// registry mode count so a stale profiles.inc cannot silently shift slots.
+#ifndef FA4_REGISTRY_MODE_COUNT
+#define FA4_REGISTRY_MODE_COUNT attention_modes
+#endif
+static_assert(attention_modes == FA4_REGISTRY_MODE_COUNT,
+              "profiles.inc mode count differs from the manifest registry");
+#ifndef FA4_REGISTRY_NAMESPACE
+#define FA4_REGISTRY_NAMESPACE "unversioned"
+#endif
+extern "C" int infinity_fa4_registry_mode_count_v1(){return attention_modes;}
+extern "C" const char* infinity_fa4_registry_namespace_v1(){return FA4_REGISTRY_NAMESPACE;}
 #ifndef FA4_COMPUTE_CAPABILITY
 #define FA4_COMPUTE_CAPABILITY 90
 #endif
@@ -117,7 +130,10 @@ extern "C" int infinity_fa4_forward_v1(int mode,int dtype,int device,void* strea
   StreamScope scope(device,stream);
   invoke_export(dtype * attention_modes + mode, [&] {
 #if FA4_COMPUTE_CAPABILITY == 100
-  if (profile.width == 256)
+  // Only non-local d256 uses the dedicated two-CTA 18-argument kernel.
+  // Local d256 is compiled through the generic one-CTA path (tile 128x64,
+  // q_stage 1) and therefore requires the 25-argument SM100 call shape.
+  if (profile.width == 256 && !profile.local)
     fn(&qt,&kt,&vt,&ot,nullptr,scale,&ct,&ckt,nullptr,nullptr,nullptr,lb,rb,nullptr,
        nullptr,nullptr,aux,int64_t(max_q));
   else

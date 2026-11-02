@@ -186,9 +186,15 @@ at::Tensor infinity_fa4(const at::Tensor& query,
 #include "vendor/infinity_fa4/profiles.inc"
 #undef FA4_PROFILE
   };
+  // Keep Native on the published 20-profile selector. Appended canonical26
+  // modes are exposed only through the manifest-driven Oxide provider until
+  // Native adoption is separately qualified.
+  constexpr size_t native_profile_count = 20;
+  static_assert(native_profile_count <= std::size(profiles),
+                "Native profile bound exceeds compiled profiles");
   int mode = -1;
   auto d = q.size(2), h = q.size(1), hk = k.size(1);
-  for (size_t index = 0; index < std::size(profiles); ++index) {
+  for (size_t index = 0; index < native_profile_count; ++index) {
     const auto& profile = profiles[index];
     const bool window = profile.local ? left >= 0 && (causal ? right <= 0 : right >= 0)
                                       : left < 0 && (causal ? right <= 0 : right < 0);
