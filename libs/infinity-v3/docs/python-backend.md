@@ -36,6 +36,8 @@ Reserved keys:
   `module:attribute` factory. If omitted, the sole installed entry point is
   used.
 - `queue_depth`: positive integer maximum in-flight forwards. Defaults to 32.
+  Admission uses the full validated value; the deferred completion queue is
+  capped separately.
 
 All other keys are passed to the plugin as opaque configuration. `device` is a
 common convention but is not interpreted by the frontend.
@@ -131,7 +133,10 @@ release model resources.
 
 - One executor thread per process is recommended. The Rust backend already
   serializes a single model worker and completion worker.
-- The Rust backend bounds outstanding forwards with `queue_depth`.
+- The Rust backend bounds outstanding forwards with `queue_depth`. The deferred
+  completion queue is bounded by `min(queue_depth, 256)`, so the model worker
+  can keep accepting coalesced batches without preallocating an oversized
+  channel. Other backend kinds retain their completion depth of 2.
 - `healthy` is called by the shared health endpoint.
 - The Python interpreter stays initialized for the process lifetime. The plugin
   must be importable before the first model is created.
