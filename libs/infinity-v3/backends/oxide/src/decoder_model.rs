@@ -6,6 +6,10 @@
 //! weights, build rotary tables or claim engine support. Executor integration is
 //! a separate step and owns those contracts.
 
+use crate::decoder_classifier::{
+    classifier_dense_rejected, reject_declared_dense_modules, DecoderClassifierConfig,
+    DecoderClassifierHeadHost,
+};
 use crate::model::{elements, path_present, read_json, Checkpoint, WeightSource};
 use infinity_v3_backend_core::BackendError;
 use serde::Deserialize;
@@ -28,6 +32,7 @@ pub(crate) enum DecoderFamily {
     Qwen2,
     Qwen3,
     Llama,
+    Mistral,
 }
 impl DecoderFamily {
     pub(crate) fn from_model_type(model_type: &str) -> Option<Self> {
@@ -35,8 +40,24 @@ impl DecoderFamily {
             "qwen2" => Some(Self::Qwen2),
             "qwen3" => Some(Self::Qwen3),
             "llama" => Some(Self::Llama),
+            "mistral" => Some(Self::Mistral),
             _ => None,
         }
+    }
+
+    pub(crate) fn is_decoder_model_type(model_type: &str) -> bool {
+        Self::from_model_type(model_type).is_some()
+            || matches!(model_type, "ministral3" | "bidirectional_pplx_qwen3")
+    }
+
+    /// Known Native decoder aliases/families whose actual arithmetic is not
+    /// ported. They must be rejected on the host instead of falling through to
+    /// encoder detection. Qwen3.5 remains a separate future Root branch.
+    pub(crate) fn is_unsupported_native_decoder_model_type(model_type: &str) -> bool {
+        matches!(
+            model_type,
+            "ministral3" | "llama_bidirec" | "mistral3" | "qwen3_moe"
+        )
     }
 
     pub(crate) const fn requires_qk_norm(self) -> bool {
@@ -47,23 +68,41 @@ impl DecoderFamily {
         match self {
             Self::Qwen2 => DEFAULT_QWEN2_THETA,
             Self::Qwen3 => DEFAULT_QWEN3_THETA,
-            Self::Llama => DEFAULT_LLAMA_THETA,
+            Self::Llama | Self::Mistral => DEFAULT_LLAMA_THETA,
         }
     }
 
     const fn default_rope(self) -> DecoderRope {
         match self {
             Self::Qwen2 | Self::Qwen3 => DecoderRope::FullNeoX,
-            Self::Llama => DecoderRope::Default,
+            Self::Llama | Self::Mistral => DecoderRope::Default,
         }
     }
 
-    fn accepts_architecture(self, architecture: &str) -> bool {
-        match self {
+    fn accepts_architecture(self, architecture: &str, classifier: bool) -> bool {
+        let backbone = match self {
             Self::Qwen2 => matches!(architecture, "Qwen2Model" | "Qwen2ForCausalLM"),
             Self::Qwen3 => matches!(architecture, "Qwen3Model" | "Qwen3ForCausalLM"),
             Self::Llama => matches!(architecture, "LlamaModel" | "LlamaForCausalLM"),
+            Self::Mistral => matches!(architecture, "MistralModel" | "MistralForCausalLM"),
+        };
+        if backbone {
+            return true;
         }
+        classifier
+            && matches!(
+                (self, architecture),
+                (
+                    Self::Qwen2,
+                    "Qwen2ForSequenceClassification" | "Qwen2ForTokenClassification"
+                ) | (
+                    Self::Qwen3,
+                    "Qwen3ForSequenceClassification" | "Qwen3ForTokenClassification"
+                ) | (
+                    Self::Llama,
+                    "LlamaForSequenceClassification" | "LlamaForTokenClassification"
+                )
+            )
     }
 }
 
@@ -128,12 +167,18 @@ pub(crate) struct DecoderConfig {
     pub(crate) rms_norm_eps: f64,
     pub(crate) rope_theta: f64,
     pub(crate) is_causal: bool,
+    pub(crate) attention_window: Option<usize>,
     pub(crate) rope: DecoderRope,
 }
 impl DecoderConfig {
     pub(crate) fn load(path: &Path) -> Result<Self, BackendError> {
         let raw: RawDecoderConfig = read_json(&path.join("config.json"))?;
-        Self::from_raw(raw)
+        Self::from_raw(raw, false)
+    }
+
+    fn from_value(value: serde_json::Value, classifier: bool) -> Result<Self, BackendError> {
+        let raw: RawDecoderConfig = serde_json::from_value(value).map_err(start)?;
+        Self::from_raw(raw, classifier)
     }
 
     pub(crate) const fn q_width(&self) -> usize {
@@ -144,23 +189,36 @@ impl DecoderConfig {
         self.num_key_value_heads * self.head_dim
     }
 
-    fn from_raw(raw: RawDecoderConfig) -> Result<Self, BackendError> {
-        let family = DecoderFamily::from_model_type(&raw.model_type).ok_or_else(|| {
+    fn from_raw(raw: RawDecoderConfig, classifier: bool) -> Result<Self, BackendError> {
+        if raw.model_type == "ministral3" {
+            return Err(start(
+                "ministral3 H3072/YaRN/transformers math is not ported; only ordinary Mistral H4096 is supported",
+            ));
+        }
+        let bidirectional_pplx_qwen3 = raw.model_type == "bidirectional_pplx_qwen3";
+        let model_type = if bidirectional_pplx_qwen3 {
+            "qwen3"
+        } else {
+            raw.model_type.as_str()
+        };
+        let family = DecoderFamily::from_model_type(model_type).ok_or_else(|| {
             start(format!(
-                "unsupported model_type {}; expected dense qwen2, qwen3 or llama",
+                "unsupported model_type {}; expected dense qwen2, qwen3, llama or mistral",
                 raw.model_type
             ))
         })?;
         if let Some(architectures) = raw.architectures.as_deref() {
             for architecture in architectures {
-                if !family.accepts_architecture(architecture) {
+                if !family.accepts_architecture(architecture, classifier) {
                     return Err(start(format!(
-                        "unsupported decoder task/architecture {architecture}; only pooled embedding Model/ForCausalLM backbones are supported"
+                        "unsupported decoder task/architecture {architecture}; only pooled embedding Model/ForCausalLM backbones{}{} are supported",
+                        if classifier { " or matching dense classification heads" } else { "" },
+                        ""
                     )));
                 }
             }
         }
-        reject_config_modifiers(&raw)?;
+        reject_config_modifiers(&raw, family)?;
 
         let hidden_size = required_usize(raw.hidden_size, "hidden_size")?;
         let intermediate_size = required_usize(raw.intermediate_size, "intermediate_size")?;
@@ -224,7 +282,18 @@ impl DecoderConfig {
         {
             return Err(start("decoder rms_norm_eps must be finite and positive"));
         }
-        let rope_theta = raw.rope_theta.unwrap_or(family.default_theta());
+        let saved_rope_theta = bidirectional_pplx_qwen3
+            .then(|| {
+                raw.rope_parameters
+                    .as_ref()
+                    .and_then(|value| value.get("rope_theta"))
+                    .and_then(serde_json::Value::as_f64)
+            })
+            .flatten();
+        let rope_theta = raw
+            .rope_theta
+            .or(saved_rope_theta)
+            .unwrap_or(family.default_theta());
         if !rope_theta.is_finite()
             || rope_theta <= 1.0
             || !(rope_theta as f32).is_finite()
@@ -250,11 +319,26 @@ impl DecoderConfig {
         };
 
         let bidirectional = raw.use_bidirectional_attention.unwrap_or(false);
-        let is_causal = match family {
-            DecoderFamily::Qwen2 => raw.is_causal.unwrap_or(true),
-            DecoderFamily::Qwen3 => raw.is_causal.unwrap_or(!bidirectional),
-            DecoderFamily::Llama => raw.is_causal.unwrap_or(!bidirectional),
+        let is_causal = if bidirectional_pplx_qwen3 {
+            // Native normalizes bidirectional_pplx_qwen3 to qwen3 and sets
+            // both use_bidirectional_attention and is_causal after loading.
+            false
+        } else {
+            match family {
+                DecoderFamily::Qwen2 => raw.is_causal.unwrap_or(true),
+                DecoderFamily::Qwen3 | DecoderFamily::Llama | DecoderFamily::Mistral => {
+                    raw.is_causal.unwrap_or(!bidirectional)
+                }
+            }
         };
+        let attention_window = match family {
+            DecoderFamily::Mistral => raw.sliding_window.filter(|window| *window > 0),
+            _ => None,
+        };
+        if let Some(window) = attention_window {
+            i32::try_from(window)
+                .map_err(|_| start("decoder Mistral sliding_window exceeds CUDA bounds"))?;
+        }
 
         let config = Self {
             family,
@@ -269,6 +353,7 @@ impl DecoderConfig {
             rms_norm_eps,
             rope_theta,
             is_causal,
+            attention_window,
             rope,
         };
         config.validate(kv_width)?;
@@ -300,27 +385,48 @@ fn required_usize(value: Option<usize>, name: &str) -> Result<usize, BackendErro
     value.ok_or_else(|| start(format!("missing decoder config field {name}")))
 }
 
-fn reject_config_modifiers(raw: &RawDecoderConfig) -> Result<(), BackendError> {
-    if raw.quantization_config.is_some() {
+fn reject_config_modifiers(
+    raw: &RawDecoderConfig,
+    family: DecoderFamily,
+) -> Result<(), BackendError> {
+    if raw
+        .quantization_config
+        .as_ref()
+        .is_some_and(|value| !value.is_null())
+    {
         return Err(start(
             "quantized decoder checkpoints are not supported by this loader",
         ));
     }
-    if raw
-        .rope_scaling
-        .as_ref()
-        .is_some_and(|value| !value.is_null())
+    // Native clears rope_scaling for dense Qwen2/Qwen3 even when a checkpoint
+    // carries the field. Other families still need unsupported scaling rejected.
+    if !matches!(family, DecoderFamily::Qwen2 | DecoderFamily::Qwen3)
+        && raw
+            .rope_scaling
+            .as_ref()
+            .is_some_and(|value| !value.is_null())
     {
         return Err(start(
             "scaled decoder RoPE (including Llama3) is not supported yet",
         ));
     }
-    if raw
+    if let Some(parameters) = raw
         .rope_parameters
         .as_ref()
-        .is_some_and(|value| !value.is_null())
+        .filter(|value| !value.is_null())
     {
-        return Err(start("decoder rope_parameters are not supported yet"));
+        let parameters = parameters
+            .as_object()
+            .ok_or_else(|| start("decoder rope_parameters must be an object"))?;
+        if let Some(rope_type) = parameters
+            .get("rope_type")
+            .and_then(serde_json::Value::as_str)
+            .filter(|name| !name.is_empty() && !name.eq_ignore_ascii_case("default"))
+        {
+            return Err(start(format!(
+                "decoder rope_parameters scaling {rope_type} (including YaRN) is not supported yet"
+            )));
+        }
     }
     if raw
         .partial_rotary_factor
@@ -336,9 +442,21 @@ fn reject_config_modifiers(raw: &RawDecoderConfig) -> Result<(), BackendError> {
                 .sliding_window
                 .zip(raw.max_position_embeddings)
                 .is_some_and(|(window, maximum)| window < maximum));
-    if active_window {
+    // Native uses every positive Llama window regardless of the optional
+    // use_sliding_window flag. This executor only has global Llama attention;
+    // reject on the host rather than silently changing its mask.
+    let native_llama_window =
+        family == DecoderFamily::Llama && raw.sliding_window.is_some_and(|window| window > 0);
+    if (active_window || native_llama_window) && family != DecoderFamily::Mistral {
         return Err(start(
             "sliding-window decoder attention is not supported yet",
+        ));
+    }
+    if family == DecoderFamily::Mistral
+        && raw.extra.get("pooling").and_then(serde_json::Value::as_str) == Some("avg")
+    {
+        return Err(start(
+            "decoder Mistral config-level average pooling needs unported ATen model-dtype reduction",
         ));
     }
     for key in raw.extra.keys() {
@@ -542,12 +660,50 @@ impl DecoderWeights {
         let config = DecoderConfig::load(path)?;
         validate_decoder_modules(path)?;
         let checkpoint = Checkpoint::open(path)?;
-        validate_checkpoint_capacity(&config, &checkpoint)?;
+        Self::from_checkpoint(config, &checkpoint)
+    }
+
+    /// Cold classification admission deriving the backbone and the score head
+    /// from one authoritative config JSON view and one opened checkpoint. The
+    /// ordinary embedding constructor above continues to reject every
+    /// classification architecture.
+    pub(crate) fn load_classifier(
+        path: &Path,
+        dense_paths: Option<Vec<String>>,
+        value: serde_json::Value,
+    ) -> Result<(Self, DecoderClassifierHeadHost), BackendError> {
+        let config = DecoderConfig::from_value(value.clone(), true)?;
+        let head_config = DecoderClassifierConfig::from_value(value)?;
+        validate_decoder_modules(path)?;
+        reject_declared_dense_modules(path)?;
+        let explicit_dense = dense_paths.as_ref().is_some_and(|paths| !paths.is_empty());
+        let discovered = if explicit_dense {
+            false
+        } else {
+            crate::dense::DenseChainHost::load_with_paths(path, config.hidden_size, dense_paths)?
+                .is_some()
+        };
+        if classifier_dense_rejected(explicit_dense, discovered) {
+            return Err(start(
+                "decoder classifier does not accept Dense / Sentence-Transformers modules",
+            ));
+        }
+        let checkpoint = Checkpoint::open(path)?;
+        let weights = Self::from_checkpoint(config, &checkpoint)?;
+        let head = DecoderClassifierHeadHost::load_from_checkpoint(&checkpoint, head_config)?;
+        Ok((weights, head))
+    }
+
+    fn from_checkpoint(
+        config: DecoderConfig,
+        checkpoint: &Checkpoint,
+    ) -> Result<Self, BackendError> {
+        validate_checkpoint_capacity(&config, checkpoint)?;
         let mut layers = Vec::new();
         layers
             .try_reserve_exact(config.num_hidden_layers)
             .map_err(start)?;
-        let root = select_root(&checkpoint)?;
+        let root = select_root(checkpoint)?;
         let h = config.hidden_size;
         let q = config.q_width();
         let kv = config.kv_width();
@@ -560,9 +716,9 @@ impl DecoderWeights {
         let norm = checkpoint.source(&format!("{root}norm.weight"), &[h])?;
         for layer in 0..config.num_hidden_layers {
             let p = format!("{root}layers.{layer}");
-            let q_linear = fetch_linear(&checkpoint, &p, ".self_attn.q_proj", &[q, h], &[q])?;
-            let k_linear = fetch_linear(&checkpoint, &p, ".self_attn.k_proj", &[kv, h], &[kv])?;
-            let v_linear = fetch_linear(&checkpoint, &p, ".self_attn.v_proj", &[kv, h], &[kv])?;
+            let q_linear = fetch_linear(checkpoint, &p, ".self_attn.q_proj", &[q, h], &[q])?;
+            let k_linear = fetch_linear(checkpoint, &p, ".self_attn.k_proj", &[kv, h], &[kv])?;
+            let v_linear = fetch_linear(checkpoint, &p, ".self_attn.v_proj", &[kv, h], &[kv])?;
             if q_linear.bias.is_some() != k_linear.bias.is_some()
                 || q_linear.bias.is_some() != v_linear.bias.is_some()
             {
@@ -570,14 +726,14 @@ impl DecoderWeights {
                     "decoder layer {layer} Q/K/V projection biases must be all present or all absent"
                 )));
             }
-            let gate = fetch_linear(&checkpoint, &p, ".mlp.gate_proj", &[i, h], &[i])?;
-            let up = fetch_linear(&checkpoint, &p, ".mlp.up_proj", &[i, h], &[i])?;
+            let gate = fetch_linear(checkpoint, &p, ".mlp.gate_proj", &[i, h], &[i])?;
+            let up = fetch_linear(checkpoint, &p, ".mlp.up_proj", &[i, h], &[i])?;
             if gate.bias.is_some() != up.bias.is_some() {
                 return Err(start(format!(
                     "decoder layer {layer} gate/up projection biases must be both present or both absent"
                 )));
             }
-            let (q_norm, k_norm) = fetch_qk_norm(&checkpoint, layer, &p, config.family)?;
+            let (q_norm, k_norm) = fetch_qk_norm(checkpoint, layer, &p, config.family)?;
             layers.push(DecoderLayerWeights {
                 input_norm: checkpoint.source(&format!("{p}.input_layernorm.weight"), &[h])?,
                 post_attention_norm: checkpoint
@@ -587,10 +743,10 @@ impl DecoderWeights {
                 q: q_linear,
                 k: k_linear,
                 v: v_linear,
-                o: fetch_linear(&checkpoint, &p, ".self_attn.o_proj", &[h, q], &[h])?,
+                o: fetch_linear(checkpoint, &p, ".self_attn.o_proj", &[h, q], &[h])?,
                 gate,
                 up,
-                down: fetch_linear(&checkpoint, &p, ".mlp.down_proj", &[h, i], &[h])?,
+                down: fetch_linear(checkpoint, &p, ".mlp.down_proj", &[h, i], &[h])?,
             });
         }
         Ok(Self {
@@ -885,6 +1041,37 @@ mod tests {
         })
     }
 
+    fn mistral_config() -> serde_json::Value {
+        serde_json::json!({
+            "model_type": "mistral",
+            "architectures": ["MistralForCausalLM"],
+            "hidden_size": 4096,
+            "intermediate_size": 14336,
+            "num_hidden_layers": 2,
+            "num_attention_heads": 32,
+            "num_key_value_heads": 8,
+            "vocab_size": 32000,
+            "max_position_embeddings": 32768,
+            "sliding_window": 4096
+        })
+    }
+
+    fn mistral_small_config() -> serde_json::Value {
+        serde_json::json!({
+            "model_type": "mistral",
+            "architectures": ["MistralForCausalLM"],
+            "hidden_size": 8,
+            "intermediate_size": 16,
+            "num_hidden_layers": 1,
+            "num_attention_heads": 2,
+            "num_key_value_heads": 1,
+            "head_dim": 4,
+            "vocab_size": 12,
+            "max_position_embeddings": 8192,
+            "sliding_window": 4096
+        })
+    }
+
     fn qwen3_config() -> serde_json::Value {
         serde_json::json!({
             "model_type": "qwen3",
@@ -1033,6 +1220,90 @@ mod tests {
     }
 
     #[test]
+    fn normalizes_bidirectional_pplx_qwen3_alias_with_native_precedence() {
+        let fixture = Fixture::new();
+        let mut value = with_fields(
+            qwen3_config(),
+            serde_json::json!({
+                "model_type": "bidirectional_pplx_qwen3",
+                "use_bidirectional_attention": false,
+                "is_causal": true,
+                "rope_parameters": {
+                    "rope_type": "default",
+                    "rope_theta": 500000.0
+                }
+            }),
+        );
+        value.as_object_mut().unwrap().remove("rope_theta");
+        fixture.raw_config(value);
+        let config = fixture.config_from_disk();
+        assert_eq!(config.family, DecoderFamily::Qwen3);
+        assert!(
+            !config.is_causal,
+            "Native alias forces non-causal attention"
+        );
+        assert_eq!(
+            config.rope_theta, 500000.0,
+            "Native falls back to the saved rope_parameters theta"
+        );
+        assert_eq!(config.rope, DecoderRope::FullNeoX);
+
+        fixture.raw_config(with_fields(
+            qwen3_config(),
+            serde_json::json!({
+                "model_type": "bidirectional_pplx_qwen3",
+                "rope_theta": 2000000.0,
+                "rope_parameters": {"rope_theta": 500000.0}
+            }),
+        ));
+        let config = fixture.config_from_disk();
+        assert_eq!(
+            config.rope_theta, 2_000_000.0,
+            "an explicit rope_theta wins over the saved fallback"
+        );
+        assert_eq!(config.family, DecoderFamily::Qwen3);
+        assert!(!config.is_causal);
+    }
+
+    #[test]
+    fn qwen_ignores_rope_scaling_but_rejects_yarn_parameters_and_other_families() {
+        for value in [qwen2_config(), qwen3_config()] {
+            let fixture = Fixture::new();
+            fixture.raw_config(with_fields(
+                value,
+                serde_json::json!({"rope_scaling": {"type": "llama3", "factor": 8.0}}),
+            ));
+            let config = fixture.config_from_disk();
+            assert_eq!(config.rope, DecoderRope::FullNeoX);
+        }
+
+        let fixture = Fixture::new();
+        fixture.raw_config(with_fields(
+            llama_config(),
+            serde_json::json!({"rope_scaling": {"type": "llama3", "factor": 8.0}}),
+        ));
+        let error = DecoderConfig::load(&fixture.0).unwrap_err().to_string();
+        assert!(error.contains("scaled decoder RoPE"), "{error}");
+
+        for value in [qwen2_config(), qwen3_config(), llama_config()] {
+            let fixture = Fixture::new();
+            fixture.raw_config(with_fields(
+                value,
+                serde_json::json!({
+                    "rope_parameters": {
+                        "rope_type": "yarn",
+                        "rope_theta": 1000000.0,
+                        "factor": 4.0
+                    }
+                }),
+            ));
+            let error = DecoderConfig::load(&fixture.0).unwrap_err().to_string();
+            assert!(error.contains("rope_parameters scaling yarn"), "{error}");
+            assert!(error.contains("YaRN"), "{error}");
+        }
+    }
+
+    #[test]
     fn rejects_partial_or_malformed_qwen3_qk_norm_weights() {
         let fixture = Fixture::new();
         fixture.raw_config(qwen3_config());
@@ -1079,10 +1350,13 @@ mod tests {
     }
 
     #[test]
-    fn qwen3_06_and_8b_geometry_metadata_needs_no_model_weights() {
-        for (hidden, intermediate, layers, heads, kv_heads) in
-            [(1024usize, 3072, 28, 16, 8), (4096, 12288, 36, 32, 8)]
-        {
+    fn qwen3_geometry_metadata_needs_no_model_weights() {
+        for (hidden, intermediate, layers, heads, kv_heads) in [
+            (1024usize, 3072, 28, 16, 8),
+            (2048, 6144, 28, 16, 8),
+            (2560, 9728, 36, 32, 8),
+            (4096, 12288, 36, 32, 8),
+        ] {
             let fixture = Fixture::new();
             fixture.raw_config(serde_json::json!({
                 "model_type": "qwen3",
@@ -1152,6 +1426,7 @@ mod tests {
             DecoderFamily::Qwen2,
             DecoderFamily::Qwen3,
             DecoderFamily::Llama,
+            DecoderFamily::Mistral,
         ] {
             for bidirectional in [None, Some(false), Some(true)] {
                 for causal in [None, Some(false), Some(true)] {
@@ -1159,6 +1434,7 @@ mod tests {
                         DecoderFamily::Qwen2 => qwen2_config(),
                         DecoderFamily::Qwen3 => qwen3_config(),
                         DecoderFamily::Llama => llama_config(),
+                        DecoderFamily::Mistral => mistral_config(),
                     };
                     let object = value.as_object_mut().unwrap();
                     object.remove("is_causal");
@@ -1172,8 +1448,9 @@ mod tests {
                     let loaded = DecoderConfig::load(&fixture.0).unwrap();
                     let default = match family {
                         DecoderFamily::Qwen2 => true,
-                        DecoderFamily::Qwen3 => !bidirectional.unwrap_or(false),
-                        DecoderFamily::Llama => !bidirectional.unwrap_or(false),
+                        DecoderFamily::Qwen3 | DecoderFamily::Llama | DecoderFamily::Mistral => {
+                            !bidirectional.unwrap_or(false)
+                        }
                     };
                     assert_eq!(
                         loaded.is_causal,
@@ -1357,6 +1634,28 @@ mod tests {
     }
 
     #[test]
+    fn rejects_positive_native_llama_windows_even_when_flag_is_false() {
+        for window in [1, 4096, 32768] {
+            let raw = serde_json::json!({
+                "model_type": "llama",
+                "hidden_size": 2048,
+                "intermediate_size": 8192,
+                "num_hidden_layers": 1,
+                "num_attention_heads": 32,
+                "num_key_value_heads": 8,
+                "vocab_size": 32000,
+                "max_position_embeddings": 32768,
+                "rms_norm_eps": 1e-5,
+                "rope_theta": 10000.0,
+                "sliding_window": window,
+                "use_sliding_window": false
+            });
+            let error = DecoderConfig::from_value(raw, false).unwrap_err();
+            assert!(error.to_string().contains("sliding-window"));
+        }
+    }
+
+    #[test]
     fn rejects_unsupported_config_modifiers_and_tasks() {
         for (overrides, needle) in [
             (
@@ -1368,12 +1667,15 @@ mod tests {
                 "quantized decoder",
             ),
             (
-                serde_json::json!({"rope_scaling": {"type": "llama3", "factor": 8.0}}),
-                "scaled decoder RoPE",
-            ),
-            (
                 serde_json::json!({"rope_parameters": {"rope_type": "yarn"}}),
                 "rope_parameters",
+            ),
+            (
+                serde_json::json!({
+                    "model_type": "bidirectional_pplx_qwen3",
+                    "architectures": ["Qwen3ForSequenceClassification"]
+                }),
+                "unsupported decoder task/architecture",
             ),
             (
                 serde_json::json!({"partial_rotary_factor": 0.5}),
@@ -1483,6 +1785,14 @@ mod tests {
             (
                 serde_json::json!({"num_key_value_heads": 3}),
                 "divide evenly by num_key_value_heads",
+            ),
+            (
+                serde_json::json!({
+                    "num_attention_heads": usize::MAX,
+                    "head_dim": 2,
+                    "num_key_value_heads": 1
+                }),
+                "query width overflow",
             ),
             (serde_json::json!({"rms_norm_eps": 0.0}), "rms_norm_eps"),
             (serde_json::json!({"rope_theta": 1.0}), "rope_theta"),
@@ -1626,5 +1936,166 @@ mod tests {
         assert!(config.is_causal);
         assert_eq!(config.rope, DecoderRope::Default);
         assert_eq!(config.rope_theta, 10_000.0);
+    }
+
+    #[test]
+    fn loads_mistral_defaults_and_saved_window_flag_precedence() {
+        let fixture = Fixture::new();
+        fixture.raw_config(mistral_config());
+        let config = fixture.config_from_disk();
+        assert_eq!(config.family, DecoderFamily::Mistral);
+        assert!(config.is_causal);
+        assert_eq!(config.rope, DecoderRope::Default);
+        assert_eq!(config.rope_theta, 10_000.0);
+        assert_eq!(config.head_dim, 128);
+        assert_eq!(config.q_width(), 4096);
+        assert_eq!(config.kv_width(), 1024);
+        assert_eq!(config.attention_window, Some(4096));
+
+        fixture.raw_config(with_fields(
+            mistral_config(),
+            serde_json::json!({"use_sliding_window": false}),
+        ));
+        assert_eq!(fixture.config_from_disk().attention_window, Some(4096));
+        fixture.raw_config(with_fields(
+            mistral_config(),
+            serde_json::json!({"use_sliding_window": true}),
+        ));
+        assert_eq!(fixture.config_from_disk().attention_window, Some(4096));
+
+        for fields in [
+            serde_json::json!({"sliding_window": 0}),
+            serde_json::json!({"sliding_window": null, "use_sliding_window": true}),
+        ] {
+            fixture.raw_config(with_fields(mistral_config(), fields));
+            assert_eq!(fixture.config_from_disk().attention_window, None);
+        }
+        fixture.raw_config(with_fields(
+            mistral_config(),
+            serde_json::json!({"sliding_window": 2147483648u64}),
+        ));
+        let error = DecoderConfig::load(&fixture.0).unwrap_err().to_string();
+        assert!(error.contains("CUDA bounds"), "{error}");
+
+        fixture.raw_config(with_fields(
+            mistral_config(),
+            serde_json::json!({"use_bidirectional_attention": true, "is_causal": true}),
+        ));
+        assert!(fixture.config_from_disk().is_causal);
+    }
+
+    #[test]
+    fn rejects_mistral_model_dtype_average_pooling() {
+        let fixture = Fixture::new();
+        fixture.raw_config(with_fields(
+            mistral_config(),
+            serde_json::json!({"pooling": "avg"}),
+        ));
+        let error = DecoderConfig::load(&fixture.0).unwrap_err().to_string();
+        assert!(
+            error.contains("unported ATen model-dtype reduction"),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn rejects_ministral3_instead_of_treating_it_as_ordinary_mistral() {
+        let fixture = Fixture::new();
+        fixture.raw_config(with_fields(
+            mistral_config(),
+            serde_json::json!({"model_type": "ministral3"}),
+        ));
+        let error = DecoderConfig::load(&fixture.0).unwrap_err().to_string();
+        assert!(error.contains("ministral3"), "{error}");
+        assert!(error.contains("not ported"), "{error}");
+        assert_eq!(DecoderFamily::from_model_type("ministral3"), None);
+        assert!(DecoderFamily::is_decoder_model_type("ministral3"));
+        for alias in ["ministral3", "llama_bidirec", "mistral3", "qwen3_moe"] {
+            assert!(
+                DecoderFamily::is_unsupported_native_decoder_model_type(alias),
+                "{alias} must fail explicitly on the host"
+            );
+        }
+        assert!(!DecoderFamily::is_unsupported_native_decoder_model_type(
+            "bidirectional_pplx_qwen3"
+        ));
+        assert!(!DecoderFamily::is_unsupported_native_decoder_model_type(
+            "qwen3.5"
+        ));
+    }
+
+    #[test]
+    fn loads_mistral_weights_from_default_model_namespace() {
+        let fixture = Fixture::new();
+        fixture.raw_config(mistral_small_config());
+        write_weights(&fixture, "model.", Biases::default(), false);
+
+        let loaded = DecoderWeights::load(&fixture.0).unwrap();
+        assert_eq!(loaded.config.family, DecoderFamily::Mistral);
+        assert_eq!(loaded.config.attention_window, Some(4096));
+        assert_eq!(loaded.layers.len(), 1);
+        assert_eq!(loaded.layers[0].q.weight.shape(), &[8, 8]);
+        assert_eq!(loaded.layers[0].k.weight.shape(), &[4, 8]);
+        assert_eq!(loaded.layers[0].v.weight.shape(), &[4, 8]);
+        assert_eq!(loaded.layers[0].o.weight.shape(), &[8, 8]);
+        assert_eq!(loaded.layers[0].gate.weight.shape(), &[16, 8]);
+        assert_eq!(loaded.layers[0].down.weight.shape(), &[8, 16]);
+        assert!(loaded.layers[0].q.bias.is_none());
+    }
+    #[test]
+    fn classifier_admission_uses_one_config_view_and_alias_routing() {
+        let mut value = qwen2_config();
+        value["architectures"] = serde_json::json!(["Qwen2ForSequenceClassification"]);
+        value["id2label"] = serde_json::json!({"0": "no", "1": "yes"});
+        value["quantization_config"] = serde_json::Value::Null;
+        let config = DecoderConfig::from_value(value.clone(), true).unwrap();
+        assert_eq!(config.family, DecoderFamily::Qwen2);
+        assert!(
+            DecoderConfig::from_value(value.clone(), false).is_err(),
+            "ordinary embedding admission must keep rejecting classifier architectures"
+        );
+        let head = DecoderClassifierConfig::from_value(value).unwrap();
+        assert_eq!(head.family, DecoderFamily::Qwen2);
+        assert_eq!(head.num_labels, 2);
+
+        let mut quantized = qwen2_config();
+        quantized["architectures"] = serde_json::json!(["Qwen2ForSequenceClassification"]);
+        quantized["quantization_config"] = serde_json::json!({"quant_method": "gptq"});
+        assert!(DecoderConfig::from_value(quantized.clone(), true).is_err());
+        assert!(DecoderClassifierConfig::from_value(quantized).is_err());
+
+        let mut alias = qwen3_config();
+        alias["model_type"] = serde_json::json!("bidirectional_pplx_qwen3");
+        alias["architectures"] = serde_json::json!(["Qwen3ForSequenceClassification"]);
+        assert!(DecoderFamily::is_decoder_model_type(
+            "bidirectional_pplx_qwen3"
+        ));
+        let config = DecoderConfig::from_value(alias, true).unwrap();
+        assert_eq!(config.family, DecoderFamily::Qwen3);
+        assert!(!config.is_causal);
+    }
+
+    #[test]
+    fn classifier_bundle_loads_backbone_and_root_score_from_one_checkpoint() {
+        let fixture = Fixture::new();
+        let mut value = qwen2_config();
+        value["architectures"] = serde_json::json!(["Qwen2ForSequenceClassification"]);
+        value["id2label"] = serde_json::json!({"0": "no", "1": "yes"});
+        fixture.raw_config(value.clone());
+        let config = DecoderConfig::from_value(value.clone(), true).unwrap();
+        let mut weights = entries(&config, "model.", Biases::default());
+        weights.push(("score.weight".into(), vec![2, 8]));
+        fixture.write_entries(&weights, false);
+
+        assert!(DecoderWeights::load(&fixture.0).is_err());
+        let (loaded, head) = DecoderWeights::load_classifier(&fixture.0, None, value).unwrap();
+        assert_eq!(loaded.config.family, DecoderFamily::Qwen2);
+        assert_eq!(loaded.layers.len(), 2);
+        assert_eq!(
+            head.config.task,
+            crate::decoder_classifier::DecoderClassifierTask::Sequence
+        );
+        assert_eq!(head.config.num_labels, 2);
+        assert_eq!(head.config.hidden_size, 8);
     }
 }

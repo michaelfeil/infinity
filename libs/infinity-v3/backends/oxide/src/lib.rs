@@ -14,6 +14,7 @@ mod decision_head;
 #[allow(dead_code)]
 mod decision_head_gpu;
 mod decoder;
+mod decoder_classifier;
 mod decoder_model;
 mod dense;
 pub mod encoder_activation;
@@ -103,10 +104,11 @@ mod workspace_retirement_root_tests;
 use classifier_head::{
     canonicalize_indices, pack_predictions, pack_token_predictions, ClassifierHead,
     ClassifierHeadHost, ClassifierReadout, ClassifierScratchBuffers, ClassifierScratchLayout,
-    ReadoutMode,
+    ClassifierTask, ReadoutMode,
 };
 use cublas::Blas;
 use cuda_core::{launch_kernel, Context, DeviceBuffer, Function, Stream};
+use decoder_classifier::{DecoderClassifierTask, RowPlan};
 use decoder_model::{DecoderConfig, DecoderFamily, DecoderWeights};
 use dense::{DenseChainHost, DenseHead, DenseWork};
 use encoder_linear::ProjectionPlan;
@@ -237,6 +239,15 @@ impl EnqueueError {
         match error {
             BackendError::Overloaded(_) => Self::Admission(error),
             _ => Self::Fatal(error),
+        }
+    }
+    /// Request-dependent admission/staging errors are recoverable: malformed
+    /// classifier plans must not quarantine the Engine. Reservation pressure
+    /// stays Admission, matching the existing head/admit contract.
+    fn recoverable_preflight(error: BackendError) -> Self {
+        match error {
+            BackendError::Overloaded(_) => Self::Admission(error),
+            _ => Self::PreflightRejected(error),
         }
     }
     #[cfg(test)]
@@ -1434,7 +1445,12 @@ impl ExecutableModel {
             }
             Self::EncoderF16(model) => model.plans.set_rows(provider, batch.input_ids.len()),
             Self::Modern(model) => model.preflight(batch.input_ids.len()),
-            Self::Decoder(model) => model.preflight(provider, batch, pool),
+            Self::Decoder(model) => {
+                if let Some(mode) = readout_mode {
+                    model.admit_readout(mode).map_err(ShapeError::Rejected)?;
+                }
+                model.preflight(provider, batch, pool)
+            }
             Self::Qwen35(model) => model.preflight(batch),
         }
     }
@@ -1457,13 +1473,27 @@ impl ExecutableModel {
     }
     /// # Safety
     /// The provider/engine CUDA context must already be bound on this thread.
+    #[allow(clippy::too_many_arguments)]
     unsafe fn prepare(
         &mut self,
         provider: &LtProvider,
         blas: Option<&Blas>,
         tokens: usize,
+        batch: &Batch,
+        readout_mode: Option<ReadoutMode>,
+        classifier_plan: Option<&RowPlan>,
         workspace: &mut Workspace,
     ) -> Result<(), ShapeError> {
+        if let Self::Decoder(model) = self {
+            if let (Some(plan), Workspace::Decoder(work)) = (classifier_plan, &mut *workspace) {
+                let blas = blas.ok_or_else(|| {
+                    ShapeError::Fatal(infer("Decoder classifier requires a plain cuBLAS handle"))
+                })?;
+                let stream = work.stream().clone();
+                return model.prepare_classifier(provider, blas, &stream, work, batch, plan);
+            }
+            let _ = (batch, readout_mode);
+        }
         match (self, workspace) {
             (Self::Encoder(model), Workspace::Encoder(work)) => {
                 let width = model.config.hidden_size;
@@ -1523,7 +1553,11 @@ impl ExecutableModel {
             ),
             Self::EncoderF16(model) => Work::<F16>::allocation_bytes(key, &model.config),
             Self::Modern(model) => Work::<Bf16>::allocation_bytes(key, &model.config.geometry),
-            Self::Decoder(model) => decoder::DecoderWork::allocation_bytes(key, &model.config),
+            Self::Decoder(model) => decoder::DecoderWork::allocation_bytes_with_classifier(
+                key,
+                &model.config,
+                model.classifier_scratch_layout(key)?,
+            ),
             Self::Qwen35(model) => model.workspace_bytes(key),
         }
     }
@@ -1546,18 +1580,28 @@ impl ExecutableModel {
                 &model.config.geometry,
                 key,
             )?)),
-            Self::Decoder(model) => Ok(Workspace::Decoder(decoder::DecoderWork::new(
-                stream,
-                &model.config,
-                key,
-            )?)),
+            Self::Decoder(model) => Ok(Workspace::Decoder(
+                decoder::DecoderWork::new_with_classifier(
+                    stream,
+                    &model.config,
+                    key,
+                    model.classifier_scratch_layout(key)?,
+                )?,
+            )),
             Self::Qwen35(model) => Ok(Workspace::Qwen35(Box::new(model.workspace(stream, key)?))),
         }
     }
     fn classifier_readout(&self) -> Option<ClassifierReadout> {
         match self {
             Self::Encoder(model) => model.classifier.as_ref().map(ClassifierHead::readout),
-            Self::EncoderF16(_) | Self::Modern(_) | Self::Decoder(_) | Self::Qwen35(_) => None,
+            Self::Decoder(model) => model.classifier_task().map(|task| ClassifierReadout {
+                task: match task {
+                    DecoderClassifierTask::Sequence => ClassifierTask::Sequence,
+                    DecoderClassifierTask::Tokens => ClassifierTask::Tokens,
+                },
+                width: model.classifier_width().unwrap_or(0),
+            }),
+            Self::EncoderF16(_) | Self::Modern(_) | Self::Qwen35(_) => None,
         }
     }
 }
@@ -1688,7 +1732,8 @@ impl Workspace {
     ) -> Result<(usize, usize), BackendError> {
         match self {
             Self::Encoder(work) => work.stage_classifier(batch, geometry, lease),
-            Self::EncoderF16(_) | Self::Decoder(_) | Self::Qwen35(_) => Err(infer(
+            Self::Decoder(work) => work.stage_classifier(batch, geometry, lease),
+            Self::EncoderF16(_) | Self::Qwen35(_) => Err(infer(
                 "Classifier staging requires a BF16 encoder workspace",
             )),
         }
@@ -1880,6 +1925,27 @@ fn work_key(b: &Batch) -> Result<WorkKey, BackendError> {
         bucketed(b.cumulative_seq_lengths.len(), 2)?,
         bucketed(output::rows(b)?, 1)?,
     ))
+}
+/// A decoder classifier plan and its head scratch are one invariant. A plan
+/// without scratch would otherwise submit no readable output and fall through
+/// to an untouched host slot, so it is a fatal Engine invariant violation.
+fn classifier_output<'a>(
+    plan: Option<&'a RowPlan>,
+    scratch: Option<&'a decoder_classifier::DecoderClassifierScratchBuffers>,
+) -> Result<
+    Option<(
+        &'a RowPlan,
+        &'a decoder_classifier::DecoderClassifierScratchBuffers,
+    )>,
+    BackendError,
+> {
+    match (plan, scratch) {
+        (None, _) => Ok(None),
+        (Some(_), None) => Err(infer(
+            "Decoder classifier plan is present without head scratch",
+        )),
+        (Some(plan), Some(scratch)) => Ok(Some((plan, scratch))),
+    }
 }
 /// Pure arena admission. Existing arenas already proved their capacity valid;
 /// only a new size class needs checked geometry before context or reservation.
@@ -3063,25 +3129,6 @@ impl Engine {
             .ok_or_else(|| infer("Missing oxide workspace"))?;
         let lt = &*self.lt;
         let plain_blas = (*self.plain_blas).as_ref();
-        // SAFETY: enqueue_request bound the engine context above and keeps it
-        // current through the ordered body.
-        unsafe { self.model.prepare(lt, plain_blas, tokens, w)? };
-        if let (ExecutableModel::Encoder(model), Workspace::Encoder(work)) =
-            (&mut *self.model, &mut *w)
-        {
-            if let Some(head) = model.classifier.as_mut() {
-                let blas = plain_blas
-                    .ok_or_else(|| infer("Classifier head requires a plain cuBLAS handle"))?;
-                let stream = self.stream.clone();
-                let (source, scratch) = work.classifier_parts()?;
-                let mode = readout_mode.ok_or_else(|| {
-                    infer("Classifier head requires a call-selected readout mode")
-                })?;
-                // SAFETY: the engine context is bound and every pointer is
-                // fixed by the reserved arena before the lease begins.
-                unsafe { head.prepare(lt, blas, b, mode, &stream, source, scratch)? };
-            }
-        }
         // Retire/cache the previous GPU arena before allocating larger pins;
         // otherwise old scratch plus future staging can exceed the projection.
         let host_oversized = pinned > cache::BYTE_BUDGET;
@@ -3113,6 +3160,49 @@ impl Engine {
             }
             stage_batch_with_position_offset(b, geometry, lease, position_offset)?
         };
+        // The decoder classifier writes its host-prepared physical row ids into
+        // the existing InputLayout.selections region exactly once, after the
+        // ordinary packed metadata and before the first upload.
+        let decoder_plan = match (&*self.model, readout_mode) {
+            (ExecutableModel::Decoder(model), Some(mode)) if model.classifier_task().is_some() => {
+                Some(
+                    model
+                        .stage_classifier_plan(b, mode, lease)
+                        .map_err(EnqueueError::recoverable_preflight)?,
+                )
+            }
+            _ => None,
+        };
+        if let (ExecutableModel::Encoder(model), Workspace::Encoder(work)) =
+            (&mut *self.model, &mut *w)
+        {
+            if let Some(head) = model.classifier.as_mut() {
+                let blas = plain_blas
+                    .ok_or_else(|| infer("Classifier head requires a plain cuBLAS handle"))?;
+                let stream = self.stream.clone();
+                let (source, scratch) = work.classifier_parts()?;
+                let mode = readout_mode.ok_or_else(|| {
+                    infer("Classifier head requires a call-selected readout mode")
+                })?;
+                // SAFETY: the engine context is bound and every pointer is
+                // fixed by the reserved arena before the lease begins.
+                unsafe { head.prepare(lt, blas, b, mode, &stream, source, scratch)? };
+            }
+        }
+        // SAFETY: enqueue_request bound the engine context above and keeps it
+        // current through the ordered body. Decoder head preparation also runs
+        // here, before the request lease begins and before any upload.
+        unsafe {
+            self.model.prepare(
+                lt,
+                plain_blas,
+                tokens,
+                b,
+                readout_mode,
+                decoder_plan.as_ref(),
+                w,
+            )?;
+        }
         // One pre-upload ticket covers this submission's backbone and Dense
         // last use. It is taken only after staging succeeded, immediately
         // before the first GPU upload, so a staging rejection keeps the prior
@@ -3141,7 +3231,30 @@ impl Engine {
                 )
                 .map_err(EnqueueError::from),
             (ExecutableModel::Decoder(model), Workspace::Decoder(work)) => {
-                model.enqueue(lt, plain_blas, s, work, b, pool, max_length, tokens)?;
+                model.enqueue(
+                    lt,
+                    plain_blas,
+                    s,
+                    work,
+                    b,
+                    pool,
+                    max_length,
+                    tokens,
+                    decoder_plan.as_ref(),
+                )?;
+                if let Some((plan, scratch)) =
+                    classifier_output(decoder_plan.as_ref(), work.classifier_scratch())
+                        .map_err(EnqueueError::Fatal)?
+                {
+                    let width = model
+                        .classifier_width()
+                        .ok_or_else(|| infer("Decoder classifier width is missing"))?;
+                    let elements = product(plan.rows(), width)?;
+                    let host = lease.slot_mut()?.output.as_mut_slice();
+                    download_output_range(s, scratch.f32_logits()?, 0, host, 0, elements)?;
+                    lease.record()?;
+                    return Ok(());
+                }
                 Ok(())
             }
             (ExecutableModel::Qwen35(model), Workspace::Qwen35(work)) => model
@@ -4195,7 +4308,12 @@ fn selects_architecture(
     let Some(model_type) = head.model_type.as_deref() else {
         return Ok(CheckpointArchitecture::Encoder);
     };
-    if DecoderFamily::from_model_type(model_type).is_some() {
+    if DecoderFamily::is_unsupported_native_decoder_model_type(model_type) {
+        return Err(start(format!(
+            "decoder model_type {model_type} is a recognized Native alias/family whose actual math is not ported; no encoder fallback"
+        )));
+    }
+    if DecoderFamily::is_decoder_model_type(model_type) {
         return Ok(CheckpointArchitecture::Decoder);
     }
     if jina_encoder_model::is_jina_code_marker(head) {
@@ -4305,11 +4423,25 @@ impl OxideBackend {
             deberta_host = Some(deberta_encoder_model::load(path)?);
         }
         let classifier = model_type == ModelType::Classifier;
+        let decoder_classifier_value =
+            if classifier && early_architecture == CheckpointArchitecture::Decoder {
+                let value: serde_json::Value = model::read_json(&path.join("config.json"))?;
+                // Recognized decoder classification families this leaf does
+                // not implement fail on the host instead of falling through to
+                // generic encoder admission.
+                decoder_classifier::reject_unsupported_classifier_architecture(&value)?;
+                decoder_classifier::value_is_classifier_architecture(&value).then_some(value)
+            } else {
+                None
+            };
+        let decoder_classifier = decoder_classifier_value.is_some();
         if classifier {
             if precision != EncoderPrecision::Bf16 {
                 return Err(start("Oxide classifiers require bfloat16"));
             }
-            classifier_head::validate_admission(path, dense_paths.clone())?;
+            if !decoder_classifier {
+                classifier_head::validate_admission(path, dense_paths.clone())?;
+            }
         }
         let pool = match model_type {
             ModelType::Embedding(p @ (Pool::Cls | Pool::Mean | Pool::LastToken)) => p,
@@ -4333,6 +4465,13 @@ impl OxideBackend {
         } else {
             None
         };
+        // Cold classifier admission owns exactly one config view, Dense/module
+        // exclusion, one checkpoint open and the root score tensors. Hold the
+        // lazy host bundle here so device creation cannot precede a rejection.
+        let mut decoder_classifier_bundle = decoder_classifier_value
+            .as_ref()
+            .map(|value| DecoderWeights::load_classifier(path, dense_paths.clone(), value.clone()))
+            .transpose()?;
         if device_id >= device_count()? {
             return Err(start("CUDA device ordinal is not visible"));
         }
@@ -4351,189 +4490,217 @@ impl OxideBackend {
         } else {
             LtProvider::new(context.clone(), stream.clone())?
         };
-        let (model, config, plain_blas, attention_length_limit, dense, output_width, readout) =
-            if classifier {
-                let (host, head_host) = if architecture == CheckpointArchitecture::Deberta {
-                    let mut host = deberta_host
-                        .take()
-                        .ok_or_else(|| start("DeBERTa host weights were not preloaded"))?;
-                    let head = host
-                        .head
-                        .take()
-                        .ok_or_else(|| start("DeBERTa classifier head is missing"))?;
-                    (
-                        EncoderHostWeights::Deberta(host),
-                        ClassifierHeadHost::from_deberta(head),
-                    )
-                } else {
-                    let (host, checkpoint) = BertWeights::load_classifier(path)?;
-                    let head = ClassifierHeadHost::load(&checkpoint, &host.config)?;
-                    (EncoderHostWeights::Standard(host), head)
-                };
-                let config = host.config().clone();
-                let readout = head_host.readout;
-                let output_width = readout.width();
-                let mut model =
-                    encoder_model::<Bf16>(host, &context, &stream, &lt, EncoderPrecision::Bf16)?;
-                model.classifier = Some(ClassifierHead::new(head_host, &context, &stream, &lt)?);
+        let (
+            model,
+            config,
+            plain_blas,
+            attention_length_limit,
+            dense,
+            mut output_width,
+            mut readout,
+        ) = if classifier && !decoder_classifier {
+            let (host, head_host) = if architecture == CheckpointArchitecture::Deberta {
+                let mut host = deberta_host
+                    .take()
+                    .ok_or_else(|| start("DeBERTa host weights were not preloaded"))?;
+                let head = host
+                    .head
+                    .take()
+                    .ok_or_else(|| start("DeBERTa classifier head is missing"))?;
                 (
-                    ExecutableModel::Encoder(Box::new(model)),
-                    LoadedConfig::Encoder(config),
-                    Some(Blas::new(context.clone(), stream.clone())?),
-                    None,
-                    None,
-                    output_width,
-                    Some(readout),
+                    EncoderHostWeights::Deberta(host),
+                    ClassifierHeadHost::from_deberta(head),
                 )
             } else {
-                let (model, config, plain_blas, attention_length_limit, dense, output_width) =
-                    if precision == EncoderPrecision::F16 {
-                        f16_admitted
-                            .ok_or_else(|| start("Missing admitted FP16 encoder config"))?;
-                        let host = BertWeights::load(path)?;
-                        let config = loaded_f16_config(&host)?;
-                        let dense_host = DenseChainHost::load_with_paths(
-                            path,
-                            config.hidden_size,
-                            dense_paths.clone(),
-                        )?;
-                        if dense_host.is_some() {
-                            return Err(start("FP16 H384 MiniLM currently requires its backbone pooling without Dense modules"));
-                        }
-                        let host = EncoderHostWeights::Standard(host);
-                        let model = encoder_model::<F16>(
-                            host,
-                            &context,
-                            &stream,
-                            &lt,
-                            EncoderPrecision::F16,
-                        )?;
-                        let attention_length_limit = model.kernels.attention_length_limit;
-                        let output_width = config.hidden_size;
-                        (
-                            ExecutableModel::EncoderF16(Box::new(model)),
-                            LoadedConfig::Encoder(config),
-                            None,
-                            attention_length_limit,
-                            None,
-                            output_width,
-                        )
-                    } else if decoder {
-                        let host = DecoderWeights::load(path)?;
-                        let config = host.config.clone();
-                        let dense_host = DenseChainHost::load_with_paths(
-                            path,
-                            config.hidden_size,
-                            dense_paths.clone(),
-                        )?;
-                        let output_width = dense_host
-                            .as_ref()
-                            .map_or(config.hidden_size, DenseChainHost::output_width);
-                        let model = decoder::DecoderModel::new(host, &context, &stream, &lt)?;
-                        let needs_plain = model.needs_plain()
-                            || dense_host.as_ref().is_some_and(DenseChainHost::uses_plain);
-                        let dense = dense_host
-                            .map(|host| DenseHead::new(host, &context, &stream, &lt))
-                            .transpose()?;
-                        let plain_blas = if needs_plain {
-                            Some(Blas::new(context.clone(), stream.clone())?)
-                        } else {
-                            None
-                        };
-                        (
-                            ExecutableModel::Decoder(Box::new(model)),
-                            LoadedConfig::Decoder(config),
-                            plain_blas,
-                            None,
-                            dense,
-                            output_width,
-                        )
-                    } else if architecture == CheckpointArchitecture::Modern {
-                        let host = ModernWeights::load(path)?;
-                        let config = host.config.clone();
-                        let hidden = config.geometry.hidden_size;
-                        let dense_host =
-                            DenseChainHost::load_with_paths(path, hidden, dense_paths.clone())?;
-                        let output_width = dense_host
-                            .as_ref()
-                            .map_or(hidden, DenseChainHost::output_width);
-                        let model = ModernEncoder::new(host, &context, &stream)?;
-                        let dense = dense_host
-                            .map(|host| DenseHead::new(host, &context, &stream, &lt))
-                            .transpose()?;
-                        (
-                            ExecutableModel::Modern(Box::new(model)),
-                            LoadedConfig::Modern(config),
-                            Some(Blas::new(context.clone(), stream.clone())?),
-                            None,
-                            dense,
-                            output_width,
-                        )
-                    } else {
-                        let host = match architecture {
-                            CheckpointArchitecture::Jina => {
-                                EncoderHostWeights::Jina(JinaWeights::load(path)?)
-                            }
-                            CheckpointArchitecture::JinaCode => {
-                                EncoderHostWeights::JinaCode(JinaCodeHost::load(path)?)
-                            }
-                            CheckpointArchitecture::Nomic => {
-                                EncoderHostWeights::Nomic(NomicWeights::load(path)?)
-                            }
-                            CheckpointArchitecture::Deberta => {
-                                EncoderHostWeights::Deberta(deberta_host.take().ok_or_else(
-                                    || start("DeBERTa host weights were not preloaded"),
-                                )?)
-                            }
-                            _ => EncoderHostWeights::Standard(BertWeights::load(path)?),
-                        };
-                        let config = host.config().clone();
-                        let dense_host = DenseChainHost::load_with_paths(
-                            path,
-                            config.hidden_size,
-                            dense_paths.clone(),
-                        )?;
-                        let output_width = dense_host
-                            .as_ref()
-                            .map_or(config.hidden_size, DenseChainHost::output_width);
-                        let model = encoder_model::<Bf16>(
-                            host,
-                            &context,
-                            &stream,
-                            &lt,
-                            EncoderPrecision::Bf16,
-                        )?;
-                        let dense = dense_host
-                            .map(|host| DenseHead::new(host, &context, &stream, &lt))
-                            .transpose()?;
-                        let plain_blas = if dense.as_ref().is_some_and(DenseHead::uses_plain)
-                            || config.recipe.feed_forward.is_gated()
-                            || config.family == EncoderFamily::Deberta
-                        {
-                            Some(Blas::new(context.clone(), stream.clone())?)
-                        } else {
-                            None
-                        };
-                        let attention_length_limit = model.kernels.attention_length_limit;
-                        (
-                            ExecutableModel::Encoder(Box::new(model)),
-                            LoadedConfig::Encoder(config),
-                            plain_blas,
-                            attention_length_limit,
-                            dense,
-                            output_width,
-                        )
-                    };
-                (
-                    model,
-                    config,
-                    plain_blas,
-                    attention_length_limit,
-                    dense,
-                    output_width,
-                    None,
-                )
+                let (host, checkpoint) = BertWeights::load_classifier(path)?;
+                let head = ClassifierHeadHost::load(&checkpoint, &host.config)?;
+                (EncoderHostWeights::Standard(host), head)
             };
+            let config = host.config().clone();
+            let readout = head_host.readout;
+            let output_width = readout.width();
+            let mut model =
+                encoder_model::<Bf16>(host, &context, &stream, &lt, EncoderPrecision::Bf16)?;
+            model.classifier = Some(ClassifierHead::new(head_host, &context, &stream, &lt)?);
+            (
+                ExecutableModel::Encoder(Box::new(model)),
+                LoadedConfig::Encoder(config),
+                Some(Blas::new(context.clone(), stream.clone())?),
+                None,
+                None,
+                output_width,
+                Some(readout),
+            )
+        } else {
+            let (model, config, plain_blas, attention_length_limit, dense, output_width) =
+                if precision == EncoderPrecision::F16 {
+                    f16_admitted.ok_or_else(|| start("Missing admitted FP16 encoder config"))?;
+                    let host = BertWeights::load(path)?;
+                    let config = loaded_f16_config(&host)?;
+                    let dense_host = DenseChainHost::load_with_paths(
+                        path,
+                        config.hidden_size,
+                        dense_paths.clone(),
+                    )?;
+                    if dense_host.is_some() {
+                        return Err(start("FP16 H384 MiniLM currently requires its backbone pooling without Dense modules"));
+                    }
+                    let host = EncoderHostWeights::Standard(host);
+                    let model =
+                        encoder_model::<F16>(host, &context, &stream, &lt, EncoderPrecision::F16)?;
+                    let attention_length_limit = model.kernels.attention_length_limit;
+                    let output_width = config.hidden_size;
+                    (
+                        ExecutableModel::EncoderF16(Box::new(model)),
+                        LoadedConfig::Encoder(config),
+                        None,
+                        attention_length_limit,
+                        None,
+                        output_width,
+                    )
+                } else if decoder {
+                    let (host, head_host) = match decoder_classifier_bundle.take() {
+                        Some((host, head)) => (host, Some(head)),
+                        None => (DecoderWeights::load(path)?, None),
+                    };
+                    let config = host.config.clone();
+                    let head_present = head_host.is_some();
+                    // The cold classifier bundle already rejected every Dense
+                    // module, so it must not read that metadata a second time.
+                    let dense_host = if head_present {
+                        None
+                    } else {
+                        DenseChainHost::load_with_paths(
+                            path,
+                            config.hidden_size,
+                            dense_paths.clone(),
+                        )?
+                    };
+                    let output_width = dense_host
+                        .as_ref()
+                        .map_or(config.hidden_size, DenseChainHost::output_width);
+                    let model = decoder::DecoderModel::new_with_classifier(
+                        host, head_host, &context, &stream, &lt,
+                    )?;
+                    let needs_plain = model.needs_plain()
+                        || head_present
+                        || dense_host.as_ref().is_some_and(DenseChainHost::uses_plain);
+                    let dense = dense_host
+                        .map(|host| DenseHead::new(host, &context, &stream, &lt))
+                        .transpose()?;
+                    let plain_blas = if needs_plain {
+                        Some(Blas::new(context.clone(), stream.clone())?)
+                    } else {
+                        None
+                    };
+                    (
+                        ExecutableModel::Decoder(Box::new(model)),
+                        LoadedConfig::Decoder(config),
+                        plain_blas,
+                        None,
+                        dense,
+                        output_width,
+                    )
+                } else if architecture == CheckpointArchitecture::Modern {
+                    let host = ModernWeights::load(path)?;
+                    let config = host.config.clone();
+                    let hidden = config.geometry.hidden_size;
+                    let dense_host =
+                        DenseChainHost::load_with_paths(path, hidden, dense_paths.clone())?;
+                    let output_width = dense_host
+                        .as_ref()
+                        .map_or(hidden, DenseChainHost::output_width);
+                    let model = ModernEncoder::new(host, &context, &stream)?;
+                    let dense = dense_host
+                        .map(|host| DenseHead::new(host, &context, &stream, &lt))
+                        .transpose()?;
+                    (
+                        ExecutableModel::Modern(Box::new(model)),
+                        LoadedConfig::Modern(config),
+                        Some(Blas::new(context.clone(), stream.clone())?),
+                        None,
+                        dense,
+                        output_width,
+                    )
+                } else {
+                    let host = match architecture {
+                        CheckpointArchitecture::Jina => {
+                            EncoderHostWeights::Jina(JinaWeights::load(path)?)
+                        }
+                        CheckpointArchitecture::JinaCode => {
+                            EncoderHostWeights::JinaCode(JinaCodeHost::load(path)?)
+                        }
+                        CheckpointArchitecture::Nomic => {
+                            EncoderHostWeights::Nomic(NomicWeights::load(path)?)
+                        }
+                        CheckpointArchitecture::Deberta => EncoderHostWeights::Deberta(
+                            deberta_host
+                                .take()
+                                .ok_or_else(|| start("DeBERTa host weights were not preloaded"))?,
+                        ),
+                        _ => EncoderHostWeights::Standard(BertWeights::load(path)?),
+                    };
+                    let config = host.config().clone();
+                    let dense_host = DenseChainHost::load_with_paths(
+                        path,
+                        config.hidden_size,
+                        dense_paths.clone(),
+                    )?;
+                    let output_width = dense_host
+                        .as_ref()
+                        .map_or(config.hidden_size, DenseChainHost::output_width);
+                    let model = encoder_model::<Bf16>(
+                        host,
+                        &context,
+                        &stream,
+                        &lt,
+                        EncoderPrecision::Bf16,
+                    )?;
+                    let dense = dense_host
+                        .map(|host| DenseHead::new(host, &context, &stream, &lt))
+                        .transpose()?;
+                    let plain_blas = if dense.as_ref().is_some_and(DenseHead::uses_plain)
+                        || config.recipe.feed_forward.is_gated()
+                        || config.family == EncoderFamily::Deberta
+                    {
+                        Some(Blas::new(context.clone(), stream.clone())?)
+                    } else {
+                        None
+                    };
+                    let attention_length_limit = model.kernels.attention_length_limit;
+                    (
+                        ExecutableModel::Encoder(Box::new(model)),
+                        LoadedConfig::Encoder(config),
+                        plain_blas,
+                        attention_length_limit,
+                        dense,
+                        output_width,
+                    )
+                };
+            (
+                model,
+                config,
+                plain_blas,
+                attention_length_limit,
+                dense,
+                output_width,
+                None,
+            )
+        };
+        if let ExecutableModel::Decoder(model) = &model {
+            if let Some(classifier_readout) =
+                model.classifier_task().map(|task| ClassifierReadout {
+                    task: match task {
+                        DecoderClassifierTask::Sequence => ClassifierTask::Sequence,
+                        DecoderClassifierTask::Tokens => ClassifierTask::Tokens,
+                    },
+                    width: model.classifier_width().unwrap_or(0),
+                })
+            {
+                output_width = classifier_readout.width();
+                readout = Some(classifier_readout);
+            }
+        }
         let io = HostIo::pool(&context)?;
         let raw_output_supported = model.supports_raw_output();
         Ok(Self {
@@ -5804,6 +5971,13 @@ impl Backend for OxideBackend {
         let readout = self
             .readout
             .ok_or_else(|| infer("Oxide classifier readout is not configured"))?;
+        if readout.task == ClassifierTask::Sequence
+            && matches!(self.config, LoadedConfig::Decoder(_))
+        {
+            return Err(infer(
+                "Decoder sequence classifier does not implement token classification",
+            ));
+        }
         if let LoadedConfig::Encoder(config) = &self.config {
             classifier_head::admit_readout(config, ReadoutMode::Tokens)?;
         }
@@ -8083,6 +8257,25 @@ mod tests {
         let internal: EnqueueError = infer("unexpected runtime failure").into();
         assert!(matches!(internal, EnqueueError::Fatal(_)));
         assert!(internal.poisons());
+
+        let request = EnqueueError::recoverable_preflight(infer("classifier staging rejected"));
+        assert!(matches!(request, EnqueueError::PreflightRejected(_)));
+        assert!(!request.poisons());
+        let pressure = EnqueueError::recoverable_preflight(BackendError::Overloaded(
+            "classifier staging pressure".into(),
+        ));
+        assert!(matches!(pressure, EnqueueError::Admission(_)));
+        assert!(!pressure.poisons());
+    }
+
+    #[test]
+    fn classifier_plan_without_head_scratch_is_a_fatal_invariant() {
+        let plan = RowPlan::tokens(4).unwrap();
+        assert!(
+            classifier_output(Some(&plan), None).is_err(),
+            "a plan without scratch must never reach an untouched host output"
+        );
+        assert!(classifier_output(None, None).unwrap().is_none());
     }
 
     fn bf16_bit_mismatch(actual: &[u16], gold: &[u16]) -> Option<(usize, u16, u16)> {
@@ -8732,6 +8925,41 @@ mod tests {
         let held_tokens = backend.submit_predict_tokens(request).unwrap();
         drop(held_sequence);
         let _ = held_tokens.complete().unwrap();
+        backend.health().unwrap();
+    }
+
+    #[test]
+    #[ignore = "Requires CUDA, an actual Qwen3 reranker checkpoint in INFINITY_OXIDE_TEST_QWEN3_RERANK_MODEL, INFINITY_OXIDE_KERNEL_MODULE and FA4_ROOT"]
+    fn trained_qwen3_decoder_sequence_classifier_holds_and_recovers() {
+        let path = std::env::var_os("INFINITY_OXIDE_TEST_QWEN3_RERANK_MODEL")
+            .expect("set INFINITY_OXIDE_TEST_QWEN3_RERANK_MODEL to the actual Qwen3 reranker");
+        let backend =
+            OxideBackend::new(Path::new(&path), "bfloat16", ModelType::Classifier, 0).unwrap();
+        let request = repeated_sequences(2, 13);
+        assert_eq!(request.input_ids.len(), 26);
+
+        let sequence = backend.predict(request.clone()).unwrap();
+        assert_eq!(sequence.len(), request.len());
+        for index in 0..request.len() {
+            let row = sequence.get(&index).expect("missing sequence score");
+            assert_eq!(row.len(), 2, "Qwen3 reranker emits two label logits");
+            assert!(row.iter().all(|value| value.is_finite()));
+        }
+
+        assert!(
+            backend.predict_tokens(request.clone()).is_err(),
+            "a sequence-trained decoder head must reject token prediction"
+        );
+
+        let first = backend.submit_predict(request.clone()).unwrap();
+        let second = backend.submit_predict(request.clone()).unwrap();
+        drop(first);
+        let _ = second.complete().unwrap();
+        backend.health().unwrap();
+
+        let mut invalid = request;
+        invalid.cumulative_seq_lengths[1] = 0;
+        assert!(backend.submit_predict(invalid).is_err());
         backend.health().unwrap();
     }
 

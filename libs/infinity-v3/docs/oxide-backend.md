@@ -39,7 +39,8 @@ variant of these families.
 | MPNet | BF16 H768, intermediate width 3072, 12 attention heads, 32 relative buckets and at most 512 positions. Uses exact GELU, learned bucket attention and the native `positions + 2` lookup. Only token type `0` is accepted; classifier and MLM heads are rejected. |
 | DeBERTa-v2/v3 | BF16 H768, 12 heads, intermediate width 3072, word-only embeddings and learned relative attention. Shared or dedicated relative projections and c2p/p2c combinations are supported. Absolute position/type embeddings, embedding projection and convolution are rejected. Requires FA4. |
 | Qwen2 | Dense SiLU text backbone, full split-half NeoX RoPE, global causal or noncausal attention, and a matching FA4 profile. The H896/d64 native RMS/rotary recipe is rejected. The exercised GTE-Qwen2-1.5B-instruct geometry is H1536, 12 Q/2 KV heads, d128, noncausal. |
-| Qwen3 | Dense SiLU text backbones at H1024 or H4096, d128 learned Q/K head norms, full NeoX RoPE, and a matching FA4 profile. Query projection width may differ from hidden width. Qwen3-Embedding-0.6B and 8B are exercised; expert models and other normalization widths are rejected. |
+| Qwen3 | BF16 dense SiLU backbones at H1024, H2048, H2560 or H4096, d128 learned Q/K head norms, full NeoX RoPE, and a matching causal or noncausal FA4 profile. Query projection width may differ from hidden width. The `bidirectional_pplx_qwen3` alias follows Native configuration precedence. Qwen3 4B and Embedding 0.6B/8B are exercised; expert models and other normalization widths are rejected. |
+| Mistral | BF16 H4096, 32 Q/8 KV heads at d128, dense SiLU and base RoPE, with global causal attention or a 4096-token sliding window. A positive window stays active even when `use_sliding_window` is false, matching Native. Mistral-7B-v0.1 is exercised. Other geometries, scaled RoPE and config-level average pooling are rejected. |
 | Qwen3.5 dense text | BF16, d256 heads, partial rotary width 64, gated full attention and 128-wide GDN heads. Hidden width is at most 8192; the actual GQA ratio requires a matching FA4 profile. Query width may differ from hidden width. Model geometry is validated structurally rather than by checkpoint name. |
 | Llama | Hidden width 2048, dense SiLU, base unscaled `default` RoPE, causal global attention, and a matching FA4 profile. TinyLlama's 32 Q/4 KV heads at d64 need the appended twentieth profile. H4096, noncausal Llama, and scaled RoPE including Llama3 are rejected. |
 
@@ -65,10 +66,19 @@ qualification; this does not establish every Qwen3.5 geometry or performance.
 The cold runtime dependencies are selected by `INFINITY_FA4_ROOT`,
 `INFINITY_OXIDE_GDN_RAW_KERNELS`, `INFINITY_OXIDE_GDN_PROVIDER`, and
 `INFINITY_OXIDE_GDN_AUX_KERNELS`. The current combined builder emits 99 Rust
-exports; Qwen3.5 requires its nine additive exports. Existing families can retain
-their older qualified bundles.
+exports; Qwen3.5 requires its nine additive exports. Dense decoders require the
+90-export bundle or newer for Native BF16 mean pooling. Other existing families
+can retain their older qualified bundles.
 Stored `A_log` and `dt_bias` decay parameters retain native F32 precision;
 other parameters follow the selected BF16 weight conversion.
+
+Dense Qwen2/Qwen3/Llama sequence and token classifiers load their trained
+`score.weight` and optional bias directly. Sequence heads select the last
+non-padding token; token heads also support sequence readout. A sequence head
+rejects token prediction. Qwen3-Reranker-4B's two-label scores are exercised.
+Decoder mean pooling preserves Native's BF16 reduction for up to 65535 selected
+rows and its F32 reduction above that limit. Raw token rows keep their original
+order; repeated sequence selectors and raw overrides follow Native canonicalization.
 
 Jina embeddings v2 base code uses a separate BF16 recipe at H768, 12 layers,
 12 heads and 8192 positions, loading its F16 checkpoint weights. It supports
@@ -538,8 +548,14 @@ graph/vendor settings. Positive latency changes mean slower than LibTorch:
 | Embedding-0.6B | 1.407 | 1.623 | +15.32% | +14.56% |
 | Embedding-8B | 6.388 | 7.073 | +10.72% | +9.21% |
 
-These Qwen3 paths expand functional coverage; their current performance still
-misses the speed target. Other Qwen3 widths, tasks and dtypes remain unqualified.
+These initial controls miss the speed target; they do not measure the expanded
+decoder and score-head implementation. Fresh Native comparisons cover Qwen3
+Embedding 0.6B/4B/8B, Reranker 4B, and Mistral-7B-v0.1. The corrected mean
+readouts and reranker scores match F32 words exactly. Nine held-result,
+cancellation and recovery runs pass, including GPU memory and initialization
+checking. Mistral mean/last-token outputs also match all 40,960 F32 words across
+4095/4096/4097-token inputs and a ragged 4097+7 batch. Other widths and dtypes
+still need checkpoint qualification; these checks establish no new speed claim.
 
 The fixed-shape controls below use one 128-token sequence, BF16, the documented
 pool, H100 and eight CPU cores. Each backend has two fresh-process windows of

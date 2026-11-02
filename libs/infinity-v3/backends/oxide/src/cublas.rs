@@ -575,6 +575,36 @@ impl Blas {
         plan.bind(x, w, y).map_err(super::infer)
     }
 
+    /// Cheap metadata preflight for the plain beta=0 projection.
+    ///
+    /// Besides context/storage identity this rejects a cuBLAS handle whose
+    /// creation stream differs from the caller's ordered stream, so a beta=0
+    /// GEMM can never be enqueued on another stream without ordering against
+    /// the row gather that feeds it.
+    pub(crate) fn preflight_beta_zero<E: Element>(
+        &self,
+        plan: &LinearPlan<E>,
+        x: &cuda_core::DeviceBuffer<E::Storage>,
+        w: &cuda_core::DeviceBuffer<E::Storage>,
+        y: &mut cuda_core::DeviceBuffer<E::Storage>,
+        stream: &Stream,
+    ) -> Result<GemmArguments, ShapeError> {
+        if !std::ptr::eq(self.stream.as_ref(), stream) {
+            return Err(ShapeError::Fatal(super::infer(
+                "Plain cuBLAS projection requires the prepared plan stream",
+            )));
+        }
+        for context in [x.context(), w.context(), y.context()] {
+            if !Arc::ptr_eq(context, &self.context) {
+                return Err(ShapeError::Fatal(super::infer(
+                    "Plain cuBLAS buffers belong to a different CUDA context",
+                )));
+            }
+        }
+        plan.bind(x, w, y)
+            .map_err(|error| ShapeError::Fatal(super::infer(error)))
+    }
+
     /// Pure preflight for the native non-Lt N=1 biased GEMM.
     ///
     /// Validates the real GEMM arguments plus the bias-copy shape, context and

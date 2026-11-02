@@ -19,6 +19,11 @@ use super::{
 };
 use crate::{
     cublas::Blas,
+    decoder_classifier::{
+        DecoderClassifierHead, DecoderClassifierHeadHost, DecoderClassifierReadout,
+        DecoderClassifierRows, DecoderClassifierScratchBuffers, DecoderClassifierScratchLayout,
+        DecoderClassifierTask, RowPlan, RowPlanKind,
+    },
     decoder_model::{
         DecoderConfig, DecoderFamily, DecoderLayerWeights, DecoderRope, DecoderWeights,
     },
@@ -43,6 +48,15 @@ use std::{
 /// The GTE geometry needs 67,109,120 peak payload bytes; this cap leaves room
 /// for the immutable tables without silently growing at inference.
 const ROPE_TABLE_BYTE_LIMIT: usize = 128 * 1024 * 1024;
+
+/// Mistral H4096 binds the current public 90-export Gemma2 BF16 rotary export.
+/// Every standard BF16 dense math recipe binds the shared public Gemma2 BF16
+/// mean-pool export for `Pool::Mean` with at most 65535 selections. The old
+/// private Mistral kernel names are deliberately not a fallback: a bundle
+/// without these public exports is not this ABI and must be qualified
+/// separately before any GPU/numerical claim.
+pub(crate) const MISTRAL_PUBLIC_ROPE_EXPORT: &str = "infinity_gemma2_rope_tables_bf16";
+pub(crate) const PUBLIC_MEAN_EXPORT: &str = "infinity_gemma2_mean_pool_bf16";
 
 /// RMS launch geometry prepared once at load. The width-2048 Llama kernel uses
 /// one warp per row and four rows per CTA; Qwen keeps the generic one-row,
@@ -76,8 +90,11 @@ pub(crate) enum DecoderMath {
     Qwen2FullNeox,
     Qwen2H1536FullNeox,
     Qwen3H1024Candle,
+    Qwen3H2048Ordinary,
+    Qwen3H2560Ordinary,
     Qwen3H4096Ordinary,
     LlamaH2048Exact,
+    MistralH4096Ordinary,
 }
 impl DecoderMath {
     pub(crate) fn select(config: &DecoderConfig) -> Result<Self, BackendError> {
@@ -113,9 +130,11 @@ impl DecoderMath {
                 }
                 match config.hidden_size {
                     1024 => Ok(Self::Qwen3H1024Candle),
+                    2048 => Ok(Self::Qwen3H2048Ordinary),
+                    2560 => Ok(Self::Qwen3H2560Ordinary),
                     4096 => Ok(Self::Qwen3H4096Ordinary),
                     hidden => Err(start(format!(
-                        "decoder executor implements only Qwen3 hidden_size 1024 or 4096; H{hidden} is deferred"
+                        "decoder executor implements only Qwen3 hidden_size 1024, 2048, 2560 or 4096; H{hidden} is deferred"
                     ))),
                 }
             }
@@ -137,6 +156,26 @@ impl DecoderMath {
                 }
                 Ok(Self::LlamaH2048Exact)
             }
+            DecoderFamily::Mistral => {
+                if (
+                    config.hidden_size,
+                    config.head_dim,
+                    config.num_attention_heads,
+                    config.num_key_value_heads,
+                ) != (4096, 128, 32, 8)
+                {
+                    return Err(start("decoder Mistral requires H4096/d128/heads32/KV8"));
+                }
+                if config.rope != DecoderRope::Default || !config.is_causal {
+                    return Err(start(
+                        "decoder Mistral requires base default RoPE and causal attention",
+                    ));
+                }
+                match config.attention_window {
+                    None | Some(4096) => Ok(Self::MistralH4096Ordinary),
+                    Some(_) => Err(start("decoder Mistral window admits only global or 4096")),
+                }
+            }
         }
     }
 
@@ -145,7 +184,10 @@ impl DecoderMath {
             Self::Qwen2FullNeox => "infinity_rms_norm",
             Self::Qwen2H1536FullNeox => "infinity_rms_norm_1536_vector",
             Self::Qwen3H1024Candle => "infinity_rms_norm_1024_exact_vector",
-            Self::Qwen3H4096Ordinary => "infinity_rms_norm_4096_vector",
+            Self::Qwen3H2048Ordinary | Self::Qwen3H2560Ordinary => "infinity_rms_norm",
+            Self::Qwen3H4096Ordinary | Self::MistralH4096Ordinary => {
+                "infinity_rms_norm_4096_vector"
+            }
             Self::LlamaH2048Exact => "infinity_rms_norm_2048_vector",
         }
     }
@@ -155,7 +197,10 @@ impl DecoderMath {
             Self::Qwen2FullNeox => "infinity_add_rms_norm",
             Self::Qwen2H1536FullNeox => "infinity_add_rms_norm_1536_vector",
             Self::Qwen3H1024Candle => "infinity_add_rms_norm_1024_exact_vector",
-            Self::Qwen3H4096Ordinary => "infinity_add_rms_norm_4096_vector",
+            Self::Qwen3H2048Ordinary | Self::Qwen3H2560Ordinary => "infinity_add_rms_norm",
+            Self::Qwen3H4096Ordinary | Self::MistralH4096Ordinary => {
+                "infinity_add_rms_norm_4096_vector"
+            }
             Self::LlamaH2048Exact => "infinity_add_rms_norm_2048_vector",
         }
     }
@@ -163,17 +208,25 @@ impl DecoderMath {
     const fn rope_export(self) -> &'static str {
         match self {
             Self::Qwen2FullNeox | Self::Qwen2H1536FullNeox => "infinity_rope_neox",
-            Self::Qwen3H1024Candle | Self::Qwen3H4096Ordinary => "infinity_rope_neox",
+            Self::Qwen3H1024Candle
+            | Self::Qwen3H2048Ordinary
+            | Self::Qwen3H2560Ordinary
+            | Self::Qwen3H4096Ordinary
+            | Self::MistralH4096Ordinary => "infinity_rope_neox",
             Self::LlamaH2048Exact => "infinity_rope_neox_hfma",
         }
     }
 
     const fn qk_norm_rope_export(self) -> Option<&'static str> {
         match self {
-            Self::Qwen3H1024Candle | Self::Qwen3H4096Ordinary => {
-                Some("infinity_qk_norm_rope_128_bf16")
-            }
-            Self::Qwen2FullNeox | Self::Qwen2H1536FullNeox | Self::LlamaH2048Exact => None,
+            Self::Qwen3H1024Candle
+            | Self::Qwen3H2048Ordinary
+            | Self::Qwen3H2560Ordinary
+            | Self::Qwen3H4096Ordinary => Some("infinity_qk_norm_rope_128_bf16"),
+            Self::Qwen2FullNeox
+            | Self::Qwen2H1536FullNeox
+            | Self::LlamaH2048Exact
+            | Self::MistralH4096Ordinary => None,
         }
     }
 
@@ -185,16 +238,22 @@ impl DecoderMath {
             Self::Qwen2FullNeox
             | Self::Qwen2H1536FullNeox
             | Self::Qwen3H1024Candle
+            | Self::Qwen3H2048Ordinary
+            | Self::Qwen3H2560Ordinary
             | Self::Qwen3H4096Ordinary
-            | Self::LlamaH2048Exact => "infinity_silu_mul_bf16_vector8_native",
+            | Self::LlamaH2048Exact
+            | Self::MistralH4096Ordinary => "infinity_silu_mul_bf16_vector8_native",
         }
     }
 
     const fn norm_geometry(self) -> NormGeometry {
         match self {
-            Self::Qwen2FullNeox | Self::Qwen2H1536FullNeox | Self::Qwen3H4096Ordinary => {
-                GENERIC_NORM_GEOMETRY
-            }
+            Self::Qwen2FullNeox
+            | Self::Qwen2H1536FullNeox
+            | Self::Qwen3H2048Ordinary
+            | Self::Qwen3H2560Ordinary
+            | Self::Qwen3H4096Ordinary
+            | Self::MistralH4096Ordinary => GENERIC_NORM_GEOMETRY,
             Self::Qwen3H1024Candle => H1024_NORM_GEOMETRY,
             Self::LlamaH2048Exact => H2048_NORM_GEOMETRY,
         }
@@ -207,8 +266,10 @@ struct DecoderKernels {
     add_rms_norm: Function,
     rope_neox: Function,
     qk_norm_rope: Option<Function>,
+    rope_initializer: Option<Arc<Function>>,
     silu_mul: Function,
     pool: Function,
+    gemma2_mean: Option<Function>,
     selected_rows: Function,
     bf16_to_f32: Function,
     norm_geometry: NormGeometry,
@@ -233,6 +294,27 @@ impl DecoderKernels {
             .qk_norm_rope_export()
             .map(|export| module.load_function(export).map_err(start))
             .transpose()?;
+        let rope_initializer = if math == DecoderMath::MistralH4096Ordinary {
+            Some(Arc::new(
+                module
+                    .load_function(MISTRAL_PUBLIC_ROPE_EXPORT)
+                    .map_err(|error| {
+                        start(format!(
+                            "Mistral requires the current public 90-export Gemma2 ABI bundle export {MISTRAL_PUBLIC_ROPE_EXPORT}: {error}; old private Mistral exports are not accepted"
+                        ))
+                    })?,
+            ))
+        } else {
+            None
+        };
+        // Cold, once-per-model resolution for every standard BF16 dense recipe.
+        // The public 90-export bundle always carries this export, so a missing
+        // symbol is a typed ABI error rather than a per-request resolver query.
+        let gemma2_mean = Some(module.load_function(PUBLIC_MEAN_EXPORT).map_err(|error| {
+            start(format!(
+                "BF16 dense decoder mean pooling requires the current public 90-export Gemma2 ABI bundle export {PUBLIC_MEAN_EXPORT}: {error}; old private Mistral exports and the unported ATen model-dtype reduction are not accepted"
+            ))
+        })?);
         Ok(Self {
             gather: module
                 .load_function("infinity_embedding_gather")
@@ -241,10 +323,12 @@ impl DecoderKernels {
             add_rms_norm: module.load_function(math.add_rms_export()).map_err(start)?,
             rope_neox: module.load_function(math.rope_export()).map_err(start)?,
             qk_norm_rope,
+            rope_initializer,
             silu_mul: module
                 .load_function(math.activation_export())
                 .map_err(start)?,
             pool: module.load_function("infinity_pool").map_err(start)?,
+            gemma2_mean,
             selected_rows: module
                 .load_function("infinity_selected_rows")
                 .map_err(start)?,
@@ -665,6 +749,67 @@ pub(crate) fn selected_readout(pool: &Pool, selections: usize) -> Option<Selecte
     }
 }
 
+/// Pooled-mean admission for the shared public BF16 export.
+///
+/// The retained native bridge (`bridge.cpp:1478-1490`) sends every contiguous
+/// CUDA BF16 decoder `Pool::Mean` request with at most 65535 pooled rows through
+/// `infinity::packed_mean_pool` (`candle_kernels/pooling/mean_pool.cu`). This
+/// executor binds the already loaded `infinity_gemma2_mean_pool_bf16` export and
+/// `MeanPlan`, whose source performs the same BF16 strided partials, halving
+/// tree, BF16 reciprocal multiply, trailing `+ 0` round and final F32 widening.
+/// That comparison is source-level only: it makes no GPU or numerical claim.
+/// Larger selection counts keep the existing generic `infinity_pool` F32
+/// reduction, while CLS/last/raw work keeps its selected-readout, projection and
+/// workspace arithmetic unchanged.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum MeanPoolRoute {
+    /// No pooled rows were requested; only the raw trailer may be enqueued.
+    Empty,
+    /// Shared public `infinity_gemma2_mean_pool_bf16` arm with `MeanPlan`.
+    NativeBf16Tree,
+    /// Existing generic `infinity_pool` arm (F32 reduction for `Pool::Mean`).
+    F32Fallback,
+}
+
+/// Route predicate called by the actual embedding enqueue. It performs no
+/// driver, allocation or stream work, so its pool/count boundaries are pure CPU
+/// tests of the same decision used on the launch path.
+pub(crate) fn mean_pool_route(
+    pool: &Pool,
+    selections: usize,
+) -> Result<MeanPoolRoute, BackendError> {
+    match pool {
+        Pool::Splade => Err(infer("Oxide SPLADE unsupported")),
+        _ if selections == 0 => Ok(MeanPoolRoute::Empty),
+        Pool::Mean if selections <= usize::from(u16::MAX) => Ok(MeanPoolRoute::NativeBf16Tree),
+        Pool::Cls | Pool::Mean | Pool::LastToken => Ok(MeanPoolRoute::F32Fallback),
+    }
+}
+
+fn attention_spec(config: &DecoderConfig) -> Result<fa4::AttentionSpec, BackendError> {
+    let window = match config.attention_window {
+        None => fa4::Window::Global,
+        Some(window) => fa4::Window::Local {
+            left: i32::try_from(
+                window
+                    .checked_sub(1)
+                    .ok_or_else(|| start("decoder window underflow"))?,
+            )
+            .map_err(start)?,
+            right: 0,
+        },
+    };
+    Ok(fa4::AttentionSpec {
+        heads: config.num_attention_heads,
+        kv_heads: config.num_key_value_heads,
+        head_dim: config.head_dim,
+        causal: config.is_causal,
+        window,
+        dtype: fa4::DType::Bf16,
+        scale: fa4::Scale::RsqrtHeadDim,
+    })
+}
+
 pub(crate) struct DecoderModel {
     pub(crate) config: DecoderConfig,
     weights: DecoderWeightBuffers,
@@ -675,10 +820,41 @@ pub(crate) struct DecoderModel {
     rope_sine: DeviceBuffer<f32>,
     geometry: DecoderGeometry,
     uses_plain: bool,
+    selected_readout_enabled: bool,
+    head: Option<DecoderClassifierHead>,
 }
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ClassifierMode {
+    /// Sequence head: select last-non-PAD rows before the final pointwise seam.
+    Selected,
+    /// Token head serving sequence readout: full-T forward then head gather.
+    FullSequenceGather,
+    /// Token head token readout: full-T forward then head projection.
+    FullTokens,
+}
+fn classifier_mode(plan: Option<&RowPlan>) -> Option<ClassifierMode> {
+    plan.map(|plan| match plan.kind() {
+        RowPlanKind::Selected => ClassifierMode::Selected,
+        RowPlanKind::PackedRows => ClassifierMode::FullSequenceGather,
+        RowPlanKind::Tokens => ClassifierMode::FullTokens,
+    })
+}
+
 impl DecoderModel {
+    #[allow(dead_code)]
     pub(crate) fn new(
         host: DecoderWeights,
+        context: &Arc<Context>,
+        stream: &Arc<Stream>,
+        lt: &LtProvider,
+    ) -> Result<Self, BackendError> {
+        Self::new_with_classifier(host, None, context, stream, lt)
+    }
+
+    pub(crate) fn new_with_classifier(
+        host: DecoderWeights,
+        head_host: Option<DecoderClassifierHeadHost>,
         context: &Arc<Context>,
         stream: &Arc<Stream>,
         lt: &LtProvider,
@@ -686,22 +862,15 @@ impl DecoderModel {
         let config = host.config.clone();
         let math = DecoderMath::select(&config)?;
         let geometry = DecoderGeometry::new(&config)?;
-        let attention_spec = fa4::AttentionSpec {
-            heads: config.num_attention_heads,
-            kv_heads: config.num_key_value_heads,
-            head_dim: config.head_dim,
-            causal: config.is_causal,
-            window: fa4::Window::Global,
-            dtype: fa4::DType::Bf16,
-            scale: fa4::Scale::RsqrtHeadDim,
-        };
-        if !fa4::Fa4::supports_published(&attention_spec) {
+        let attention_spec = attention_spec(&config)?;
+        if !fa4::Fa4::supports(&attention_spec) {
             return Err(start(format!(
-                "decoder attention H{} KV{} d{} causal={} has no qualified ABI7 FA4 export",
+                "decoder attention H{} KV{} d{} causal={} window={:?} has no qualified ABI7 FA4 export",
                 config.num_attention_heads,
                 config.num_key_value_heads,
                 config.head_dim,
-                config.is_causal
+                config.is_causal,
+                attention_spec.window
             )));
         }
         let fa4_root = std::env::var_os(infinity_v3_config::infinity_env!("FA4_ROOT"))
@@ -714,23 +883,39 @@ impl DecoderModel {
         let mut uploader = WeightUploader::new(stream.clone())?;
         let weights = DecoderWeightBuffers::upload(&mut uploader, stream, &host)?;
         uploader.finish()?;
-        let tables = BaseRopeTables::new(
-            config.head_dim,
-            config.rope_theta,
-            config.max_position_embeddings,
-            ROPE_TABLE_BYTE_LIMIT,
-        )
-        .map_err(start)?;
-        if tables.head_dim() != config.head_dim
-            || tables.position_capacity() != config.max_position_embeddings
-            || tables.table_stride() != config.head_dim / 2
-            || tables.table_bytes() == 0
-        {
-            return Err(start("decoder rotary table geometry disagrees with config"));
-        }
-        let rope_cosine = DeviceBuffer::from_host(stream, tables.cosine()).map_err(start)?;
-        let rope_sine = DeviceBuffer::from_host(stream, tables.sine()).map_err(start)?;
-        drop(tables);
+        let head = head_host
+            .map(|host| DecoderClassifierHead::new(host, context, stream, lt))
+            .transpose()?;
+        let (rope_cosine, rope_sine) = if math == DecoderMath::MistralH4096Ordinary {
+            let initializer = kernels.rope_initializer.as_ref().ok_or_else(|| {
+                start("Mistral requires the public Gemma2 BF16 rotary initializer")
+            })?;
+            crate::native_rope_tables::decoder_128_tables(
+                config.rope_theta,
+                config.max_position_embeddings,
+                ROPE_TABLE_BYTE_LIMIT,
+                stream,
+                initializer.clone(),
+            )?
+        } else {
+            let tables = BaseRopeTables::new(
+                config.head_dim,
+                config.rope_theta,
+                config.max_position_embeddings,
+                ROPE_TABLE_BYTE_LIMIT,
+            )
+            .map_err(start)?;
+            if tables.head_dim() != config.head_dim
+                || tables.position_capacity() != config.max_position_embeddings
+                || tables.table_stride() != config.head_dim / 2
+                || tables.table_bytes() == 0
+            {
+                return Err(start("decoder rotary table geometry disagrees with config"));
+            }
+            let cosine = DeviceBuffer::from_host(stream, tables.cosine()).map_err(start)?;
+            let sine = DeviceBuffer::from_host(stream, tables.sine()).map_err(start)?;
+            (cosine, sine)
+        };
         Ok(Self {
             config,
             weights,
@@ -741,11 +926,153 @@ impl DecoderModel {
             rope_sine,
             geometry,
             uses_plain: bias_support.uses_plain(),
+            selected_readout_enabled: math != DecoderMath::MistralH4096Ordinary,
+            head,
         })
     }
 
     pub(crate) fn needs_plain(&self) -> bool {
         self.uses_plain
+    }
+
+    pub(crate) fn classifier_task(&self) -> Option<DecoderClassifierTask> {
+        self.head.as_ref().map(DecoderClassifierHead::task)
+    }
+
+    pub(crate) fn classifier_width(&self) -> Option<usize> {
+        self.head.as_ref().map(DecoderClassifierHead::width)
+    }
+
+    pub(crate) fn admit_readout(
+        &self,
+        mode: crate::classifier_head::ReadoutMode,
+    ) -> Result<(), BackendError> {
+        let Some(head) = self.head.as_ref() else {
+            return Ok(());
+        };
+        let readout = match mode {
+            crate::classifier_head::ReadoutMode::Sequence => DecoderClassifierReadout::Sequence,
+            crate::classifier_head::ReadoutMode::Tokens => DecoderClassifierReadout::Tokens,
+        };
+        head.admit(readout)
+    }
+
+    pub(crate) fn classifier_scratch_layout(
+        &self,
+        key: WorkKey,
+    ) -> Result<Option<DecoderClassifierScratchLayout>, BackendError> {
+        self.head
+            .as_ref()
+            .map(|head| head.scratch_layout(key))
+            .transpose()
+    }
+
+    pub(crate) fn stage_classifier_plan(
+        &self,
+        batch: &Batch,
+        mode: crate::classifier_head::ReadoutMode,
+        lease: &mut HostIoLease,
+    ) -> Result<RowPlan, BackendError> {
+        let head = self
+            .head
+            .as_ref()
+            .ok_or_else(|| infer("Decoder classifier head is not configured"))?;
+        let readout = match mode {
+            crate::classifier_head::ReadoutMode::Sequence => DecoderClassifierReadout::Sequence,
+            crate::classifier_head::ReadoutMode::Tokens => DecoderClassifierReadout::Tokens,
+        };
+        head.admit(readout)?;
+        let sequences = batch
+            .cumulative_seq_lengths
+            .len()
+            .checked_sub(1)
+            .filter(|count| *count > 0)
+            .ok_or_else(|| infer("Missing decoder sequence boundaries"))?;
+        let layout = InputLayout::new(
+            batch.input_ids.len(),
+            batch.cumulative_seq_lengths.len(),
+            batch.pooled_indices.len(),
+        )?;
+        let staging = lease
+            .slot_mut()?
+            .input
+            .as_mut_slice()
+            .get_mut(layout.selections_range())
+            .ok_or_else(|| infer("Invalid decoder classifier row-id staging layout"))?;
+        match (head.task(), readout) {
+            (DecoderClassifierTask::Sequence, DecoderClassifierReadout::Sequence) => {
+                RowPlan::sequence_into(
+                    &batch.input_ids,
+                    &batch.cumulative_seq_lengths,
+                    head.pad_token_id(),
+                    staging,
+                )?;
+                RowPlan::selected_sequence(sequences, sequences)
+            }
+            (DecoderClassifierTask::Tokens, DecoderClassifierReadout::Sequence) => {
+                RowPlan::sequence_into(
+                    &batch.input_ids,
+                    &batch.cumulative_seq_lengths,
+                    head.pad_token_id(),
+                    staging,
+                )
+            }
+            (DecoderClassifierTask::Tokens, DecoderClassifierReadout::Tokens) => {
+                RowPlan::tokens(batch.input_ids.len())
+            }
+            _ => Err(infer(
+                "Decoder classifier task does not admit the requested readout",
+            )),
+        }
+    }
+
+    fn classifier_mode(&self, plan: Option<&RowPlan>) -> Option<ClassifierMode> {
+        classifier_mode(plan)
+    }
+
+    pub(crate) fn prepare_classifier(
+        &mut self,
+        provider: &LtProvider,
+        blas: &Blas,
+        stream: &Stream,
+        work: &mut DecoderWork,
+        batch: &Batch,
+        plan: &RowPlan,
+    ) -> Result<(), ShapeError> {
+        let Some(head) = self.head.as_mut() else {
+            return Err(ShapeError::Fatal(infer(
+                "Decoder classifier head is not configured",
+            )));
+        };
+        let hidden = self.geometry.hidden;
+        let source = DecoderClassifierRows::new(&work.normalized, plan.source_rows(), hidden)
+            .map_err(ShapeError::Rejected)?;
+        let row_ids = if plan.requires_gather() {
+            let layout = InputLayout::new(
+                batch.input_ids.len(),
+                batch.cumulative_seq_lengths.len(),
+                batch.pooled_indices.len(),
+            )
+            .map_err(ShapeError::Rejected)?;
+            Some(
+                layout
+                    .selections()
+                    .address(work.input.cu_deviceptr())
+                    .map_err(ShapeError::Fatal)?,
+            )
+        } else {
+            None
+        };
+        let scratch = work
+            .classifier
+            .as_deref_mut()
+            .ok_or_else(|| ShapeError::Fatal(infer("Decoder classifier scratch is missing")))?;
+        // SAFETY: the engine bound this context and every pointer comes from
+        // the reserved work arena before the request lease begins.
+        unsafe {
+            head.prepare(provider, blas, stream, source, plan, row_ids, scratch)?;
+        }
+        Ok(())
     }
 
     pub(crate) fn preflight(
@@ -755,8 +1082,14 @@ impl DecoderModel {
         pool: &Pool,
     ) -> Result<(), ShapeError> {
         self.plans.set_rows(provider, batch.input_ids.len())?;
-        if batch.raw_indices.is_empty()
-            && selected_readout(pool, batch.pooled_indices.len()).is_some()
+        let classifier_sequence = self
+            .head
+            .as_ref()
+            .is_some_and(|head| head.task() == DecoderClassifierTask::Sequence);
+        if classifier_sequence
+            || (self.selected_readout_enabled
+                && batch.raw_indices.is_empty()
+                && selected_readout(pool, batch.pooled_indices.len()).is_some())
         {
             let sequences = batch
                 .cumulative_seq_lengths
@@ -782,14 +1115,31 @@ impl DecoderModel {
         pool: &Pool,
         max_length: usize,
         tokens: usize,
+        classifier_plan: Option<&RowPlan>,
     ) -> Result<(), BackendError> {
         if self.kernels.qk_norm_rope.is_some() {
             self.enqueue_impl::<true>(
-                lt, plain_blas, stream, work, batch, pool, max_length, tokens,
+                lt,
+                plain_blas,
+                stream,
+                work,
+                batch,
+                pool,
+                max_length,
+                tokens,
+                classifier_plan,
             )
         } else {
             self.enqueue_impl::<false>(
-                lt, plain_blas, stream, work, batch, pool, max_length, tokens,
+                lt,
+                plain_blas,
+                stream,
+                work,
+                batch,
+                pool,
+                max_length,
+                tokens,
+                classifier_plan,
             )
         }
     }
@@ -805,6 +1155,7 @@ impl DecoderModel {
         pool: &Pool,
         max_length: usize,
         tokens: usize,
+        classifier_plan: Option<&RowPlan>,
     ) -> Result<(), BackendError> {
         let c = &self.config;
         let g = self.geometry;
@@ -815,9 +1166,14 @@ impl DecoderModel {
             .ok_or_else(|| infer("Missing decoder sequence boundaries"))?;
         let selections = batch.pooled_indices.len();
         work.check(tokens, sequences, super::output::rows(batch)?, &g)?;
-        // Token outputs need every final hidden row; pooled-only requests keep
-        // the canonical-B final-layer optimization unchanged.
-        let readout = if batch.raw_indices.is_empty() {
+        let classifier = self.classifier_mode(classifier_plan);
+        // A decoder classifier owns its row policy: sequence heads select
+        // before the final pointwise seam, token heads keep the full T matrix.
+        // Ordinary pooled embedding requests keep the canonical-B optimization.
+        let readout = if classifier.is_none()
+            && self.selected_readout_enabled
+            && batch.raw_indices.is_empty()
+        {
             selected_readout(pool, selections)
         } else {
             None
@@ -1059,43 +1415,86 @@ impl DecoderModel {
             // and boundaries remain retained by the engine/workspace through
             // stream completion; the selected spec was qualified at load.
             unsafe { self.fa4.forward_batch_bound(stream, &attention)? };
-            if readout.is_some() && index + 1 == self.weights.layers.len() {
-                let readout_mode = readout.ok_or_else(|| infer("Missing selected readout mode"))?;
-                let gather_widths = g
-                    .q_width
-                    .checked_add(h)
-                    .ok_or_else(|| infer("Decoder selected row width overflow"))?;
-                let gather_elements = product(sequences, gather_widths)?;
-                // QKV is dead once FA4 returned; the accumulated residual has
-                // already been read here, so both destinations are reusable.
-                let mut gather_first = activation;
-                let mut gather_second = residual_cur;
-                let mut gather_bounds = boundaries;
-                let mut gather_selected = 0u64;
-                let mut gather_first_out = projection;
-                let mut gather_second_out = residual_next_ptr;
-                let mut gather_count = u32_size(sequences)?;
-                let mut gather_first_width = u32_size(g.q_width)?;
-                let mut gather_second_width = width;
-                let mut gather_mode = readout_mode.kernel_mode();
-                launch(
-                    &k.selected_rows,
-                    stream,
-                    blocks(gather_elements)?,
-                    0,
-                    &mut [
-                        arg(&mut gather_first),
-                        arg(&mut gather_second),
-                        arg(&mut gather_bounds),
-                        arg(&mut gather_selected),
-                        arg(&mut gather_first_out),
-                        arg(&mut gather_second_out),
-                        arg(&mut gather_count),
-                        arg(&mut gather_first_width),
-                        arg(&mut gather_second_width),
-                        arg(&mut gather_mode),
-                    ],
-                )?;
+            let classifier_selected = classifier == Some(ClassifierMode::Selected);
+            if (readout.is_some() || classifier_selected) && index + 1 == self.weights.layers.len()
+            {
+                if classifier_selected {
+                    // Explicit classifier rows: gather both the attention-output
+                    // Q-width rows and the accumulated residual H rows at the
+                    // host-prepared last-non-PAD token ids before o_proj and the
+                    // final pointwise seam. No new shader is introduced.
+                    for (table, out, row_width, elements) in [
+                        (
+                            activation,
+                            projection,
+                            g.q_width,
+                            product(sequences, g.q_width)?,
+                        ),
+                        (
+                            residual_cur,
+                            residual_next_ptr,
+                            width as usize,
+                            product(sequences, h)?,
+                        ),
+                    ] {
+                        let mut gather_ids = selected;
+                        let mut gather_table = table;
+                        let mut gather_out = out;
+                        let mut gather_count = u32_size(sequences)?;
+                        let mut gather_width = u32_size(row_width)?;
+                        launch(
+                            &k.gather,
+                            stream,
+                            blocks(elements)?,
+                            0,
+                            &mut [
+                                arg(&mut gather_ids),
+                                arg(&mut gather_table),
+                                arg(&mut gather_out),
+                                arg(&mut gather_count),
+                                arg(&mut gather_width),
+                            ],
+                        )?;
+                    }
+                } else {
+                    let readout_mode =
+                        readout.ok_or_else(|| infer("Missing selected readout mode"))?;
+                    let gather_widths = g
+                        .q_width
+                        .checked_add(h)
+                        .ok_or_else(|| infer("Decoder selected row width overflow"))?;
+                    let gather_elements = product(sequences, gather_widths)?;
+                    // QKV is dead once FA4 returned; the accumulated residual has
+                    // already been read here, so both destinations are reusable.
+                    let mut gather_first = activation;
+                    let mut gather_second = residual_cur;
+                    let mut gather_bounds = boundaries;
+                    let mut gather_selected = 0u64;
+                    let mut gather_first_out = projection;
+                    let mut gather_second_out = residual_next_ptr;
+                    let mut gather_count = u32_size(sequences)?;
+                    let mut gather_first_width = u32_size(g.q_width)?;
+                    let mut gather_second_width = width;
+                    let mut gather_mode = readout_mode.kernel_mode();
+                    launch(
+                        &k.selected_rows,
+                        stream,
+                        blocks(gather_elements)?,
+                        0,
+                        &mut [
+                            arg(&mut gather_first),
+                            arg(&mut gather_second),
+                            arg(&mut gather_bounds),
+                            arg(&mut gather_selected),
+                            arg(&mut gather_first_out),
+                            arg(&mut gather_second_out),
+                            arg(&mut gather_count),
+                            arg(&mut gather_first_width),
+                            arg(&mut gather_second_width),
+                            arg(&mut gather_mode),
+                        ],
+                    )?;
+                }
 
                 let selected_rows = u32_size(sequences)?;
                 if let Some(bias) = layer.attention.bias.as_ref() {
@@ -1251,24 +1650,30 @@ impl DecoderModel {
                         arg(&mut add_eps),
                     ],
                 )?;
-                let mut cast_input = normalized;
-                let mut cast_output = work.pooled.cu_deviceptr();
-                let mut cast_selected = selected;
-                let mut cast_count = u32_size(selections)?;
-                let mut cast_width = width;
-                launch(
-                    &k.bf16_to_f32,
-                    stream,
-                    blocks(product(selections, h)?)?,
-                    0,
-                    &mut [
-                        arg(&mut cast_input),
-                        arg(&mut cast_output),
-                        arg(&mut cast_selected),
-                        arg(&mut cast_count),
-                        arg(&mut cast_width),
-                    ],
-                )?;
+                if !classifier_selected {
+                    let mut cast_input = normalized;
+                    let mut cast_output = work
+                        .pooled
+                        .as_ref()
+                        .ok_or_else(|| infer("Decoder embedding workspace has no pooled slab"))?
+                        .cu_deviceptr();
+                    let mut cast_selected = selected;
+                    let mut cast_count = u32_size(selections)?;
+                    let mut cast_width = width;
+                    launch(
+                        &k.bf16_to_f32,
+                        stream,
+                        blocks(product(selections, h)?)?,
+                        0,
+                        &mut [
+                            arg(&mut cast_input),
+                            arg(&mut cast_output),
+                            arg(&mut cast_selected),
+                            arg(&mut cast_count),
+                            arg(&mut cast_width),
+                        ],
+                    )?;
+                }
                 selected_done = true;
                 continue;
             }
@@ -1453,48 +1858,134 @@ impl DecoderModel {
                 ],
             )?;
 
-            let mut pool_input = normalized;
-            let mut pool_bounds = boundaries;
-            let mut pool_indices = selected;
-            let mut pool_out = work.pooled.cu_deviceptr();
-            let mut pool_count = u32_size(selections)?;
-            let mut pool_width = width;
-            let mut mode = match pool {
-                Pool::Cls => 0u32,
-                Pool::Mean => 1,
-                Pool::LastToken => 2,
-                Pool::Splade => return Err(infer("Oxide SPLADE unsupported")),
-            };
-            if selections > 0 {
-                launch(
-                    &k.pool,
-                    stream,
-                    blocks(product(selections, h)?)?,
-                    0,
-                    &mut [
-                        arg(&mut pool_input),
-                        arg(&mut pool_bounds),
-                        arg(&mut pool_indices),
-                        arg(&mut pool_out),
-                        arg(&mut pool_count),
-                        arg(&mut pool_width),
-                        arg(&mut mode),
-                    ],
-                )?;
-            }
-            if !batch.raw_indices.is_empty() {
-                super::enqueue_raw_output(
-                    &k.bf16_to_f32,
-                    stream,
-                    normalized,
-                    work.pooled.cu_deviceptr(),
-                    layout.trailer().address(base)?,
-                    batch,
-                    h,
-                )?;
+            if classifier.is_none() {
+                let route = mean_pool_route(pool, selections)?;
+                if route != MeanPoolRoute::Empty {
+                    let mut pool_input = normalized;
+                    let mut pool_bounds = boundaries;
+                    let mut pool_indices = selected;
+                    let mut pool_out = work
+                        .pooled
+                        .as_ref()
+                        .ok_or_else(|| infer("Decoder embedding workspace has no pooled slab"))?
+                        .cu_deviceptr();
+                    match route {
+                        MeanPoolRoute::Empty => {}
+                        MeanPoolRoute::NativeBf16Tree => {
+                            let mean = k.gemma2_mean.as_ref().ok_or_else(|| {
+                                start(format!(
+                                    "BF16 dense decoder mean pooling requires the public Gemma2 ABI bundle export {PUBLIC_MEAN_EXPORT}"
+                                ))
+                            })?;
+                            let plan = crate::gemma2_math::MeanPlan::new(
+                                tokens,
+                                h,
+                                &batch.cumulative_seq_lengths,
+                                &batch.pooled_indices,
+                            )
+                            .map_err(|error| start(format!("decoder BF16 mean plan: {error}")))?;
+                            let geometry = plan.geometry().map_err(|error| {
+                                start(format!("decoder BF16 mean grid: {error}"))
+                            })?;
+                            let mut mean_count = plan.count();
+                            let mut mean_width = plan.width();
+                            launch_threads(
+                                mean,
+                                stream,
+                                (geometry.grid()[0], geometry.grid()[1], geometry.grid()[2]),
+                                geometry.block()[0],
+                                0,
+                                &mut [
+                                    arg(&mut pool_input),
+                                    arg(&mut pool_bounds),
+                                    arg(&mut pool_indices),
+                                    arg(&mut pool_out),
+                                    arg(&mut mean_count),
+                                    arg(&mut mean_width),
+                                ],
+                            )?;
+                        }
+                        MeanPoolRoute::F32Fallback => {
+                            let mut pool_count = u32_size(selections)?;
+                            let mut pool_width = width;
+                            let mut mode = match pool {
+                                Pool::Cls => 0u32,
+                                Pool::Mean => 1,
+                                Pool::LastToken => 2,
+                                Pool::Splade => return Err(infer("Oxide SPLADE unsupported")),
+                            };
+                            launch(
+                                &k.pool,
+                                stream,
+                                blocks(product(selections, h)?)?,
+                                0,
+                                &mut [
+                                    arg(&mut pool_input),
+                                    arg(&mut pool_bounds),
+                                    arg(&mut pool_indices),
+                                    arg(&mut pool_out),
+                                    arg(&mut pool_count),
+                                    arg(&mut pool_width),
+                                    arg(&mut mode),
+                                ],
+                            )?;
+                        }
+                    }
+                }
+                if !batch.raw_indices.is_empty() {
+                    let pooled = work
+                        .pooled
+                        .as_ref()
+                        .ok_or_else(|| infer("Decoder embedding workspace has no pooled slab"))?;
+                    super::enqueue_raw_output(
+                        &k.bf16_to_f32,
+                        stream,
+                        normalized,
+                        pooled.cu_deviceptr(),
+                        layout.trailer().address(base)?,
+                        batch,
+                        h,
+                    )?;
+                }
             }
         }
+        if let (Some(plan), Some(classifier_mode)) = (classifier_plan, classifier) {
+            let head = self
+                .head
+                .as_mut()
+                .ok_or_else(|| infer("Decoder classifier head is not configured"))?;
+            let blas = plain_blas
+                .ok_or_else(|| infer("Decoder classifier requires a plain cuBLAS handle"))?;
+            let source = DecoderClassifierRows::new(&work.normalized, plan.source_rows(), h)?;
+            let row_ids = match classifier_mode {
+                ClassifierMode::Selected => None,
+                ClassifierMode::FullSequenceGather => Some(layout.selections().address(base)?),
+                ClassifierMode::FullTokens => None,
+            };
+            let scratch = work
+                .classifier
+                .as_deref_mut()
+                .ok_or_else(|| infer("Decoder classifier scratch is missing"))?;
+            // SAFETY: every buffer is fixed by the reserved work arena and the
+            // caller retains all owners through the ordered stream completion.
+            unsafe { head.enqueue(lt, blas, stream, source, row_ids, scratch)? };
+        }
         Ok(())
+    }
+}
+
+/// Classifier requests read F32 logits from head scratch and never run pooled
+/// or raw F32 readout, so their physical pooled allocation is zero. Embedding
+/// works keep the existing `[selections,H]` F32 owner unchanged.
+fn pooled_elements(
+    selections: usize,
+    hidden: usize,
+    has_classifier: bool,
+) -> Result<usize, BackendError> {
+    if has_classifier {
+        Ok(0)
+    } else {
+        product(selections, hidden)
     }
 }
 
@@ -1511,7 +2002,8 @@ pub(crate) struct DecoderWork {
     normalized: ManuallyDrop<DeviceBuffer<Bf16>>,
     projection: ManuallyDrop<DeviceBuffer<Bf16>>,
     activation: ManuallyDrop<DeviceBuffer<Bf16>>,
-    pooled: ManuallyDrop<DeviceBuffer<f32>>,
+    pooled: Option<ManuallyDrop<DeviceBuffer<f32>>>,
+    classifier: Option<Box<DecoderClassifierScratchBuffers>>,
     last_completion: Option<CompletionTicket>,
     released: bool,
 }
@@ -1525,7 +2017,16 @@ impl DecoderWork {
     pub(crate) fn fits(&self, key: WorkKey) -> bool {
         super::capacity_fits(self.key(), key, self.bytes)
     }
+    #[allow(dead_code)]
     pub(crate) fn allocation_bytes(key: WorkKey, c: &DecoderConfig) -> Result<usize, BackendError> {
+        Self::allocation_bytes_with_classifier(key, c, None)
+    }
+
+    pub(crate) fn allocation_bytes_with_classifier(
+        key: WorkKey,
+        c: &DecoderConfig,
+        classifier: Option<DecoderClassifierScratchLayout>,
+    ) -> Result<usize, BackendError> {
         let (tokens, _, selections) = key;
         i32::try_from(tokens).map_err(infer)?;
         let geometry = DecoderGeometry::new(c)?;
@@ -1533,27 +2034,39 @@ impl DecoderWork {
         let projection = product(tokens, geometry.projection_width)?;
         let activation = product(tokens, geometry.activation_width)?;
         let input = staging::input_capacity(key)?;
-        let output = product(selections, geometry.hidden)?;
+        let output = pooled_elements(selections, geometry.hidden, classifier.is_some())?;
+        let classifier_bytes = classifier
+            .map(DecoderClassifierScratchLayout::bytes)
+            .transpose()?;
         product(input, 4)?
             .checked_add(product(output, 4)?)
             .and_then(|n| n.checked_add(product(hidden, 8).ok()?))
             .and_then(|n| n.checked_add(product(projection, 2).ok()?))
             .and_then(|n| n.checked_add(product(activation, 2).ok()?))
+            .and_then(|n| n.checked_add(classifier_bytes.unwrap_or(0)))
             .ok_or_else(|| infer("Decoder workspace arena overflow"))
     }
+    #[allow(dead_code)]
     pub(crate) fn new(
         stream: Arc<Stream>,
         c: &DecoderConfig,
         key: WorkKey,
     ) -> Result<Self, BackendError> {
-        let bytes = Self::allocation_bytes(key, c)?;
+        Self::new_with_classifier(stream, c, key, None)
+    }
+    pub(crate) fn new_with_classifier(
+        stream: Arc<Stream>,
+        c: &DecoderConfig,
+        key: WorkKey,
+        classifier_layout: Option<DecoderClassifierScratchLayout>,
+    ) -> Result<Self, BackendError> {
+        let bytes = Self::allocation_bytes_with_classifier(key, c, classifier_layout)?;
         let (tokens, sequences, selections) = key;
         let geometry = DecoderGeometry::new(c)?;
         let input_len = staging::input_capacity(key)?;
         let hidden = product(tokens, geometry.hidden)?;
         let projection = product(tokens, geometry.projection_width)?;
         let activation = product(tokens, geometry.activation_width)?;
-        let output = product(selections, geometry.hidden)?;
         let alloc = |len| {
             // SAFETY: private allocation initialized before any vectorized
             // library or kernel read on this ordered stream.
@@ -1578,9 +2091,20 @@ impl DecoderWork {
         let normalized = alloc(hidden)?;
         let projection = alloc(projection)?;
         let activation = alloc(activation)?;
-        // SAFETY: pooling writes every selected element before download.
-        let pooled =
-            unsafe { DeviceBuffer::<f32>::uninitialized_async(&stream, output) }.map_err(infer)?;
+        let pooled = if classifier_layout.is_some() {
+            None
+        } else {
+            let output = product(selections, geometry.hidden)?;
+            // SAFETY: pooling writes every selected element before download.
+            let pooled = unsafe { DeviceBuffer::<f32>::uninitialized_async(&stream, output) }
+                .map_err(infer)?;
+            Some(ManuallyDrop::new(pooled))
+        };
+        let classifier = classifier_layout
+            .map(|layout| {
+                DecoderClassifierScratchBuffers::new(stream.clone(), layout).map(Box::new)
+            })
+            .transpose()?;
         metrics::counter!("oxide_arena_allocations_total").increment(1);
         super::LIVE_ARENA_BYTES.fetch_add(bytes, Ordering::Relaxed);
         super::record_live_arena_bytes();
@@ -1596,7 +2120,8 @@ impl DecoderWork {
             normalized: ManuallyDrop::new(normalized),
             projection: ManuallyDrop::new(projection),
             activation: ManuallyDrop::new(activation),
-            pooled: ManuallyDrop::new(pooled),
+            pooled,
+            classifier,
             last_completion: None,
             released: false,
             stream,
@@ -1687,7 +2212,16 @@ impl DecoderWork {
             ManuallyDrop::drop(&mut self.normalized);
             ManuallyDrop::drop(&mut self.projection);
             ManuallyDrop::drop(&mut self.activation);
-            ManuallyDrop::drop(&mut self.pooled);
+            if let Some(pooled) = self.pooled.as_mut() {
+                ManuallyDrop::drop(pooled);
+            }
+        }
+        if let Some(mut scratch) = self.classifier.take() {
+            // SAFETY: this owner is only released after an exact completion
+            // proof or a successful whole-stream drain, so the reused outer
+            // marks cover the head scratch without another warm synchronize.
+            unsafe { scratch.mark_stream_drained() };
+            drop(scratch);
         }
         super::LIVE_ARENA_BYTES.fetch_sub(self.bytes, Ordering::Relaxed);
         super::record_live_arena_bytes();
@@ -1720,9 +2254,13 @@ impl DecoderWork {
             (self.normalized.len(), product(tokens, g.hidden)?),
             (self.projection.len(), product(tokens, g.projection_width)?),
             (self.activation.len(), product(tokens, g.activation_width)?),
-            (self.pooled.len(), product(selections, g.hidden)?),
         ] {
             if elements > len {
+                return Err(infer("Decoder slab exceeds retained arena"));
+            }
+        }
+        if let Some(pooled) = self.pooled.as_ref() {
+            if product(selections, g.hidden)? > pooled.len() {
                 return Err(infer("Decoder slab exceeds retained arena"));
             }
         }
@@ -1734,13 +2272,31 @@ impl DecoderWork {
         geometry: super::output::OutputGeometry,
         lease: &mut HostIoLease,
     ) -> Result<(usize, usize), BackendError> {
-        if geometry.backbone_elements(b)? > self.pooled.len() {
+        let pooled = self
+            .pooled
+            .as_ref()
+            .ok_or_else(|| infer("Decoder embedding workspace has no pooled slab"))?;
+        if geometry.backbone_elements(b)? > pooled.len() {
             return Err(infer("Decoder backbone output exceeds retained arena"));
         }
         stage_batch(b, geometry, lease)
     }
     pub(crate) fn upload(&self, host: &[u32], elements: usize) -> Result<(), BackendError> {
         upload_input(&self.stream, &self.input, host, elements)
+    }
+    pub(crate) fn stage_classifier(
+        &self,
+        b: &Batch,
+        geometry: super::output::OutputGeometry,
+        lease: &mut HostIoLease,
+    ) -> Result<(usize, usize), BackendError> {
+        stage_batch(b, geometry, lease)
+    }
+    pub(crate) fn stream(&self) -> &Arc<Stream> {
+        &self.stream
+    }
+    pub(crate) fn classifier_scratch(&self) -> Option<&DecoderClassifierScratchBuffers> {
+        self.classifier.as_deref()
     }
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn finish(
@@ -1754,6 +2310,9 @@ impl DecoderWork {
         lease: &mut HostIoLease,
     ) -> Result<(), BackendError> {
         let Self { pooled, stream, .. } = self;
+        let pooled = pooled
+            .as_ref()
+            .ok_or_else(|| infer("Decoder embedding workspace has no pooled slab"))?;
         super::finish_pooled(
             dense,
             lt,
@@ -1779,7 +2338,13 @@ impl Drop for DecoderWork {
             // drains deliberately retain device allocations.
             unsafe { self.release_payload_once() };
         } else {
+            // The Work is the single byte owner and already includes the
+            // classifier scratch in self.bytes. Retain the scratch and its
+            // stream as part of that charge without a second sync/charge.
             metrics::counter!("oxide_arena_retained_bytes_total").increment(self.bytes as u64);
+            if let Some(scratch) = self.classifier.take() {
+                scratch.retain_owned_by_failed_work();
+            }
         }
     }
 }
@@ -1835,6 +2400,17 @@ mod tests {
         fn drop(&mut self) {
             let _ = fs::remove_dir_all(&self.0);
         }
+    }
+
+    #[test]
+    fn dense_decoder_requires_the_current_public_gemma2_exports_without_private_fallback() {
+        assert!(crate::gemma2_math::EXPORTS.contains(&MISTRAL_PUBLIC_ROPE_EXPORT));
+        assert!(crate::gemma2_math::EXPORTS.contains(&PUBLIC_MEAN_EXPORT));
+        assert_eq!(
+            MISTRAL_PUBLIC_ROPE_EXPORT,
+            "infinity_gemma2_rope_tables_bf16"
+        );
+        assert_eq!(PUBLIC_MEAN_EXPORT, "infinity_gemma2_mean_pool_bf16");
     }
 
     #[test]
@@ -2004,6 +2580,89 @@ mod tests {
         assert_eq!(g.activation_width, 3072);
         assert_eq!(g.silu_groups_per_row, 384);
 
+        let h2048 = qwen3_fixture(serde_json::json!({
+            "hidden_size": 2048,
+            "intermediate_size": 6144,
+            "num_hidden_layers": 28,
+            "num_attention_heads": 16
+        }));
+        let c = h2048.config();
+        assert_eq!(
+            DecoderMath::select(&c).unwrap(),
+            DecoderMath::Qwen3H2048Ordinary
+        );
+        assert_eq!(
+            DecoderMath::Qwen3H2048Ordinary.rms_export(),
+            "infinity_rms_norm"
+        );
+        assert_eq!(
+            DecoderMath::Qwen3H2048Ordinary.add_rms_export(),
+            "infinity_add_rms_norm"
+        );
+        assert_eq!(
+            DecoderMath::Qwen3H2048Ordinary.qk_norm_rope_export(),
+            Some("infinity_qk_norm_rope_128_bf16")
+        );
+        assert_eq!(
+            DecoderMath::Qwen3H2048Ordinary.activation_export(),
+            "infinity_silu_mul_bf16_vector8_native"
+        );
+        assert_eq!(
+            DecoderMath::Qwen3H2048Ordinary.norm_geometry(),
+            GENERIC_NORM_GEOMETRY
+        );
+        assert_eq!(GENERIC_NORM_GEOMETRY.rows_per_cta, 1);
+        assert_eq!(GENERIC_NORM_GEOMETRY.threads, 256);
+        let g = DecoderGeometry::new(&c).expect("geometry");
+        assert_eq!(
+            (g.hidden, g.q_width, g.kv_width, g.qkv_width),
+            (2048, 2048, 1024, 4096)
+        );
+        assert_eq!(g.projection_width, 12288);
+        assert_eq!(g.activation_width, 6144);
+        assert_eq!(g.silu_groups_per_row, 768);
+
+        let h2560 = qwen3_fixture(serde_json::json!({
+            "hidden_size": 2560,
+            "intermediate_size": 9728,
+            "num_hidden_layers": 36,
+            "num_attention_heads": 32
+        }));
+        let c = h2560.config();
+        assert_eq!(
+            DecoderMath::select(&c).unwrap(),
+            DecoderMath::Qwen3H2560Ordinary
+        );
+        assert_eq!(
+            DecoderMath::Qwen3H2560Ordinary.rms_export(),
+            "infinity_rms_norm"
+        );
+        assert_eq!(
+            DecoderMath::Qwen3H2560Ordinary.add_rms_export(),
+            "infinity_add_rms_norm"
+        );
+        assert_eq!(
+            DecoderMath::Qwen3H2560Ordinary.qk_norm_rope_export(),
+            Some("infinity_qk_norm_rope_128_bf16")
+        );
+        assert_eq!(
+            DecoderMath::Qwen3H2560Ordinary.activation_export(),
+            "infinity_silu_mul_bf16_vector8_native"
+        );
+        assert_eq!(
+            DecoderMath::Qwen3H2560Ordinary.norm_geometry(),
+            GENERIC_NORM_GEOMETRY
+        );
+        let g = DecoderGeometry::new(&c).expect("geometry");
+        assert_eq!(
+            (g.hidden, g.q_width, g.kv_width, g.qkv_width),
+            (2560, 4096, 1024, 6144)
+        );
+        assert_eq!(g.projection_width, 19456);
+        assert_eq!(g.activation_width, 9728);
+        assert_eq!(g.silu_groups_per_row, 1216);
+        assert!(c.q_width() != c.hidden_size);
+
         let h4096 = qwen3_fixture(serde_json::json!({
             "hidden_size": 4096,
             "intermediate_size": 12288,
@@ -2054,6 +2713,79 @@ mod tests {
     }
 
     #[test]
+    fn qwen3_4b_actual_config_selects_h2560_ordinary_geometry() {
+        // Exact metadata from the Qwen3-4B BF16/FP8 comparison checkpoint.
+        let fixture = Fixture::with_config(
+            r#"{
+                "architectures": ["Qwen3ForCausalLM"],
+                "attention_bias": false,
+                "attention_dropout": 0.0,
+                "bos_token_id": 151643,
+                "eos_token_id": 151645,
+                "head_dim": 128,
+                "hidden_act": "silu",
+                "hidden_size": 2560,
+                "initializer_range": 0.02,
+                "intermediate_size": 9728,
+                "max_position_embeddings": 40960,
+                "max_window_layers": 36,
+                "model_type": "qwen3",
+                "num_attention_heads": 32,
+                "num_hidden_layers": 36,
+                "num_key_value_heads": 8,
+                "rms_norm_eps": 1e-06,
+                "rope_scaling": null,
+                "rope_theta": 1000000,
+                "sliding_window": null,
+                "tie_word_embeddings": true,
+                "torch_dtype": "bfloat16",
+                "transformers_version": "4.51.2",
+                "use_cache": true,
+                "use_sliding_window": false,
+                "vocab_size": 151665
+            }"#,
+        );
+        let c = fixture.config();
+        assert_eq!(c.family, DecoderFamily::Qwen3);
+        assert_eq!(
+            (c.hidden_size, c.intermediate_size, c.num_hidden_layers),
+            (2560, 9728, 36)
+        );
+        assert_eq!(
+            (c.num_attention_heads, c.num_key_value_heads, c.head_dim),
+            (32, 8, 128)
+        );
+        assert_eq!(c.max_position_embeddings, 40960);
+        assert_eq!(c.rope_theta, 1_000_000.0);
+        assert!(c.is_causal);
+        assert_eq!(c.rope, DecoderRope::FullNeoX);
+        assert_eq!(
+            DecoderMath::select(&c).unwrap(),
+            DecoderMath::Qwen3H2560Ordinary
+        );
+        let g = DecoderGeometry::new(&c).expect("geometry");
+        assert_eq!(
+            (g.hidden, g.q_width, g.kv_width, g.qkv_width),
+            (2560, 4096, 1024, 6144)
+        );
+        assert_eq!(g.projection_width, 19456);
+        assert_eq!(g.activation_width, 9728);
+        assert_eq!(g.silu_groups_per_row, 1216);
+        assert!(c.q_width() != c.hidden_size);
+        for causal in [false, true] {
+            assert!(fa4::Fa4::supports(&fa4::AttentionSpec {
+                heads: c.num_attention_heads,
+                kv_heads: c.num_key_value_heads,
+                head_dim: c.head_dim,
+                causal,
+                window: fa4::Window::Global,
+                dtype: fa4::DType::Bf16,
+                scale: fa4::Scale::RsqrtHeadDim,
+            }));
+        }
+    }
+
+    #[test]
     fn decoder_auto_prefix_keeps_published_and_falls_back_for_appended() {
         let published = fa4::AttentionSpec {
             heads: 32,
@@ -2086,8 +2818,12 @@ mod tests {
                 "only Qwen3 head_dim 128",
             ),
             (
-                serde_json::json!({"hidden_size": 2048}),
-                "hidden_size 1024 or 4096",
+                serde_json::json!({"head_dim": 256}),
+                "only Qwen3 head_dim 128",
+            ),
+            (
+                serde_json::json!({"hidden_size": 5120}),
+                "hidden_size 1024, 2048, 2560 or 4096",
             ),
             (
                 serde_json::json!({"rope_type": "simple"}),
@@ -2388,5 +3124,343 @@ mod tests {
         assert!(sequences * g.q_width <= tokens * g.projection_width);
         assert!(sequences * g.hidden <= tokens * g.hidden);
         assert!(sequences * c.intermediate_size <= tokens * g.activation_width);
+    }
+
+    fn mistral_config() -> DecoderConfig {
+        DecoderConfig {
+            family: DecoderFamily::Mistral,
+            hidden_size: 4096,
+            intermediate_size: 14336,
+            num_hidden_layers: 2,
+            num_attention_heads: 32,
+            num_key_value_heads: 8,
+            head_dim: 128,
+            vocab_size: 32000,
+            max_position_embeddings: 32768,
+            rms_norm_eps: 1e-5,
+            rope_theta: 10_000.0,
+            is_causal: true,
+            attention_window: Some(4096),
+            rope: DecoderRope::Default,
+        }
+    }
+
+    #[test]
+    fn mistral_h4096_math_and_unported_window_selectors() {
+        let c = mistral_config();
+        assert_eq!(
+            DecoderMath::select(&c).unwrap(),
+            DecoderMath::MistralH4096Ordinary
+        );
+        let math = DecoderMath::MistralH4096Ordinary;
+        assert_eq!(math.rms_export(), "infinity_rms_norm_4096_vector");
+        assert_eq!(math.add_rms_export(), "infinity_add_rms_norm_4096_vector");
+        assert_eq!(math.rope_export(), "infinity_rope_neox");
+        assert_eq!(
+            math.activation_export(),
+            "infinity_silu_mul_bf16_vector8_native"
+        );
+        assert_eq!(math.qk_norm_rope_export(), None);
+        assert_eq!(math.norm_geometry(), GENERIC_NORM_GEOMETRY);
+        let global = DecoderConfig {
+            attention_window: None,
+            ..mistral_config()
+        };
+        assert_eq!(
+            DecoderMath::select(&global).unwrap(),
+            DecoderMath::MistralH4096Ordinary
+        );
+        let wrong_hidden = DecoderConfig {
+            hidden_size: 3072,
+            ..mistral_config()
+        };
+        let noncausal = DecoderConfig {
+            is_causal: false,
+            ..mistral_config()
+        };
+        let window = DecoderConfig {
+            attention_window: Some(2048),
+            ..mistral_config()
+        };
+        let wrong_rope = DecoderConfig {
+            rope: DecoderRope::FullNeoX,
+            ..mistral_config()
+        };
+        for (config, needle) in [
+            (wrong_hidden, "H4096"),
+            (noncausal, "causal"),
+            (window, "4096"),
+            (wrong_rope, "default RoPE"),
+        ] {
+            let error = validate_recipe(&config).unwrap_err().to_string();
+            assert!(error.contains(needle), "{error}");
+        }
+    }
+
+    #[test]
+    fn mistral_local_window_remains_local_and_supported() {
+        let spec = attention_spec(&mistral_config()).expect("local spec");
+        assert_eq!(
+            spec.window,
+            fa4::Window::Local {
+                left: 4095,
+                right: 0
+            }
+        );
+        assert!(fa4::Fa4::supports(&spec));
+        let global = DecoderConfig {
+            attention_window: None,
+            ..mistral_config()
+        };
+        assert_eq!(
+            attention_spec(&global).expect("global spec").window,
+            fa4::Window::Global
+        );
+        let underflow = DecoderConfig {
+            attention_window: Some(0),
+            ..mistral_config()
+        };
+        assert!(attention_spec(&underflow).is_err());
+    }
+
+    #[test]
+    fn mistral_mean_plan_keeps_short_store_lanes_and_canonical_mix_capacity() {
+        for longest in 1..=4usize {
+            let cu = [0, longest as u32];
+            let plan =
+                crate::gemma2_math::MeanPlan::new(longest, 4096, &cu, &[0]).expect("mean plan");
+            let geometry = plan.geometry().expect("mean grid");
+            assert!(geometry.block()[0] >= 8);
+            assert_eq!(geometry.grid(), [1, 512, 1]);
+        }
+        let cu = [0, 3, 7, 12, 15];
+        let selected = [2, 0, 2, 1, 3];
+        let plan =
+            crate::gemma2_math::MeanPlan::new(15, 4096, &cu, &selected).expect("mixed mean plan");
+        assert_eq!(plan.count(), 5);
+        assert_eq!(plan.threads(), 8);
+        assert_eq!(plan.geometry().expect("mixed grid").grid(), [5, 512, 1]);
+    }
+
+    #[test]
+    fn mean_pool_route_uses_the_shared_bf16_tree_only_for_standard_mean_counts() {
+        for pool in [Pool::Cls, Pool::Mean, Pool::LastToken] {
+            for selections in [1usize, usize::from(u16::MAX)] {
+                let expected = if matches!(&pool, Pool::Mean) {
+                    MeanPoolRoute::NativeBf16Tree
+                } else {
+                    MeanPoolRoute::F32Fallback
+                };
+                assert_eq!(mean_pool_route(&pool, selections).unwrap(), expected);
+            }
+            assert_eq!(mean_pool_route(&pool, 0).unwrap(), MeanPoolRoute::Empty);
+        }
+        assert_eq!(
+            mean_pool_route(&Pool::Mean, usize::from(u16::MAX) + 1).unwrap(),
+            MeanPoolRoute::F32Fallback
+        );
+        assert!(mean_pool_route(&Pool::Splade, 1).is_err());
+        assert!(mean_pool_route(&Pool::Splade, 0).is_err());
+    }
+
+    #[test]
+    fn mean_pool_route_keeps_raw_only_requests_out_of_the_pooled_kernel() {
+        for pool in [Pool::Cls, Pool::Mean, Pool::LastToken] {
+            assert_eq!(mean_pool_route(&pool, 0).unwrap(), MeanPoolRoute::Empty);
+            assert_eq!(selected_readout(&pool, 0), None);
+        }
+    }
+
+    #[test]
+    fn shared_bf16_mean_plan_covers_dense_widths_and_short_spans() {
+        for width in [1024usize, 2560, 4096, 5120] {
+            for rows in 1..=4usize {
+                let cu = [0, rows as u32];
+                let plan = crate::gemma2_math::MeanPlan::new(rows, width, &cu, &[0])
+                    .expect("dense mean plan");
+                assert_eq!(plan.count(), 1);
+                assert_eq!(plan.width() as usize, width);
+                assert_eq!(plan.threads(), crate::gemma2_math::POOL_TILE as u32);
+                assert_eq!(
+                    plan.geometry().expect("dense mean grid").grid(),
+                    [1, width.div_ceil(crate::gemma2_math::POOL_TILE) as u32, 1]
+                );
+                assert_eq!(plan.output_layout().shape(), &[1, width]);
+            }
+        }
+    }
+
+    #[test]
+    fn shared_bf16_mean_plan_keeps_duplicates_and_accepts_more_selections_than_tokens() {
+        let cu = [0, 3, 7, 12, 15];
+        let selected = [2, 0, 2, 1, 3];
+        let plan = crate::gemma2_math::MeanPlan::new(15, 4096, &cu, &selected)
+            .expect("duplicate mean plan");
+        assert_eq!(plan.count(), selected.len() as u32);
+        assert_eq!(
+            plan.geometry().expect("duplicate grid").grid()[0],
+            selected.len() as u32
+        );
+        assert_eq!(plan.output_layout().shape(), &[selected.len(), 4096]);
+
+        let cu = [0, 2, 4];
+        let selected = [0, 0, 0, 0, 1];
+        let plan =
+            crate::gemma2_math::MeanPlan::new(4, 1024, &cu, &selected).expect("M>T mean plan");
+        assert!(selected.len() > cu.len() - 1);
+        assert!(selected.len() > 4, "selections exceed the token count");
+        assert_eq!(plan.count(), selected.len() as u32);
+        assert_eq!(plan.output_layout().shape(), &[selected.len(), 1024]);
+    }
+
+    #[test]
+    fn mistral_geometry_and_workspace_capacity_follow_actual_slabs() {
+        let c = mistral_config();
+        let g = DecoderGeometry::new(&c).expect("geometry");
+        assert_eq!(
+            (g.hidden, g.q_width, g.kv_width, g.qkv_width),
+            (4096, 4096, 1024, 6144)
+        );
+        assert_eq!(g.projection_width, 28672);
+        assert_eq!(g.activation_width, 14336);
+        assert_eq!(g.silu_groups_per_row, 1792);
+        assert!(DecoderWork::allocation_bytes((128, 2, 1), &c).is_ok());
+        assert!(DecoderWork::allocation_bytes((usize::MAX, 2, 1), &c).is_err());
+    }
+    #[test]
+    fn geometry_keeps_query_width_separate_from_hidden_width() {
+        let fixture = Fixture::with_config(
+            r#"{
+                "model_type": "qwen2",
+                "architectures": ["Qwen2Model"],
+                "hidden_size": 12,
+                "intermediate_size": 20,
+                "num_hidden_layers": 1,
+                "num_attention_heads": 2,
+                "num_key_value_heads": 1,
+                "head_dim": 8,
+                "vocab_size": 12,
+                "max_position_embeddings": 32,
+                "rms_norm_eps": 1e-6,
+                "rope_theta": 1000000.0,
+                "hidden_act": "silu",
+                "is_causal": false
+            }"#,
+        );
+        let c = fixture.config();
+        assert_ne!(c.q_width(), c.hidden_size);
+        let g = DecoderGeometry::new(&c).expect("geometry");
+        assert_eq!(
+            (g.hidden, g.q_width, g.kv_width, g.qkv_width),
+            (12, 16, 8, 32)
+        );
+        assert_eq!((g.projection_width, g.activation_width), (40, 20));
+        let layout = DecoderClassifierScratchLayout::for_key(c.hidden_size, 3, (32, 4, 2))
+            .expect("classifier scratch");
+        assert_eq!(layout.gather_elements(), 4 * 12);
+        assert_eq!(layout.logits_elements(), 32 * 3);
+    }
+
+    #[test]
+    fn classifier_plan_kinds_map_to_distinct_trunk_modes() {
+        let selected = RowPlan::selected_sequence(3, 3).unwrap();
+        let packed = RowPlan::from_row_ids(10, vec![1, 3, 9]).unwrap();
+        let tokens = RowPlan::tokens(10).unwrap();
+        assert_eq!(
+            classifier_mode(Some(&selected)),
+            Some(ClassifierMode::Selected)
+        );
+        assert_eq!(
+            classifier_mode(Some(&packed)),
+            Some(ClassifierMode::FullSequenceGather)
+        );
+        assert_eq!(
+            classifier_mode(Some(&tokens)),
+            Some(ClassifierMode::FullTokens)
+        );
+        assert_eq!(classifier_mode(None), None);
+    }
+
+    #[test]
+    fn classifier_scratch_bytes_are_accounted_and_overflow_is_rejected() {
+        let fixture = Fixture::new();
+        let c = fixture.config();
+        let key = (32usize, 4, 2);
+        let plain = DecoderWork::allocation_bytes(key, &c).expect("plain bytes");
+        let layout = DecoderClassifierScratchLayout::for_key(c.hidden_size, 2, key)
+            .expect("classifier layout");
+        let with = DecoderWork::allocation_bytes_with_classifier(key, &c, Some(layout))
+            .expect("classifier bytes");
+        let pooled_bytes = key.2 * c.hidden_size * std::mem::size_of::<f32>();
+        assert_eq!(
+            with,
+            plain - pooled_bytes + layout.bytes().unwrap(),
+            "head works replace the unused pooled slab with head scratch"
+        );
+        assert_eq!(pooled_elements(key.2, c.hidden_size, true).unwrap(), 0);
+        assert_eq!(
+            pooled_elements(key.2, c.hidden_size, false).unwrap(),
+            key.2 * c.hidden_size
+        );
+        assert!(DecoderWork::allocation_bytes_with_classifier(
+            (usize::MAX, 4, 2),
+            &c,
+            Some(layout)
+        )
+        .is_err());
+        assert!(DecoderWork::allocation_bytes_with_classifier(
+            (32, 4, usize::MAX),
+            &c,
+            Some(layout)
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn token_classifier_bytes_exclude_the_unused_token_by_hidden_f32_slab() {
+        let fixture = Fixture::with_config(
+            r#"{
+                "model_type": "qwen3",
+                "architectures": ["Qwen3ForCausalLM"],
+                "hidden_size": 2560,
+                "intermediate_size": 9728,
+                "num_hidden_layers": 1,
+                "num_attention_heads": 32,
+                "num_key_value_heads": 8,
+                "head_dim": 128,
+                "vocab_size": 151669,
+                "max_position_embeddings": 40960,
+                "rms_norm_eps": 1e-6,
+                "rope_theta": 1000000.0,
+                "hidden_act": "silu",
+                "is_causal": false
+            }"#,
+        );
+        let c = fixture.config();
+        let g = DecoderGeometry::new(&c).expect("geometry");
+        assert!(
+            g.projection_width > g.hidden,
+            "D > H layouts must retain their ordinary slab bounds"
+        );
+        let tokens = 8192usize;
+        let labels = 2usize;
+        let key = (tokens, 2, tokens);
+        let layout = DecoderClassifierScratchLayout::for_key(c.hidden_size, labels, key)
+            .expect("classifier layout");
+        let plain = DecoderWork::allocation_bytes(key, &c).expect("plain bytes");
+        let with = DecoderWork::allocation_bytes_with_classifier(key, &c, Some(layout))
+            .expect("classifier bytes");
+        let unused_pooled = tokens * c.hidden_size * std::mem::size_of::<f32>();
+        assert_eq!(unused_pooled, 83_886_080);
+        assert_eq!(
+            with,
+            plain - unused_pooled + layout.bytes().unwrap(),
+            "token classification must not charge T*H*4 pooled storage"
+        );
+        assert_eq!(pooled_elements(tokens, c.hidden_size, true).unwrap(), 0);
+        assert!(
+            with < plain,
+            "head workspace is smaller than pooled baseline"
+        );
     }
 }
