@@ -73,14 +73,19 @@ checks all 65,536 BF16 patterns for both constants, including NaN conversion.
 GPU instruction and model equivalence remain separate qualification steps;
 compilation alone establishes neither runtime quality nor performance.
 
-The default registry is canonical31 (export ABI7/native ABI1): the original
+The default registry is canonical38 (export ABI7/native ABI1): the original
 26 modes keep their exact order, followed by Qwen3.5-MoE GQA8/d256 causal,
 Qwen3 Q40/KV8/d128 causal and noncausal, an asymmetric Mistral inventory
-entry, and Qwen3.5-MoE GQA8/d256 noncausal. This produces 62 ordinary
-FP16/BF16 objects and the same eight helper objects (70 total). The Rust
-loader continues accepting old canonical26 bundles for old profiles. Mode29's
-`[4096,-1]` window is provider inventory only; the current Rust runtime rejects
-that unsupported asymmetric mask. Provider inventory is not model qualification.
+entry, and Qwen3.5-MoE GQA8/d256 noncausal. Modes 31..37 append the three
+unique dense-gap decoder shapes, three unique Gemma3 global/local1024 shapes,
+and Gemma4 E4B local1024. This produces 76 ordinary FP16/BF16 objects and the
+same eight helper objects (84 total). The Rust loader continues accepting old
+canonical26/canonical31 bundles for old profiles. Because the legacy
+`infinity_fa4_modes_v1` mask is an `i32`, manifests declaring more than 31
+exports also provide `infinity_fa4_modes_v2() -> u64`; hosts declaring <=31
+keep the old query and load path unchanged. Mode29's `[4096,-1]` window is
+provider inventory only; the current Rust runtime rejects that unsupported
+asymmetric mask. Provider inventory is not model qualification.
 
 The existing architecture selection, compile-only guard, portable linking and
 `--only-symbol` development export controls are unchanged. A selected export

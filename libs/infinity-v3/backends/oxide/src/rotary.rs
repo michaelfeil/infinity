@@ -244,6 +244,114 @@ impl BaseRopeTables {
         })
     }
 
+    /// Build Native Llama3 NTK-by-parts rotary tables.
+    ///
+    /// Every stage is F32, mirroring Candle: the unscaled inverse frequency is
+    /// `1/theta^(2i/d)`; wavelengths above `original/low` are divided by the
+    /// factor, and wavelengths in the smoothing band are blended with that
+    /// scaled frequency using the F32 smooth factor. Phases then follow the
+    /// shared `position * frequency` -> BF16 sine/cosine ABI.
+    pub(crate) fn new_llama3(
+        head_dim: usize,
+        theta: f64,
+        scale: crate::decoder_model::Llama3RopeScale,
+        position_capacity: usize,
+        byte_limit: usize,
+    ) -> Result<Self, RotaryError> {
+        if head_dim == 0 || !head_dim.is_multiple_of(2) || u32::try_from(head_dim).is_err() {
+            return Err(RotaryError::InvalidHeadDimension);
+        }
+        let base = theta as f32;
+        if !theta.is_finite() || theta <= 1.0 || !base.is_finite() || base <= 1.0 {
+            return Err(RotaryError::InvalidTheta);
+        }
+        if position_capacity == 0 || u32::try_from(position_capacity).is_err() {
+            return Err(RotaryError::InvalidCapacity);
+        }
+        let factor = scale.factor;
+        let original = scale.original_max_position_embeddings;
+        let low = scale.low_freq_factor;
+        let high = scale.high_freq_factor;
+        if !factor.is_finite()
+            || !original.is_finite()
+            || !low.is_finite()
+            || !high.is_finite()
+            || !factor.is_normal()
+            || factor < 1.0
+            || original <= 0.0
+            || high <= low
+        {
+            return Err(RotaryError::InvalidScale);
+        }
+        let half = head_dim / 2;
+        let elements = position_capacity
+            .checked_mul(half)
+            .ok_or(RotaryError::SizeOverflow)?;
+        let table_bytes = elements
+            .checked_mul(2)
+            .and_then(|n| n.checked_mul(size_of::<f32>()))
+            .ok_or(RotaryError::SizeOverflow)?;
+        let required = half
+            .checked_mul(size_of::<f32>())
+            .and_then(|n| n.checked_add(table_bytes))
+            .ok_or(RotaryError::SizeOverflow)?;
+        if required > byte_limit {
+            return Err(RotaryError::ByteBudgetExceeded {
+                required,
+                limit: byte_limit,
+            });
+        }
+
+        let mut inverse = zeroed(half)?;
+        for (lane, frequency) in inverse.iter_mut().enumerate() {
+            let numerator = lane.checked_mul(2).ok_or(RotaryError::SizeOverflow)?;
+            let exponent = numerator as f32 / head_dim as f32;
+            let mut current = 1.0f32 / base.powf(exponent);
+            let wavelength = 2.0f32 * core::f32::consts::PI / current;
+            if !current.is_normal() || !wavelength.is_finite() {
+                return Err(RotaryError::InvalidScale);
+            }
+            if wavelength > original / low {
+                current /= factor;
+            } else if wavelength >= original / high {
+                let smooth = (original / wavelength - low) / (high - low);
+                let scaled = current / factor;
+                current = (1.0 - smooth) * scaled + smooth * current;
+            }
+            if !current.is_normal() {
+                return Err(RotaryError::InvalidScale);
+            }
+            *frequency = current;
+        }
+        let mut cosine = zeroed(elements)?;
+        let mut sine = zeroed(elements)?;
+        for (position, (cosine_row, sine_row)) in cosine
+            .chunks_exact_mut(half)
+            .zip(sine.chunks_exact_mut(half))
+            .enumerate()
+        {
+            for ((cosine_value, sine_value), frequency) in cosine_row
+                .iter_mut()
+                .zip(sine_row.iter_mut())
+                .zip(inverse.iter())
+            {
+                let angle = position as f32 * frequency;
+                if !angle.is_finite() {
+                    return Err(RotaryError::InvalidScale);
+                }
+                *cosine_value = bf16::from_f32(angle.cos()).to_f32();
+                *sine_value = bf16::from_f32(angle.sin()).to_f32();
+            }
+        }
+        Ok(Self {
+            head_dim,
+            positions: position_capacity,
+            table_bytes,
+            cosine,
+            sine,
+        })
+    }
+
     pub(crate) const fn head_dim(&self) -> usize {
         self.head_dim
     }
@@ -416,6 +524,94 @@ mod tests {
                 Err(RotaryError::SizeOverflow)
             ));
         }
+    }
+
+    #[test]
+    fn llama3_ntk_by_parts_stages_match_the_native_f32_recipe() {
+        use crate::decoder_model::Llama3RopeScale;
+        let dimension = 8usize;
+        let theta = 10_000.0f64;
+        let scale = Llama3RopeScale {
+            factor: 2.0,
+            original_max_position_embeddings: 16.0,
+            low_freq_factor: 1.0,
+            high_freq_factor: 4.0,
+        };
+        let capacity = 9usize;
+        let tables = BaseRopeTables::new_llama3(dimension, theta, scale, capacity, 1 << 20)
+            .expect("Llama3 geometry");
+        let base = theta as f32;
+        for lane in 0..dimension / 2 {
+            let exponent = (2 * lane) as f32 / dimension as f32;
+            let base_inverse = 1.0f32 / base.powf(exponent);
+            let wavelength = 2.0f32 * core::f32::consts::PI / base_inverse;
+            let expected = if wavelength
+                > scale.original_max_position_embeddings / scale.low_freq_factor
+            {
+                base_inverse / scale.factor
+            } else if wavelength >= scale.original_max_position_embeddings / scale.high_freq_factor
+            {
+                let smooth = (scale.original_max_position_embeddings / wavelength
+                    - scale.low_freq_factor)
+                    / (scale.high_freq_factor - scale.low_freq_factor);
+                let scaled = base_inverse / scale.factor;
+                (1.0 - smooth) * scaled + smooth * base_inverse
+            } else {
+                base_inverse
+            };
+            for position in [0usize, 1, 8] {
+                let angle = position as f32 * expected;
+                let offset = position * (dimension / 2) + lane;
+                assert_eq!(
+                    tables.cosine()[offset],
+                    bf16::from_f32(angle.cos()).to_f32()
+                );
+                assert_eq!(tables.sine()[offset], bf16::from_f32(angle.sin()).to_f32());
+            }
+        }
+        let unscaled = BaseRopeTables::new(dimension, theta, capacity, 1 << 20).unwrap();
+        assert_ne!(tables.cosine(), unscaled.cosine());
+        assert_eq!(tables.table_stride(), dimension / 2);
+    }
+
+    #[test]
+    fn rejects_malformed_llama3_scaling_without_allocating_tables() {
+        use crate::decoder_model::Llama3RopeScale;
+        let ok = Llama3RopeScale {
+            factor: 2.0,
+            original_max_position_embeddings: 16.0,
+            low_freq_factor: 1.0,
+            high_freq_factor: 4.0,
+        };
+        for broken in [
+            Llama3RopeScale { factor: 0.5, ..ok },
+            Llama3RopeScale {
+                factor: f32::NAN,
+                ..ok
+            },
+            Llama3RopeScale {
+                original_max_position_embeddings: 0.0,
+                ..ok
+            },
+            Llama3RopeScale {
+                high_freq_factor: 1.0,
+                ..ok
+            },
+        ] {
+            assert!(matches!(
+                BaseRopeTables::new_llama3(8, 10_000.0, broken, 8, 1 << 20),
+                Err(RotaryError::InvalidScale)
+            ));
+        }
+        let required = (10 * 4 * 2 + 4) * 4;
+        assert!(matches!(
+            BaseRopeTables::new_llama3(8, 10_000.0, ok, 10, required - 1),
+            Err(RotaryError::ByteBudgetExceeded {
+                required: 336,
+                limit: 335
+            })
+        ));
+        assert!(BaseRopeTables::new_llama3(8, 10_000.0, ok, 10, required).is_ok());
     }
 
     #[test]

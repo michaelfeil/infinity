@@ -140,6 +140,51 @@ impl DenseChainHost {
         }))
     }
 
+    /// Wrap one Native root projection (noncausal `linear.weight`) as an
+    /// identity Dense chain. The shared Dense executor then applies the actual
+    /// BF16 weight after pooling, so the public output width is the trained
+    /// projection width rather than the backbone hidden width.
+    pub(crate) fn from_root_projection(
+        backbone_width: usize,
+        weight: crate::model::WeightSource,
+        bias: Option<crate::model::WeightSource>,
+    ) -> Result<Self, crate::BackendError> {
+        let shape = weight.shape();
+        let [out_features, in_features] = shape else {
+            return Err(start(
+                "root decoder output projection must be a rank-2 matrix",
+            ));
+        };
+        let (out_features, in_features) = (*out_features, *in_features);
+        if backbone_width == 0 || in_features != backbone_width || out_features == 0 {
+            return Err(start(format!(
+                "root decoder output projection must be [out_features, {backbone_width}], got {shape:?}"
+            )));
+        }
+        if let Some(bias) = bias.as_ref() {
+            if bias.shape() != [out_features] {
+                return Err(start(
+                    "root decoder output projection bias width is invalid",
+                ));
+            }
+        }
+        let config = DenseModuleConfig {
+            in_features,
+            out_features,
+            bias: bias.is_some(),
+            activation: DenseActivation::Identity,
+        };
+        Ok(Self {
+            modules: vec![DenseModule {
+                config,
+                weight,
+                bias,
+            }],
+            input_width: in_features,
+            output_width: out_features,
+        })
+    }
+
     #[cfg(test)]
     pub(crate) fn input_width(&self) -> usize {
         self.input_width

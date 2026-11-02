@@ -7,6 +7,11 @@
 // Mode 29 is Mistral noncausal W4096 left=4096, right=-1 (unbounded future).
 // Mode 30 is Qwen3.5-MoE group8/d256 noncausal global, enabled by the Native
 // use_bidirectional_attention / noncausal_full_attention selector.
+// Extended canonical38 append (modes 31..37): three dense-gap decoder shapes,
+// the three unique Gemma3 global/local1024 shapes, and Gemma4 E4B local1024.
+// Rune 26B Q16/KV8 d256 local1024 deduplicates onto mode 35 (same ratio, width,
+// causality and window), so it is intentionally absent. Absolute Q/KV heads
+// remain runtime dimensions; keys are reduced ratio + width + causal + window.
 FA4_PROFILE(bert, 16, 16, 64, 0, 0)
 FA4_PROFILE(modern_local, 12, 12, 64, 0, 1)
 FA4_PROFILE(qwen, 32, 8, 128, 1, 0)
@@ -38,3 +43,10 @@ FA4_PROFILE(qwen3_q40kv8_d128_causal, 40, 8, 128, 1, 0)
 FA4_PROFILE(qwen3_q40kv8_d128_noncausal, 40, 8, 128, 0, 0)
 FA4_PROFILE(mistral_local4096_noncausal, 32, 8, 128, 0, 1)
 FA4_PROFILE(qwen35_moe_gqa8_noncausal, 16, 2, 256, 0, 0)
+FA4_PROFILE(qwen2_q14kv2_d64_causal, 14, 2, 64, 1, 0)
+FA4_PROFILE(qwen2_q12kv2_d128_causal, 12, 2, 128, 1, 0)
+FA4_PROFILE(llama_q32kv8_d64_noncausal, 32, 8, 64, 0, 0)
+FA4_PROFILE(gemma3_global_d256_gqa2, 16, 8, 256, 1, 0)
+FA4_PROFILE(gemma3_local1024_d256_gqa2, 16, 8, 256, 1, 1)
+FA4_PROFILE(gemma3_local1024_d128_gqa2, 32, 16, 128, 1, 1)
+FA4_PROFILE(gemma4_e4b_local1024_d256_gqa4, 8, 2, 256, 1, 1)

@@ -41,14 +41,13 @@ class Qwen35ExportRegistryTests(unittest.TestCase):
             with self.subTest(entry=entry):
                 self.assertIsNotNone(kernel_pattern(entry).search(main))
 
-    def test_export_union_is_99_unique_kernels(self):
+    def test_export_union_matches_kernel_definitions_and_is_unique(self):
         names = registered_exports()
-        self.assertEqual(len(names), 99)
         self.assertEqual(len(set(names)), len(names))
         main = MAIN.read_text()
-        missing = [name for name in names
-                   if kernel_pattern(name).search(main) is None]
-        self.assertEqual(missing, [])
+        definitions = re.findall(
+            r"#\[kernel\]\s*pub unsafe fn (\w+)\s*\(", main)
+        self.assertCountEqual(names, definitions)
 
     def test_registry_sources_exist_and_are_declared(self):
         main = MAIN.read_text()

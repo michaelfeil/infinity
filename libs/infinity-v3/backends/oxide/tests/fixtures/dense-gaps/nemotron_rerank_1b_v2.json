@@ -1,0 +1,40 @@
+{
+  "architectures": [
+    "LlamaBidirectionalForSequenceClassification"
+  ],
+  "model_type": "llama_bidirec",
+  "hidden_size": 2048,
+  "intermediate_size": 8192,
+  "num_hidden_layers": 16,
+  "num_attention_heads": 32,
+  "num_key_value_heads": 8,
+  "head_dim": 64,
+  "vocab_size": 128256,
+  "max_position_embeddings": 131072,
+  "rms_norm_eps": 1e-05,
+  "rope_theta": 500000.0,
+  "hidden_act": "silu",
+  "rope_scaling": {
+    "factor": 32.0,
+    "high_freq_factor": 4.0,
+    "low_freq_factor": 1.0,
+    "original_max_position_embeddings": 8192,
+    "rope_type": "llama3",
+    "rope_theta": 500000.0
+  },
+  "id2label": {
+    "0": "LABEL_0"
+  },
+  "label2id": {
+    "LABEL_0": 0
+  },
+  "pad_token_id": 128001,
+  "pooling": "avg",
+  "temperature": 1.0,
+  "tie_word_embeddings": true,
+  "attention_bias": false,
+  "mlp_bias": false,
+  "torch_dtype": "bfloat16",
+  "_name_or_path": "nvidia/llama-3.2-nv-rerankqa-1b-v2",
+  "__source__": "nvidia/llama-nemotron-rerank-1b-v2"
+}

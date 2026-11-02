@@ -1,0 +1,76 @@
+{
+  "schema": "oxide-fa4-profile-request/v2",
+  "owner": "remaining_latency_audit",
+  "requested_by": "dense_gaps",
+  "base_commit": "09fbb71f27536f99713abc696b749e94e145b735",
+  "source_only": true,
+  "compiled_here": false,
+  "matching_rule": "reduced Q/KV ratio, exact head_dim, exact causal bit, global/local mask kind",
+  "official_configs_scanned": 108,
+  "profiles_total_after_append": 34,
+  "appended_modes": [31, 32, 33],
+  "extended_mask": "0x3ffffffff",
+  "legacy_modes_unchanged": 31,
+  "capability_query": {
+    "legacy": "infinity_fa4_modes_v1() -> i32, unchanged for manifests declaring <=31 exports",
+    "extended": "infinity_fa4_modes_v2() -> u64, loaded only when the manifest declares >31 exports",
+    "abi_note": "native_abi_version=1 / abi_version=7 remain unchanged; the extended u64 query is an additional optional symbol, not a new manifest ABI"
+  },
+  "profiles": [
+    {
+      "mode": 31,
+      "name": "qwen2_q14kv2_d64_causal",
+      "heads": 14,
+      "kv_heads": 2,
+      "head_dim": 64,
+      "causal": true,
+      "window": "global",
+      "used_by": ["jinaai/jina-code-embeddings-0.5b"],
+      "old31_matches": [],
+      "native_evidence": "Qwen2 H896/d64 exact masked Candle RMS plus model-dtype HFMA split-half RoPE; ordinary causal global mask."
+    },
+    {
+      "mode": 32,
+      "name": "qwen2_q12kv2_d128_causal",
+      "heads": 12,
+      "kv_heads": 2,
+      "head_dim": 128,
+      "causal": true,
+      "window": "global",
+      "used_by": ["jinaai/jina-code-embeddings-1.5b"],
+      "old31_matches": [],
+      "native_evidence": "Qwen2 H1536 backbone; only the causal ratio-6 d128 global mask is absent."
+    },
+    {
+      "mode": 33,
+      "name": "llama_q32kv8_d64_noncausal",
+      "heads": 32,
+      "kv_heads": 8,
+      "head_dim": 64,
+      "causal": false,
+      "window": "global",
+      "used_by": ["nvidia/llama-nemotron-rerank-1b-v2"],
+      "old31_matches": [],
+      "native_evidence": "Bidirectional Llama H2048/d64 with Native Llama3 NTK-by-parts RoPE and mean-pooled temperature head."
+    }
+  ],
+  "already_covered_no_new_mode": [
+    {
+      "requested": "Qwen3 16 Q/8 KV d128 noncausal",
+      "existing_mode": 3,
+      "existing_name": "voyage",
+      "official_models": [
+        "perplexity-ai/pplx-embed-v1-0.6b",
+        "voyageai/voyage-4-nano"
+      ]
+    }
+  ],
+  "already_published_profiles_reused": [
+    {"name": "gqa6", "heads": 12, "kv_heads": 2, "head_dim": 128, "causal": false, "used_by": ["Alibaba-NLP/gte-Qwen2-1.5B-instruct"]},
+    {"name": "gqa7", "heads": 28, "kv_heads": 4, "head_dim": 128, "causal": false, "used_by": ["Alibaba-NLP/gte-Qwen2-7B-instruct"]},
+    {"name": "causal_gqa2", "heads": 16, "kv_heads": 8, "head_dim": 128, "causal": true, "used_by": ["Qwen/Qwen3-Embedding-0.6B", "microsoft/harrier-oss-v1-0.6b", "Skywork/Skywork-Reward-V2-Qwen3-0.6B"]},
+    {"name": "causal_gqa8", "heads": 32, "kv_heads": 8, "head_dim": 128, "causal": true, "used_by": ["Qwen/Qwen3-Embedding-4B", "Qwen/Qwen3-Embedding-8B"]},
+    {"name": "gqa4", "heads": 32, "kv_heads": 8, "head_dim": 128, "causal": false, "used_by": ["perplexity-ai/pplx-embed-v1-4b"]},
+    {"name": "voyage", "heads": 16, "kv_heads": 8, "head_dim": 128, "causal": false, "used_by": ["perplexity-ai/pplx-embed-v1-0.6b", "voyageai/voyage-4-nano"]}
+  ]
+}

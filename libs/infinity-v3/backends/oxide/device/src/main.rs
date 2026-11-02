@@ -45,6 +45,7 @@ mod readout;
 mod rms1536;
 mod rms1536_vector;
 mod rms4096_vector;
+mod rms896_exact_vector;
 mod silu_pairs;
 mod silu_vector8;
 mod splade_pool;
@@ -884,6 +885,45 @@ mod kernels {
     ) {
         unsafe {
             crate::norm1024_exact_vector::exact_add_rms_norm_1024_vector(
+                input, residual, weight, out, summed, rows, width, eps,
+            )
+        };
+    }
+
+    /// Exact masked width-896 BF16 RMSNorm with aligned 128-bit transactions.
+    /// Grid=(ceil(rows/4),1,1), block=(128,1,1); one warp per row. The kernel
+    /// masks 896 real columns inside the registered 1024 lane map.
+    #[kernel]
+    pub unsafe fn infinity_rms_norm_896_exact_masked_vector(
+        input: *const u16,
+        weight: *const u16,
+        out: *mut u16,
+        rows: u32,
+        width: u32,
+        eps: f32,
+    ) {
+        unsafe {
+            crate::rms896_exact_vector::exact_rms_norm_896_vector(
+                input, weight, out, rows, width, eps,
+            )
+        };
+    }
+
+    /// Exact masked width-896 BF16 residual RMSNorm with aligned 128-bit
+    /// transactions. Grid=(ceil(rows/4),1,1), block=(128,1,1).
+    #[kernel]
+    pub unsafe fn infinity_add_rms_norm_896_exact_masked_vector(
+        input: *const u16,
+        residual: *const u16,
+        weight: *const u16,
+        out: *mut u16,
+        summed: *mut u16,
+        rows: u32,
+        width: u32,
+        eps: f32,
+    ) {
+        unsafe {
+            crate::rms896_exact_vector::exact_add_rms_norm_896_vector(
                 input, residual, weight, out, summed, rows, width, eps,
             )
         };

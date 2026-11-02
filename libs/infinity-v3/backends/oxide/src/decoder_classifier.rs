@@ -32,7 +32,7 @@ use crate::{
     blocks,
     cublas::Blas,
     decoder_model::DecoderFamily,
-    infer, launch,
+    infer, launch, launch_threads,
     lt::{LtProvider, ShapeError, NATIVE_DEFAULT_SEED_ROWS},
     math::{GemmArguments, LinearPlan},
     model::{path_present, read_json, Checkpoint, WeightSource},
@@ -59,6 +59,9 @@ fn fatal(error: impl std::fmt::Display) -> ShapeError {
 pub(crate) enum DecoderClassifierTask {
     Sequence,
     Tokens,
+    /// Native `LlamaBidirectionalForSequenceClassification`: noncausal trunk,
+    /// average pooling over each sequence, optional temperature divisor.
+    BidirectionalSequence,
 }
 
 impl DecoderClassifierTask {
@@ -70,8 +73,15 @@ impl DecoderClassifierTask {
             (DecoderFamily::Qwen3, Self::Tokens) => Some("Qwen3ForTokenClassification"),
             (DecoderFamily::Llama, Self::Sequence) => Some("LlamaForSequenceClassification"),
             (DecoderFamily::Llama, Self::Tokens) => Some("LlamaForTokenClassification"),
+            (DecoderFamily::Llama, Self::BidirectionalSequence) => {
+                Some("LlamaBidirectionalForSequenceClassification")
+            }
             _ => None,
         }
+    }
+
+    pub(crate) const fn is_sequence(self) -> bool {
+        !matches!(self, Self::Tokens)
     }
 }
 
@@ -87,7 +97,7 @@ pub(crate) fn admit_readout(
     task: DecoderClassifierTask,
     readout: DecoderClassifierReadout,
 ) -> Result<(), BackendError> {
-    if task == DecoderClassifierTask::Sequence && readout == DecoderClassifierReadout::Tokens {
+    if task.is_sequence() && readout == DecoderClassifierReadout::Tokens {
         return Err(infer(
             "Decoder sequence classifier does not implement token classification",
         ));
@@ -143,6 +153,8 @@ struct RawDecoderClassifierConfig {
     id2label: Option<BTreeMap<String, String>>,
     pad_token_id: Option<i64>,
     token_classification_bias: Option<bool>,
+    pooling: Option<String>,
+    temperature: Option<f64>,
     use_linear_output_projection: Option<bool>,
     linear_output_size: Option<usize>,
     quantization_config: Option<serde_json::Value>,
@@ -151,7 +163,7 @@ struct RawDecoderClassifierConfig {
 }
 
 /// Validated cold classification metadata for one dense decoder checkpoint.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) struct DecoderClassifierConfig {
     pub(crate) task: DecoderClassifierTask,
     pub(crate) family: DecoderFamily,
@@ -159,6 +171,9 @@ pub(crate) struct DecoderClassifierConfig {
     pub(crate) num_labels: usize,
     pub(crate) pad_token_id: Option<u32>,
     pub(crate) token_classification_bias: bool,
+    /// Native bidirectional sequence head divisor. Kept as F32 because the
+    /// score projection produces model-dtype BF16 before the divide.
+    pub(crate) temperature: f32,
 }
 
 impl DecoderClassifierConfig {
@@ -174,10 +189,10 @@ impl DecoderClassifierConfig {
     }
 
     fn from_raw(raw: RawDecoderClassifierConfig) -> Result<Self, BackendError> {
-        let model_type = if raw.model_type == "bidirectional_pplx_qwen3" {
-            "qwen3"
-        } else {
-            raw.model_type.as_str()
+        let model_type = match raw.model_type.as_str() {
+            "bidirectional_pplx_qwen3" => "qwen3",
+            "llama_bidirec" => "llama",
+            other => other,
         };
         let family = match model_type {
             "qwen2" => DecoderFamily::Qwen2,
@@ -209,14 +224,10 @@ impl DecoderClassifierConfig {
                 "decoder classifier requires exactly one trained architecture",
             ));
         };
-        if architecture == "LlamaBidirectionalForSequenceClassification" {
-            return Err(crate::start(
-                "LlamaBidirectionalForSequenceClassification uses mean pooling and temperature, not the standard score head",
-            ));
-        }
         let task = [
             DecoderClassifierTask::Sequence,
             DecoderClassifierTask::Tokens,
+            DecoderClassifierTask::BidirectionalSequence,
         ]
         .into_iter()
         .find(|task| task.architecture(family) == Some(architecture.as_str()))
@@ -257,6 +268,24 @@ impl DecoderClassifierConfig {
             ));
         }
         let token_classification_bias = raw.token_classification_bias.unwrap_or(true);
+        let temperature = if task == DecoderClassifierTask::BidirectionalSequence {
+            if let Some(pooling) = raw.pooling.as_deref() {
+                if pooling != "avg" {
+                    return Err(crate::start(
+                        "LlamaBidirectionalForSequenceClassification requires average pooling",
+                    ));
+                }
+            }
+            let temperature = raw.temperature.unwrap_or(1.0);
+            if !temperature.is_finite() || temperature <= 0.0 || !(temperature as f32).is_finite() {
+                return Err(crate::start(
+                    "decoder classifier temperature must be finite and positive",
+                ));
+            }
+            temperature as f32
+        } else {
+            1.0
+        };
         let extra = raw.extra.keys().map(String::as_str).collect::<Vec<_>>();
         if extra.iter().any(|key| {
             let key = key.to_ascii_lowercase();
@@ -273,6 +302,7 @@ impl DecoderClassifierConfig {
             num_labels: labels,
             pad_token_id,
             token_classification_bias,
+            temperature,
         })
     }
 
@@ -309,6 +339,7 @@ pub(crate) fn is_supported_classifier_architecture(architecture: &str) -> bool {
             | "Qwen3ForTokenClassification"
             | "LlamaForSequenceClassification"
             | "LlamaForTokenClassification"
+            | "LlamaBidirectionalForSequenceClassification"
     )
 }
 
@@ -472,6 +503,20 @@ pub(crate) enum RowPlanKind {
     Selected,
     PackedRows,
     Tokens,
+    /// Full packed hidden rows reduced by the Native model-dtype mean over each
+    /// contiguous sequence span before the score projection.
+    MeanSequence,
+}
+
+/// Cold-prepared pointers and launch geometry for the Native BF16 mean. The
+/// host computes the plan once from the request boundaries; the hot enqueue only
+/// revalidates the pointers.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct MeanRows {
+    pub(crate) boundaries: u64,
+    pub(crate) indices: u64,
+    pub(crate) grid: [u32; 3],
+    pub(crate) threads: u32,
 }
 
 fn validate_sequence(
@@ -555,6 +600,27 @@ impl RowPlan {
 
     pub(crate) fn requires_gather(&self) -> bool {
         self.kind == RowPlanKind::PackedRows
+    }
+
+    pub(crate) fn requires_mean(&self) -> bool {
+        self.kind == RowPlanKind::MeanSequence
+    }
+
+    /// Native bidirectional sequence head: one mean row per packed sequence.
+    pub(crate) fn mean_sequence(
+        input_ids: &[u32],
+        boundaries: &[u32],
+    ) -> Result<Self, BackendError> {
+        let (tokens, sequences) = validate_sequence(input_ids, boundaries)?;
+        u32_size(tokens)?;
+        u32_size(sequences)?;
+        Ok(Self {
+            kind: RowPlanKind::MeanSequence,
+            readout: DecoderClassifierReadout::Sequence,
+            rows: sequences,
+            source_rows: tokens,
+            row_ids: Vec::new(),
+        })
     }
 
     /// Source rows already selected by the final decoder pointwise seam.
@@ -758,6 +824,7 @@ pub(crate) struct DecoderClassifierScratchLayout {
     token_rows: usize,
     gather: usize,
     logits: usize,
+    mean: usize,
 }
 
 impl DecoderClassifierScratchLayout {
@@ -784,8 +851,10 @@ impl DecoderClassifierScratchLayout {
         let gather = product(sequence_rows, hidden)?;
         let logits_rows = token_rows.max(sequence_rows);
         let logits = product(logits_rows, labels)?;
+        let mean = product(sequence_rows, hidden)?;
         u32_size(gather)?;
         u32_size(logits)?;
+        u32_size(mean)?;
         Ok(Self {
             hidden,
             labels,
@@ -793,6 +862,7 @@ impl DecoderClassifierScratchLayout {
             token_rows,
             gather,
             logits,
+            mean,
         })
     }
 
@@ -820,12 +890,17 @@ impl DecoderClassifierScratchLayout {
         self.logits
     }
 
+    pub(crate) fn mean_elements(&self) -> usize {
+        self.mean
+    }
+
     pub(crate) fn bytes(self) -> Result<usize, BackendError> {
         let bf16 = self
             .gather
             .checked_mul(size_of::<Bf16>())
             .and_then(|bytes| bytes.checked_add(self.logits.checked_mul(size_of::<Bf16>())?))
             .and_then(|bytes| bytes.checked_add(self.logits.checked_mul(size_of::<f32>())?))
+            .and_then(|bytes| bytes.checked_add(self.mean.checked_mul(size_of::<f32>())?))
             .ok_or_else(|| infer("decoder classifier scratch byte size overflow"))?;
         Ok(bf16)
     }
@@ -836,9 +911,9 @@ impl DecoderClassifierScratchLayout {
                 "decoder classifier scratch width does not match the trained head",
             ));
         }
-        if plan.requires_gather() && plan.rows > self.sequence_rows {
+        if (plan.requires_gather() || plan.requires_mean()) && plan.rows > self.sequence_rows {
             return Err(infer(
-                "decoder classifier row gather exceeds retained sequence capacity",
+                "decoder classifier row gather/mean exceeds retained sequence capacity",
             ));
         }
         let logits_rows = self.logits / labels;
@@ -851,6 +926,12 @@ impl DecoderClassifierScratchLayout {
     }
 }
 
+type MeanGatherLogits<'a> = (
+    &'a DeviceBuffer<f32>,
+    &'a mut DeviceBuffer<Bf16>,
+    &'a mut DeviceBuffer<Bf16>,
+);
+
 /// Capacity-backed BF16 row gather, BF16 projection output and F32 logit read.
 /// The outer Work owns this scratch and accounts `layout.bytes()`.
 pub(crate) struct DecoderClassifierScratchBuffers {
@@ -858,6 +939,7 @@ pub(crate) struct DecoderClassifierScratchBuffers {
     gather: Option<DeviceBuffer<Bf16>>,
     logits_bf16: Option<DeviceBuffer<Bf16>>,
     logits_f32: Option<DeviceBuffer<f32>>,
+    mean_f32: Option<DeviceBuffer<f32>>,
     layout: DecoderClassifierScratchLayout,
     stream_drained: bool,
 }
@@ -912,11 +994,13 @@ fn scratch_buffer_bytes(
     gather: Option<&DeviceBuffer<Bf16>>,
     logits_bf16: Option<&DeviceBuffer<Bf16>>,
     logits_f32: Option<&DeviceBuffer<f32>>,
+    mean_f32: Option<&DeviceBuffer<f32>>,
 ) -> usize {
     gather
         .map_or(0, DeviceBuffer::num_bytes)
         .saturating_add(logits_bf16.map_or(0, DeviceBuffer::num_bytes))
         .saturating_add(logits_f32.map_or(0, DeviceBuffer::num_bytes))
+        .saturating_add(mean_f32.map_or(0, DeviceBuffer::num_bytes))
 }
 
 fn apply_scratch_drop_plan(
@@ -924,6 +1008,7 @@ fn apply_scratch_drop_plan(
     gather: &mut Option<DeviceBuffer<Bf16>>,
     logits_bf16: &mut Option<DeviceBuffer<Bf16>>,
     logits_f32: &mut Option<DeviceBuffer<f32>>,
+    mean_f32: &mut Option<DeviceBuffer<f32>>,
     stream: &Arc<Stream>,
 ) {
     if plan.charge_bytes != 0 {
@@ -939,6 +1024,9 @@ fn apply_scratch_drop_plan(
         if let Some(buffer) = logits_f32.take() {
             std::mem::forget(buffer);
         }
+        if let Some(buffer) = mean_f32.take() {
+            std::mem::forget(buffer);
+        }
         if plan.forget_stream {
             std::mem::forget(Arc::clone(stream));
         }
@@ -946,6 +1034,7 @@ fn apply_scratch_drop_plan(
         gather.take();
         logits_bf16.take();
         logits_f32.take();
+        mean_f32.take();
     }
 }
 
@@ -954,6 +1043,7 @@ struct ScratchBuilding<'a> {
     gather: Option<DeviceBuffer<Bf16>>,
     logits_bf16: Option<DeviceBuffer<Bf16>>,
     logits_f32: Option<DeviceBuffer<f32>>,
+    mean_f32: Option<DeviceBuffer<f32>>,
 }
 
 impl Drop for ScratchBuilding<'_> {
@@ -962,6 +1052,7 @@ impl Drop for ScratchBuilding<'_> {
             self.gather.as_ref(),
             self.logits_bf16.as_ref(),
             self.logits_f32.as_ref(),
+            self.mean_f32.as_ref(),
         );
         if allocated == 0 {
             return;
@@ -973,6 +1064,7 @@ impl Drop for ScratchBuilding<'_> {
             &mut self.gather,
             &mut self.logits_bf16,
             &mut self.logits_f32,
+            &mut self.mean_f32,
             self.stream,
         );
     }
@@ -1019,20 +1111,23 @@ impl DecoderClassifierScratchBuffers {
         stream: Arc<Stream>,
         layout: DecoderClassifierScratchLayout,
     ) -> Result<Self, BackendError> {
-        let (gather, logits_bf16, logits_f32) = {
+        let (gather, logits_bf16, logits_f32, mean_f32) = {
             let mut building = ScratchBuilding {
                 stream: &stream,
                 gather: None,
                 logits_bf16: None,
                 logits_f32: None,
+                mean_f32: None,
             };
             building.gather = Some(initialized_bf16(&stream, layout.gather)?);
             building.logits_bf16 = Some(initialized_bf16(&stream, layout.logits)?);
             building.logits_f32 = Some(uninitialized_f32(&stream, layout.logits)?);
+            building.mean_f32 = Some(uninitialized_f32(&stream, layout.mean)?);
             (
                 building.gather.take(),
                 building.logits_bf16.take(),
                 building.logits_f32.take(),
+                building.mean_f32.take(),
             )
         };
         Ok(Self {
@@ -1040,6 +1135,7 @@ impl DecoderClassifierScratchBuffers {
             gather,
             logits_bf16,
             logits_f32,
+            mean_f32,
             layout,
             stream_drained: false,
         })
@@ -1093,6 +1189,28 @@ impl DecoderClassifierScratchBuffers {
             .ok_or_else(|| infer("missing decoder classifier F32 logits scratch"))
     }
 
+    pub(crate) fn mean_f32(&self) -> Result<&DeviceBuffer<f32>, BackendError> {
+        self.mean_f32
+            .as_ref()
+            .ok_or_else(|| infer("missing decoder classifier F32 mean scratch"))
+    }
+
+    fn mean_gather_and_logits_mut(&mut self) -> Result<MeanGatherLogits<'_>, BackendError> {
+        let mean = self
+            .mean_f32
+            .as_ref()
+            .ok_or_else(|| infer("missing decoder classifier F32 mean scratch"))?;
+        let gather = self
+            .gather
+            .as_mut()
+            .ok_or_else(|| infer("missing decoder classifier row-gather scratch"))?;
+        let logits = self
+            .logits_bf16
+            .as_mut()
+            .ok_or_else(|| infer("missing decoder classifier BF16 logits scratch"))?;
+        Ok((mean, gather, logits))
+    }
+
     /// The owning Work already charged its full byte class and is retaining it
     /// after a failed drain. Leak buffers and stream without a second charge or
     /// synchronize so this scratch's Drop cannot run twice.
@@ -1114,6 +1232,7 @@ impl Drop for DecoderClassifierScratchBuffers {
             self.gather.as_ref(),
             self.logits_bf16.as_ref(),
             self.logits_f32.as_ref(),
+            self.mean_f32.as_ref(),
         );
         let plan = if self.stream_drained {
             ScratchDropPlan::released()
@@ -1125,6 +1244,7 @@ impl Drop for DecoderClassifierScratchBuffers {
             &mut self.gather,
             &mut self.logits_bf16,
             &mut self.logits_f32,
+            &mut self.mean_f32,
             &self.stream,
         );
     }
@@ -1133,6 +1253,9 @@ impl Drop for DecoderClassifierScratchBuffers {
 struct DecoderClassifierKernels {
     gather: Function,
     cast: Function,
+    mean: Function,
+    f32_to_bf16: Function,
+    divide: Function,
     bias_seed: Option<Function>,
 }
 
@@ -1163,6 +1286,15 @@ impl DecoderClassifierKernels {
                 .map_err(crate::start)?,
             cast: module
                 .load_function("infinity_bf16_to_f32")
+                .map_err(crate::start)?,
+            mean: module
+                .load_function("infinity_gemma2_mean_pool_bf16")
+                .map_err(crate::start)?,
+            f32_to_bf16: module
+                .load_function("infinity_f32_to_bf16")
+                .map_err(crate::start)?,
+            divide: module
+                .load_function("infinity_deberta_divide")
                 .map_err(crate::start)?,
             bias_seed: with_bias
                 .then(|| {
@@ -1198,6 +1330,10 @@ struct DecoderClassifierPrepared {
     source: u64,
     stream: usize,
     row_ids: u64,
+    mean_bounds: u64,
+    mean_indices: u64,
+    mean_grid: [u32; 3],
+    mean_threads: u32,
     gather: u64,
     logits_bf16: u64,
     logits_f32: u64,
@@ -1226,9 +1362,18 @@ fn admit_plan(task: DecoderClassifierTask, plan: &RowPlan) -> Result<(), Backend
     match (task, plan.kind(), plan.readout()) {
         (DecoderClassifierTask::Sequence, RowPlanKind::Selected, DecoderClassifierReadout::Sequence)
         | (DecoderClassifierTask::Sequence, RowPlanKind::PackedRows, DecoderClassifierReadout::Sequence)
+        | (
+            DecoderClassifierTask::BidirectionalSequence,
+            RowPlanKind::MeanSequence,
+            DecoderClassifierReadout::Sequence,
+        )
         | (DecoderClassifierTask::Tokens, RowPlanKind::PackedRows, DecoderClassifierReadout::Sequence)
         | (DecoderClassifierTask::Tokens, RowPlanKind::Tokens, DecoderClassifierReadout::Tokens) => Ok(()),
-        (DecoderClassifierTask::Sequence, _, DecoderClassifierReadout::Tokens) => Err(infer(
+        (
+            DecoderClassifierTask::Sequence | DecoderClassifierTask::BidirectionalSequence,
+            _,
+            DecoderClassifierReadout::Tokens,
+        ) => Err(infer(
             "Decoder sequence classifier does not implement token classification",
         )),
         (DecoderClassifierTask::Tokens, RowPlanKind::Selected, _) => Err(infer(
@@ -1330,6 +1475,7 @@ impl DecoderClassifierHead {
         source: DecoderClassifierRows<'_>,
         plan: &RowPlan,
         row_ids: Option<u64>,
+        mean: Option<MeanRows>,
         scratch: &DecoderClassifierScratchBuffers,
     ) -> Result<(), ShapeError> {
         admit_plan(self.config.task, plan).map_err(ShapeError::Rejected)?;
@@ -1362,6 +1508,20 @@ impl DecoderClassifierHead {
                 if row_ids.is_none_or(|address| address == 0) {
                     return Err(rejected(
                         "decoder classifier packed rows require uploaded host-prepared row ids",
+                    ));
+                }
+            }
+            RowPlanKind::MeanSequence => {
+                if source.physical_rows() != plan.source_rows() {
+                    return Err(rejected(
+                        "decoder classifier mean source row count differs from its row plan",
+                    ));
+                }
+                if mean.is_none_or(|rows| {
+                    rows.boundaries == 0 || rows.indices == 0 || rows.threads == 0
+                }) {
+                    return Err(rejected(
+                        "decoder classifier mean rows require uploaded boundaries and canonical indices",
                     ));
                 }
             }
@@ -1440,14 +1600,21 @@ impl DecoderClassifierHead {
         source: DecoderClassifierRows<'_>,
         plan: &RowPlan,
         row_ids: Option<u64>,
+        mean: Option<MeanRows>,
         scratch: &mut DecoderClassifierScratchBuffers,
     ) -> Result<(), ShapeError> {
         self.prepared = None;
-        self.preflight(stream, source, plan, row_ids, scratch)?;
+        self.preflight(stream, source, plan, row_ids, mean, scratch)?;
         let rows = plan.rows();
         let source_pointer = source.buffer().cu_deviceptr();
         let stream_identity = stream.cu_stream() as usize;
         let row_id_pointer = row_ids.unwrap_or(0);
+        let mean = mean.unwrap_or(MeanRows {
+            boundaries: 0,
+            indices: 0,
+            grid: [0; 3],
+            threads: 0,
+        });
         let gather_pointer = scratch
             .gather()
             .map(DeviceBuffer::cu_deviceptr)
@@ -1465,6 +1632,10 @@ impl DecoderClassifierHead {
                 let (gather, output) = scratch.gather_and_logits_mut().map_err(fatal)?;
                 self.prepare_linear(provider, blas, rows, stream, gather, output)?
             }
+            RowPlanKind::MeanSequence => {
+                let (_, gather, output) = scratch.mean_gather_and_logits_mut().map_err(fatal)?;
+                self.prepare_linear(provider, blas, rows, stream, gather, output)?
+            }
             RowPlanKind::Selected | RowPlanKind::Tokens => {
                 let output = scratch.logits_bf16_mut().map_err(fatal)?;
                 self.prepare_linear(provider, blas, rows, stream, source.buffer(), output)?
@@ -1477,6 +1648,10 @@ impl DecoderClassifierHead {
             source: source_pointer,
             stream: stream_identity,
             row_ids: row_id_pointer,
+            mean_bounds: mean.boundaries,
+            mean_indices: mean.indices,
+            mean_grid: mean.grid,
+            mean_threads: mean.threads,
             gather: gather_pointer,
             logits_bf16,
             logits_f32,
@@ -1561,6 +1736,7 @@ impl DecoderClassifierHead {
         stream: &Stream,
         source: DecoderClassifierRows<'_>,
         row_ids: Option<u64>,
+        mean: Option<MeanRows>,
         scratch: &mut DecoderClassifierScratchBuffers,
     ) -> Result<(), BackendError> {
         let prepared = self
@@ -1574,17 +1750,33 @@ impl DecoderClassifierHead {
             source: prepared_source,
             stream: prepared_stream,
             row_ids: prepared_row_ids,
+            mean_bounds: prepared_mean_bounds,
+            mean_indices: prepared_mean_indices,
+            mean_grid: prepared_mean_grid,
+            mean_threads: prepared_mean_threads,
             gather,
             logits_bf16,
             logits_f32,
             linear,
         } = prepared;
         let current_row_ids = row_ids.unwrap_or(0);
+        let mean = mean.unwrap_or(MeanRows {
+            boundaries: 0,
+            indices: 0,
+            grid: [0; 3],
+            threads: 0,
+        });
+        let current_mean_bounds = mean.boundaries;
+        let current_mean_indices = mean.indices;
         if source.buffer().cu_deviceptr() != prepared_source
             || source.physical_rows() != source_rows
             || source.width() != self.config.hidden_size
             || stream.cu_stream() as usize != prepared_stream
             || current_row_ids != prepared_row_ids
+            || current_mean_bounds != prepared_mean_bounds
+            || current_mean_indices != prepared_mean_indices
+            || mean.grid != prepared_mean_grid
+            || mean.threads != prepared_mean_threads
             || scratch
                 .gather()
                 .map(DeviceBuffer::cu_deviceptr)
@@ -1633,10 +1825,68 @@ impl DecoderClassifierHead {
                 )?;
                 self.launch_linear(provider, blas, stream, gather, output, linear)?;
             }
+            RowPlanKind::MeanSequence => {
+                if current_mean_bounds == 0 || current_mean_indices == 0 {
+                    return Err(infer(
+                        "decoder classifier mean rows require uploaded boundaries and indices",
+                    ));
+                }
+                let (mean_buffer, gather, output) = scratch.mean_gather_and_logits_mut()?;
+                let mut input = source.buffer().cu_deviceptr();
+                let mut bounds = current_mean_bounds;
+                let mut indices = current_mean_indices;
+                let mut mean_out = mean_buffer.cu_deviceptr();
+                let mut count = u32_size(rows)?;
+                let mut hidden = u32_size(self.config.hidden_size)?;
+                launch_threads(
+                    &self.kernels.mean,
+                    stream,
+                    (mean.grid[0], mean.grid[1], mean.grid[2]),
+                    mean.threads,
+                    0,
+                    &mut [
+                        arg(&mut input),
+                        arg(&mut bounds),
+                        arg(&mut indices),
+                        arg(&mut mean_out),
+                        arg(&mut count),
+                        arg(&mut hidden),
+                    ],
+                )?;
+                let mut mean_input = mean_buffer.cu_deviceptr();
+                let mut gather_out = gather.cu_deviceptr();
+                let mut elements = u32_size(product(rows, self.config.hidden_size)?)?;
+                launch(
+                    &self.kernels.f32_to_bf16,
+                    stream,
+                    blocks(elements as usize)?,
+                    0,
+                    &mut [
+                        arg(&mut mean_input),
+                        arg(&mut gather_out),
+                        arg(&mut elements),
+                    ],
+                )?;
+                self.launch_linear(provider, blas, stream, gather, output, linear)?;
+            }
             RowPlanKind::Selected | RowPlanKind::Tokens => {
                 let output = scratch.logits_bf16_mut()?;
                 self.launch_linear(provider, blas, stream, source.buffer(), output, linear)?;
             }
+        }
+        if self.config.task == DecoderClassifierTask::BidirectionalSequence
+            && self.config.temperature != 1.0
+        {
+            let mut logits = scratch.logits_bf16_mut()?.cu_deviceptr();
+            let mut elements = u32_size(product(rows, self.config.num_labels)?)?;
+            let mut temperature = self.config.temperature;
+            launch(
+                &self.kernels.divide,
+                stream,
+                blocks(elements as usize)?,
+                0,
+                &mut [arg(&mut logits), arg(&mut elements), arg(&mut temperature)],
+            )?;
         }
         let input = scratch.logits_bf16()?;
         let output = scratch.f32_logits()?;
@@ -1763,12 +2013,29 @@ mod tests {
             "hidden_size": 8
         }))
         .is_err());
-        assert!(raw(json!({
-            "model_type": "llama",
-            "architectures": ["LlamaBidirectionalForSequenceClassification"],
-            "hidden_size": 8
-        }))
-        .is_err());
+        let mut bidirectional = config("LlamaBidirectionalForSequenceClassification");
+        bidirectional["model_type"] = json!("llama_bidirec");
+        bidirectional["pooling"] = json!("avg");
+        bidirectional["temperature"] = json!(0.7);
+        bidirectional["num_labels"] = json!(1);
+        bidirectional["id2label"] = json!({"0": "LABEL_0"});
+        let bidirectional = raw(bidirectional).unwrap();
+        assert_eq!(
+            bidirectional.task,
+            DecoderClassifierTask::BidirectionalSequence
+        );
+        assert_eq!(bidirectional.family, DecoderFamily::Llama);
+        assert_eq!(bidirectional.num_labels, 1);
+        assert_eq!(bidirectional.temperature, 0.7);
+
+        let mut wrong_pooling = config("LlamaBidirectionalForSequenceClassification");
+        wrong_pooling["model_type"] = json!("llama");
+        wrong_pooling["pooling"] = json!("cls");
+        assert!(raw(wrong_pooling).is_err());
+        let mut bad_temperature = config("LlamaBidirectionalForSequenceClassification");
+        bad_temperature["model_type"] = json!("llama");
+        bad_temperature["temperature"] = json!(0.0);
+        assert!(raw(bad_temperature).is_err());
         assert!(raw(json!({
             "model_type": "qwen3",
             "architectures": ["Qwen3ForSequenceClassification"],
@@ -1821,6 +2088,8 @@ mod tests {
     #[test]
     fn labels_and_token_bias_follow_native_agreement_rules() {
         assert_eq!(resolve_label_count(None, None).unwrap(), 2);
+        assert_eq!(resolve_label_count(None, Some(1)).unwrap(), 1);
+        assert_eq!(resolve_label_count(Some(1), Some(1)).unwrap(), 1);
         assert_eq!(resolve_label_count(Some(2), Some(2)).unwrap(), 2);
         assert_eq!(resolve_label_count(Some(9), None).unwrap(), 9);
         assert!(resolve_label_count(Some(2), Some(3)).is_err());
@@ -1866,7 +2135,8 @@ mod tests {
         let layout = DecoderClassifierScratchLayout::for_key(8, 2, (32, 4, 2)).unwrap();
         assert_eq!(layout.gather_elements(), 32);
         assert_eq!(layout.logits_elements(), 64);
-        assert_eq!(layout.bytes().unwrap(), 32 * 2 + 64 * 2 + 64 * 4);
+        assert_eq!(layout.mean_elements(), 32);
+        assert_eq!(layout.bytes().unwrap(), 32 * 2 + 64 * 2 + 64 * 4 + 32 * 4);
         assert!(DecoderClassifierScratchLayout::for_key(0, 2, (32, 4, 2)).is_err());
         assert!(DecoderClassifierScratchLayout::for_key(usize::MAX, 2, (32, 4, 2)).is_err());
         assert!(DecoderClassifierScratchLayout::for_key(8, 2, (0, 4, 2)).is_err());
@@ -1922,7 +2192,6 @@ mod tests {
             "MistralForTokenClassification",
             "Mistral3ForSequenceClassification",
             "Ministral3ForSequenceClassification",
-            "LlamaBidirectionalForSequenceClassification",
             "Qwen3MoeForSequenceClassification",
             "Qwen3MoeForTokenClassification",
         ] {
@@ -1940,6 +2209,7 @@ mod tests {
             "Qwen3ForTokenClassification",
             "LlamaForSequenceClassification",
             "LlamaForTokenClassification",
+            "LlamaBidirectionalForSequenceClassification",
         ] {
             let value = json!({"model_type": "qwen3", "architectures": [architecture]});
             assert!(reject_unsupported_classifier_architecture(&value).is_ok());
@@ -2004,6 +2274,13 @@ mod tests {
         );
         assert!(admit_plan(DecoderClassifierTask::Tokens, &packed).is_ok());
         assert!(admit_plan(DecoderClassifierTask::Tokens, &tokens).is_ok());
+        let mean = RowPlan::mean_sequence(&[1, 2, 3, 4, 5], &[0, 2, 5]).unwrap();
+        assert_eq!(mean.kind(), RowPlanKind::MeanSequence);
+        assert_eq!((mean.rows(), mean.source_rows()), (2, 5));
+        assert!(mean.requires_mean() && !mean.requires_gather());
+        assert!(admit_plan(DecoderClassifierTask::BidirectionalSequence, &mean).is_ok());
+        assert!(admit_plan(DecoderClassifierTask::Sequence, &mean).is_err());
+        assert!(admit_plan(DecoderClassifierTask::BidirectionalSequence, &tokens).is_err());
         assert_eq!(tokens.source_rows(), tokens.rows());
         assert!(
             tokens.row_ids().is_empty(),

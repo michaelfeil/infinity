@@ -44,7 +44,7 @@ impl DecoderFamily {
             "qwen2" => Some(Self::Qwen2),
             "qwen3" => Some(Self::Qwen3),
             "qwen3_moe" => Some(Self::Qwen3Moe),
-            "llama" => Some(Self::Llama),
+            "llama" | "llama_bidirec" => Some(Self::Llama),
             "mistral" => Some(Self::Mistral),
             _ => None,
         }
@@ -59,7 +59,7 @@ impl DecoderFamily {
     /// ported. They must be rejected on the host instead of falling through to
     /// encoder detection. Qwen3.5 remains a separate future Root branch.
     pub(crate) fn is_unsupported_native_decoder_model_type(model_type: &str) -> bool {
-        matches!(model_type, "ministral3" | "llama_bidirec" | "mistral3")
+        matches!(model_type, "ministral3" | "mistral3")
     }
 
     pub(crate) const fn requires_qk_norm(self) -> bool {
@@ -84,7 +84,10 @@ impl DecoderFamily {
     fn accepts_architecture(self, architecture: &str, classifier: bool) -> bool {
         let backbone = match self {
             Self::Qwen2 => matches!(architecture, "Qwen2Model" | "Qwen2ForCausalLM"),
-            Self::Qwen3 => matches!(architecture, "Qwen3Model" | "Qwen3ForCausalLM"),
+            Self::Qwen3 => matches!(
+                architecture,
+                "Qwen3Model" | "Qwen3ForCausalLM" | "PPLXQwen3Model"
+            ),
             Self::Qwen3Moe => matches!(architecture, "Qwen3MoeModel" | "Qwen3MoeForCausalLM"),
             Self::Llama => matches!(architecture, "LlamaModel" | "LlamaForCausalLM"),
             Self::Mistral => matches!(architecture, "MistralModel" | "MistralForCausalLM"),
@@ -103,7 +106,9 @@ impl DecoderFamily {
                     "Qwen3ForSequenceClassification" | "Qwen3ForTokenClassification"
                 ) | (
                     Self::Llama,
-                    "LlamaForSequenceClassification" | "LlamaForTokenClassification"
+                    "LlamaForSequenceClassification"
+                        | "LlamaForTokenClassification"
+                        | "LlamaBidirectionalForSequenceClassification"
                 )
             )
     }
@@ -116,6 +121,17 @@ pub(crate) enum DecoderRope {
     Simple,
     Default,
     FullNeoX,
+}
+
+/// Native Llama3 NTK-by-parts rotary scaling, already narrowed to the F32
+/// domain used by the Candle frequency loop. Presence means the executor must
+/// build scaled tables; absence keeps the base `rope_theta` recipe.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct Llama3RopeScale {
+    pub(crate) factor: f32,
+    pub(crate) original_max_position_embeddings: f32,
+    pub(crate) low_freq_factor: f32,
+    pub(crate) high_freq_factor: f32,
 }
 impl DecoderRope {
     fn from_name(name: &str) -> Option<Self> {
@@ -172,6 +188,10 @@ pub(crate) struct DecoderConfig {
     pub(crate) is_causal: bool,
     pub(crate) attention_window: Option<usize>,
     pub(crate) rope: DecoderRope,
+    /// Validated Llama3 NTK-by-parts scaling. Native clears `rope_scaling` for
+    /// dense Qwen2/Qwen3, so this is only Some for a Llama checkpoint whose
+    /// saved declaration names `llama3` (or supplies the Llama3 band factors).
+    pub(crate) rope_scale: Option<Llama3RopeScale>,
     /// Validated routed-MLP metadata for `qwen3_moe`; always absent for dense
     /// families, whose expert keys remain rejected.
     pub(crate) routed: Option<RoutedMlpConfig>,
@@ -183,7 +203,10 @@ impl DecoderConfig {
         Self::from_raw(raw, &value, false)
     }
 
-    fn from_value(value: serde_json::Value, classifier: bool) -> Result<Self, BackendError> {
+    pub(crate) fn from_value(
+        value: serde_json::Value,
+        classifier: bool,
+    ) -> Result<Self, BackendError> {
         let raw: RawDecoderConfig = serde_json::from_value(value.clone()).map_err(start)?;
         Self::from_raw(raw, &value, classifier)
     }
@@ -207,6 +230,7 @@ impl DecoderConfig {
             ));
         }
         let bidirectional_pplx_qwen3 = raw.model_type == "bidirectional_pplx_qwen3";
+        let llama_bidirec = raw.model_type == "llama_bidirec";
         let model_type = if bidirectional_pplx_qwen3 {
             "qwen3"
         } else {
@@ -257,6 +281,18 @@ impl DecoderConfig {
             return Err(start(
                 "decoder max_position_embeddings must fit CUDA position IDs",
             ));
+        }
+        if let Some(layers) = raw
+            .extra
+            .get("layer_types")
+            .and_then(serde_json::Value::as_array)
+        {
+            if layers.len() != num_hidden_layers {
+                return Err(start(format!(
+                    "decoder layer_types has {} entries but num_hidden_layers is {num_hidden_layers}",
+                    layers.len()
+                )));
+            }
         }
         let head_dim = match raw.head_dim {
             Some(0) => return Err(start("decoder config head_dim must be nonzero")),
@@ -328,12 +364,18 @@ impl DecoderConfig {
             })?,
             None => family.default_rope(),
         };
+        let rope_scale = parse_llama3_scale(&raw, family)?;
 
         let bidirectional = raw.use_bidirectional_attention.unwrap_or(false);
         let is_causal = if bidirectional_pplx_qwen3 {
-            // Native normalizes bidirectional_pplx_qwen3 to qwen3 and sets
-            // both use_bidirectional_attention and is_causal after loading.
+            // Native normalizes the pplx alias and then sets both the
+            // bidirectional flag and is_causal=false, overriding a stale
+            // checkpoint flag.
             false
+        } else if llama_bidirec {
+            // The Llama bidirectional fine-tunes publish no causal flag; their
+            // trained contract is the noncausal trunk and mean-pooled head.
+            raw.is_causal.unwrap_or(false)
         } else {
             match family {
                 DecoderFamily::Qwen2 => raw.is_causal.unwrap_or(true),
@@ -383,6 +425,7 @@ impl DecoderConfig {
             is_causal,
             attention_window,
             rope,
+            rope_scale,
             routed,
         };
         config.validate(kv_width)?;
@@ -428,16 +471,15 @@ fn reject_config_modifiers(
         ));
     }
     // Native clears rope_scaling for dense Qwen2/Qwen3 even when a checkpoint
-    // carries the field. Other families still need unsupported scaling rejected.
-    if !matches!(family, DecoderFamily::Qwen2 | DecoderFamily::Qwen3)
-        && raw
-            .rope_scaling
-            .as_ref()
-            .is_some_and(|value| !value.is_null())
+    // carries the field. Llama admits the Native Llama3 NTK-by-parts recipe;
+    // other families still reject scaled RoPE.
+    if raw
+        .rope_scaling
+        .as_ref()
+        .is_some_and(|value| !value.is_null())
+        && !matches!(family, DecoderFamily::Qwen2 | DecoderFamily::Qwen3)
     {
-        return Err(start(
-            "scaled decoder RoPE (including Llama3) is not supported yet",
-        ));
+        parse_llama3_scale(raw, family)?;
     }
     if let Some(parameters) = raw
         .rope_parameters
@@ -488,6 +530,31 @@ fn reject_config_modifiers(
             "decoder Mistral config-level average pooling needs unported ATen model-dtype reduction",
         ));
     }
+    // Transformers 4.5x emits `layer_types` for dense Qwen2/Qwen3 checkpoints
+    // even when every layer is ordinary global attention. Native ignores that
+    // list for these families. Accept it only when it describes the same global
+    // mask this executor runs; sliding layers need the unported window path.
+    if let Some(layer_types) = raw.extra.get("layer_types") {
+        if !matches!(
+            family,
+            DecoderFamily::Qwen2 | DecoderFamily::Qwen3 | DecoderFamily::Qwen3Moe
+        ) {
+            return Err(start(
+                "unsupported decoder config modifier layer_types; only dense Qwen2/Qwen3 global layers are accepted",
+            ));
+        }
+        let layers = layer_types.as_array().ok_or_else(|| {
+            start("decoder layer_types must be an array of per-layer attention kinds")
+        })?;
+        if layers
+            .iter()
+            .any(|kind| kind.as_str() != Some("full_attention"))
+        {
+            return Err(start(
+                "decoder layer_types declares sliding/other attention; only full_attention global layers are ported",
+            ));
+        }
+    }
     for key in raw.extra.keys() {
         let key_lower = key.to_ascii_lowercase();
         // `RoutedMlpConfig` validates quantization and shared-expert metadata
@@ -525,8 +592,7 @@ fn reject_config_modifiers(
             || key_lower.starts_with("image_")
             || key_lower.starts_with("mm_")
             || key_lower.starts_with("multi_modal")
-            || key_lower.starts_with("linear_")
-            || key_lower.as_str() == "layer_types";
+            || key_lower.starts_with("linear_");
         if unsupported {
             return Err(start(format!(
                 "unsupported decoder config modifier {key}; only dense SiLU text backbones are accepted"
@@ -534,6 +600,75 @@ fn reject_config_modifiers(
         }
     }
     Ok(())
+}
+
+/// Parse the Native Llama3 NTK-by-parts declaration. Qwen2/Qwen3 keep their
+/// unscaled recipe even when a checkpoint carries `rope_scaling`; every other
+/// family must name `llama3` (or carry the Llama3 band factors) to be admitted.
+fn parse_llama3_scale(
+    raw: &RawDecoderConfig,
+    family: DecoderFamily,
+) -> Result<Option<Llama3RopeScale>, BackendError> {
+    let Some(value) = raw.rope_scaling.as_ref().filter(|value| !value.is_null()) else {
+        return Ok(None);
+    };
+    if matches!(family, DecoderFamily::Qwen2 | DecoderFamily::Qwen3) {
+        return Ok(None);
+    }
+    if family != DecoderFamily::Llama {
+        return Err(start(
+            "scaled decoder RoPE (including Llama3) is not supported for this family",
+        ));
+    }
+    let object = value
+        .as_object()
+        .ok_or_else(|| start("decoder rope_scaling must be an object"))?;
+    let kind = object
+        .get("rope_type")
+        .or_else(|| object.get("type"))
+        .and_then(serde_json::Value::as_str);
+    let has_band_factors = object.contains_key("high_freq_factor");
+    if kind != Some("llama3") && !has_band_factors {
+        return Err(start(format!(
+            "unsupported decoder rope_scaling kind {}; only the Native Llama3 NTK-by-parts recipe is ported",
+            kind.unwrap_or("<none>")
+        )));
+    }
+    let number = |name: &str, default: f64| -> Result<f32, BackendError> {
+        let value = object
+            .get(name)
+            .map(|value| {
+                value
+                    .as_f64()
+                    .ok_or_else(|| start(format!("decoder rope_scaling.{name} must be a number")))
+            })
+            .transpose()?
+            .unwrap_or(default);
+        if !value.is_finite() || !(value as f32).is_finite() {
+            return Err(start(format!(
+                "decoder rope_scaling.{name} must be finite and representable in F32"
+            )));
+        }
+        Ok(value as f32)
+    };
+    let factor = number("factor", 1.0)?;
+    let original_max_position_embeddings = number("original_max_position_embeddings", 8192.0)?;
+    let low_freq_factor = number("low_freq_factor", 1.0)?;
+    let high_freq_factor = number("high_freq_factor", 4.0)?;
+    if factor < 1.0
+        || original_max_position_embeddings <= 0.0
+        || high_freq_factor <= low_freq_factor
+    {
+        return Err(start(
+            "decoder Llama3 rope_scaling requires factor >= 1, original_max_position_embeddings > 0 and high_freq_factor > low_freq_factor",
+        ));
+    }
+    Ok(Some(Llama3RopeScale {
+        factor,
+        original_max_position_embeddings,
+        low_freq_factor,
+        high_freq_factor,
+    }))
 }
 
 #[derive(Clone, Debug)]
@@ -592,6 +727,9 @@ pub(crate) struct DecoderWeights {
     pub(crate) embed: WeightSource,
     pub(crate) norm: WeightSource,
     pub(crate) layers: Vec<DecoderLayerWeights>,
+    /// Native noncausal root output projection (`linear.weight`). Kept on the
+    /// host until the factory can admit it as a real Dense projection.
+    pub(crate) projection: Option<DecoderLinear>,
 }
 
 fn select_root(checkpoint: &Checkpoint) -> Result<&'static str, BackendError> {
@@ -885,12 +1023,55 @@ impl DecoderWeights {
                 mlp,
             });
         }
+        // Native applies a root `linear.weight` projection only for noncausal
+        // decoders; causal checkpoints keep their ordinary backbone width.
+        let projection = if !config.is_causal && checkpoint.contains("linear.weight") {
+            let shape = checkpoint
+                .shape("linear.weight")
+                .ok_or_else(|| start("decoder linear.weight has no shape"))?;
+            let h = config.hidden_size;
+            let [out_features, in_features] = shape else {
+                return Err(start(
+                    "decoder noncausal linear.weight must be a rank-2 projection",
+                ));
+            };
+            if *in_features != h || *out_features == 0 {
+                return Err(start(format!(
+                    "decoder noncausal linear.weight must be [out_features, {h}], got {shape:?}"
+                )));
+            }
+            Some(DecoderLinear {
+                weight: checkpoint.source("linear.weight", &[*out_features, h])?,
+                // Native's root noncausal projection carries no bias from
+                // `linear.bias`; keep that omission explicit.
+                bias: None,
+            })
+        } else {
+            None
+        };
         Ok(Self {
             config,
             embed,
             norm,
             layers,
+            projection,
         })
+    }
+
+    /// Materialize the admitted root projection as the same identity-activation
+    /// Dense chain the shared output pipeline already executes.
+    pub(crate) fn take_projection_dense_host(
+        &mut self,
+    ) -> Result<Option<crate::dense::DenseChainHost>, BackendError> {
+        let Some(projection) = self.projection.take() else {
+            return Ok(None);
+        };
+        crate::dense::DenseChainHost::from_root_projection(
+            self.config.hidden_size,
+            projection.weight,
+            projection.bias,
+        )
+        .map(Some)
     }
 }
 
@@ -911,6 +1092,13 @@ pub(crate) fn validate_decoder_modules(path: &Path) -> Result<(), BackendError> 
     let mut strict = Vec::new();
     for module in &modules {
         if crate::dense::is_dense_module_type(&module.kind) {
+            continue;
+        }
+        // Perplexity's floating-point checkpoints append a FlexibleQuantizer
+        // module with no applied quantization. The config-level
+        // `quantization_config` guard rejects truly quantized checkpoints, so
+        // this module is a no-op for the admitted F32/BF16 path.
+        if module.kind == "st_quantize.FlexibleQuantizer" {
             continue;
         }
         if !matches!(
@@ -994,16 +1182,17 @@ fn validate_pooling_config(path: &Path) -> Result<(), BackendError> {
     let config: PoolingConfig = read_json(path)?;
     let unsupported = [
         config.pooling_mode_cls_token,
-        config.pooling_mode_mean_tokens,
         config.pooling_mode_max_tokens,
         config.pooling_mode_mean_sqrt_len_tokens,
         config.pooling_mode_weightedmean_tokens,
     ]
     .into_iter()
     .any(|enabled| enabled);
-    if !config.pooling_mode_lasttoken || unsupported {
+    let selected =
+        u8::from(config.pooling_mode_lasttoken) + u8::from(config.pooling_mode_mean_tokens);
+    if unsupported || selected != 1 {
         return Err(start(
-            "decoder pooled embedding task requires last-token pooling only",
+            "decoder pooled embedding task requires exactly one last-token or mean-token pooling mode",
         ));
     }
     Ok(())
@@ -1651,10 +1840,36 @@ mod tests {
         let fixture = Fixture::new();
         fixture.raw_config(with_fields(
             llama_config(),
-            serde_json::json!({"rope_scaling": {"type": "llama3", "factor": 8.0}}),
+            serde_json::json!({
+                "rope_scaling": {
+                    "rope_type": "llama3",
+                    "factor": 32.0,
+                    "original_max_position_embeddings": 8192.0,
+                    "low_freq_factor": 1.0,
+                    "high_freq_factor": 4.0
+                }
+            }),
         ));
-        let error = DecoderConfig::load(&fixture.0).unwrap_err().to_string();
-        assert!(error.contains("scaled decoder RoPE"), "{error}");
+        let config = fixture.config_from_disk();
+        let scale = config.rope_scale.expect("Llama3 scaling must be retained");
+        assert_eq!(scale.factor, 32.0);
+        assert_eq!(scale.original_max_position_embeddings, 8192.0);
+        assert_eq!(scale.low_freq_factor, 1.0);
+        assert_eq!(scale.high_freq_factor, 4.0);
+        assert_eq!(config.rope, DecoderRope::Default);
+
+        for bad in [
+            serde_json::json!({"rope_scaling": {"rope_type": "linear", "factor": 2.0}}),
+            serde_json::json!({"rope_scaling": {"rope_type": "llama3", "factor": 0.5}}),
+            serde_json::json!({"rope_scaling": {"rope_type": "llama3", "high_freq_factor": 1.0}}),
+        ] {
+            let fixture = Fixture::new();
+            fixture.raw_config(with_fields(llama_config(), bad));
+            assert!(
+                DecoderConfig::load(&fixture.0).is_err(),
+                "malformed Llama3 scaling was admitted"
+            );
+        }
 
         for value in [qwen2_config(), qwen3_config(), llama_config()] {
             let fixture = Fixture::new();
@@ -2064,8 +2279,8 @@ mod tests {
                 "unsupported decoder config modifier",
             ),
             (
-                serde_json::json!({"layer_types": ["full_attention"]}),
-                "unsupported decoder config modifier",
+                serde_json::json!({"layer_types": ["full_attention", "sliding_attention"]}),
+                "sliding/other attention",
             ),
             (
                 serde_json::json!({"vision_config": {}}),
@@ -2115,9 +2330,12 @@ mod tests {
             {"type": "sentence_transformers.models.Transformer"},
             {"type": "sentence_transformers.models.Pooling", "path": "1_Pooling"}
         ]));
-        fixture.write_pooling(false, true);
+        fixture.write_pooling(false, false);
         let error = fixture.error();
-        assert!(error.contains("last-token pooling only"), "{error}");
+        assert!(
+            error.contains("exactly one last-token or mean-token"),
+            "{error}"
+        );
 
         let fixture = Fixture::new();
         fixture.write_modules(serde_json::json!([
@@ -2130,6 +2348,19 @@ mod tests {
             error.contains("Transformer module path must be the checkpoint root"),
             "{error}"
         );
+    }
+
+    #[test]
+    fn admits_perplexity_floating_point_quantizer_module_as_a_no_op() {
+        let fixture = Fixture::new();
+        fixture.write_modules(serde_json::json!([
+            {"type": "sentence_transformers.models.Transformer", "path": ""},
+            {"type": "sentence_transformers.models.Pooling", "path": "1_Pooling"},
+            {"type": "st_quantize.FlexibleQuantizer", "path": "", "kwargs": ["quantization"]}
+        ]));
+        fixture.write_pooling(false, true);
+        validate_decoder_modules(&fixture.0)
+            .expect("floating-point FlexibleQuantizer is a no-op with mean pooling");
     }
 
     #[test]
@@ -2387,12 +2618,19 @@ mod tests {
         assert!(error.contains("not ported"), "{error}");
         assert_eq!(DecoderFamily::from_model_type("ministral3"), None);
         assert!(DecoderFamily::is_decoder_model_type("ministral3"));
-        for alias in ["ministral3", "llama_bidirec", "mistral3"] {
+        for alias in ["ministral3", "mistral3"] {
             assert!(
                 DecoderFamily::is_unsupported_native_decoder_model_type(alias),
                 "{alias} must fail explicitly on the host"
             );
         }
+        assert!(!DecoderFamily::is_unsupported_native_decoder_model_type(
+            "llama_bidirec"
+        ));
+        assert_eq!(
+            DecoderFamily::from_model_type("llama_bidirec"),
+            Some(DecoderFamily::Llama)
+        );
         assert!(!DecoderFamily::is_unsupported_native_decoder_model_type(
             "qwen3_moe"
         ));
@@ -2402,6 +2640,81 @@ mod tests {
         assert!(!DecoderFamily::is_unsupported_native_decoder_model_type(
             "qwen3.5"
         ));
+    }
+
+    #[test]
+    fn dense_qwen3_layer_types_all_full_attention_are_admitted() {
+        let fixture = Fixture::new();
+        fixture.raw_config(with_fields(
+            qwen3_config(),
+            serde_json::json!({
+                "layer_types": ["full_attention"],
+                "max_window_layers": 1,
+                "transformers_version": "4.57.6"
+            }),
+        ));
+        let config = fixture.config_from_disk();
+        assert_eq!(config.family, DecoderFamily::Qwen3);
+        assert!(config.is_causal);
+
+        let fixture = Fixture::new();
+        fixture.raw_config(with_fields(
+            qwen3_config(),
+            serde_json::json!({"layer_types": ["full_attention", "full_attention"]}),
+        ));
+        let error = DecoderConfig::load(&fixture.0).unwrap_err().to_string();
+        assert!(error.contains("num_hidden_layers"), "{error}");
+    }
+
+    #[test]
+    fn llama_bidirec_alias_normalizes_to_bidirectional_llama() {
+        let fixture = Fixture::new();
+        let classifier_value = with_fields(
+            llama_config(),
+            serde_json::json!({
+                "model_type": "llama_bidirec",
+                "architectures": ["LlamaBidirectionalForSequenceClassification"]
+            }),
+        );
+        let config = DecoderConfig::from_value(classifier_value.clone(), true).unwrap();
+        assert_eq!(config.family, DecoderFamily::Llama);
+        assert!(!config.is_causal);
+        assert_eq!(config.rope, DecoderRope::Default);
+        assert!(config.rope_scale.is_none());
+        // Ordinary embedding admission still requires a backbone architecture.
+        fixture.raw_config(with_fields(
+            classifier_value,
+            serde_json::json!({"architectures": ["LlamaModel"]}),
+        ));
+        assert!(!fixture.config_from_disk().is_causal);
+
+        let fixture = Fixture::new();
+        fixture.raw_config(with_fields(
+            llama_config(),
+            serde_json::json!({
+                "model_type": "llama_bidirec",
+                "is_causal": true
+            }),
+        ));
+        assert!(fixture.config_from_disk().is_causal);
+    }
+
+    #[test]
+    fn pplx_architecture_is_admitted_for_the_bidirectional_qwen3_alias() {
+        let fixture = Fixture::new();
+        fixture.raw_config(with_fields(
+            qwen3_config(),
+            serde_json::json!({
+                "model_type": "bidirectional_pplx_qwen3",
+                "architectures": ["PPLXQwen3Model"],
+                "use_bidirectional_attention": true,
+                "rope_parameters": {"rope_type": "default", "rope_theta": 1000000.0}
+            }),
+        ));
+        let config = fixture.config_from_disk();
+        assert_eq!(config.family, DecoderFamily::Qwen3);
+        assert!(!config.is_causal);
+        assert_eq!(config.rope_theta, 1_000_000.0);
     }
 
     #[test]

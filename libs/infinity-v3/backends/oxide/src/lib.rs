@@ -1687,7 +1687,8 @@ impl ExecutableModel {
             Self::Modern(model) => model.classifier.as_ref().map(ClassifierHead::readout),
             Self::Decoder(model) => model.classifier_task().map(|task| ClassifierReadout {
                 task: match task {
-                    DecoderClassifierTask::Sequence => ClassifierTask::Sequence,
+                    DecoderClassifierTask::Sequence
+                    | DecoderClassifierTask::BidirectionalSequence => ClassifierTask::Sequence,
                     DecoderClassifierTask::Tokens => ClassifierTask::Tokens,
                 },
                 width: model.classifier_width().unwrap_or(0),
@@ -5298,7 +5299,7 @@ impl OxideBackend {
                         output_width,
                     )
                 } else if decoder {
-                    let (host, head_host) = match decoder_classifier_bundle.take() {
+                    let (mut host, head_host) = match decoder_classifier_bundle.take() {
                         Some((host, head)) => (host, Some(head)),
                         None => (DecoderWeights::load(path)?, None),
                     };
@@ -5307,7 +5308,7 @@ impl OxideBackend {
                     let head_present = head_host.is_some();
                     // The cold classifier bundle already rejected every Dense
                     // module, so it must not read that metadata a second time.
-                    let dense_host = if head_present {
+                    let mut dense_host = if head_present {
                         None
                     } else {
                         DenseChainHost::load_with_paths(
@@ -5316,6 +5317,12 @@ impl OxideBackend {
                             dense_paths.clone(),
                         )?
                     };
+                    if dense_host.is_none() && !head_present {
+                        // Native's noncausal root `linear.weight` projection
+                        // (for example voyage-4-nano's 1024 -> 2048 output) is
+                        // a real trained matrix, not a wider backbone.
+                        dense_host = host.take_projection_dense_host()?;
+                    }
                     let output_width = dense_host
                         .as_ref()
                         .map_or(config.hidden_size, DenseChainHost::output_width);
@@ -5431,7 +5438,8 @@ impl OxideBackend {
             if let Some(classifier_readout) =
                 model.classifier_task().map(|task| ClassifierReadout {
                     task: match task {
-                        DecoderClassifierTask::Sequence => ClassifierTask::Sequence,
+                        DecoderClassifierTask::Sequence
+                        | DecoderClassifierTask::BidirectionalSequence => ClassifierTask::Sequence,
                         DecoderClassifierTask::Tokens => ClassifierTask::Tokens,
                     },
                     width: model.classifier_width().unwrap_or(0),

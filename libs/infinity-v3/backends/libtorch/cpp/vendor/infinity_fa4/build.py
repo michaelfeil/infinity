@@ -81,7 +81,7 @@ def registry_metadata():
     namespaces = {19: "legacy19", 20: "published20", 21: "private23", 22: "private23",
                   23: "private23", 24: "registry24", 25: "canonical26", 26: "canonical26",
                   27: "canonical27", 28: "canonical28", 29: "canonical29", 30: "canonical30",
-                  31: "canonical31"}
+                  31: "canonical31", 38: "canonical38"}
     namespace = namespaces.get(len(rows))
     if namespace is None:
         raise RuntimeError(f"unsupported canonical profile count {len(rows)}")
@@ -401,7 +401,7 @@ if not a.link_only:
     exported_object_order = [pathlib.Path(obj).name for obj in objects]
     if exported_object_order != link_object_order:
         raise RuntimeError(
-            "canonical31 export/link object order changed: "
+            "canonical38 export/link object order changed: "
             f"expected={link_object_order} actual={exported_object_order}")
     export_runtime_pins = build_contract.runtime_pins(a.ffi_root, a.runtime_dir)
     manifest = {

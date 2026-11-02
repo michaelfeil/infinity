@@ -30,6 +30,9 @@ use std::{
 };
 
 type Query = unsafe extern "C" fn() -> i32;
+/// Extended capability query used only when a manifest declares more than the
+/// 31-mode ABI7 limit. Legacy (<=31) bundles keep `infinity_fa4_modes_v1`.
+type ExtendedQuery = unsafe extern "C" fn() -> u64;
 type Error = unsafe extern "C" fn() -> *const c_char;
 // Exact native1/export7 ABI from vendor/infinity_fa4/bridge.cpp.
 type Forward = unsafe extern "C" fn(
@@ -225,7 +228,13 @@ const PRIVATE23_PROFILE_COUNT: usize = 23;
 const REGISTRY24_PROFILE_COUNT: usize = 24;
 const CANONICAL26_PROFILE_COUNT: usize = 26;
 const CANONICAL31_PROFILE_COUNT: usize = 31;
-const PROFILES: [Profile; CANONICAL31_PROFILE_COUNT] = [
+/// Append-only canonical38 extension beyond the ABI7 i32 mask. Every canonical31
+/// index/geometry is preserved; declared counts >31 use the u64
+/// `infinity_fa4_modes_v2` query. Keys deduplicate by ratio + head_dim +
+/// causal + window, not absolute heads: Qwen3 16/8 d128 noncausal reuses
+/// published `voyage` (mode 3), and Rune 26B 16/8 d256 local1024 reuses mode 35.
+const EXTENDED38_PROFILE_COUNT: usize = 38;
+const PROFILES: [Profile; EXTENDED38_PROFILE_COUNT] = [
     Profile::new("bert", 16, 16, 64, false, Window::Global),
     Profile::new(
         "modern_local",
@@ -374,13 +383,60 @@ const PROFILES: [Profile; CANONICAL31_PROFILE_COUNT] = [
         false,
         Window::Global,
     ),
+    // Canonical38 append: dense-gap decoders (31..33), unique Gemma3
+    // global/local1024 shapes (34..36), and Gemma4 E4B local1024 (37).
+    Profile::new("qwen2_q14kv2_d64_causal", 14, 2, 64, true, Window::Global),
+    Profile::new("qwen2_q12kv2_d128_causal", 12, 2, 128, true, Window::Global),
+    Profile::new(
+        "llama_q32kv8_d64_noncausal",
+        32,
+        8,
+        64,
+        false,
+        Window::Global,
+    ),
+    Profile::new("gemma3_global_d256_gqa2", 16, 8, 256, true, Window::Global),
+    Profile::new(
+        "gemma3_local1024_d256_gqa2",
+        16,
+        8,
+        256,
+        true,
+        Window::Local {
+            left: 1023,
+            right: 0,
+        },
+    ),
+    Profile::new(
+        "gemma3_local1024_d128_gqa2",
+        32,
+        16,
+        128,
+        true,
+        Window::Local {
+            left: 1023,
+            right: 0,
+        },
+    ),
+    Profile::new(
+        "gemma4_e4b_local1024_d256_gqa4",
+        8,
+        2,
+        256,
+        true,
+        Window::Local {
+            left: 1023,
+            right: 0,
+        },
+    ),
 ];
 const _: () = assert!(LEGACY_PROFILE_COUNT < PUBLISHED_PROFILE_COUNT);
 const _: () = assert!(PUBLISHED_PROFILE_COUNT < PRIVATE23_PROFILE_COUNT);
 const _: () = assert!(PRIVATE23_PROFILE_COUNT < REGISTRY24_PROFILE_COUNT);
 const _: () = assert!(REGISTRY24_PROFILE_COUNT < CANONICAL26_PROFILE_COUNT);
 const _: () = assert!(CANONICAL26_PROFILE_COUNT < CANONICAL31_PROFILE_COUNT);
-const _: () = assert!(PROFILES.len() == CANONICAL31_PROFILE_COUNT);
+const _: () = assert!(CANONICAL31_PROFILE_COUNT < EXTENDED38_PROFILE_COUNT);
+const _: () = assert!(PROFILES.len() == EXTENDED38_PROFILE_COUNT);
 
 // Exact manifest registry identity for every legal declared ordinary prefix.
 // The fingerprint is the SHA-256 of the canonical profile sequence
@@ -455,6 +511,11 @@ const REGISTRY_PREFIX_IDENTITIES: &[(usize, &str, &str)] = &[
         31,
         "canonical31",
         "187defaacc9f9b9b326b392fbeda675545a73660f44f69e21743743f782a87f1",
+    ),
+    (
+        38,
+        "canonical38",
+        "5308427d3c2f149dba100ef7235843df3693b11dd125ccb78288616bd7dcd99d",
     ),
 ];
 
@@ -659,8 +720,12 @@ fn validate_registry_metadata(
         .get("mode_mask")
         .and_then(serde_json::Value::as_str)
     {
-        let expected = mode_mask(declared)?;
-        if mask != format!("{expected:#x}") {
+        let expected = if declared > CANONICAL31_PROFILE_COUNT {
+            format!("{:#x}", extended_mode_mask(declared)?)
+        } else {
+            format!("{:#x}", mode_mask(declared)?)
+        };
+        if mask != expected {
             return Err(start("registry mode_mask differs from declared exports"));
         }
     }
@@ -677,6 +742,11 @@ fn validate_registry_metadata(
 }
 
 fn mode_mask(declared: usize) -> Result<i32, BackendError> {
+    if declared > CANONICAL31_PROFILE_COUNT {
+        return Err(start(
+            "provider mode count exceeds the ABI7 i32 mask; use the extended u64 query",
+        ));
+    }
     let bits = u32::try_from(declared).map_err(start)?;
     let mask = 1i64
         .checked_shl(bits)
@@ -685,9 +755,34 @@ fn mode_mask(declared: usize) -> Result<i32, BackendError> {
     i32::try_from(mask).map_err(start)
 }
 
+/// Extended mask for append-only prefixes beyond 31 modes. Bits `0..declared`
+/// are set; the 31-bit legacy value is a strict prefix of this result.
+fn extended_mode_mask(declared: usize) -> Result<u64, BackendError> {
+    let bits = u32::try_from(declared).map_err(start)?;
+    let mask = 1u64
+        .checked_shl(bits)
+        .and_then(|value| value.checked_sub(1))
+        .ok_or_else(|| start("provider extended mode count overflow"))?;
+    if declared <= CANONICAL31_PROFILE_COUNT {
+        return Err(start(
+            "extended mode query is reserved for manifests declaring more than 31 exports",
+        ));
+    }
+    Ok(mask)
+}
+
 fn validate_mode_mask(declared: usize, modes: i32) -> Result<(), BackendError> {
     if modes != mode_mask(declared)? {
         return Err(start("provider mode mask does not match manifest exports"));
+    }
+    Ok(())
+}
+
+fn validate_extended_mode_mask(declared: usize, modes: u64) -> Result<(), BackendError> {
+    if modes != extended_mode_mask(declared)? {
+        return Err(start(
+            "provider extended mode mask does not match manifest exports",
+        ));
     }
     Ok(())
 }
@@ -954,16 +1049,13 @@ impl Fa4 {
         // SAFETY: root is a trusted provider selection; symbol signatures and
         // versioned export order match the repository's installed AOT provider.
         let library = unsafe { Library::new(path.join("libinfinityfa4.so")) }.map_err(start)?;
-        let (portable, architecture, modes, forward, error) = unsafe {
+        let (portable, architecture, forward, error) = unsafe {
             (
                 *library
                     .get::<Query>(b"infinity_fa4_portable_host_v1\0")
                     .map_err(start)?,
                 *library
                     .get::<Query>(b"infinity_fa4_compute_capability_v1\0")
-                    .map_err(start)?,
-                *library
-                    .get::<Query>(b"infinity_fa4_modes_v1\0")
                     .map_err(start)?,
                 *library
                     .get::<Forward>(b"infinity_fa4_forward_v1\0")
@@ -980,13 +1072,37 @@ impl Fa4 {
         if unsafe { architecture() } != capability {
             return Err(start("incompatible native compute capability"));
         }
-        let modes = unsafe { modes() };
-        validate_mode_mask(declared, modes)?;
-        let selected = 1i32
-            .checked_shl(u32::try_from(mode).map_err(start)?)
-            .ok_or_else(|| start("provider mode index overflow"))?;
-        if modes & selected == 0 {
-            return Err(start("selected attention mode is not exported"));
+        // Backward-compatible capability split: old ABI7 bundles keep the i32
+        // query and old 31-mode load; only an extended manifest opts into the
+        // u64 query. A legacy provider is never asked for `modes_v2`.
+        if declared > CANONICAL31_PROFILE_COUNT {
+            let modes = unsafe {
+                *library
+                    .get::<ExtendedQuery>(b"infinity_fa4_modes_v2\0")
+                    .map_err(start)?
+            };
+            let modes = unsafe { modes() };
+            validate_extended_mode_mask(declared, modes)?;
+            let selected = 1u64
+                .checked_shl(u32::try_from(mode).map_err(start)?)
+                .ok_or_else(|| start("provider mode index overflow"))?;
+            if modes & selected == 0 {
+                return Err(start("selected attention mode is not exported"));
+            }
+        } else {
+            let modes = unsafe {
+                *library
+                    .get::<Query>(b"infinity_fa4_modes_v1\0")
+                    .map_err(start)?
+            };
+            let modes = unsafe { modes() };
+            validate_mode_mask(declared, modes)?;
+            let selected = 1i32
+                .checked_shl(u32::try_from(mode).map_err(start)?)
+                .ok_or_else(|| start("provider mode index overflow"))?;
+            if modes & selected == 0 {
+                return Err(start("selected attention mode is not exported"));
+            }
         }
         Ok(Self {
             alibi: None,
@@ -1711,30 +1827,30 @@ mod tests {
         )
         .is_ok());
         assert!(validate_mode_mask(
-            PROFILES.len(),
-            mode_mask(PROFILES.len()).expect("appended mode mask")
+            CANONICAL31_PROFILE_COUNT,
+            mode_mask(CANONICAL31_PROFILE_COUNT).expect("canonical31 mode mask")
         )
         .is_ok());
         assert!(validate_mode_mask(
             LEGACY_PROFILE_COUNT,
-            mode_mask(PROFILES.len()).expect("appended mode mask")
+            mode_mask(CANONICAL31_PROFILE_COUNT).expect("canonical31 mode mask")
         )
         .is_err());
         assert!(validate_mode_mask(
-            PROFILES.len(),
+            CANONICAL31_PROFILE_COUNT,
             mode_mask(LEGACY_PROFILE_COUNT).expect("legacy mode mask")
         )
         .is_err());
         assert!(validate_mode_mask(
-            PROFILES.len(),
-            mode_mask(PROFILES.len()).expect("appended mode mask") ^ 1
+            CANONICAL31_PROFILE_COUNT,
+            mode_mask(CANONICAL31_PROFILE_COUNT).expect("canonical31 mode mask") ^ 1
         )
         .is_err());
     }
 
     #[test]
     fn canonical26_modes_are_appended_in_order_and_mode_mask_is_exact() {
-        assert_eq!(PROFILES.len(), CANONICAL31_PROFILE_COUNT);
+        assert_eq!(PROFILES.len(), EXTENDED38_PROFILE_COUNT);
         assert_eq!(PUBLISHED_PROFILE_COUNT, 20);
         assert_eq!(PRIVATE23_PROFILE_COUNT, 23);
         assert_eq!(REGISTRY24_PROFILE_COUNT, 24);
@@ -1784,17 +1900,125 @@ mod tests {
         assert_eq!(mask26, 0x03ff_ffff);
         assert_eq!(mask26.count_ones(), 26);
         assert!(validate_mode_mask(CANONICAL26_PROFILE_COUNT, mask26).is_ok());
-        assert!(validate_mode_mask(PROFILES.len(), mask26).is_err());
+        assert!(validate_mode_mask(CANONICAL31_PROFILE_COUNT, mask26).is_err());
 
         let mask31 = mode_mask(CANONICAL31_PROFILE_COUNT).expect("canonical31 mask");
         assert_eq!(mask31, 0x7fff_ffff);
         assert_eq!(mask31.count_ones(), 31);
-        assert!(validate_mode_mask(PROFILES.len(), mask31).is_ok());
+        assert!(validate_mode_mask(CANONICAL31_PROFILE_COUNT, mask31).is_ok());
         assert!(validate_mode_mask(
-            PROFILES.len(),
+            CANONICAL31_PROFILE_COUNT,
             mode_mask(REGISTRY24_PROFILE_COUNT).expect("registry24 mask")
         )
         .is_err());
+    }
+
+    #[test]
+    fn canonical38_appends_common_fa4_profiles_and_u64_mask_is_exact() {
+        assert_eq!(PROFILES.len(), EXTENDED38_PROFILE_COUNT);
+        let expected = [
+            ("qwen2_q14kv2_d64_causal", 14, 2, 64, true, false),
+            ("qwen2_q12kv2_d128_causal", 12, 2, 128, true, false),
+            ("llama_q32kv8_d64_noncausal", 32, 8, 64, false, false),
+            ("gemma3_global_d256_gqa2", 16, 8, 256, true, false),
+            ("gemma3_local1024_d256_gqa2", 16, 8, 256, true, true),
+            ("gemma3_local1024_d128_gqa2", 32, 16, 128, true, true),
+            ("gemma4_e4b_local1024_d256_gqa4", 8, 2, 256, true, true),
+        ];
+        for (index, (name, heads, kv_heads, head_dim, causal, local)) in expected.iter().enumerate()
+        {
+            let profile = PROFILES[CANONICAL31_PROFILE_COUNT + index];
+            assert_eq!(profile.name, *name);
+            assert_eq!(
+                (
+                    profile.heads,
+                    profile.kv_heads,
+                    profile.head_dim,
+                    profile.causal
+                ),
+                (*heads, *kv_heads, *head_dim, *causal)
+            );
+            let window = if *local {
+                Window::Local {
+                    left: 1023,
+                    right: 0,
+                }
+            } else {
+                Window::Global
+            };
+            assert_eq!(profile.window, window);
+        }
+
+        assert_eq!(
+            mode_mask(CANONICAL31_PROFILE_COUNT).expect("legacy mask"),
+            0x7fff_ffff
+        );
+        assert!(mode_mask(EXTENDED38_PROFILE_COUNT).is_err());
+        assert!(extended_mode_mask(CANONICAL31_PROFILE_COUNT).is_err());
+        let mask = extended_mode_mask(EXTENDED38_PROFILE_COUNT).expect("extended mask");
+        assert_eq!(mask, 0x3f_ffff_ffff);
+        assert_eq!(mask.count_ones(), 38);
+        assert!(validate_extended_mode_mask(EXTENDED38_PROFILE_COUNT, mask).is_ok());
+        assert!(validate_extended_mode_mask(CANONICAL31_PROFILE_COUNT, mask).is_err());
+        assert!(validate_extended_mode_mask(EXTENDED38_PROFILE_COUNT, mask ^ 1).is_err());
+    }
+
+    #[test]
+    fn canonical38_selection_is_ratio_dim_mask_and_deduplicated() {
+        let dtype = DType::Bf16;
+        for (offset, profile) in PROFILES[CANONICAL31_PROFILE_COUNT..].iter().enumerate() {
+            let spec = spec_for(profile, dtype);
+            assert_eq!(
+                profile_index(&spec),
+                Some(CANONICAL31_PROFILE_COUNT + offset)
+            );
+            assert!(Fa4::supports(&spec));
+            assert!(!Fa4::supports_published(&spec));
+        }
+        let spec = |heads, kv_heads, head_dim, causal, left, right| AttentionSpec {
+            heads,
+            kv_heads,
+            head_dim,
+            causal,
+            window: if let Some(left) = left {
+                Window::Local { left, right }
+            } else {
+                Window::Global
+            },
+            dtype,
+            scale: Scale::RsqrtHeadDim,
+        };
+        // Dense unique shapes.
+        assert_eq!(profile_index(&spec(7, 1, 64, true, None, 0)), Some(31));
+        assert_eq!(profile_index(&spec(14, 2, 64, false, None, 0)), None);
+        assert_eq!(profile_index(&spec(12, 2, 128, true, None, 0)), Some(32));
+        assert_eq!(profile_index(&spec(12, 2, 128, false, None, 0)), Some(4));
+        assert_eq!(profile_index(&spec(32, 8, 64, false, None, 0)), Some(33));
+        assert_eq!(profile_index(&spec(32, 4, 64, true, None, 0)), Some(19));
+        // Gemma3 unique global/local1024 shapes.
+        assert_eq!(profile_index(&spec(16, 8, 256, true, None, 0)), Some(34));
+        assert_eq!(
+            profile_index(&spec(16, 8, 256, true, Some(1023), 0)),
+            Some(35)
+        );
+        assert_eq!(
+            profile_index(&spec(32, 16, 128, true, Some(1023), 0)),
+            Some(36)
+        );
+        // Rune 26B Q16/KV8 d256 local1024 is mode 35, not a duplicate.
+        assert_eq!(
+            profile_index(&spec(16, 8, 256, true, Some(1023), 0)),
+            Some(35)
+        );
+        // Gemma4 E4B Q8/KV2 d256 local1024 remains distinct.
+        assert_eq!(
+            profile_index(&spec(8, 2, 256, true, Some(1023), 0)),
+            Some(37)
+        );
+        // No causal narrowing: the noncausal d64/d128 families stay separate.
+        assert_eq!(profile_index(&spec(32, 8, 64, true, None, 0)), None);
+        // Qwen3 16/8 d128 noncausal is published voyage (mode 3).
+        assert_eq!(profile_index(&spec(16, 8, 128, false, None, 0)), Some(3));
     }
 
     #[test]
@@ -1900,7 +2124,7 @@ mod tests {
 
     #[test]
     fn canonical31_complete_bundle_with_exact_mul_validates_31_modes() {
-        let mut manifest = manifest_for(&[DType::F16, DType::Bf16]);
+        let mut manifest = manifest_prefix(&[DType::F16, DType::Bf16], CANONICAL31_PROFILE_COUNT);
         for dtype in [DType::F16, DType::Bf16] {
             manifest["kernels"]
                 .as_array_mut()
@@ -1991,7 +2215,7 @@ mod tests {
 
     #[test]
     fn canonical31_registry_metadata_carries_the_source_contract_identity() {
-        let mut manifest = manifest_for(&[DType::F16, DType::Bf16]);
+        let mut manifest = manifest_prefix(&[DType::F16, DType::Bf16], CANONICAL31_PROFILE_COUNT);
         manifest["registry"] = json!({
             "namespace": "canonical31",
             "mode_count": 31,
@@ -3034,11 +3258,16 @@ mod tests {
         {
             for dtype in [DType::F16, DType::Bf16] {
                 let mut manifest = manifest_prefix(&[dtype], count);
+                let mask = if count > CANONICAL31_PROFILE_COUNT {
+                    extended_mode_mask(count).expect("extended prefix mask")
+                } else {
+                    mode_mask(count).expect("legacy prefix mask") as u64
+                };
                 manifest["registry"] = json!({"namespace": namespace, "mode_count": count,
-                    "mode_mask": format!("0x{:x}", mode_mask(count).unwrap()),
+                    "mode_mask": format!("0x{mask:x}"),
                     "profile_sequence_sha256": fingerprint});
                 assert_eq!(validate_profile_order(&manifest, dtype).ok(), Some(count));
-                if count < CANONICAL31_PROFILE_COUNT {
+                if count != CANONICAL31_PROFILE_COUNT {
                     manifest["registry"]["profile_sequence_sha256"] =
                         json!("187defaacc9f9b9b326b392fbeda675545a73660f44f69e21743743f782a87f1");
                     assert!(validate_profile_order(&manifest, dtype).is_err());

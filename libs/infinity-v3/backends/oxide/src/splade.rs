@@ -1,5 +1,5 @@
 // Copyright Infinity Core Contributors. Licensed under the repository LICENSE.
-//! Host-side loading and bounded geometry checks for a BF16 BERT SPLADE head.
+//! Host-side loading and bounded geometry checks for BF16 BERT/DistilBERT SPLADE.
 
 use crate::{
     infer,
@@ -28,6 +28,7 @@ pub(crate) struct SpladeHeadHost {
     pub hidden: usize,
     pub vocab: usize,
     pub eps: f32,
+    pub decoder_relu_separate: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -49,8 +50,13 @@ pub(crate) struct SpladeGeometry {
 #[cfg_attr(not(test), allow(dead_code))]
 impl SpladeHeadHost {
     pub(crate) fn validate_config(config: &BertConfig) -> Result<(), BackendError> {
-        if config.family != EncoderFamily::Bert {
-            return Err(start("SPLADE head requires the BERT encoder family"));
+        if !matches!(
+            config.family,
+            EncoderFamily::Bert | EncoderFamily::DistilBert
+        ) {
+            return Err(start(
+                "SPLADE head requires the BERT or DistilBERT encoder family",
+            ));
         }
         if config.hidden_size != 768 {
             return Err(start(format!(
@@ -76,18 +82,26 @@ impl SpladeHeadHost {
         if config.vocab_size == 0 {
             return Err(start("SPLADE head requires a positive vocabulary size"));
         }
+        let architecture = if config.family == EncoderFamily::DistilBert {
+            "DistilBertForMaskedLM"
+        } else {
+            "BertForMaskedLM"
+        };
         if config.architectures.len() != 1
-            || config.architectures.first().map(String::as_str) != Some("BertForMaskedLM")
+            || config.architectures.first().map(String::as_str) != Some(architecture)
         {
             return Err(start(
-                "SPLADE head requires exactly one BertForMaskedLM architecture",
+                "SPLADE head requires exactly one family-matched masked-LM architecture",
             ));
         }
-        if config.recipe.embedding != NormArithmetic::ExactBiased
-            || config.recipe.residual != NormArithmetic::ExactBiased
-        {
+        let norm = if config.family == EncoderFamily::DistilBert {
+            NormArithmetic::RoundedAddBeforeStats
+        } else {
+            NormArithmetic::ExactBiased
+        };
+        if config.recipe.embedding != norm || config.recipe.residual != norm {
             return Err(start(
-                "SPLADE head requires exact-biased embedding and residual arithmetic",
+                "SPLADE head requires the family-native embedding and residual arithmetic",
             ));
         }
         if config.recipe.positions != PositionRecipe::Absolute {
@@ -113,7 +127,13 @@ impl SpladeHeadHost {
         word: &WeightSource,
     ) -> Result<Self, BackendError> {
         Self::validate_config(config)?;
-        let eps = config.layer_norm_eps as f32;
+        let distil = config.family == EncoderFamily::DistilBert;
+        // Native Distil token_scores hardcodes the MLM norm epsilon.
+        let eps = if distil {
+            1e-12
+        } else {
+            config.layer_norm_eps as f32
+        };
 
         let hidden = config.hidden_size;
         let vocab = config.vocab_size;
@@ -126,21 +146,34 @@ impl SpladeHeadHost {
             }
         }
 
-        let transform = LinearWeights {
-            weight: checkpoint
-                .source("cls.predictions.transform.dense.weight", &[hidden, hidden])?,
-            bias: checkpoint.source("cls.predictions.transform.dense.bias", &[hidden])?,
+        let (transform_name, norm_name, decoder_name, bias_name) = if distil {
+            (
+                "vocab_transform",
+                "vocab_layer_norm",
+                "vocab_projector.weight",
+                "vocab_projector.bias",
+            )
+        } else {
+            (
+                "cls.predictions.transform.dense",
+                "cls.predictions.transform.LayerNorm",
+                "cls.predictions.decoder.weight",
+                "cls.predictions.bias",
+            )
         };
-        let gamma = checkpoint.source("cls.predictions.transform.LayerNorm.weight", &[hidden])?;
-        let beta = checkpoint.source("cls.predictions.transform.LayerNorm.bias", &[hidden])?;
-        let decoder_bias = checkpoint.source("cls.predictions.bias", &[vocab])?;
-        let decoder =
-            match checkpoint.optional_source("cls.predictions.decoder.weight", &[vocab, hidden])? {
-                Some(source) => SpladeDecoderHost::Explicit(Box::new(source)),
-                None => SpladeDecoderHost::TiedWord,
-            };
-        // Native uses cls.predictions.bias; an unused decoder.bias alias must
-        // neither replace it nor change admission when it has another shape.
+        let transform = LinearWeights {
+            weight: checkpoint.source(&format!("{transform_name}.weight"), &[hidden, hidden])?,
+            bias: checkpoint.source(&format!("{transform_name}.bias"), &[hidden])?,
+        };
+        let gamma = checkpoint.source(&format!("{norm_name}.weight"), &[hidden])?;
+        let beta = checkpoint.source(&format!("{norm_name}.bias"), &[hidden])?;
+        let decoder_bias = checkpoint.source(bias_name, &[vocab])?;
+        let decoder = match checkpoint.optional_source(decoder_name, &[vocab, hidden])? {
+            Some(source) => SpladeDecoderHost::Explicit(Box::new(source)),
+            None => SpladeDecoderHost::TiedWord,
+        };
+        // BERT uses cls.predictions.bias; an unused decoder.bias alias never
+        // replaces it. Distil uses its real vocab_projector.bias.
 
         Ok(Self {
             transform,
@@ -151,6 +184,7 @@ impl SpladeHeadHost {
             hidden,
             vocab,
             eps,
+            decoder_relu_separate: distil,
         })
     }
 
@@ -317,20 +351,25 @@ pub(crate) fn validate_admission(
 ) -> Result<(), BackendError> {
     let config = BertConfig::load(path)?;
     SpladeHeadHost::validate_config(&config)?;
-    // Exact public metadata for the documented BERT SPLADE rows: H768/L12/
-    // Q12/I3072/V30522, P512, two type rows and eps=1e-12. This is a metadata
-    // contract, not a checkpoint-name allowlist.
+    // Exact documented metadata: BERT L12 or Distil L6, both H768/Q12/I3072/
+    // V30522/P512/eps1e-12. Distil's absent segment table uses the existing
+    // shared loader's two zero rows; these are not checkpoint-owned weights.
     if config.hidden_size != 768
         || config.intermediate_size != 3072
         || config.num_attention_heads != 12
-        || config.num_hidden_layers != 12
+        || config.num_hidden_layers
+            != if config.family == EncoderFamily::DistilBert {
+                6
+            } else {
+                12
+            }
         || config.max_position_embeddings != 512
         || config.vocab_size != 30522
         || config.type_vocab_size != 2
         || config.layer_norm_eps != 1e-12
     {
         return Err(start(format!(
-            "BF16 BERT SPLADE requires the documented H768/I3072/Q12/L12/V30522/P512 metadata with eps=1e-12; got H{}/I{}/Q{}/L{}/V{}/P{}/eps={}",
+            "BF16 SPLADE requires documented H768/I3072/Q12/V30522/P512/eps1e-12 with BERT L12 or Distil L6 (the shared loader reserves two zero segment rows when absent); got H{}/I{}/Q{}/L{}/V{}/P{}/eps={}",
             config.hidden_size,
             config.intermediate_size,
             config.num_attention_heads,
@@ -509,7 +548,148 @@ mod tests {
             hidden,
             vocab,
             eps: 1e-5,
+            decoder_relu_separate: false,
         }
+    }
+
+    fn actual_distil_config() -> serde_json::Value {
+        serde_json::from_str(include_str!(
+            "../tests/fixtures/distil-splade-v2-max-config.json"
+        ))
+        .unwrap()
+    }
+    fn write_distil_config(dir: &Path, vocab: usize) {
+        let mut value = actual_distil_config();
+        value["vocab_size"] = serde_json::json!(vocab);
+        fs::write(dir.join("config.json"), serde_json::to_vec(&value).unwrap()).unwrap();
+    }
+    fn distil_head_tensors(vocab: usize, explicit: bool) -> Vec<(String, Vec<usize>)> {
+        let mut tensors = vec![
+            tensor("vocab_transform.weight", &[768, 768]),
+            tensor("vocab_transform.bias", &[768]),
+            tensor("vocab_layer_norm.weight", &[768]),
+            tensor("vocab_layer_norm.bias", &[768]),
+            tensor("vocab_projector.bias", &[vocab]),
+        ];
+        if explicit {
+            tensors.push(tensor("vocab_projector.weight", &[vocab, 768]));
+        }
+        tensors
+    }
+    #[test]
+    fn actual_documented_distil_splade_metadata_admits_both_checkpoints() {
+        for bytes in [
+            include_str!("../tests/fixtures/distil-splade-v2-max-config.json"),
+            include_str!("../tests/fixtures/distil-splade-v2-distil-config.json"),
+        ] {
+            let dir = temp_dir("distil-actual-metadata");
+            fs::write(dir.join("config.json"), bytes).unwrap();
+            validate_admission(&dir, None).unwrap_or_else(|error| panic!("{error}"));
+            let config = BertConfig::load(&dir).unwrap();
+            assert_eq!(config.family, EncoderFamily::DistilBert);
+            assert_eq!(config.num_hidden_layers, 6);
+            assert_eq!(config.type_vocab_size, 2);
+            assert_eq!(config.configured_type_vocab_size, None);
+            fs::remove_dir_all(dir).unwrap();
+        }
+    }
+    #[test]
+    fn distil_loader_uses_native_names_tied_precedence_and_separate_relu() {
+        for explicit in [false, true] {
+            let dir = temp_dir("distil-head");
+            write_distil_config(&dir, 7);
+            write_safetensors(&dir, &distil_head_tensors(7, explicit));
+            let config = BertConfig::load(&dir).unwrap();
+            let checkpoint = checkpoint_at(&dir);
+            let word = WeightSource::zeroed(vec![7, 768]).unwrap();
+            let head = SpladeHeadHost::load(&checkpoint, &config, &word).unwrap();
+            assert_eq!(
+                matches!(head.decoder, SpladeDecoderHost::Explicit(_)),
+                explicit
+            );
+            assert!(head.decoder_relu_separate);
+            assert_eq!(head.eps, 1e-12);
+            fs::remove_dir_all(dir).unwrap();
+        }
+        let dir = temp_dir("distil-missing-real-bias");
+        write_distil_config(&dir, 7);
+        let mut tensors = distil_head_tensors(7, false);
+        tensors.retain(|(name, _)| name != "vocab_projector.bias");
+        tensors.push(tensor("cls.predictions.bias", &[7]));
+        write_safetensors(&dir, &tensors);
+        assert!(load_at(&dir, 768, 7).is_err());
+        fs::remove_dir_all(dir).unwrap();
+    }
+    #[test]
+    fn actual_distil_backbone_and_head_headers_reach_shared_loader_without_payload_reads() {
+        use std::io::Write;
+        let dir = temp_dir("distil-complete-headers");
+        write_distil_config(&dir, 30522);
+        let mut tensors = distil_head_tensors(30522, false);
+        for (name, shape) in [
+            ("embeddings.word_embeddings.weight", vec![30522, 768]),
+            ("embeddings.position_embeddings.weight", vec![512, 768]),
+            ("embeddings.LayerNorm.weight", vec![768]),
+            ("embeddings.LayerNorm.bias", vec![768]),
+        ] {
+            tensors.push(tensor(&format!("distilbert.{name}"), &shape));
+        }
+        for layer in 0..6 {
+            for (stem, output, input) in [
+                ("attention.q_lin", 768, 768),
+                ("attention.k_lin", 768, 768),
+                ("attention.v_lin", 768, 768),
+                ("attention.out_lin", 768, 768),
+                ("ffn.lin1", 3072, 768),
+                ("ffn.lin2", 768, 3072),
+            ] {
+                tensors.push(tensor(
+                    &format!("distilbert.transformer.layer.{layer}.{stem}.weight"),
+                    &[output, input],
+                ));
+                tensors.push(tensor(
+                    &format!("distilbert.transformer.layer.{layer}.{stem}.bias"),
+                    &[output],
+                ));
+            }
+            for stem in ["sa_layer_norm", "output_layer_norm"] {
+                tensors.push(tensor(
+                    &format!("distilbert.transformer.layer.{layer}.{stem}.weight"),
+                    &[768],
+                ));
+                tensors.push(tensor(
+                    &format!("distilbert.transformer.layer.{layer}.{stem}.bias"),
+                    &[768],
+                ));
+            }
+        }
+        let mut header = serde_json::Map::new();
+        let mut offset = 0u64;
+        for (name, shape) in tensors {
+            let end = offset + shape.iter().product::<usize>() as u64 * 2;
+            header.insert(
+                name,
+                serde_json::json!({"dtype":"BF16","shape":shape,"data_offsets":[offset,end]}),
+            );
+            offset = end;
+        }
+        let mut bytes = serde_json::to_vec(&header).unwrap();
+        while !bytes.len().is_multiple_of(8) {
+            bytes.push(b' ');
+        }
+        let mut file = fs::File::create(dir.join("model.safetensors")).unwrap();
+        file.write_all(&(bytes.len() as u64).to_le_bytes()).unwrap();
+        file.write_all(&bytes).unwrap();
+        file.set_len(8 + bytes.len() as u64 + offset).unwrap();
+        drop(file);
+        let (backbone, checkpoint) = crate::model::BertWeights::load_splade(&dir).unwrap();
+        assert_eq!(backbone.config.family, EncoderFamily::DistilBert);
+        assert_eq!(backbone.layers.len(), 6);
+        assert_eq!(backbone.layers[0].query.weight.shape(), &[768, 768]);
+        let head = SpladeHeadHost::load(&checkpoint, &backbone.config, &backbone.word).unwrap();
+        assert!(matches!(head.decoder, SpladeDecoderHost::TiedWord));
+        assert_eq!(head.vocab, 30522);
+        fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]

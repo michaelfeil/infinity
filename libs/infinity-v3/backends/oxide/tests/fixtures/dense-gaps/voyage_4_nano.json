@@ -1,0 +1,27 @@
+{
+  "architectures": [
+    "Qwen3ForCausalLM"
+  ],
+  "model_type": "qwen3",
+  "hidden_size": 1024,
+  "intermediate_size": 3072,
+  "num_hidden_layers": 12,
+  "num_attention_heads": 16,
+  "num_key_value_heads": 8,
+  "head_dim": 128,
+  "vocab_size": 151936,
+  "max_position_embeddings": 40960,
+  "rms_norm_eps": 1e-06,
+  "rope_theta": 1000000,
+  "hidden_act": "silu",
+  "use_bidirectional_attention": true,
+  "sliding_window": null,
+  "use_sliding_window": false,
+  "max_window_layers": 28,
+  "rope_scaling": null,
+  "num_labels": 2048,
+  "tie_word_embeddings": true,
+  "attention_bias": false,
+  "torch_dtype": "bfloat16",
+  "__source__": "voyageai/voyage-4-nano"
+}

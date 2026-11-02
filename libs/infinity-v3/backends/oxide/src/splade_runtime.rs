@@ -276,10 +276,11 @@ struct SpladeKernels {
     layer_norm: Function,
     pool: Function,
     gather: Function,
+    relu: Option<Function>,
 }
 
 impl SpladeKernels {
-    fn load(context: &Arc<Context>) -> Result<Self, BackendError> {
+    fn load(context: &Arc<Context>, separate_relu: bool) -> Result<Self, BackendError> {
         let path = std::env::var_os(infinity_v3_config::infinity_env!("OXIDE_KERNEL_MODULE"))
             .ok_or_else(|| {
                 start("Set INFINITY_OXIDE_KERNEL_MODULE to the artifact compiled by cargo oxide")
@@ -305,6 +306,15 @@ impl SpladeKernels {
             gather: module
                 .load_function("infinity_embedding_gather")
                 .map_err(start)?,
+            relu: if separate_relu {
+                Some(
+                    module
+                        .load_function("infinity_encoder_activation_relu_bf16")
+                        .map_err(start)?,
+                )
+            } else {
+                None
+            },
         })
     }
 }
@@ -405,11 +415,14 @@ impl SpladeHead {
         if !host.eps.is_finite() || host.eps <= 0.0 {
             return Err(start("SPLADE head requires a positive finite epsilon"));
         }
-        let kernels = SpladeKernels::load(context)?;
+        let kernels = SpladeKernels::load(context, host.decoder_relu_separate)?;
         let gelu_plan =
             lt.prepare_native_default_gelu_bias_shape::<Bf16>(host.hidden, host.hidden, 1)?;
-        let relu_plan =
-            lt.prepare_native_default_relu_bias_shape::<Bf16>(host.hidden, host.vocab, 1)?;
+        let relu_plan = if host.decoder_relu_separate {
+            lt.prepare_native_default_bias_shape::<Bf16>(host.hidden, host.vocab, 1)?
+        } else {
+            lt.prepare_native_default_relu_bias_shape::<Bf16>(host.hidden, host.vocab, 1)?
+        };
         let mut uploader = WeightUploader::new(stream.clone())?;
         let mut uploaded = Vec::new();
         uploaded
@@ -712,6 +725,35 @@ impl SpladeHead {
                 decoder,
                 logits,
             )?;
+        }
+        if let Some(relu) = self.kernels.relu.as_ref() {
+            // Native Distil materializes BF16 logits before its separate ReLU.
+            // Reuse the existing pointwise activation without a fused epilogue.
+            let mut input = work.logits_ptr();
+            let mut output = input;
+            let mut bias = 0u64;
+            let mut count = u32_size(rows).map_err(ShapeError::Fatal)?;
+            let mut width = u32_size(self.vocab).map_err(ShapeError::Fatal)?;
+            let mut input_stride = width;
+            let mut output_stride = width;
+            crate::launch_threads(
+                relu,
+                stream,
+                crate::blocks(product(rows, self.vocab).map_err(ShapeError::Fatal)?)
+                    .map_err(ShapeError::Fatal)?,
+                256,
+                0,
+                &mut [
+                    crate::arg(&mut input),
+                    crate::arg(&mut bias),
+                    crate::arg(&mut output),
+                    crate::arg(&mut count),
+                    crate::arg(&mut width),
+                    crate::arg(&mut input_stride),
+                    crate::arg(&mut output_stride),
+                ],
+            )
+            .map_err(ShapeError::Fatal)?;
         }
         let compact_offset = rows
             .checked_mul(size_of::<u32>())

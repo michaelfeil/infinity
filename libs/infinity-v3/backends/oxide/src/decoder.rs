@@ -22,7 +22,7 @@ use crate::{
     decoder_classifier::{
         DecoderClassifierHead, DecoderClassifierHeadHost, DecoderClassifierReadout,
         DecoderClassifierRows, DecoderClassifierScratchBuffers, DecoderClassifierScratchLayout,
-        DecoderClassifierTask, RowPlan, RowPlanKind,
+        DecoderClassifierTask, MeanRows, RowPlan, RowPlanKind,
     },
     decoder_model::{
         DecoderConfig, DecoderFamily, DecoderLayerWeights, DecoderMlpWeights, DecoderRope,
@@ -86,6 +86,12 @@ const H5120_RMS_GEOMETRY: NormGeometry = NormGeometry {
     rows_per_cta: 1,
     threads: 128,
 };
+/// Native BF16 width-896 registers the same 4x1 Candle warp geometry as the
+/// width-1024 vector kernel, with the actual 896 columns masked inside it.
+const H896_NORM_GEOMETRY: NormGeometry = NormGeometry {
+    rows_per_cta: 4,
+    threads: 128,
+};
 /// Dense Qwen3 fused per-head Q/K RMSNorm + RoPE launch geometry.
 const QK_NORM_ROPE_THREADS: u32 = 128;
 const QK_NORM_ROPE_HEAD_ROWS_PER_CTA: usize = 8;
@@ -96,6 +102,7 @@ const QK_NORM_ROPE_HEAD_ROWS_PER_CTA: usize = 8;
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum DecoderMath {
     Qwen2FullNeox,
+    Qwen2H896MaskedCandle,
     Qwen2H1536FullNeox,
     Qwen3H1024Candle,
     Qwen3H2048Ordinary,
@@ -111,17 +118,16 @@ impl DecoderMath {
     pub(crate) fn select(config: &DecoderConfig) -> Result<Self, BackendError> {
         match config.family {
             DecoderFamily::Qwen2 => {
-                if config.hidden_size == 896 && config.head_dim == 64 {
-                    return Err(start(
-                        "Qwen2 H896/d64 requires the unported masked Candle RMS and rotary recipe",
-                    ));
-                }
                 if config.rope != DecoderRope::FullNeoX {
                     return Err(start(
                         "decoder executor requires the native Qwen2 full split-half NeoX RoPE recipe",
                     ));
                 }
-                Ok(if config.hidden_size == 1536 {
+                Ok(if config.hidden_size == 896 && config.head_dim == 64 {
+                    // Native exact_decoder_math selects the masked width-896
+                    // Candle reduction and model-dtype HFMA rotary for these.
+                    Self::Qwen2H896MaskedCandle
+                } else if config.hidden_size == 1536 {
                     Self::Qwen2H1536FullNeox
                 } else {
                     Self::Qwen2FullNeox
@@ -186,14 +192,11 @@ impl DecoderMath {
                 }
                 if config.rope != DecoderRope::Default {
                     return Err(start(
-                        "decoder executor requires the base unscaled Llama default RoPE recipe",
+                        "decoder executor requires the Llama default RoPE recipe",
                     ));
                 }
-                if !config.is_causal {
-                    return Err(start(
-                        "decoder executor implements only causal global Llama attention",
-                    ));
-                }
+                // Bidirectional Llama classifiers reuse the same global trunk
+                // recipe; only the FA4 mask and mean-pooled head differ.
                 Ok(Self::LlamaH2048Exact)
             }
             DecoderFamily::Mistral => {
@@ -222,6 +225,7 @@ impl DecoderMath {
     const fn rms_export(self) -> &'static str {
         match self {
             Self::Qwen2FullNeox => "infinity_rms_norm",
+            Self::Qwen2H896MaskedCandle => "infinity_rms_norm_896_exact_masked_vector",
             Self::Qwen2H1536FullNeox => "infinity_rms_norm_1536_vector",
             Self::Qwen3H1024Candle => "infinity_rms_norm_1024_exact_vector",
             Self::Qwen3H2048Ordinary | Self::Qwen3H2560Ordinary => "infinity_rms_norm",
@@ -237,6 +241,7 @@ impl DecoderMath {
     const fn add_rms_export(self) -> &'static str {
         match self {
             Self::Qwen2FullNeox => "infinity_add_rms_norm",
+            Self::Qwen2H896MaskedCandle => "infinity_add_rms_norm_896_exact_masked_vector",
             Self::Qwen2H1536FullNeox => "infinity_add_rms_norm_1536_vector",
             Self::Qwen3H1024Candle => "infinity_add_rms_norm_1024_exact_vector",
             Self::Qwen3H2048Ordinary | Self::Qwen3H2560Ordinary | Self::Qwen3H5120Ordinary => {
@@ -253,6 +258,7 @@ impl DecoderMath {
     const fn rope_export(self) -> &'static str {
         match self {
             Self::Qwen2FullNeox | Self::Qwen2H1536FullNeox => "infinity_rope_neox",
+            Self::Qwen2H896MaskedCandle => "infinity_rope_neox_hfma",
             Self::Qwen3H1024Candle
             | Self::Qwen3H2048Ordinary
             | Self::Qwen3H2560Ordinary
@@ -275,6 +281,7 @@ impl DecoderMath {
             | Self::Qwen3MoeH2048Exact
             | Self::Qwen3MoeH4096Ordinary => Some("infinity_qk_norm_rope_128_bf16"),
             Self::Qwen2FullNeox
+            | Self::Qwen2H896MaskedCandle
             | Self::Qwen2H1536FullNeox
             | Self::LlamaH2048Exact
             | Self::MistralH4096Ordinary => None,
@@ -287,6 +294,7 @@ impl DecoderMath {
     const fn activation_export(self) -> &'static str {
         match self {
             Self::Qwen2FullNeox
+            | Self::Qwen2H896MaskedCandle
             | Self::Qwen2H1536FullNeox
             | Self::Qwen3H1024Candle
             | Self::Qwen3H2048Ordinary
@@ -311,6 +319,7 @@ impl DecoderMath {
             | Self::MistralH4096Ordinary
             | Self::Qwen3MoeH4096Ordinary => GENERIC_NORM_GEOMETRY,
             Self::Qwen3H1024Candle => H1024_NORM_GEOMETRY,
+            Self::Qwen2H896MaskedCandle => H896_NORM_GEOMETRY,
             Self::LlamaH2048Exact | Self::Qwen3MoeH2048Exact => H2048_NORM_GEOMETRY,
         }
     }
@@ -944,12 +953,15 @@ enum ClassifierMode {
     FullSequenceGather,
     /// Token head token readout: full-T forward then head projection.
     FullTokens,
+    /// Bidirectional sequence head: full-T forward then per-sequence mean.
+    FullSequenceMean,
 }
 fn classifier_mode(plan: Option<&RowPlan>) -> Option<ClassifierMode> {
     plan.map(|plan| match plan.kind() {
         RowPlanKind::Selected => ClassifierMode::Selected,
         RowPlanKind::PackedRows => ClassifierMode::FullSequenceGather,
         RowPlanKind::Tokens => ClassifierMode::FullTokens,
+        RowPlanKind::MeanSequence => ClassifierMode::FullSequenceMean,
     })
 }
 
@@ -1019,12 +1031,21 @@ impl DecoderModel {
                 initializer.clone(),
             )?
         } else {
-            let tables = BaseRopeTables::new(
-                config.head_dim,
-                config.rope_theta,
-                config.max_position_embeddings,
-                ROPE_TABLE_BYTE_LIMIT,
-            )
+            let tables = match config.rope_scale {
+                Some(scale) => BaseRopeTables::new_llama3(
+                    config.head_dim,
+                    config.rope_theta,
+                    scale,
+                    config.max_position_embeddings,
+                    ROPE_TABLE_BYTE_LIMIT,
+                ),
+                None => BaseRopeTables::new(
+                    config.head_dim,
+                    config.rope_theta,
+                    config.max_position_embeddings,
+                    ROPE_TABLE_BYTE_LIMIT,
+                ),
+            }
             .map_err(start)?;
             if tables.head_dim() != config.head_dim
                 || tables.position_capacity() != config.max_position_embeddings
@@ -1186,6 +1207,12 @@ impl DecoderModel {
                 )?;
                 RowPlan::selected_sequence(sequences, sequences)
             }
+            (DecoderClassifierTask::BidirectionalSequence, DecoderClassifierReadout::Sequence) => {
+                // Native averages every nonempty logical span; the canonical
+                // 0..B indices already staged in `batch.pooled_indices` address
+                // those spans without overwriting the selections region.
+                RowPlan::mean_sequence(&batch.input_ids, &batch.cumulative_seq_lengths)
+            }
             (DecoderClassifierTask::Tokens, DecoderClassifierReadout::Sequence) => {
                 RowPlan::sequence_into(
                     &batch.input_ids,
@@ -1224,19 +1251,47 @@ impl DecoderModel {
         let hidden = self.geometry.hidden;
         let source = DecoderClassifierRows::new(&work.normalized, plan.source_rows(), hidden)
             .map_err(ShapeError::Rejected)?;
+        let layout = InputLayout::new(
+            batch.input_ids.len(),
+            batch.cumulative_seq_lengths.len(),
+            batch.pooled_indices.len(),
+        )
+        .map_err(ShapeError::Rejected)?;
         let row_ids = if plan.requires_gather() {
-            let layout = InputLayout::new(
-                batch.input_ids.len(),
-                batch.cumulative_seq_lengths.len(),
-                batch.pooled_indices.len(),
-            )
-            .map_err(ShapeError::Rejected)?;
             Some(
                 layout
                     .selections()
                     .address(work.input.cu_deviceptr())
                     .map_err(ShapeError::Fatal)?,
             )
+        } else {
+            None
+        };
+        let mean = if plan.requires_mean() {
+            let plan_mean = crate::gemma2_math::MeanPlan::new(
+                batch.input_ids.len(),
+                hidden,
+                &batch.cumulative_seq_lengths,
+                &batch.pooled_indices,
+            )
+            .map_err(|error| {
+                ShapeError::Rejected(infer(format!("decoder classifier mean plan: {error}")))
+            })?;
+            let geometry = plan_mean.geometry().map_err(|error| {
+                ShapeError::Rejected(infer(format!("decoder classifier mean grid: {error}")))
+            })?;
+            Some(MeanRows {
+                boundaries: layout
+                    .boundaries()
+                    .address(work.input.cu_deviceptr())
+                    .map_err(ShapeError::Fatal)?,
+                indices: layout
+                    .selections()
+                    .address(work.input.cu_deviceptr())
+                    .map_err(ShapeError::Fatal)?,
+                grid: [geometry.grid()[0], geometry.grid()[1], geometry.grid()[2]],
+                threads: geometry.block()[0],
+            })
         } else {
             None
         };
@@ -1247,7 +1302,7 @@ impl DecoderModel {
         // SAFETY: the engine bound this context and every pointer comes from
         // the reserved work arena before the request lease begins.
         unsafe {
-            head.prepare(provider, blas, stream, source, plan, row_ids, scratch)?;
+            head.prepare(provider, blas, stream, source, plan, row_ids, mean, scratch)?;
         }
         Ok(())
     }
@@ -2177,7 +2232,28 @@ impl DecoderModel {
             let row_ids = match classifier_mode {
                 ClassifierMode::Selected => None,
                 ClassifierMode::FullSequenceGather => Some(layout.selections().address(base)?),
-                ClassifierMode::FullTokens => None,
+                ClassifierMode::FullTokens | ClassifierMode::FullSequenceMean => None,
+            };
+            let mean = match classifier_mode {
+                ClassifierMode::FullSequenceMean => {
+                    let plan_mean = crate::gemma2_math::MeanPlan::new(
+                        tokens,
+                        h,
+                        &batch.cumulative_seq_lengths,
+                        &batch.pooled_indices,
+                    )
+                    .map_err(|error| infer(format!("decoder classifier mean plan: {error}")))?;
+                    let geometry = plan_mean
+                        .geometry()
+                        .map_err(|error| infer(format!("decoder classifier mean grid: {error}")))?;
+                    Some(MeanRows {
+                        boundaries: layout.boundaries().address(base)?,
+                        indices: layout.selections().address(base)?,
+                        grid: [geometry.grid()[0], geometry.grid()[1], geometry.grid()[2]],
+                        threads: geometry.block()[0],
+                    })
+                }
+                _ => None,
             };
             let scratch = work
                 .classifier
@@ -2185,7 +2261,7 @@ impl DecoderModel {
                 .ok_or_else(|| infer("Decoder classifier scratch is missing"))?;
             // SAFETY: every buffer is fixed by the reserved work arena and the
             // caller retains all owners through the ordered stream completion.
-            unsafe { head.enqueue(lt, blas, stream, source, row_ids, scratch)? };
+            unsafe { head.enqueue(lt, blas, stream, source, row_ids, mean, scratch)? };
         }
         Ok(())
     }
@@ -3263,7 +3339,7 @@ mod tests {
     }
 
     #[test]
-    fn qwen2_masked_candle_recipe_is_rejected_before_generic_dispatch() {
+    fn qwen2_h896_d64_selects_the_masked_candle_recipe() {
         let base = Fixture::new();
         let mut config: serde_json::Value =
             serde_json::from_str(&fs::read_to_string(base.0.join("config.json")).unwrap()).unwrap();
@@ -3271,33 +3347,134 @@ mod tests {
         for (head_dim, heads) in [(64, 14), (128, 7)] {
             config["head_dim"] = head_dim.into();
             config["num_attention_heads"] = heads.into();
-            config["num_key_value_heads"] = heads.into();
+            config["num_key_value_heads"] = (if heads == 14 { 2 } else { 1 }).into();
             for causal in [false, true] {
                 config["is_causal"] = causal.into();
                 let fixture = Fixture::with_config(&config.to_string());
                 let loaded = fixture.config();
+                let math = DecoderMath::select(&loaded).unwrap();
                 if head_dim == 64 {
-                    if !causal {
-                        assert!(fa4::Fa4::supports(&fa4::AttentionSpec {
-                            heads: loaded.num_attention_heads,
-                            kv_heads: loaded.num_key_value_heads,
-                            head_dim: loaded.head_dim,
-                            causal,
-                            window: fa4::Window::Global,
-                            dtype: fa4::DType::Bf16,
-                            scale: fa4::Scale::RsqrtHeadDim,
-                        }));
-                    }
-                    let error = DecoderMath::select(&loaded).unwrap_err().to_string();
-                    assert!(error.contains("masked Candle RMS and rotary"));
-                } else {
+                    assert_eq!(math, DecoderMath::Qwen2H896MaskedCandle);
                     assert_eq!(
-                        DecoderMath::select(&loaded).unwrap(),
-                        DecoderMath::Qwen2FullNeox
+                        math.rms_export(),
+                        "infinity_rms_norm_896_exact_masked_vector"
                     );
+                    assert_eq!(
+                        math.add_rms_export(),
+                        "infinity_add_rms_norm_896_exact_masked_vector"
+                    );
+                    assert_eq!(math.rope_export(), "infinity_rope_neox_hfma");
+                    assert_eq!(math.qk_norm_rope_export(), None);
+                    assert_eq!(math.norm_geometry(), H896_NORM_GEOMETRY);
+                } else {
+                    assert_eq!(math, DecoderMath::Qwen2FullNeox);
+                    assert_eq!(math.rms_export(), "infinity_rms_norm");
                 }
             }
         }
+    }
+
+    #[test]
+    fn documented_dense_gap_configs_select_their_native_recipes() {
+        use crate::decoder_classifier::{DecoderClassifierConfig, DecoderClassifierTask};
+        let embedding_cases: &[(&str, &str, DecoderMath)] = &[
+            (
+                "gte-Qwen2-1.5B",
+                include_str!("../tests/fixtures/dense-gaps/gte_qwen2_1p5b.json"),
+                DecoderMath::Qwen2H1536FullNeox,
+            ),
+            (
+                "gte-Qwen2-7B",
+                include_str!("../tests/fixtures/dense-gaps/gte_qwen2_7b.json"),
+                DecoderMath::Qwen2FullNeox,
+            ),
+            (
+                "jina-code-0.5b",
+                include_str!("../tests/fixtures/dense-gaps/jina_code_0p5b.json"),
+                DecoderMath::Qwen2H896MaskedCandle,
+            ),
+            (
+                "jina-code-1.5b",
+                include_str!("../tests/fixtures/dense-gaps/jina_code_1p5b.json"),
+                DecoderMath::Qwen2H1536FullNeox,
+            ),
+            (
+                "Qwen3-Embedding-0.6B",
+                include_str!("../tests/fixtures/dense-gaps/qwen3_embed_0p6b.json"),
+                DecoderMath::Qwen3H1024Candle,
+            ),
+            (
+                "Qwen3-Embedding-4B",
+                include_str!("../tests/fixtures/dense-gaps/qwen3_embed_4b.json"),
+                DecoderMath::Qwen3H2560Ordinary,
+            ),
+            (
+                "Qwen3-Embedding-8B",
+                include_str!("../tests/fixtures/dense-gaps/qwen3_embed_8b.json"),
+                DecoderMath::Qwen3H4096Ordinary,
+            ),
+            (
+                "harrier-oss-v1-0.6b",
+                include_str!("../tests/fixtures/dense-gaps/harrier_0p6b.json"),
+                DecoderMath::Qwen3H1024Candle,
+            ),
+            (
+                "voyage-4-nano",
+                include_str!("../tests/fixtures/dense-gaps/voyage_4_nano.json"),
+                DecoderMath::Qwen3H1024Candle,
+            ),
+            (
+                "pplx-embed-v1-0.6b",
+                include_str!("../tests/fixtures/dense-gaps/pplx_0p6b.json"),
+                DecoderMath::Qwen3H1024Candle,
+            ),
+            (
+                "pplx-embed-v1-4b",
+                include_str!("../tests/fixtures/dense-gaps/pplx_4b.json"),
+                DecoderMath::Qwen3H2560Ordinary,
+            ),
+        ];
+        for (name, json, expected) in embedding_cases {
+            let value: serde_json::Value = serde_json::from_str(json).unwrap();
+            let config = DecoderConfig::from_value(value, false)
+                .unwrap_or_else(|error| panic!("{name}: {error}"));
+            assert_eq!(&DecoderMath::select(&config).unwrap(), expected, "{name}");
+        }
+
+        let skywork: serde_json::Value = serde_json::from_str(include_str!(
+            "../tests/fixtures/dense-gaps/skywork_reward_qwen3_0p6b.json"
+        ))
+        .unwrap();
+        let head = DecoderClassifierConfig::from_value(skywork.clone()).unwrap();
+        assert_eq!(head.task, DecoderClassifierTask::Sequence);
+        assert_eq!(head.num_labels, 1);
+        let config = DecoderConfig::from_value(skywork, true).unwrap();
+        assert_eq!(
+            DecoderMath::select(&config).unwrap(),
+            DecoderMath::Qwen3H1024Candle
+        );
+
+        let nemotron: serde_json::Value = serde_json::from_str(include_str!(
+            "../tests/fixtures/dense-gaps/nemotron_rerank_1b_v2.json"
+        ))
+        .unwrap();
+        let head = DecoderClassifierConfig::from_value(nemotron.clone()).unwrap();
+        assert_eq!(head.task, DecoderClassifierTask::BidirectionalSequence);
+        assert_eq!(head.num_labels, 1);
+        assert_eq!(head.temperature, 1.0);
+        let config = DecoderConfig::from_value(nemotron, true).unwrap();
+        assert_eq!(config.family, DecoderFamily::Llama);
+        assert!(!config.is_causal);
+        assert_eq!(config.head_dim, 64);
+        let scale = config.rope_scale.expect("llama3 scaling");
+        assert_eq!(
+            (scale.factor, scale.original_max_position_embeddings),
+            (32.0, 8192.0)
+        );
+        assert_eq!(
+            DecoderMath::select(&config).unwrap(),
+            DecoderMath::LlamaH2048Exact
+        );
     }
 
     #[test]
@@ -3396,13 +3573,12 @@ mod tests {
         let error = validate_recipe(&non_default_rope.config())
             .unwrap_err()
             .to_string();
-        assert!(error.contains("base unscaled Llama default RoPE"));
+        assert!(error.contains("Llama default RoPE"));
 
+        // Bidirectional Llama reuses the same trunk recipe; only the FA4 mask
+        // and the mean-pooled sequence head differ.
         let noncausal = fixture_with_overrides(serde_json::json!({"is_causal": false}));
-        let error = validate_recipe(&noncausal.config())
-            .unwrap_err()
-            .to_string();
-        assert!(error.contains("causal global Llama attention"));
+        assert!(validate_recipe(&noncausal.config()).is_ok());
 
         let simple = Fixture::with_config(
             r#"{
@@ -3568,6 +3744,7 @@ mod tests {
             is_causal: true,
             attention_window: Some(4096),
             rope: DecoderRope::Default,
+            rope_scale: None,
             routed: None,
         }
     }
@@ -3602,6 +3779,7 @@ mod tests {
             is_causal: true,
             attention_window: None,
             rope: DecoderRope::FullNeoX,
+            rope_scale: None,
             routed: Some(routed),
         };
         let math = DecoderMath::select(&c).unwrap();
@@ -3836,6 +4014,7 @@ mod tests {
         let selected = RowPlan::selected_sequence(3, 3).unwrap();
         let packed = RowPlan::from_row_ids(10, vec![1, 3, 9]).unwrap();
         let tokens = RowPlan::tokens(10).unwrap();
+        let mean = RowPlan::mean_sequence(&[1, 2, 3, 4, 5], &[0, 2, 5]).unwrap();
         assert_eq!(
             classifier_mode(Some(&selected)),
             Some(ClassifierMode::Selected)
@@ -3847,6 +4026,10 @@ mod tests {
         assert_eq!(
             classifier_mode(Some(&tokens)),
             Some(ClassifierMode::FullTokens)
+        );
+        assert_eq!(
+            classifier_mode(Some(&mean)),
+            Some(ClassifierMode::FullSequenceMean)
         );
         assert_eq!(classifier_mode(None), None);
     }

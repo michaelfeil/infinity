@@ -1,0 +1,23 @@
+{
+  "architectures": [
+    "Qwen2ForCausalLM"
+  ],
+  "model_type": "qwen2",
+  "hidden_size": 3584,
+  "intermediate_size": 18944,
+  "num_hidden_layers": 28,
+  "num_attention_heads": 28,
+  "num_key_value_heads": 4,
+  "vocab_size": 151646,
+  "max_position_embeddings": 131072,
+  "rms_norm_eps": 1e-06,
+  "rope_theta": 1000000.0,
+  "hidden_act": "silu",
+  "is_causal": false,
+  "sliding_window": 131072,
+  "use_sliding_window": false,
+  "max_window_layers": 28,
+  "tie_word_embeddings": false,
+  "torch_dtype": "float32",
+  "__source__": "Alibaba-NLP/gte-Qwen2-7B-instruct"
+}

@@ -356,6 +356,13 @@ class MockedCompileTests(unittest.TestCase):
             ("fa4_qwen3_q40kv8_d128_noncausal_fp16", 28),
             ("fa4_mistral_local4096_noncausal_bf16", 29),
             ("fa4_qwen35_moe_gqa8_noncausal_bf16", 30),
+            ("fa4_qwen2_q14kv2_d64_causal_bf16", 31),
+            ("fa4_qwen2_q12kv2_d128_causal_bf16", 32),
+            ("fa4_llama_q32kv8_d64_noncausal_bf16", 33),
+            ("fa4_gemma3_global_d256_gqa2_bf16", 34),
+            ("fa4_gemma3_local1024_d256_gqa2_bf16", 35),
+            ("fa4_gemma3_local1024_d128_gqa2_bf16", 36),
+            ("fa4_gemma4_e4b_local1024_d256_gqa4_bf16", 37),
         ):
             with self.subTest(symbol=symbol), tempfile.TemporaryDirectory() as temporary:
                 root = pathlib.Path(temporary)
@@ -403,8 +410,8 @@ class MockedCompileTests(unittest.TestCase):
                 "--deberta", "--deberta-exact-mul", "--alibi", "--jinacode",
                 "--runtime-dir", root / "runtime", "--ffi-root", root / "ffi"])
             self.assertEqual(code, 0)
-            self.assertEqual(len(exported), 70)
-            self.assertEqual(len(state["calls"]), 70)
+            self.assertEqual(len(exported), 84)
+            self.assertEqual(len(state["calls"]), 84)
             self.assertTrue((output / "manifest.json").exists())
             self.assertFalse((output / "development-manifest.json").exists())
 

@@ -50,6 +50,7 @@ infinity_silu_mul_bf16_vector8_native infinity_silu_mul_f32
 """.split()
 SYMBOLS += (DEVICE / "qwen35_exports.txt").read_text().split()
 SYMBOLS += (DEVICE / "rms5120_aten_exports.txt").read_text().split()
+SYMBOLS += (DEVICE / "rms896_exports.txt").read_text().split()
 SYMBOLS += (DEVICE / "encoder_activation_exports.txt").read_text().split()
 SYMBOLS += (DEVICE / "colbert_exports.txt").read_text().split()
 SYMBOLS += ["infinity_deberta_plain_norm_bf16_aten",
@@ -131,7 +132,7 @@ def source_digest(root):
     files = [root / name for name in (
         "build.sh", "Cargo.toml", "Cargo.lock", "rust-toolchain.toml",
         "encoder_activation_exports.txt", "colbert_exports.txt", "SPARSE_COLBERT_ABI.json",
-        "qwen35_exports.txt", "rms5120_aten_exports.txt", "LICENSE-Candle-BSD3",
+        "qwen35_exports.txt", "rms5120_aten_exports.txt", "rms896_exports.txt", "LICENSE-Candle-BSD3",
         "LICENSE-PyTorch-BSD3")]
     files += sorted((root / "src").rglob("*.rs"))
     files.append(root.parent / "NOTICE")

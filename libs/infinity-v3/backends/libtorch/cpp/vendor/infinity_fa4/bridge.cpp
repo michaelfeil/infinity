@@ -96,7 +96,12 @@ void invoke_export(unsigned slot, F&& invoke) {
 }
 }  // namespace
 
+// Legacy ABI7 mask. Bundles with more than 31 modes return -1 here so an old
+// host rejects them instead of truncating the signed mask.
 extern "C" int infinity_fa4_modes_v1(){return attention_modes >= 32 ? -1 : static_cast<int>((1u << attention_modes) - 1u);}
+// Backward-compatible extended query. Loaded only by hosts that saw a manifest
+// declaring more than 31 exports; old hosts keep calling modes_v1.
+extern "C" uint64_t infinity_fa4_modes_v2(){return attention_modes >= 64 ? ~uint64_t{0} : ((uint64_t{1} << attention_modes) - 1u);}
 
 // Export families: 0 global d64 MHA, 1 windowed d64 MHA, 2 causal d128 GQA4, 3 global d128 GQA2, 4 GQA6, 5 GQA8, 6 global d256 GQA4.
 // Pointers remain owned by the caller; no device allocation or synchronization here.
