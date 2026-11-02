@@ -1,0 +1,17 @@
+{
+  "schema": "q35moe-native-cpu-stage-handoff/v1",
+  "freeze": "/tmp/infinity-oxide-parity-20261101/q35moe-runtime-handoff-v1/native-light-freeze.json",
+  "freeze_sha256": "f267b0dc8493b93377a2987f14b380c6c1417850d64ace92c63bdf4a364522a9",
+  "root_command_file": "/tmp/infinity-oxide-parity-20261101/q35moe-runtime-handoff-v1/ROOT-NATIVE-CPU-COMMAND.txt",
+  "mode": "actual SDK load/GOT19ABI+headers only; no engine, payload or forward",
+  "container": "infinity-torch214-compare-sdk",
+  "expected_sdk_sha256": "b66d70b61b39e1bf0d565aca33bac7c5e21849677396ce5216f5baf73027d37e",
+  "native_gpu_gold": "none; Root minimal T7 pending",
+  "optimized_host_build": "unused, held until blocking+independent-shape+canonical-selector+bytebudget successor review",
+  "known_failures_preserved": [
+    "native-control-preflight-failure-v1.json",
+    "native-control-tests-v1.log",
+    "native-control-tests-v3.log"
+  ],
+  "review_closure_by": "Codex source fixes and actual CPU negative/guard tests; original independent review artifacts preserved"
+}

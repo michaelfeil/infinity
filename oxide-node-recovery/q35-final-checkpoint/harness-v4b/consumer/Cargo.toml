@@ -1,0 +1,22 @@
+[package]
+name = "q35moe-unified-runtime"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+infinity_v3-backend = { package = "infinity_v3-backend", path = "/tmp/oxide-all-model-feature-matrix-v1/qwen35-moe-factory-service-blocking-v2/libs/infinity-v3/backends", default-features = false, features = ["oxide"] }
+infinity_v3-backend-core = { path = "/tmp/oxide-all-model-feature-matrix-v1/qwen35-moe-factory-service-blocking-v2/libs/infinity-v3/backends/core" }
+infinity-backend-oxide = { path = "/tmp/oxide-all-model-feature-matrix-v1/qwen35-moe-factory-service-blocking-v2/libs/infinity-v3/backends/oxide" }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+sha2 = "0.10"
+tokio = { version = "1.25", features = ["rt-multi-thread", "macros", "time"] }
+
+[profile.release]
+opt-level = 3
+lto = false
+debug = 1
+codegen-units = 16
+debug-assertions = false
+panic = "abort"

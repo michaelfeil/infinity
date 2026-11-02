@@ -1,0 +1,23 @@
+   Compiling infinity-backend-oxide v3.0.2-beta.1 (/tmp/oxide-all-model-feature-matrix-v1/mistral3-v4/libs/infinity-v3/backends/oxide)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 5.54s
+     Running unittests src/lib.rs (/tmp/oxide-all-model-feature-matrix-v1/mistral3-v4/.work/target-cpu-debug/debug/deps/infinity_backend_oxide-7bef44295a29f9d8)
+
+running 15 tests
+test mistral3::tests::cold_plan_byte_accounting_matches_vision_and_projector_headers ... ok
+test mistral3::tests::feature_layer_selection_uses_the_matching_snapshot_once ... ok
+test mistral3::tests::image_media_plan_matches_spatial_merge_and_marker_contract ... ok
+test mistral3::tests::mistral3_weight_layout_is_explicit_for_hf_and_raw_common_prefixes ... ok
+test mistral3::tests::media_plan_rejects_wrong_patch_payload_and_missing_policy_geometry ... ok
+test mistral3::tests::native_yarn_bidirectional_text_is_admitted ... ok
+test mistral3::tests::official_14b_params_json_is_normalized_without_rewriting ... ok
+test mistral3::tests::parses_the_native_composite_geometry_without_stripping_vision ... ok
+test mistral3::tests::official_3b_8b_14b_wrapper_configs_are_structural ... ok
+test mistral3::tests::projector_bias_is_rejected_by_readiness ... ok
+test mistral3::tests::rejects_multiple_feature_layers_and_wrong_vision_family ... ok
+test mistral3::tests::rejects_inconsistent_head_dim_and_small_intermediate_arena ... ok
+test mistral3::tests::vision_attention_profile_uses_grouping_ratio_not_absolute_heads ... ok
+test mistral3::tests::cached_mistral3_checkpoint_header_inventory_is_complete ... ok
+test mistral3::tests::cached_processor_fixture_covers_dynamic_duplicate_mixed_readout_and_errors ... ok
+
+test result: ok. 15 passed; 0 failed; 0 ignored; 0 measured; 710 filtered out; finished in 0.05s
+

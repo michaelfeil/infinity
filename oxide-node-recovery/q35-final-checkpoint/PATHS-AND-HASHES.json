@@ -1,0 +1,606 @@
+{
+  "schema": "q35-recovery-checkpoint/v1",
+  "epoch": 1793640668.9062865,
+  "paths": [
+    "/tmp/oxide-all-model-feature-matrix-v1/qwen35-moe-factory-service-blocking-v3",
+    "/tmp/oxide-q35moe-unified-runtime-v4b",
+    "/tmp/oxide-fa4-canonical31-host-v1",
+    "/tmp/infinity-oxide-parity-20261101/qwen35-cold-zero-batch-source-v3-formatted",
+    "/tmp/infinity-oxide-parity-20261101/q35moe-runtime-handoff-v1"
+  ],
+  "files": {
+    "/tmp/oxide-all-model-feature-matrix-v1/qwen35-moe-factory-service-blocking-v3/SERVICE-BLOCKING-FREEZE.json": {
+      "sha256": "210aece8e5d15ae15ea5f0156b33480b77649350de8c9225ba15c6db4d6d49e8",
+      "bytes": 2012
+    },
+    "/tmp/oxide-all-model-feature-matrix-v1/qwen35-moe-factory-service-blocking-v3/SERVICE-BLOCKING-V3-FREEZE.json": {
+      "sha256": "8f3eda07a545f07462f89245aa6b6d5c6731481029fd8b36880d6c1d33e73e0d",
+      "bytes": 1593
+    },
+    "/tmp/oxide-all-model-feature-matrix-v1/qwen35-moe-factory-service-blocking-v3/SERVICE-BLOCKING-V2-PINS.json": {
+      "sha256": "0d34ceaa74e490da6d6cc40da7bef60e3d0517b678282153a060ead89d3bb034",
+      "bytes": 448
+    },
+    "/tmp/oxide-all-model-feature-matrix-v1/qwen35-moe-factory-service-blocking-v3/SERVICE-BLOCKING-V2-FREEZE.json": {
+      "sha256": "e3bc2c0111aa3d0febf7b045a5c7099d328e933e9a401d65a29044167b11be8d",
+      "bytes": 2076
+    },
+    "/tmp/oxide-all-model-feature-matrix-v1/qwen35-moe-factory-service-blocking-v3/SERVICE-BLOCKING-WARM.patch": {
+      "sha256": "86ce2edfa368c496b11fb687ac6727251cb0d16a4929ecafeab38860713cdc6b",
+      "bytes": 5450
+    },
+    "/tmp/oxide-all-model-feature-matrix-v1/qwen35-moe-factory-service-blocking-v3/SERVICE-BLOCKING-BUDGET.patch": {
+      "sha256": "3e9af8c7586b26b5c9693526ffe6cfca35e0b3f7ccee687e8d26cd4b3818face",
+      "bytes": 27170
+    },
+    "/tmp/oxide-all-model-feature-matrix-v1/qwen35-moe-factory-service-blocking-v3/SERVICE-BLOCKING.patch": {
+      "sha256": "e56e2f0b6a0b047f11ca3edd7b573dc06d1d2ee31138efa68363438e5e82c829",
+      "bytes": 33752
+    },
+    "/tmp/oxide-all-model-feature-matrix-v1/qwen35-moe-factory-service-blocking-v3/SERVICE-BLOCKING-V3-PINS.json": {
+      "sha256": "06794cde40b272933d078d257bf9dad04f196c7a41316acef8e81b92b7599e52",
+      "bytes": 448
+    },
+    "/tmp/oxide-all-model-feature-matrix-v1/qwen35-moe-factory-service-blocking-v3/SERVICE-BLOCKING-PINS.json": {
+      "sha256": "c4f3630c7abac64ddaff111305a7edac5b254f6c7b608479b8105ad5553ff65a",
+      "bytes": 492
+    },
+    "/tmp/oxide-all-model-feature-matrix-v1/qwen35-moe-factory-service-blocking-v3/libs/infinity-v3/backends/oxide/src/qwen35_moe_factory.rs": {
+      "sha256": "869832e24779626c39f74de83d407f9a8fe973833dbb5cf81fbdd464ffb0dcb5",
+      "bytes": 47509
+    },
+    "/tmp/oxide-all-model-feature-matrix-v1/qwen35-moe-factory-service-blocking-v3/libs/infinity-v3/backends/oxide/src/qwen35_moe_engine.rs": {
+      "sha256": "4b6c343b1dbae54dc87e838bd17df39a2e2119cca9c40952bb5c1f3b7aca7fb8",
+      "bytes": 82667
+    },
+    "/tmp/oxide-all-model-feature-matrix-v1/qwen35-moe-factory-service-blocking-v3/libs/infinity-v3/backends/oxide/src/qwen35_moe_full.rs": {
+      "sha256": "7fc72c2df8d0755de2ccaf61f6532dd7090880aa903407122c7f93873902425d",
+      "bytes": 38480
+    },
+    "/tmp/oxide-q35moe-unified-runtime-v4b/consumer/Cargo.lock": {
+      "sha256": "81d1f85ded4a9856c64dbfd21592f83bf7ca2ef82ba1c4d902bfe0c9bb0743d4",
+      "bytes": 60315
+    },
+    "/tmp/oxide-q35moe-unified-runtime-v4b/consumer/rust-toolchain.toml": {
+      "sha256": "02dee3b2b81f2c5e7064c6bb118cf19e859100fcc33c220e5ec52ce4b0586b12",
+      "bytes": 66
+    },
+    "/tmp/oxide-q35moe-unified-runtime-v4b/consumer/Cargo.toml": {
+      "sha256": "dab837b9071ce86a891ddbf75ad79ab86d40d6f94f3dd8b6dac0f75b4f68d669",
+      "bytes": 904
+    },
+    "/tmp/oxide-q35moe-unified-runtime-v4b/consumer/.cargo/config.toml": {
+      "sha256": "e3fd055cdf231c676f0d966bd95fb6d7ad94893c12419ca8cd7b897a1e98e912",
+      "bytes": 77
+    },
+    "/tmp/oxide-q35moe-unified-runtime-v4b/consumer/src/fixtures.rs": {
+      "sha256": "cb69c6d9c376d1ef1de96f43afd58ed05eaef01f340ea95371ef340aff09dd7b",
+      "bytes": 3905
+    },
+    "/tmp/oxide-q35moe-unified-runtime-v4b/consumer/src/life.rs": {
+      "sha256": "a2cc80543a3c999a22e566ccc23284cc6191901c41f9a1bb9e105b4e4f0bee6d",
+      "bytes": 26643
+    },
+    "/tmp/oxide-q35moe-unified-runtime-v4b/consumer/src/lib.rs": {
+      "sha256": "0c66faf91fa55dcf25c6a1864c3444a4a47ead8c3da44edcd97cbf8dcf7fca10",
+      "bytes": 128
+    },
+    "/tmp/oxide-q35moe-unified-runtime-v4b/consumer/src/metadata.rs": {
+      "sha256": "0b862792457d1e57f6b834fb5dec572b28d0833937a07fad5cb0fa8d408382a0",
+      "bytes": 9718
+    },
+    "/tmp/oxide-q35moe-unified-runtime-v4b/consumer/src/main.rs": {
+      "sha256": "477710b5911226329410efaf250e7f5468d9f459af2d61ed74fd652545112959",
+      "bytes": 282
+    },
+    "/tmp/oxide-q35moe-unified-runtime-v4b/consumer/src/outputs.rs": {
+      "sha256": "b5bd0babc59009be8a97a38c964bb00669460cfcb774eb73f56768dba6da6d5f",
+      "bytes": 5723
+    },
+    "/tmp/oxide-q35moe-unified-runtime-v4b/consumer/src/report.rs": {
+      "sha256": "bc88942eff0345808494556a6cb170bc16b66357e536597f95ab82fda5d56dca",
+      "bytes": 5472
+    },
+    "/tmp/oxide-q35moe-unified-runtime-v4b/consumer/src/batch.rs": {
+      "sha256": "a0906876ab08e6a35039ca795f6e1be88a5cbc2ede9fa81251ba7598bc2a3625",
+      "bytes": 16126
+    },
+    "/tmp/oxide-q35moe-unified-runtime-v4b/consumer/src/cli.rs": {
+      "sha256": "1e2d38b5087d431ecb5dcafeb2b58fdc96532399bb07dcd9419bed9e47fd56f1",
+      "bytes": 7050
+    },
+    "/tmp/oxide-q35moe-unified-runtime-v4b/consumer/src/quality.rs": {
+      "sha256": "b6411339c8d819cadd19de15862eb7d034791269cb481fba77e780eb9eb752e7",
+      "bytes": 10694
+    },
+    "/tmp/oxide-q35moe-unified-runtime-v4b/consumer/src/widths.rs": {
+      "sha256": "620964fb67cc92aada278a14b7447993980f82aeb4af9e6932e3ba6386dfc631",
+      "bytes": 9331
+    },
+    "/tmp/oxide-q35moe-unified-runtime-v4b/consumer/tests/cpu.rs": {
+      "sha256": "07c741b6af261af0ed3687c4dd025fce45e648eee8561dad53f7468cf247811f",
+      "bytes": 13431
+    },
+    "/tmp/oxide-q35moe-unified-runtime-v4b/fixtures/duplicate_raw_t7.json": {
+      "sha256": "d0a6c8e260c3d995bd08de8d96d090bc5f2ebf4129a1fa2acd4270e846123b45",
+      "bytes": 188
+    },
+    "/tmp/oxide-q35moe-unified-runtime-v4b/fixtures/mixed_ragged.json": {
+      "sha256": "ddb6a24a3acb392d7e603f5b8f481d0a566992bf3bff8bc9fb0aba3e861610b6",
+      "bytes": 190
+    },
+    "/tmp/oxide-q35moe-unified-runtime-v4b/fixtures/ragged_3_4.json": {
+      "sha256": "2dd6770f4d6c18491117bc1922cdf3efb79f687aadd73eca77552317dd4559f7",
+      "bytes": 189
+    },
+    "/tmp/oxide-q35moe-unified-runtime-v4b/fixtures/t7_a.json": {
+      "sha256": "344def7466553b7d773cf92efc4bd5234cd53b4f24e9dbca334f47fafff05b8c",
+      "bytes": 185
+    },
+    "/tmp/oxide-q35moe-unified-runtime-v4b/fixtures/bounded_duplicate_ragged.json": {
+      "sha256": "a437f109d745cb2bde5f4cc66c98f037061f5c5ecd80eb8786be0cd49ab889db",
+      "bytes": 189
+    },
+    "/tmp/oxide-q35moe-unified-runtime-v4b/fixtures/t1.json": {
+      "sha256": "8c9e2dfe4fc473b1c35a5dc4c4c5f999899adac365630efc0abf9fb4a53d6d11",
+      "bytes": 143
+    },
+    "/tmp/oxide-q35moe-unified-runtime-v4b/fixtures/invalid_token_id.json": {
+      "sha256": "94cb8368d8455c60183c672513749af4b2d325d92d7a8f62a5ae63d988a6cb2c",
+      "bytes": 189
+    },
+    "/tmp/oxide-q35moe-unified-runtime-v4b/fixtures/manifest.json": {
+      "sha256": "51ae20196e3659bab82ff967522ae52d6203ae6d2b92655b369d9fe871a1cf69",
+      "bytes": 8965
+    },
+    "/tmp/oxide-q35moe-unified-runtime-v4b/fixtures/duplicate_t7.json": {
+      "sha256": "52afa91177d62dbf67dd633414a8f7a180394e0fb548260ed19687f698554565",
+      "bytes": 190
+    },
+    "/tmp/oxide-q35moe-unified-runtime-v4b/fixtures/t7_no_selection.json": {
+      "sha256": "20bd50b61ab79b65e5dea79979b4d47c0153e8e56faf58cb5aff4b85ace01f9c",
+      "bytes": 184
+    },
+    "/tmp/oxide-q35moe-unified-runtime-v4b/fixtures/rawoverride_t7.json": {
+      "sha256": "addaf86ab10e2803e1842faf725290f70bb556aa8ffa335853578fe6e8f8d0ae",
+      "bytes": 186
+    },
+    "/tmp/oxide-q35moe-unified-runtime-v4b/fixtures/invalid_selection.json": {
+      "sha256": "d2ad213e2b243a4da3e26d37973eb804fc818d089db245f611eb654775d25439",
+      "bytes": 185
+    },
+    "/tmp/oxide-q35moe-unified-runtime-v4b/fixtures/empty.json": {
+      "sha256": "7613758871b98bfeace2a38c8ee0604ce9ec84ad8a4a38e9dbb4756ba8d0f997",
+      "bytes": 139
+    },
+    "/tmp/oxide-q35moe-unified-runtime-v4b/fixtures/raw_t7.json": {
+      "sha256": "4dfc0d3bf906d8974568af70581cf59b98fad2ec43eb0af802a7f1af60553eea",
+      "bytes": 185
+    },
+    "/tmp/oxide-q35moe-unified-runtime-v4b/fixtures/subset_ragged.json": {
+      "sha256": "98d96c8cfa9233d39d666c3de24c47e6e0e853f5b150fd9e6037699c3fb18df6",
+      "bytes": 187
+    },
+    "/tmp/oxide-q35moe-unified-runtime-v4b/fixtures/t8.json": {
+      "sha256": "42b3a59e54eae72d4c685423f046c0f8f6201ff5323183602d92c6d53e67305c",
+      "bytes": 193
+    },
+    "/tmp/oxide-q35moe-unified-runtime-v4b/fixtures/invalid_media.json": {
+      "sha256": "344def7466553b7d773cf92efc4bd5234cd53b4f24e9dbca334f47fafff05b8c",
+      "bytes": 185
+    },
+    "/tmp/oxide-q35moe-unified-runtime-v4b/fixtures/invalid_token_nosel.json": {
+      "sha256": "da0691ee29bf7aa18f7ca74de7568031f3e4844da766ff4ab43c00601f769d42",
+      "bytes": 188
+    },
+    "/tmp/oxide-q35moe-unified-runtime-v4b/fixtures/invalid_media_nosel.json": {
+      "sha256": "20bd50b61ab79b65e5dea79979b4d47c0153e8e56faf58cb5aff4b85ace01f9c",
+      "bytes": 184
+    },
+    "/tmp/oxide-q35moe-unified-runtime-v4b/fixtures/t7_b.json": {
+      "sha256": "da5cd73fac7fd37254b75b4e38da9b5b061b6c6151e0b3514bc7374a94204f71",
+      "bytes": 199
+    },
+    "/tmp/oxide-q35moe-unified-runtime-v4b/fixtures/duplicate_pooled_t7.json": {
+      "sha256": "fd36123435ec78eb04b6e3a6cc17ed5e794eacba7cfe0986cb8d6bd8aee5f0fb",
+      "bytes": 187
+    },
+    "/tmp/oxide-q35moe-unified-runtime-v4b/fixtures/t9.json": {
+      "sha256": "80461f4532cd9ea55661b9fb875b4c817968a089934e3a8dfc7b10c6f066ab46",
+      "bytes": 201
+    },
+    "/tmp/oxide-q35moe-unified-runtime-v4b/fixtures/invalid_cumulative.json": {
+      "sha256": "cc56265b651c03b529ec44767c096d4c881c77c4446be2ac722b998975653727",
+      "bytes": 187
+    },
+    "/tmp/oxide-q35moe-unified-runtime-v4b/fixtures/invalid_position.json": {
+      "sha256": "025720ffe8704eba463d1496c68d4a49919df727b6c1b8788a54962455564e3c",
+      "bytes": 190
+    },
+    "/tmp/oxide-q35moe-unified-runtime-v4b/fixtures/invalid_compact_nosel.json": {
+      "sha256": "20bd50b61ab79b65e5dea79979b4d47c0153e8e56faf58cb5aff4b85ace01f9c",
+      "bytes": 184
+    },
+    "/tmp/oxide-q35moe-unified-runtime-v4b/fixtures/invalid_compact.json": {
+      "sha256": "344def7466553b7d773cf92efc4bd5234cd53b4f24e9dbca334f47fafff05b8c",
+      "bytes": 185
+    },
+    "/tmp/oxide-q35moe-unified-runtime-v4b/fixtures/metadata-model/config.json": {
+      "sha256": "8b9794934edd4487c8fd47df039601cc8838aea1edbf57adc7956b57a7265a11",
+      "bytes": 1452
+    },
+    "/tmp/oxide-q35moe-unified-runtime-v4b/fixtures/metadata-model/model.safetensors.index.json": {
+      "sha256": "c3ca4c5d5a02bbcc5a0394a4c2e9ff6f0c40d3fde240aaedbfd05956022a0e88",
+      "bytes": 96
+    },
+    "/tmp/oxide-q35moe-unified-runtime-v4b/fixtures/metadata-model/tokenizer_config.json": {
+      "sha256": "be8e94b2b5ebbd7ce4e5a52102e9ecea54c5205d97d582610d2346874b385dba",
+      "bytes": 28
+    },
+    "/tmp/oxide-q35moe-unified-runtime-v4b/fixtures/metadata-model/modules.json": {
+      "sha256": "054fd39e0604d0fa7a810bf89a582414a5461e731a2a8c10fa575e48f176017a",
+      "bytes": 90
+    },
+    "/tmp/oxide-q35moe-unified-runtime-v4b/control/product-pins-after.json": {
+      "sha256": "09258c364dbc4ebeb36a9cd59293bb0a9fae489971ed4742cc51ad0caf9a6759",
+      "bytes": 1702
+    },
+    "/tmp/oxide-q35moe-unified-runtime-v4b/control/generate_fixtures.py": {
+      "sha256": "213a51595c1739a6bb31ecb237494954971a25a4bdbe73a94f2200d061ee5d6b",
+      "bytes": 3950
+    },
+    "/tmp/oxide-q35moe-unified-runtime-v4b/control/product-pins-before.json": {
+      "sha256": "09258c364dbc4ebeb36a9cd59293bb0a9fae489971ed4742cc51ad0caf9a6759",
+      "bytes": 1702
+    },
+    "/tmp/oxide-q35moe-unified-runtime-v4b/control/comparator.py": {
+      "sha256": "2a052806fbdb177a747c926c478a94eb72ff403c86d42e4787023fbbc5e50529",
+      "bytes": 2988
+    },
+    "/tmp/oxide-q35moe-unified-runtime-v4b/control/freeze.py": {
+      "sha256": "2c42f7d013c848043c3552e5c6f866b2b15eec5ce3026693c52d41372c4fb8de",
+      "bytes": 3148
+    },
+    "/tmp/oxide-q35moe-unified-runtime-v4b/control/controller.py": {
+      "sha256": "d347fffebd072836dcfd8c7df3222adb5cc883f624bb03004da157e243846bb7",
+      "bytes": 4169
+    },
+    "/tmp/oxide-q35moe-unified-runtime-v4b/HARNESS-FREEZE-v1.json": {
+      "sha256": "730d72de8d0042f6293f1bb7317eefad474ed8d861fc97452e8b71846b92d49a",
+      "bytes": 9117
+    },
+    "/tmp/oxide-q35moe-unified-runtime-v4b/PINS.json": {
+      "sha256": "50f9f18ec4dda59428192c6438d1f8792f252f48f83f4602b629f5c8eb326c2b",
+      "bytes": 637
+    },
+    "/tmp/oxide-q35moe-unified-runtime-v4b/CONTRACT.json": {
+      "sha256": "7a2eb6684a18e40620a19291736e14a1382befa830530ef863ac1000fb12f08d",
+      "bytes": 13828
+    },
+    "/tmp/oxide-q35moe-unified-runtime-v4b/HARNESS-FREEZE-v2.json": {
+      "sha256": "7d16f01bfb19ddc8c7518de1f51e9c8b6fce23fa47efaf7856c092725b123a29",
+      "bytes": 10635
+    },
+    "/tmp/oxide-q35moe-unified-runtime-v4b/SOURCE-INPUT.json": {
+      "sha256": "8e37d8b27b3994d4215651ae37d9208a482363a0f627dab6dac6ee8a38ac0c3b",
+      "bytes": 402
+    },
+    "/tmp/oxide-q35moe-unified-runtime-v4b/opencode.json": {
+      "sha256": "a40b3685c578dd2578c77cbc4383de3accd99f51d63d593927e4f2d5b45f960f",
+      "bytes": 332
+    },
+    "/tmp/oxide-q35moe-unified-runtime-v4b/NATIVE-HANDOFF.json": {
+      "sha256": "43abb9ddd13c04aa95bec593f6912093ca0e86c3b540e7b26fb2da2d63654dda",
+      "bytes": 3176
+    },
+    "/tmp/oxide-fa4-canonical31-host-v1/fa4.before.rs": {
+      "sha256": "54add1613c36e778ecf50c811ed2c659a242aa7047bad0fb6bc7e0396b650639",
+      "bytes": 97853
+    },
+    "/tmp/oxide-fa4-canonical31-host-v1/profiles.inc": {
+      "sha256": "cf00361dc418c97a1a147723ccb72cce4884978ba3a4e36257cee9723c471f10",
+      "bytes": 1969
+    },
+    "/tmp/oxide-fa4-canonical31-host-v1/opencode.json": {
+      "sha256": "a40b3685c578dd2578c77cbc4383de3accd99f51d63d593927e4f2d5b45f960f",
+      "bytes": 332
+    },
+    "/tmp/oxide-fa4-canonical31-host-v1/fa4.rs": {
+      "sha256": "a0c939d1891f9bd44f653f8cd80d4ba7decd1a050705f7c17137f26ccf5d1a0e",
+      "bytes": 114455
+    },
+    "/tmp/oxide-fa4-canonical31-host-v1/canonical31-manifest.json": {
+      "sha256": "fdf799b3f25556b1fc520d3835e80eaad1d3815aa8e7451fa78e250cb8648fc4",
+      "bytes": 47730
+    },
+    "/tmp/oxide-fa4-canonical31-host-v1/PATCH-notes.json": {
+      "sha256": "397eecb0cae92ca28131a00deacc45020eabf45f37a194b7aac770c13f0c9c18",
+      "bytes": 5105
+    },
+    "/tmp/infinity-oxide-parity-20261101/qwen35-cold-zero-batch-source-v3-formatted/CPU-HANDOFF.json": {
+      "sha256": "1bc060c32219c0a878f37ac7cb0b335af21ca148fe787fa6c2cd9672f213ede1",
+      "bytes": 1480
+    },
+    "/tmp/infinity-oxide-parity-20261101/qwen35-cold-zero-batch-source-v3-formatted/source-review-v2.json": {
+      "sha256": "72be89c222f83a2edc7b4f0a9d21daf33dfc9f8bed7be998e73a2696c377eac9",
+      "bytes": 3973
+    },
+    "/tmp/infinity-oxide-parity-20261101/qwen35-cold-zero-batch-source-v3-formatted/format-only.json": {
+      "sha256": "094e98117d2e62266d22f32b6c6c709753c4444ade93b657a1ea026bcabf1a53",
+      "bytes": 1274
+    },
+    "/tmp/infinity-oxide-parity-20261101/qwen35-cold-zero-batch-source-v3-formatted/candidate.patch": {
+      "sha256": "e467ab847d7c14e0ab6ebf39e32c7239d8b1438acc6dc2cf00ca7c32b2193208",
+      "bytes": 50964
+    },
+    "/tmp/infinity-oxide-parity-20261101/qwen35-cold-zero-batch-source-v3-formatted/source/libs/infinity-v3/backends/oxide/src/gdn_prepared.rs": {
+      "sha256": "efed0e7e612dbda74bdbd02c72f96ea1b273e047bc60ac68bdef8665dd7cd3ff",
+      "bytes": 154228
+    },
+    "/tmp/infinity-oxide-parity-20261101/qwen35-cold-zero-batch-source-v3-formatted/source/libs/infinity-v3/backends/oxide/src/qwen35_block_work.rs": {
+      "sha256": "5f869642b9bd20788520519e7d9bbe54d3eed92e038ebaebb300a15648f6c48c",
+      "bytes": 9576
+    },
+    "/tmp/infinity-oxide-parity-20261101/qwen35-cold-zero-batch-source-v3-formatted/source/libs/infinity-v3/backends/oxide/src/warm_head.rs": {
+      "sha256": "5ec63be968da8cb939c1a5a393823189cfa1ff972dc623203361692ea9dc7255",
+      "bytes": 57502
+    },
+    "/tmp/infinity-oxide-parity-20261101/qwen35-cold-zero-batch-source-v3-formatted/source/libs/infinity-v3/backends/oxide/src/qwen35_work.rs": {
+      "sha256": "fd2abd2a7dfb0ac209f6add667cb322491a09c034e2e29f0ba0bc839b3df578a",
+      "bytes": 29312
+    },
+    "/tmp/infinity-oxide-parity-20261101/q35moe-runtime-handoff-v1/native-control-tests-v5-hostproc.log": {
+      "sha256": "490202eeb1aba8b343f006cd494630ddc680e8e172937680e8db58c5d84db8ca",
+      "bytes": 4388
+    },
+    "/tmp/infinity-oxide-parity-20261101/q35moe-runtime-handoff-v1/native-control-tests-v2.log": {
+      "sha256": "316aa36c9bb9523758fc14b80df12425fd4b399183604627be3c7707125d0dfa",
+      "bytes": 3729
+    },
+    "/tmp/infinity-oxide-parity-20261101/q35moe-runtime-handoff-v1/starter-t7-a-v1.json": {
+      "sha256": "607d76f3e1f08ebb0b18f6d6659fd1d07135712cf3f92a4b3bf36166d9ab4721",
+      "bytes": 895
+    },
+    "/tmp/infinity-oxide-parity-20261101/q35moe-runtime-handoff-v1/native-control-tests-v3.log": {
+      "sha256": "85799fce0df73b0a5413d10f6801f7d0ea1ed9ab6e291f9eb0adaecfda21d1ee",
+      "bytes": 5553
+    },
+    "/tmp/infinity-oxide-parity-20261101/q35moe-runtime-handoff-v1/root-native-light-v2.report.json": {
+      "sha256": "77215a86720771e58678f583c88aa7d3697723a694f1f137995be54424497e77",
+      "bytes": 24586
+    },
+    "/tmp/infinity-oxide-parity-20261101/q35moe-runtime-handoff-v1/native-control-v2-tests.log": {
+      "sha256": "1afb057767eb8bd3af7ef204aba43cb98e6fe6c615f1bc137c584c323b9e9028",
+      "bytes": 5129
+    },
+    "/tmp/infinity-oxide-parity-20261101/q35moe-runtime-handoff-v1/native-control-tests-v6-hostproc.log": {
+      "sha256": "5784b10b604bf660599c7be9955eae3fe5f424d6a821ba229baeffad1a1f4c0d",
+      "bytes": 4523
+    },
+    "/tmp/infinity-oxide-parity-20261101/q35moe-runtime-handoff-v1/root-native-t7-v2.report.json": {
+      "sha256": "5f72b8406592163e6c9a01cad93f79afd3b094f63e855b38c0c948a3ef8531ff",
+      "bytes": 2027
+    },
+    "/tmp/infinity-oxide-parity-20261101/q35moe-runtime-handoff-v1/root-native-light-v2.stderr": {
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    "/tmp/infinity-oxide-parity-20261101/q35moe-runtime-handoff-v1/native-control-preflight-failure-v1.json": {
+      "sha256": "2ecb1aae9021a45381ddd38ec90a3bce77e9da09341e9fed195028ad92005c1b",
+      "bytes": 254
+    },
+    "/tmp/infinity-oxide-parity-20261101/q35moe-runtime-handoff-v1/NATIVE-CPU-HANDOFF.json": {
+      "sha256": "93d7625b783713cf1944270efab10def4dd351c78c0ae6c3e3398142e577692d",
+      "bytes": 1041
+    },
+    "/tmp/infinity-oxide-parity-20261101/q35moe-runtime-handoff-v1/native-control-tests-v4-hostproc.log": {
+      "sha256": "0570d6247a690c2d2e04b79c9fdd846f4f35a2ebd77a5aecc7d5169c35bded58",
+      "bytes": 4148
+    },
+    "/tmp/infinity-oxide-parity-20261101/q35moe-runtime-handoff-v1/ROOT-NATIVE-CPU-COMMAND-v2.txt": {
+      "sha256": "d3d43adf17cd1f93f2c7479d78fff0fb2a09f720d4ec18c991bf5e964d0449ad",
+      "bytes": 402
+    },
+    "/tmp/infinity-oxide-parity-20261101/q35moe-runtime-handoff-v1/native-light-plan-v2.json": {
+      "sha256": "818d8891199a873aff5d88eb646c67215aef999e14dfc2cb00be28d92da9e016",
+      "bytes": 1319
+    },
+    "/tmp/infinity-oxide-parity-20261101/q35moe-runtime-handoff-v1/native-t7-plan-v1.json": {
+      "sha256": "208c8f6e8421e46d7f0f4ec5298530902b031adc0793ef7e380943b15c097d90",
+      "bytes": 1982
+    },
+    "/tmp/infinity-oxide-parity-20261101/q35moe-runtime-handoff-v1/run_native_t7_v2.py": {
+      "sha256": "aa6078059eea41573dfed4d05e7ca6ff865ec3ad25b814f2db46bc1bcf1d46bf",
+      "bytes": 4413
+    },
+    "/tmp/infinity-oxide-parity-20261101/q35moe-runtime-handoff-v1/native-light-freeze.json": {
+      "sha256": "f267b0dc8493b93377a2987f14b380c6c1417850d64ace92c63bdf4a364522a9",
+      "bytes": 3602
+    },
+    "/tmp/infinity-oxide-parity-20261101/q35moe-runtime-handoff-v1/native-options-parser-receipt-v1.json": {
+      "sha256": "ed5300c80752ffb87fff1b9e19c5fb0b02289dce50f5634432b6107d887c692b",
+      "bytes": 634
+    },
+    "/tmp/infinity-oxide-parity-20261101/q35moe-runtime-handoff-v1/native-light-freeze-v2.json": {
+      "sha256": "904ad7f23fc9e5fa49794153abf500e39503b74ea96269557e8ffe4bac28856a",
+      "bytes": 3597
+    },
+    "/tmp/infinity-oxide-parity-20261101/q35moe-runtime-handoff-v1/native-options-parser-receipt-v1.py": {
+      "sha256": "f44ecc7f92f4b82425c43fc8ad36308430299845ffa68d1c9be3dca2981d00e4",
+      "bytes": 4447
+    },
+    "/tmp/infinity-oxide-parity-20261101/q35moe-runtime-handoff-v1/native-control-tests-v1.log": {
+      "sha256": "2b3392825dac21b41569ee3fcf2ae06c84abb1b28d4d73525252f9ec12f800c3",
+      "bytes": 4762
+    },
+    "/tmp/infinity-oxide-parity-20261101/q35moe-runtime-handoff-v1/ROOT-native-t7-v2-fix.json": {
+      "sha256": "25dbb3232a118673f61c030ff78a3274c8882f49ec3ae769a98ab507ac8f6c9c",
+      "bytes": 328
+    },
+    "/tmp/infinity-oxide-parity-20261101/q35moe-runtime-handoff-v1/local-header-preflight.json": {
+      "sha256": "5bfb18c4b6df1a41b52e12513b421483b23a83b0a89519abc938421c694acaae",
+      "bytes": 7888
+    },
+    "/tmp/infinity-oxide-parity-20261101/q35moe-runtime-handoff-v1/ROOT-NATIVE-CPU-COMMAND.txt": {
+      "sha256": "3c4884a7c5f6c9b2e61c7450095d81096d6ae18dc8db59b28f29e4d7651f65c0",
+      "bytes": 399
+    },
+    "/tmp/infinity-oxide-parity-20261101/q35moe-runtime-handoff-v1/native-control-tests-v7-hostproc.log": {
+      "sha256": "bc23189539e8c941f375900669072a08edaa956e09491401c65e3a52dccf9a2f",
+      "bytes": 4801
+    },
+    "/tmp/infinity-oxide-parity-20261101/q35moe-runtime-handoff-v1/native-light-plan.json": {
+      "sha256": "39c6529ad05273ecf4e605768da45b15a79228032c93b09cf4dcccc97de7c309",
+      "bytes": 1319
+    },
+    "/tmp/infinity-oxide-parity-20261101/q35moe-runtime-handoff-v1/native-t7-freeze-v1.json": {
+      "sha256": "9014da635172b946d49c5d6d58acedef17f8e32c175e497ba3490634aef42984",
+      "bytes": 857
+    },
+    "/tmp/infinity-oxide-parity-20261101/q35moe-runtime-handoff-v1/root-native-t7-v1.report.json": {
+      "sha256": "e88deddc54c6d91e4a908049ca195b4de8ab6bb45a811f3c13f9fb3034db8694",
+      "bytes": 2468
+    },
+    "/tmp/infinity-oxide-parity-20261101/q35moe-runtime-handoff-v1/run_native_t7_v1.py": {
+      "sha256": "47ac651fc3800f5cf36f31fb35bb5438fc960023807c8d37e8900beed208756d",
+      "bytes": 4301
+    },
+    "/tmp/infinity-oxide-parity-20261101/q35moe-runtime-handoff-v1/native-control-v2/test_control.py": {
+      "sha256": "52c33dce7b4d1081269e60f183ce76432d8a8bac7fde5e542183668f43fed0e6",
+      "bytes": 19828
+    },
+    "/tmp/infinity-oxide-parity-20261101/q35moe-runtime-handoff-v1/native-control-v2/CONTRACT.json": {
+      "sha256": "cee51fc41089e0261bf1ee264b721cab034e7dac8ab152627f5c9abccece90a2",
+      "bytes": 4372
+    },
+    "/tmp/infinity-oxide-parity-20261101/q35moe-runtime-handoff-v1/native-control-v2/root_control.py": {
+      "sha256": "aac72c06b9b43a494e35b41b50a90e54a640d0771f312a8e6e1831ff1b6d40ce",
+      "bytes": 22239
+    },
+    "/tmp/infinity-oxide-parity-20261101/q35moe-runtime-handoff-v1/native-control-v2/strict_compare.py": {
+      "sha256": "a747dc0aff08079af6f277ab53fe0ee92c560a2193b54ece335249fbe9925673",
+      "bytes": 29864
+    },
+    "/tmp/infinity-oxide-parity-20261101/q35moe-runtime-handoff-v1/native-control-v2/test_readiness.py": {
+      "sha256": "f28061938831d3b4fe452b6049fb5a1a8aee8d9180c12f7ccb66d621d6360014",
+      "bytes": 9142
+    },
+    "/tmp/infinity-oxide-parity-20261101/q35moe-runtime-handoff-v1/native-control-v2/remote_guard.py": {
+      "sha256": "e6dfe6c71c5eb68f481e269788219a938b12f3b0aaddfcda4ad9fc3ed4c2d76e",
+      "bytes": 4939
+    },
+    "/tmp/infinity-oxide-parity-20261101/q35moe-runtime-handoff-v1/native-control-v2/native_light.py": {
+      "sha256": "55773f59d85a85d6fb0b045be6855cd95f87433bb170ea8dbefcc1caa6ce28c3",
+      "bytes": 20488
+    },
+    "/tmp/infinity-oxide-parity-20261101/q35moe-runtime-handoff-v1/native-control-v2/native_gold.py": {
+      "sha256": "afbcca4ddab2ab3e03f9e045125d7bfb5c65c82a831de4372daaa530f08bf70d",
+      "bytes": 17185
+    },
+    "/tmp/infinity-oxide-parity-20261101/q35moe-runtime-handoff-v1/native-control/test_control.py": {
+      "sha256": "52c33dce7b4d1081269e60f183ce76432d8a8bac7fde5e542183668f43fed0e6",
+      "bytes": 19828
+    },
+    "/tmp/infinity-oxide-parity-20261101/q35moe-runtime-handoff-v1/native-control/CONTRACT.json": {
+      "sha256": "cee51fc41089e0261bf1ee264b721cab034e7dac8ab152627f5c9abccece90a2",
+      "bytes": 4372
+    },
+    "/tmp/infinity-oxide-parity-20261101/q35moe-runtime-handoff-v1/native-control/root_control.py": {
+      "sha256": "0cf60cd6c650113e6b92e4587567edff657deda564634c0180ed73de1ee4e23f",
+      "bytes": 21854
+    },
+    "/tmp/infinity-oxide-parity-20261101/q35moe-runtime-handoff-v1/native-control/strict_compare.py": {
+      "sha256": "a747dc0aff08079af6f277ab53fe0ee92c560a2193b54ece335249fbe9925673",
+      "bytes": 29864
+    },
+    "/tmp/infinity-oxide-parity-20261101/q35moe-runtime-handoff-v1/native-control/test_readiness.py": {
+      "sha256": "277307e76c69e143fc8778e0acf521764dd78b29b71badc88cf34e0c9f9f6039",
+      "bytes": 6789
+    },
+    "/tmp/infinity-oxide-parity-20261101/q35moe-runtime-handoff-v1/native-control/remote_guard.py": {
+      "sha256": "e6dfe6c71c5eb68f481e269788219a938b12f3b0aaddfcda4ad9fc3ed4c2d76e",
+      "bytes": 4939
+    },
+    "/tmp/infinity-oxide-parity-20261101/q35moe-runtime-handoff-v1/native-control/native_light.py": {
+      "sha256": "55773f59d85a85d6fb0b045be6855cd95f87433bb170ea8dbefcc1caa6ce28c3",
+      "bytes": 20488
+    },
+    "/tmp/infinity-oxide-parity-20261101/q35moe-runtime-handoff-v1/native-control/native_gold.py": {
+      "sha256": "afbcca4ddab2ab3e03f9e045125d7bfb5c65c82a831de4372daaa530f08bf70d",
+      "bytes": 17185
+    },
+    "/tmp/infinity-oxide-parity-20261101/q35moe-runtime-handoff-v1/native-control-v2/input/container_sdk_got.py": {
+      "sha256": "4b39fe00bded39c5a10fdbc4e28c10a5bbcccf0fc34c38da8ef5878d5258f8a9",
+      "bytes": 13891
+    },
+    "/tmp/infinity-oxide-parity-20261101/q35moe-runtime-handoff-v1/native-control-v2/input/qwen35_models.cpp": {
+      "sha256": "375f39a305177b8c6c8651b0ce0d59541295c1888a8425fdd23095fe31bdeac4",
+      "bytes": 74067
+    },
+    "/tmp/infinity-oxide-parity-20261101/q35moe-runtime-handoff-v1/native-control-v2/input/native_base.py": {
+      "sha256": "0424a2eb3b204e14841b9ee0f32dc8cd475f8208ba7cbb709fb052a97c0af67c",
+      "bytes": 28100
+    },
+    "/tmp/infinity-oxide-parity-20261101/q35moe-runtime-handoff-v1/native-control-v2/input/native_batch.py": {
+      "sha256": "14734e70d4544983399bb5975c69f170bd56bdcc436994f72277436b6b5e425d",
+      "bytes": 10729
+    },
+    "/tmp/infinity-oxide-parity-20261101/q35moe-runtime-handoff-v1/native-control-v2/input/verify_bindings.py": {
+      "sha256": "1e6f3428d0119e08f86ee8996abb1133b4b999ecab8473d868603896ceb9240e",
+      "bytes": 3063
+    },
+    "/tmp/infinity-oxide-parity-20261101/q35moe-runtime-handoff-v1/native-control-v2/input/bridge.h": {
+      "sha256": "ed5cd44f735cbe21160f43fbdec0f4e003acd477497ab4141e2625c37c5b3b69",
+      "bytes": 10027
+    },
+    "/tmp/infinity-oxide-parity-20261101/q35moe-runtime-handoff-v1/native-control-v2/input/model_checkpoint.py": {
+      "sha256": "2b245c4c2f25e2b8e53082f0137642c3abca2b201eb6792d0d648c096b984343",
+      "bytes": 24007
+    },
+    "/tmp/infinity-oxide-parity-20261101/q35moe-runtime-handoff-v1/native-control-v2/input/bridge.cpp": {
+      "sha256": "57e879da8baf21a7f846cfd1657a4c45d9670b49893ce750c490bbb31dac2115",
+      "bytes": 73715
+    },
+    "/tmp/infinity-oxide-parity-20261101/q35moe-runtime-handoff-v1/native-control-v2/input/native_raw_probe.py": {
+      "sha256": "0c6ed626ccb2930cc3d170f1fc034846b04eae5641666238384f1051aa55a84d",
+      "bytes": 19914
+    },
+    "/tmp/infinity-oxide-parity-20261101/q35moe-runtime-handoff-v1/native-control/input/container_sdk_got.py": {
+      "sha256": "4b39fe00bded39c5a10fdbc4e28c10a5bbcccf0fc34c38da8ef5878d5258f8a9",
+      "bytes": 13891
+    },
+    "/tmp/infinity-oxide-parity-20261101/q35moe-runtime-handoff-v1/native-control/input/qwen35_models.cpp": {
+      "sha256": "375f39a305177b8c6c8651b0ce0d59541295c1888a8425fdd23095fe31bdeac4",
+      "bytes": 74067
+    },
+    "/tmp/infinity-oxide-parity-20261101/q35moe-runtime-handoff-v1/native-control/input/native_base.py": {
+      "sha256": "0424a2eb3b204e14841b9ee0f32dc8cd475f8208ba7cbb709fb052a97c0af67c",
+      "bytes": 28100
+    },
+    "/tmp/infinity-oxide-parity-20261101/q35moe-runtime-handoff-v1/native-control/input/native_batch.py": {
+      "sha256": "14734e70d4544983399bb5975c69f170bd56bdcc436994f72277436b6b5e425d",
+      "bytes": 10729
+    },
+    "/tmp/infinity-oxide-parity-20261101/q35moe-runtime-handoff-v1/native-control/input/verify_bindings.py": {
+      "sha256": "1e6f3428d0119e08f86ee8996abb1133b4b999ecab8473d868603896ceb9240e",
+      "bytes": 3063
+    },
+    "/tmp/infinity-oxide-parity-20261101/q35moe-runtime-handoff-v1/native-control/input/bridge.h": {
+      "sha256": "ed5cd44f735cbe21160f43fbdec0f4e003acd477497ab4141e2625c37c5b3b69",
+      "bytes": 10027
+    },
+    "/tmp/infinity-oxide-parity-20261101/q35moe-runtime-handoff-v1/native-control/input/model_checkpoint.py": {
+      "sha256": "2b245c4c2f25e2b8e53082f0137642c3abca2b201eb6792d0d648c096b984343",
+      "bytes": 24007
+    },
+    "/tmp/infinity-oxide-parity-20261101/q35moe-runtime-handoff-v1/native-control/input/bridge.cpp": {
+      "sha256": "57e879da8baf21a7f846cfd1657a4c45d9670b49893ce750c490bbb31dac2115",
+      "bytes": 73715
+    },
+    "/tmp/infinity-oxide-parity-20261101/q35moe-runtime-handoff-v1/native-control/input/native_raw_probe.py": {
+      "sha256": "0c6ed626ccb2930cc3d170f1fc034846b04eae5641666238384f1051aa55a84d",
+      "bytes": 19914
+    }
+  },
+  "status": "source-checkpoint-only; final source reviews/runtime qualification pending; no optimized consumer built"
+}

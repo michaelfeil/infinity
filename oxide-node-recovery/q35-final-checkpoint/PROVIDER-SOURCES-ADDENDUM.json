@@ -1,0 +1,67 @@
+{
+  "schema": "q35-source-recovery-provider-addendum/v1",
+  "base_manifest_sha256": "7834c6cf1734d48ce6cec5e112385b20406e243d8577c06246cdba2e1e966071",
+  "files": {
+    "additional-provider-sources/oxide-public-moe-standalone-package-v1/README.md": {
+      "bytes": 10437,
+      "sha256": "1df89b0a7ef536c6c637f3691109bbb649e86270dde570752f2466ecb1d0244c"
+    },
+    "additional-provider-sources/oxide-public-moe-standalone-package-v1/LICENSE": {
+      "bytes": 18907,
+      "sha256": "2bd9e20e4b48d6c2c7b551590fadf762fa4077dc6529fb531f66db9587d24ba7"
+    },
+    "additional-provider-sources/oxide-public-moe-standalone-package-v1/build.py": {
+      "bytes": 18106,
+      "sha256": "2c931a9766f964573721bf714c6e5fa1415f7a9db5bdd0bc66924cfe44c03d8e"
+    },
+    "additional-provider-sources/oxide-public-moe-standalone-package-v1/THIRD_PARTY_NOTICES.md": {
+      "bytes": 1693,
+      "sha256": "5ab11f30fdf95fa9ba5f1da5dc8522833ec87bb517927a6ba692debd1999dd42"
+    },
+    "additional-provider-sources/oxide-public-moe-standalone-package-v1/LICENSING.md": {
+      "bytes": 2722,
+      "sha256": "50f9e63e2f68f79514be11f5f019025ebae85ef8f4867d807bb80a743756cf32"
+    },
+    "additional-provider-sources/oxide-public-moe-standalone-package-v1/LICENSES/CUTLASS-BSD-3-Clause.txt": {
+      "bytes": 1510,
+      "sha256": "03db503869e4658cd2284912292eda3329e375f06b2b08f7c5aed8c5dce6a7d1"
+    },
+    "additional-provider-sources/oxide-public-moe-standalone-package-v1/LICENSES/MIT.txt": {
+      "bytes": 1151,
+      "sha256": "c0f2d7c2b0c2d85c9b168061a20d9245366f1d13be5b50f274451d7406299814"
+    },
+    "additional-provider-sources/oxide-public-moe-standalone-package-v1/src/oxide_moe_shim.cpp": {
+      "bytes": 22206,
+      "sha256": "cfca3f1870c9b9f6c33f42b587baffd5c189709f781e29da9b38c4dee7d6561d"
+    },
+    "additional-provider-sources/oxide-public-moe-standalone-package-v1/include/oxide_moe.h": {
+      "bytes": 5032,
+      "sha256": "17b5b0d6f40025fdfadfa6e767146dc97c3607c65c692047817a6294b48c6dd9"
+    },
+    "additional-provider-sources/oxide-public-moe-standalone-package-v1/tests/build_policy_tests.py": {
+      "bytes": 3347,
+      "sha256": "20440bbba2e799b0d72dcbc1506f1882eb3cadb56af9e781a6ca484cbea557f7"
+    },
+    "additional-provider-sources/oxide-public-moe-standalone-package-v1/tests/cpu_tests.c": {
+      "bytes": 27282,
+      "sha256": "1d73830eab86779b7eccb3a007f87aa28bbfc1c03ab3cce9017cbf1cbf1bbb59"
+    },
+    "additional-provider-sources/oxide-public-moe-standalone-package-v1/tests/run_cpu_tests.py": {
+      "bytes": 3007,
+      "sha256": "ceb6ed359d1e74e695e22eac4c68e0c4b4c514c3d42f7028fb72bfdd67d83cc3"
+    },
+    "additional-provider-sources/oxide-qwen35-gdn-aot-pack-v1/test_aot_index.py": {
+      "bytes": 7230,
+      "sha256": "2050a3c550861fc2609d4100d0ac8cffea41359672f622775c01b060b74ac0e6"
+    },
+    "additional-provider-sources/oxide-qwen35-gdn-aot-pack-v1/NOTES.md": {
+      "bytes": 12524,
+      "sha256": "670545d6f25468a346d973639be39d37e55567e484a8989d63498caf9375ded6"
+    },
+    "additional-provider-sources/oxide-qwen35-gdn-aot-pack-v1/index-test/qwen35_gdn_aot_index_test.cpp": {
+      "bytes": 8534,
+      "sha256": "80c78e0944169b13b8e15af2790f8981321d730efc528d91d64f637f8b903797"
+    }
+  },
+  "binary_or_weights": false
+}

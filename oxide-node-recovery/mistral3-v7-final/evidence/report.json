@@ -1,0 +1,419 @@
+{
+  "schema": "oxide-mistral3-v7-wip-report/v1",
+  "deliverable": "/tmp/oxide-all-model-feature-matrix-v1/mistral3-v7",
+  "base": {
+    "head": "55380b7",
+    "tree": "ba26a6aaf56ee255c3ab9eaf6c27200719768740",
+    "overlay": "625DenseV5 + Qwen35 e3c38 + MeanV6 decoder fix 629 CPU six-file working-tree overlay",
+    "overlay_files": {
+      "libs/infinity-v3/backends/oxide/src/cublas.rs": "a397c445ae9b80f525e901649e79bd67b8e64197cb89b486bb1255672e412f5c",
+      "libs/infinity-v3/backends/oxide/src/decoder.rs": "6ec12338e7f48a5745aad5bb7ff3792d9fadd3088992e9eb81ae60b14858c669",
+      "libs/infinity-v3/backends/oxide/src/decoder_model.rs": "4e1a203166759a534e1abc9c278d8bda8d62990e001c0d520cc48e2cb58a67fd",
+      "libs/infinity-v3/backends/oxide/src/lib.rs": "4c2d019c6c466eefa3ba4c87df9b541024855fee1d650c60cc8a4505be6ac607",
+      "libs/infinity-v3/backends/oxide/src/native_rope_tables.rs": "3e9555784045218416f828491fd5513754fe73eeb031fc7ef09664d9289e12a3",
+      "libs/infinity-v3/backends/oxide/src/decoder_classifier.rs": "22d68ca72825ce1046fa2453d996aaf72c196a13767a42157fba3cdc0fafd6d7"
+    },
+    "root_readonly": true,
+    "not_applied": "obsolete V4 upstream"
+  },
+  "patch": {
+    "file": "selective.patch",
+    "sha256": "d2150d227f06ceea13a6ced405db5805d0d7bb78952f7d90ea3c341f4334a4a8",
+    "wip": true
+  },
+  "actual_checkpoint": {
+    "path": "/workspace/model-performance/michaelfeil/benchmark-overview/models/nvidia--Nemotron-3.5-Rerank-8B-BF16",
+    "tensor_count": 531,
+    "shards": 4,
+    "categories": {
+      "vision": 218,
+      "projector": 4,
+      "language": 308,
+      "score": 1
+    },
+    "config_sha256": "e1f442a21c464cf54259e7ca2ab09f6777f50a61fbf017efed8e6044894b4303",
+    "index_sha256": "e393acf4755990784568ec2bc8de5d67f94f36b86d056c370b090084e80ea51e",
+    "payload_read": false
+  },
+  "preserved": {
+    "v5_positive_llama_window_rejection": true,
+    "v6_bf16_mean_le_65535": true,
+    "v6_f32_fallback_gt_65535": true,
+    "qwen35_foundation": true,
+    "v5_dense_composition": true,
+    "positive_mistral_window_ignores_false_flag": true,
+    "flat_2410_local_32768": true
+  },
+  "checks": {
+    "oxide_lib": {
+      "passed": 660,
+      "failed": 0,
+      "ignored": 72
+    },
+    "core_media": {
+      "passed": 29,
+      "failed": 0,
+      "ignored": 0
+    },
+    "shared_metadata": {
+      "passed": 4,
+      "failed": 0,
+      "ignored": 0
+    },
+    "mistral3": {
+      "passed": 19,
+      "failed": 0,
+      "ignored": 0
+    },
+    "cold_factory_hook": {
+      "passed": 1,
+      "failed": 0,
+      "ignored": 0
+    },
+    "shaped_rope": {
+      "passed": 4,
+      "failed": 0,
+      "ignored": 0
+    },
+    "clippy_d_warnings": "pass",
+    "rustfmt": "pass",
+    "patch_dry_run": "pass",
+    "host_consumer_debug_build": "old_artifact_evidence_only",
+    "cpu_cli_admission": {
+      "vision_tensors": "218",
+      "projector_tensors": "4",
+      "text_tensors": "308",
+      "score_tensors": "1",
+      "classifier": "true",
+      "text_layers": "34",
+      "vision_bytes": "806610944",
+      "projector_bytes": "50333696",
+      "cold_tensors": "222",
+      "cold_bytes": "856944640",
+      "vision_profile": "16heads/16kv/d64",
+      "causal": "false",
+      "window": "global",
+      "provider_compile_pending": "true",
+      "text_pending": "none",
+      "projector_pending": "none"
+    },
+    "cpu_cli_error_exit": 2,
+    "native_b66_cpu_control": {
+      "tensor_count": 531,
+      "shards": 4,
+      "shape_checks": 531,
+      "all_passed": true,
+      "categories": {
+        "vision": 218,
+        "projector": 4,
+        "language": 308,
+        "score": 1
+      },
+      "sdk_sha256": "b6607c0025b1bc65d7a2e56951ab28d0c25871da8e7620565f54b9da15d92bd4",
+      "payload_read": false
+    },
+    "paired_controller_preflight": {
+      "ok": true,
+      "errors": [],
+      "checkpoint": "/workspace/model-performance/michaelfeil/benchmark-overview/models/nvidia--Nemotron-3.5-Rerank-8B-BF16",
+      "tensor_count": 531,
+      "shard_count": 4,
+      "categories": {
+        "vision": 218,
+        "projector": 4,
+        "language": 308,
+        "score": 1
+      },
+      "config_sha256": "e1f442a21c464cf54259e7ca2ab09f6777f50a61fbf017efed8e6044894b4303",
+      "index_sha256": "e393acf4755990784568ec2bc8de5d67f94f36b86d056c370b090084e80ea51e",
+      "config_preserved_nested": {
+        "rope_parameters": {
+          "beta_fast": 32.0,
+          "beta_slow": 1.0,
+          "factor": 16.0,
+          "llama_4_scaling_beta": 0.1,
+          "mscale": 1.0,
+          "mscale_all_dim": 1.0,
+          "original_max_position_embeddings": 16384,
+          "rope_theta": 1000000.0,
+          "rope_type": "yarn",
+          "type": "yarn",
+          "apply_yarn_scaling": false
+        },
+        "llama_4_scaling": {
+          "beta": 0.1,
+          "original_max_position_embeddings": 16384
+        }
+      },
+      "payload_read": false,
+      "torch_imported": false,
+      "cuda_context_created": false
+    },
+    "native_cpu_stage_preflight": {
+      "ok": true,
+      "errors": [],
+      "checkpoint": "/workspace/model-performance/michaelfeil/benchmark-overview/models/nvidia--Nemotron-3.5-Rerank-8B-BF16",
+      "tensor_count": 531,
+      "shards": 4,
+      "categories": {
+        "vision": 218,
+        "projector": 4,
+        "language": 308,
+        "score": 1
+      }
+    },
+    "router_params_metadata": "compiled and tested with --no-default-features --features oxide,http; no LIBTORCH",
+    "all_targets": "not run by policy",
+    "downloader_policy": {
+      "passed": 1,
+      "failed": 0,
+      "ignored": 0
+    },
+    "router_oxide_only_check": "pass",
+    "router_params_test": {
+      "passed": 1,
+      "failed": 0,
+      "ignored": 0
+    },
+    "staged_controller_preflight": {
+      "preflight": {
+        "ok": true,
+        "errors": [],
+        "checkpoint": "/workspace/model-performance/michaelfeil/benchmark-overview/models/nvidia--Nemotron-3.5-Rerank-8B-BF16",
+        "tensor_count": 531,
+        "shards": 4,
+        "categories": {
+          "vision": 218,
+          "projector": 4,
+          "language": 308,
+          "score": 1
+        }
+      },
+      "allowlist": [
+        "src/mistral3_runner.cpp",
+        "include/mistral3_b66.h",
+        "include/bridge.h",
+        "native_b66_control.py",
+        "container_sdk_got.py",
+        "remote_guard.py",
+        "root_native_cpu_stage.py"
+      ],
+      "container_python": "/opt/torch-sdk/bin/python3.12",
+      "docker_host": "unix:///var/run/docker.sock"
+    },
+    "host_consumer_opt3_build": "not_run_old_f065_is_evidence_only",
+    "staged_controller_source_tests": {
+      "passed": 6,
+      "failed": 0,
+      "ignored": 0
+    },
+    "mistral3_async_source": {
+      "held_works": 2,
+      "deferred_wait_pack": true,
+      "failed_fence_quarantine": true,
+      "gpu_execution": false
+    },
+    "review_v1_findings_closed": [
+      "H1",
+      "H2",
+      "H3",
+      "H4",
+      "H5",
+      "H6",
+      "H7",
+      "H8",
+      "H9",
+      "H10",
+      "M1",
+      "M2",
+      "M3",
+      "M4",
+      "M5",
+      "L1",
+      "P1"
+    ],
+    "completion_order_helper": {
+      "passed": 1,
+      "failed": 0,
+      "ignored": 0
+    },
+    "media_metadata_layout": {
+      "passed": 1,
+      "failed": 0,
+      "ignored": 0
+    },
+    "host_consumer_debug_check": "pass"
+  },
+  "coverage": {
+    "wrapper_geometries": [
+      "3B H3072/I9216/L26/Q32KV8d128",
+      "8B H4096/I14336/L34/Q32KV8d128",
+      "14B H5120/I16384/L40/Q32KV8d128"
+    ],
+    "plain_mistral": [
+      "H4096 ordinary",
+      "H3072 exact Candle 1x4 + HFMA",
+      "other ordinary widths generic"
+    ],
+    "window": "positive Mistral sliding_window applied uniformly/local even at position limit; 2410 W32768 local left=32767, not global",
+    "service_metadata": "config.json or normalized params.json; downloader fallback; router source-wired",
+    "weight_format": "HF-converted keys load; raw Mistral-common keys typed gap",
+    "factory": {
+      "cold_hook": true,
+      "embedding_route": true,
+      "classifier_route": true,
+      "score_head": 1,
+      "token_classification": false,
+      "score_width": "language_model.score.weight.shape[0] (cached C1=1)"
+    },
+    "quality_positions": [
+      16384,
+      32768,
+      262143
+    ],
+    "device_exports": [
+      "infinity_rms_norm_3072_exact_vector",
+      "infinity_add_rms_norm_3072_exact_vector",
+      "infinity_mistral3_rope_tables_scaled_bf16",
+      "infinity_mistral3_llama4_query_scale_bf16",
+      "infinity_mistral3_rope2d_bf16",
+      "infinity_mistral3_add_bf16",
+      "infinity_mistral3_scatter_features_bf16",
+      "infinity_mistral3_pixels_to_bf16",
+      "infinity_mistral3_merge_gather_bf16",
+      "infinity_mistral3_silu_mul_bf16",
+      "infinity_mistral3_gelu_bf16",
+      "infinity_mistral3_gelu_mul_bf16"
+    ],
+    "pooling": "mean/last only; CLS rejected; SPLADE not claimed",
+    "raw": "raw_indices selects whole sequences",
+    "arena": "oversized active GPU arena >256MiB supported uncached; no global budget raise; retained/host staging bounded",
+    "async": "submit stages/enqueues all device work and returns Deferred; only Deferred waits and packs; two per-request works, independent drop/out-of-order completion",
+    "mean_math": "Mistral3 candidate model-dtype mean (BF16 sum/divide/F32 widen); ATen 5c488 reduction order unqualified pending Root controls",
+    "context_binding": "Mistral3Engine binds its CUDA context before every run/enqueue",
+    "params_only_factory": "params.json-only Mistral3 is detected before config.json-only Qwen/architecture probes",
+    "request_validation": "vocab, selector bounds/duplicates, merge/grid/patch/marker and pooled+raw capacity are checked before upload",
+    "vision_activation": "SiLU/exact GELU are Native-valid; tanh GELU remains a typed execution extension, not a Native parity claim",
+    "fatal_fence": "post-enqueue device/stream failures poison the engine and quarantine the request work",
+    "empty_selectors": "empty selector request returns Ready(empty) without GPU enqueue",
+    "vision_ordering": "one same-stream tower arena reused in enqueue order; per-request pinned pixel/metadata owners retained through the fence",
+    "completion_order": "work release/quarantine precedes HostIo slot exposure on success, drop and failure",
+    "mean_status": "candidate mean now uses ATen CPU-scalar reciprocal-multiply; CUDA sum order still unqualified pending ATEN-MEAN-PLAN controls",
+    "raw_duplicates": "Native-valid duplicate raw selectors retained; final map is last-wins while physical trailer rows are preserved up to the engine row capacity",
+    "empty_selector_markers": "validate_mistral3 checks actual marker ids before the empty-selector fast path",
+    "required_exports": "Mistral3 mean export required at cold decoder load; GELU export required when selected vision activation is GELU"
+  },
+  "produced_files": {
+    "MISTRAL3.md": "aa743a3ab1e73ff3d37f57f3032fcafc53fb5b9107b959ec0a85655fbd3e04d9",
+    "OFFICIAL-CONFIGS.md": "29bb94bdf8eab3fff7268f50b3e91885873aeddaf590443115c7137b6511b468",
+    "SHARED-DECODER-SPLIT.md": "43b5fd39320ea797a598de48b20de1b30e6f68e504112be0d9cafe83bd6cc3b4",
+    "BASE-PINS.json": "417e1419525dc4dc6e0a8977366944c3632a7a26f09474119f1a101f18867e10",
+    "selective.patch": "d2150d227f06ceea13a6ced405db5805d0d7bb78952f7d90ea3c341f4334a4a8",
+    "run_cpu_checks.sh": "9b316d1ada1afb47290ca466ccc3ec707cffb3911cb3496b819d78d2ad5ad68e",
+    "libs/infinity-v3/backends/core/src/lib.rs": "d9499a6fb1eacc6319799f5b1a04bf5fb724b5c5e66d34286dce13dd265ad758",
+    "libs/infinity-v3/backends/oxide/src/mistral3.rs": "7afdcc6620dae21635d28daad7937e902ca4c2c822e1d65daf5f43efae47544d",
+    "libs/infinity-v3/backends/oxide/src/mistral3_exec.rs": "b54bc07e44684d4851ffdda090b0ae193727eebd5a456e920acc4e84e6ef5f8f",
+    "libs/infinity-v3/backends/oxide/src/decoder.rs": "cd4f3c815be6e6e20e3bae571d130feadba65926f47d0b2880ec13b20c193ce9",
+    "libs/infinity-v3/backends/oxide/src/decoder_model.rs": "a50f0883ecc94e80c4ffd7e6aba64f8c7507692867cec5387cb495fcf7b9e232",
+    "libs/infinity-v3/backends/oxide/src/native_rope_tables.rs": "75cd4d7d2efd1802a0ad56df187c9fc05dc0b7fa95afed62c7480c821915d3f6",
+    "libs/infinity-v3/backends/oxide/src/lib.rs": "1f07961c72b70c92dcd5c1087b6d98ba8ce10c435e25bf499e0bd3de747ad74b",
+    "libs/infinity-v3/backends/oxide/src/decoder_classifier.rs": "22d68ca72825ce1046fa2453d996aaf72c196a13767a42157fba3cdc0fafd6d7",
+    "libs/infinity-v3/backends/oxide/src/media_bridge.rs": "a91be1cc254e0bf7df13ddd0d2c12cc79c40c7f1fe86f15051a8ac5c2ecf06dc",
+    "libs/infinity-v3/backends/oxide/device/src/mistral3.rs": "9905df37e93c3287cd8c171349dfd08df217925e1dc1bc77a5dea09f2cdce6af",
+    "libs/infinity-v3/backends/oxide/device/src/norm3072_exact_vector.rs": "42ad7c022555a09746bfbc700064b209cbce9fa0fb9fbe2f796a094b97fd066c",
+    "libs/infinity-v3/backends/oxide/device/src/main.rs": "c62137f368fcd4703e283db3ce82b40bbe105f5bfa0f7a4cd893f380cc6e6ac7",
+    "libs/infinity-v3/backends/oxide/device/build.sh": "d52403766128f34dd58b0e8b2d22b86069d5817964bae3b1aa9e1d15b2bd7364",
+    "libs/infinity-v3/backends/oxide/examples/mistral3_admission.rs": "9ec1cf1df6dc6ddd260ddbe648bd11747d82a7f266677a5d16ae57cf70aaa642",
+    "libs/infinity-v3/backends/oxide/examples/mistral3_engine_qualification.rs": "fa33364e7a983ed5e3ac48d8b63245dbd8f53c6e5fcbd014eda1e31c8ea529a9",
+    "libs/infinity-v3/backends/oxide/examples/mistral3_vectors.rs": "1004c5e4fb4a2ca81bd678081ba8e2067c37f381c4121a972cfe26faa9e1ba05",
+    "libs/infinity-v3/core/src/model_metadata.rs": "0e9fa0a18a5d33e29f2842b73769f81866f39545fa037e664ed84800cc84df7b",
+    "libs/infinity-v3/core/src/download.rs": "87d396433a982f0420cf5d00462b6eb0065645c86270b967da224a07eefcc81a",
+    "libs/infinity-v3/core/src/lib.rs": "2dc597ede3c83ef12d76e793bdc5632c5e7fab4abba2c8ad8f6831dfb5528e3f",
+    "libs/infinity-v3/router/src/lib.rs": "922f357ab75d29b7bb8a1e4a39f01efccf9fb47990de9a245ad6d7f5e971663a",
+    "native/host-consumer/Cargo.toml": "a837dedcb7a0f0a96cf9a4b1a1ac32e1817a22dc5186c0dea87765e9015b1683",
+    "native/host-consumer/Cargo.lock": "5275fee536187a5eb39c7540543d6ef3ae4327d769927a32267e961de0185043",
+    "native/host-consumer/src/main.rs": "ec96f8ce0504ec693ac9d409df75ea735609badada3445a13c236793e3e4f4b6",
+    "native/native_b66_control.py": "99105901cc4ddae5204adb8688eebd4cf8133bec099d0bdfdeb324ca431e92d1",
+    "native/root_native_cpu_stage.py": "3656bd87af8ae26df06efb4b8d1f9367775593f249ea6af6411dc7296c27a5f8",
+    "native/root_paired_controller.py": "3b4247c35a0c04016093732d3e6e51efb0b3a9ff7597e676b89cce7d5e80f88f",
+    "native/remote_guard.py": "a11cf9ee05b971c8a427bf671ae2b16b776c06a447644d6d94b7cf1754f627b1",
+    "native/root_device_abi.json": "d5ec1acabbdef141220e020653073f2ed6c7d90e1432a2ffeeeb62086cc7f094",
+    "native/src/mistral3_runner.cpp": "f4e3df7570689ec4a0eda5152a767581704b67207e779b0174292f81fe85938d",
+    "native/include/mistral3_b66.h": "d80effba3f742d44dadb65793a45831c1d7689b8a5060b42d9a608a93b2fa5e6",
+    "native/consumer/src/main.rs": "45afdd48cca7de83cf1784137511d82f7bf022b7650ef6319f8e55d56f99097f",
+    "native/original-config.json": "e1f442a21c464cf54259e7ca2ab09f6777f50a61fbf017efed8e6044894b4303",
+    "fixtures/make_fixtures.py": "431413b7eee4dc0dae4cf2bacc66e89a4f951ae82026d827a0b019eade2fb04b",
+    "fixtures/processor-cases.json": "13b62788530d9d6a392627ad7749bd51839cbb87f7659e5e10fff23ff0d4b30e",
+    "native/container_sdk_got.py": "0750bcb0261d4db49072e0f3928f5c375fc7d5e5b9de276afd02baa3d1c6e5c2",
+    "native/root_staged_controller.py": "8c62fd59cda3e30e1468508e332ad41a59fe800a2298afca10d03df4fff60a34",
+    "native/include/bridge.h": "ed5cd44f735cbe21160f43fbdec0f4e003acd477497ab4141e2625c37c5b3b69",
+    "native/test_staged_controller.py": "ad3a49593d23ff969e4646585649fe4f5807fdc7d5c97f0b58357201980b43fe",
+    "libs/infinity-v3/backends/oxide/device/src/mistral3_model_mean.rs": "4722a71176eeb97b57cd40c637b3345ce10683fc519235f83720b822c1db0190",
+    "DEVICE-REQUEST.md": "19dd40b063e857aa170e9fd87346f193c43028b13abc20fe255bab764488a092",
+    "ATEN-MEAN-PLAN.md": "668475503b366edd676690e59c322c86ebd8d75d70facc0d2eab32f15cee4868"
+  },
+  "admission": {
+    "gpu_execution": false,
+    "cuda_context": false,
+    "device_compile": false,
+    "public_route": false,
+    "whole_checkpoint_quality": false,
+    "image_text_score_engine": "source-complete; Root GPU qualification pending"
+  },
+  "known_gaps": [
+    "Router crate is source-tested only under oxide,http; no LibTorch build in author env",
+    "Raw Mistral-common params.json weights require HF conversion; typed gap, not claimed",
+    "GPU/AOT qualification and paired gold remain Root-only",
+    "3B/14B/2410 trained checkpoints are not local",
+    "No public push/commit",
+    "C2 checkpoint is not local; dynamic score width is source-tested, cached C1 remains the quality gate"
+  ],
+  "isolation": {
+    "cpu_affinity": "136-143",
+    "job_limit": 4,
+    "cuda_visible_devices": "",
+    "gpu_context": false,
+    "nvcc": false,
+    "docker": false,
+    "torch_loaded": false,
+    "nvidia_queries": 0,
+    "network_used": false,
+    "commit_push": false,
+    "release_all_targets": false
+  },
+  "host_consumer": {
+    "debug_check": "pass",
+    "optimized_build": "not_run_until_root_authorization",
+    "old_binary": ".work/host-consumer-opt3-v4/release/mistral3-host-consumer",
+    "old_binary_sha256": "f0653ddec06f0667f3c36dedf65b8026f85154c3629e224af4d766d4340c3067",
+    "old_binary_role": "preserved_evidence_only_not_v7_source",
+    "harness_source": "native/host-consumer/src/main.rs",
+    "harness_features": [
+      "normal_factory",
+      "CLS",
+      "dynamic_score_width",
+      "two_in_flight_deferred",
+      "early_drop",
+      "reopen_lifecycle",
+      "duplicate_raw_selectors"
+    ]
+  },
+  "device_owner_request": {
+    "owner": "/root/parity_catalog",
+    "file": "DEVICE-REQUEST.md",
+    "current_union": 130,
+    "requested_union": 131,
+    "exports": [
+      "infinity_mistral3_model_dtype_mean_bf16",
+      "infinity_mistral3_gelu_mul_bf16"
+    ],
+    "mean_compile_blocked": true,
+    "device_compile_performed": false
+  },
+  "review_v2": {
+    "status": "folded_into_v7_wip",
+    "sealed": false,
+    "source": "/tmp/oxide-mistral3-serving-independent-review-v2"
+  },
+  "status": {}
+}

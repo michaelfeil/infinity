@@ -1,0 +1,6 @@
+{
+  "failure": "CreateProcess rejected before command: requested working directory did not exist",
+  "gpu_executed": false,
+  "source_changed": false,
+  "correction": "create staged directory from existing parent before selecting as working directory"
+}

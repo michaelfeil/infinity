@@ -1,0 +1,16 @@
+{
+  "schema": "oxide-q35moe-unified-harness-pins/v2",
+  "status": "v4b-source-updated-unbuilt-product-freeze-unbound",
+  "harness_freeze_sha256": "UNBOUND",
+  "product_freeze_sha256": "UNBOUND",
+  "product_pins_before_after_match": null,
+  "product_pins_status": "historical v1 product evidence; v2 product is unsealed and was not read or compiled",
+  "source_file_count": null,
+  "dev_test": "not run for this v4b source update",
+  "dev_clippy": "not run for this v4b source update",
+  "dev_fmt": "not run for this v4b source update",
+  "optimized_build_run": false,
+  "gpu_run": false,
+  "cpu_build_run": false,
+  "tests_run": false
+}

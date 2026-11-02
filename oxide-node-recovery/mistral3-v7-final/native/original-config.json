@@ -1,0 +1,125 @@
+{
+  "architectures": [
+    "Mistral3ForSequenceClassification"
+  ],
+  "auto_map": {
+    "AutoModelForSequenceClassification": "model.Mistral3ForSequenceClassification"
+  },
+  "chunk_size_feed_forward": 0,
+  "dtype": "bfloat16",
+  "id2label": {
+    "0": "LABEL_0"
+  },
+  "image_token_index": 10,
+  "is_encoder_decoder": false,
+  "label2id": {
+    "LABEL_0": 0
+  },
+  "model_type": "mistral3",
+  "multimodal_projector_bias": false,
+  "output_attentions": false,
+  "output_hidden_states": false,
+  "pooling": "avg",
+  "problem_type": null,
+  "projector_hidden_act": "gelu",
+  "return_dict": true,
+  "rope_theta": 1000000.0,
+  "spatial_merge_size": 2,
+  "text_config": {
+    "_name_or_path": "",
+    "architectures": [
+      "Ministral3ForSequenceClassification"
+    ],
+    "attention_dropout": 0.0,
+    "bos_token_id": 1,
+    "chunk_size_feed_forward": 0,
+    "dtype": "bfloat16",
+    "eos_token_id": 2,
+    "head_dim": 128,
+    "hidden_act": "silu",
+    "hidden_size": 4096,
+    "id2label": {
+      "0": "LABEL_0"
+    },
+    "initializer_range": 0.02,
+    "intermediate_size": 14336,
+    "is_causal": false,
+    "is_encoder_decoder": false,
+    "label2id": {
+      "LABEL_0": 0
+    },
+    "max_position_embeddings": 262144,
+    "model_type": "ministral3",
+    "num_attention_heads": 32,
+    "num_hidden_layers": 34,
+    "num_key_value_heads": 8,
+    "output_attentions": false,
+    "output_hidden_states": false,
+    "pad_token_id": 11,
+    "pooling": "avg",
+    "problem_type": null,
+    "return_dict": true,
+    "rms_norm_eps": 1e-05,
+    "rope_parameters": {
+      "beta_fast": 32.0,
+      "beta_slow": 1.0,
+      "factor": 16.0,
+      "llama_4_scaling_beta": 0.1,
+      "mscale": 1.0,
+      "mscale_all_dim": 1.0,
+      "original_max_position_embeddings": 16384,
+      "rope_theta": 1000000.0,
+      "rope_type": "yarn",
+      "type": "yarn",
+      "apply_yarn_scaling": false
+    },
+    "sliding_window": null,
+    "tie_word_embeddings": false,
+    "use_cache": false,
+    "vocab_size": 131072,
+    "llama_4_scaling": {
+      "beta": 0.1,
+      "original_max_position_embeddings": 16384
+    }
+  },
+  "tie_word_embeddings": false,
+  "transformers_version": "5.12.1",
+  "use_cache": false,
+  "vision_config": {
+    "_name_or_path": "",
+    "architectures": null,
+    "attention_dropout": 0.0,
+    "chunk_size_feed_forward": 0,
+    "dtype": "bfloat16",
+    "head_dim": 64,
+    "hidden_act": "silu",
+    "hidden_size": 1024,
+    "id2label": {
+      "0": "LABEL_0",
+      "1": "LABEL_1"
+    },
+    "image_size": 1540,
+    "initializer_range": 0.02,
+    "intermediate_size": 4096,
+    "is_encoder_decoder": false,
+    "label2id": {
+      "LABEL_0": 0,
+      "LABEL_1": 1
+    },
+    "model_type": "pixtral",
+    "num_attention_heads": 16,
+    "num_channels": 3,
+    "num_hidden_layers": 24,
+    "output_attentions": false,
+    "output_hidden_states": false,
+    "patch_size": 14,
+    "problem_type": null,
+    "return_dict": true,
+    "rope_parameters": {
+      "rope_theta": 10000.0,
+      "rope_type": "default"
+    }
+  },
+  "vision_feature_layer": -1,
+  "is_causal": false
+}

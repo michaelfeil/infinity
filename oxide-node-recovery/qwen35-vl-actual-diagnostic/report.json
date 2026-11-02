@@ -1,0 +1,191 @@
+{
+  "schema": "oxide-qwen35vl-map-policy-controller/v4",
+  "phase": "paired",
+  "run_id": "paired-1793640046631680793",
+  "remote": "/tmp/oxide-qwen35vl-map-policy-v4/paired-1793640046631680793",
+  "container": "infinity-torch214-compare-sdk",
+  "GPU_executed": true,
+  "models": {
+    "Qwen3.5-0.8B": {
+      "host_path": "/workspace/model-performance/michaelfeil/onejev-perf/backbone-comparison-20261023/models/Qwen3.5-0.8B",
+      "container_path": "/bench/michaelfeil/onejev-perf/backbone-comparison-20261023/models/Qwen3.5-0.8B",
+      "format": "index",
+      "config_sha256": "b90b86f35c8e6925ef74ee04d0e758f0a845c83a42089ad82bbaa948de9b4204",
+      "index_sha256": "d8a08838a613b025eb7952ed9db11696213e57e76a375661ef5c12f9dd5dcf4e",
+      "weights_rel": "model.safetensors-00001-of-00001.safetensors",
+      "container_path_under": "/bench/michaelfeil",
+      "host_only_validation": true
+    }
+  },
+  "cases": [],
+  "assets": {
+    "single-cats.image0.f32": {
+      "host_path": "/tmp/oxide-all-model-feature-matrix-v1/qwen3-vl-v3/native-baseline/fixtures/single-cats.image0.f32",
+      "remote_name": "single-cats.image0.f32",
+      "sha256": "04f4f43be0af2177407a2733bcad9c94ffdfa8e200d71f29658f91bad0072e0b"
+    },
+    "two-images.image8.f32": {
+      "host_path": "/tmp/oxide-all-model-feature-matrix-v1/qwen3-vl-v3/native-baseline/fixtures/two-images.image8.f32",
+      "remote_name": "two-images.image8.f32",
+      "sha256": "04f4f43be0af2177407a2733bcad9c94ffdfa8e200d71f29658f91bad0072e0b"
+    },
+    "two-images.image9.f32": {
+      "host_path": "/tmp/oxide-all-model-feature-matrix-v1/qwen3-vl-v3/native-baseline/fixtures/two-images.image9.f32",
+      "remote_name": "two-images.image9.f32",
+      "sha256": "5d846b30d5dd1330f1801e6aa1d62966b36fae7b720395952b870096c7e2f5ab"
+    },
+    "three-frame.image0.f32": {
+      "host_path": "/tmp/oxide-all-model-feature-matrix-v1/qwen3-vl-v3/native-baseline/fixtures/three-frame.image0.f32",
+      "remote_name": "three-frame.image0.f32",
+      "sha256": "ea4c9c6c0428986bacfd151860f612b75a914062b45bc7adbfb1858374830d05"
+    }
+  },
+  "runtime": {
+    "device130": {
+      "host_path": "/tmp/oxide-device130-compose-source-v1/kernels",
+      "remote_rel": "runtime/kernels",
+      "manifest_sha256": "1d0b59dda1cef92c0e752553872e645adbdc07e93d40245817e82246f58b982d",
+      "file_count": 13,
+      "kernel_count": 130,
+      "architectures": [
+        "sm_90"
+      ],
+      "requested_architectures": [
+        "sm_90"
+      ],
+      "complete_target_set": false,
+      "sm_90_cubin_sha256": "695e72ffbcd1f7a7ac7648e2b4cf5d146516c7100820dd6f73c41181271f9d0e"
+    },
+    "fa4": {
+      "host_path": "/tmp/oxide-fa4-canonical26-derived-v4/bundle",
+      "remote_rel": "runtime/fa4",
+      "manifest_sha256": "0e4af6e1fd40714300649dd98e6eb31a0c59e9e3cb493b377de07d57d63916a9",
+      "file_count": 213
+    },
+    "gdn_raw": {
+      "host_path": "/tmp/infinity-oxide-parity-20261101/qwen35-gdn-foundation-v1/kernels",
+      "remote_rel": "runtime/gdn-raw",
+      "manifest_sha256": "f0b2a18d14c80eec9e1e881d87bff80c27408c77a07eb9a1039ed57548b74a7b",
+      "file_count": 6
+    },
+    "gdn_provider": {
+      "host_path": "/tmp/infinity-oxide-parity-20261101/qwen35-gdn-aot-compiled-root-v2",
+      "remote_rel": "runtime/gdn-provider",
+      "manifest_sha256": "79b9e8e10d2214d88374254d113917b44dcc5bc326e91c82a115f0c047b5beeb",
+      "file_count": 74
+    },
+    "gdn_aux": {
+      "host_path": "/tmp/oxide-qwen35-gdn-aot-pack-v1/kernels",
+      "remote_rel": "runtime/gdn-aux",
+      "manifest_sha256": "d1cd7aab5324ad3f1cc8e961ee33f016caa5a344e440661ec332d089ba904be8",
+      "file_count": 9
+    }
+  },
+  "native_policy": {
+    "helper": "/tmp/oxide-qwen35vl-sdk-map-policy-v1/native/native_whole_model_policy.py",
+    "sha256": "a2a49d25560e0d8d989617fd4215cfeb2ba013839390f6b0ffd7cb82d149079e",
+    "policy": {
+      "_cuda_graphs": "true",
+      "_cuda_graph_entries": "4",
+      "_cuda_graph_reuse": "3",
+      "_cuda_graph_max_bytes": "536870912",
+      "_cuda_graph_max_captures": "8",
+      "_cuda_graph_max_tokens": "4096",
+      "_media_cuda_graphs": "false"
+    },
+    "oxide_cuda_graphs": false
+  },
+  "source": {
+    "checked_files": 51,
+    "eight_rust_pins": {
+      "consumer/src/main.rs": {
+        "expected": "5d7a75d681a882be7149d4e543b9b861bcd5c674b0e416fd301a7d648f8d2a2b",
+        "source_sha256": "5d7a75d681a882be7149d4e543b9b861bcd5c674b0e416fd301a7d648f8d2a2b",
+        "owned_sha256": "5d7a75d681a882be7149d4e543b9b861bcd5c674b0e416fd301a7d648f8d2a2b"
+      },
+      "libs/infinity-v3/backends/oxide/src/lib.rs": {
+        "expected": "aeea32e693ea2d5120841fe4c28ae8527b8c1adcb09b008beab2815dde950721",
+        "source_sha256": "aeea32e693ea2d5120841fe4c28ae8527b8c1adcb09b008beab2815dde950721",
+        "owned_sha256": "aeea32e693ea2d5120841fe4c28ae8527b8c1adcb09b008beab2815dde950721"
+      },
+      "libs/infinity-v3/backends/oxide/src/qwen35_vl_device.rs": {
+        "expected": "1910837d81bdb0abc73a34c73c1879219b5baca7fe44bcb81fdb234d904ea5fb",
+        "source_sha256": "1910837d81bdb0abc73a34c73c1879219b5baca7fe44bcb81fdb234d904ea5fb",
+        "owned_sha256": "1910837d81bdb0abc73a34c73c1879219b5baca7fe44bcb81fdb234d904ea5fb"
+      },
+      "libs/infinity-v3/backends/oxide/src/qwen35_vl_engine.rs": {
+        "expected": "83fd2c8b3e233cbb6b42e2442900f809bacdc86d58b6f52932d363c54bb99b00",
+        "source_sha256": "83fd2c8b3e233cbb6b42e2442900f809bacdc86d58b6f52932d363c54bb99b00",
+        "owned_sha256": "83fd2c8b3e233cbb6b42e2442900f809bacdc86d58b6f52932d363c54bb99b00"
+      },
+      "libs/infinity-v3/backends/oxide/src/qwen35_vl_tests.rs": {
+        "expected": "c1f31d1622bdc548c512163a54802a47fe2bea8cd2f444090be32fe471ce5d0b",
+        "source_sha256": "c1f31d1622bdc548c512163a54802a47fe2bea8cd2f444090be32fe471ce5d0b",
+        "owned_sha256": "c1f31d1622bdc548c512163a54802a47fe2bea8cd2f444090be32fe471ce5d0b"
+      },
+      "libs/infinity-v3/backends/oxide/src/qwen35_vl_vision.rs": {
+        "expected": "b12143546b1ff7738cce854c060f33d4fb5db86a57cdfa9759c215d346a4b42e",
+        "source_sha256": "b12143546b1ff7738cce854c060f33d4fb5db86a57cdfa9759c215d346a4b42e",
+        "owned_sha256": "b12143546b1ff7738cce854c060f33d4fb5db86a57cdfa9759c215d346a4b42e"
+      },
+      "libs/infinity-v3/backends/oxide/device/src/main.rs": {
+        "expected": "c19ae20ff2ec668f1983b65f32992c7912ccca52d27b2c18d84b72503d71f6ae",
+        "source_sha256": "c19ae20ff2ec668f1983b65f32992c7912ccca52d27b2c18d84b72503d71f6ae",
+        "owned_sha256": "c19ae20ff2ec668f1983b65f32992c7912ccca52d27b2c18d84b72503d71f6ae"
+      },
+      "libs/infinity-v3/backends/oxide/device/src/qwen35vl.rs": {
+        "expected": "f7fd1a0165c15a8bc043d2c6010951449b17d2100a147e6fb305a89f034a477e",
+        "source_sha256": "f7fd1a0165c15a8bc043d2c6010951449b17d2100a147e6fb305a89f034a477e",
+        "owned_sha256": "f7fd1a0165c15a8bc043d2c6010951449b17d2100a147e6fb305a89f034a477e"
+      }
+    },
+    "source_root": "/tmp/oxide-all-model-feature-matrix-v1/qwen35-vl-lifecycle-fix-v1",
+    "owned_root": "/tmp/oxide-qwen35vl-sdk-map-policy-v1",
+    "unchanged": true
+  },
+  "binaries": {
+    "paired": {
+      "path": "/tmp/oxide-all-model-feature-matrix-v1/qwen35-vl-lifecycle-fix-v1/target-opt3-noLTO/release/qwen35-vl-consumer",
+      "expected": "3780facf61529822f33a4cf1416bc6c8723acc1fa2cd2c778f7bc54f2140d83b",
+      "actual": "3780facf61529822f33a4cf1416bc6c8723acc1fa2cd2c778f7bc54f2140d83b"
+    },
+    "owning_life": {
+      "path": "/tmp/oxide-all-model-feature-matrix-v1/qwen35-vl-lifecycle-fix-v1/target-opt3-noLTO-harness/release/qwen35-vl-consumer",
+      "expected": "21c5603ee6e9eff06dae5a4344d83fba43ee8bd0ed9a31d462417970c0bf297a",
+      "actual": "21c5603ee6e9eff06dae5a4344d83fba43ee8bd0ed9a31d462417970c0bf297a"
+    },
+    "selected": {
+      "paired": {
+        "path": "/tmp/oxide-all-model-feature-matrix-v1/qwen35-vl-lifecycle-fix-v1/target-opt3-noLTO/release/qwen35-vl-consumer",
+        "sha256": "3780facf61529822f33a4cf1416bc6c8723acc1fa2cd2c778f7bc54f2140d83b"
+      },
+      "owning_life": {
+        "path": "/tmp/oxide-all-model-feature-matrix-v1/qwen35-vl-lifecycle-fix-v1/target-opt3-noLTO-harness/release/qwen35-vl-consumer",
+        "sha256": "21c5603ee6e9eff06dae5a4344d83fba43ee8bd0ed9a31d462417970c0bf297a"
+      }
+    }
+  },
+  "oxide_cuda_graphs": false,
+  "consumer": {
+    "path": "/tmp/oxide-all-model-feature-matrix-v1/qwen35-vl-lifecycle-fix-v1/target-opt3-noLTO/release/qwen35-vl-consumer",
+    "sha256": "3780facf61529822f33a4cf1416bc6c8723acc1fa2cd2c778f7bc54f2140d83b"
+  },
+  "roles": {
+    "source_root_readonly": "/tmp/oxide-all-model-feature-matrix-v1/qwen35-vl-lifecycle-fix-v1",
+    "owned_controller_root": "/tmp/oxide-qwen35vl-sdk-map-policy-v1"
+  },
+  "stage": {
+    "verified_files": 324,
+    "trees": {
+      "/tmp/oxide-qwen35vl-map-policy-v4/paired-1793640046631680793/runtime/kernels": 13,
+      "/tmp/oxide-qwen35vl-map-policy-v4/paired-1793640046631680793/runtime/fa4": 213,
+      "/tmp/oxide-qwen35vl-map-policy-v4/paired-1793640046631680793/runtime/gdn-raw": 6,
+      "/tmp/oxide-qwen35vl-map-policy-v4/paired-1793640046631680793/runtime/gdn-provider": 74,
+      "/tmp/oxide-qwen35vl-map-policy-v4/paired-1793640046631680793/runtime/gdn-aux": 9
+    },
+    "manifest": "/tmp/oxide-qwen35vl-sdk-map-policy-v1/evidence/paired-1793640046631680793-expected.json",
+    "manifest_sha256": "f850e56c8f0d75ce273fabdcd2b1a59d7a77f3796db332442c7211672f1f08f8"
+  },
+  "status": "failed",
+  "error": "whole rows are empty or coverage differs"
+}

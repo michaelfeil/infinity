@@ -1,0 +1,13 @@
+{
+  "archive": "/tmp/oxide-vl-urgent-recovery-20261102/vl-source-recovery.tar.gz",
+  "archive_sha256": "4422278ec6710b0b185851cd841caa1ad74d7ee4691d1b0cf88d80f9c2696215",
+  "archive_bytes": 13804636,
+  "files": 3325,
+  "manifest": "/tmp/oxide-vl-urgent-recovery-20261102/MANIFEST.json",
+  "latest_qv3_candidate": "/tmp/oxide-qwen3vl-rope-budget-fix-v1/candidate",
+  "qv3_patches": "/tmp/oxide-qwen3vl-rope-budget-fix-v1/patches",
+  "qv3_binary_sha256": "a2c02adb32445d6bb36fd5d2056ce34d63af629ce83f83598cd64829d63de100",
+  "qv35_source": "/tmp/oxide-all-model-feature-matrix-v1/qwen35-vl-lifecycle-fix-v1",
+  "qv35_controller": "/tmp/oxide-qwen35vl-sdk-map-policy-v1/qwen35_vl_map_policy_controller_v4.py",
+  "qv35_corrective_math_patch": "NONE_PROVEN; actual failed outputs and WIP diagnosis preserved separately by Root"
+}

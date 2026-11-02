@@ -1,0 +1,21 @@
+{
+  "schema": "vl-recovery-final-state/v1",
+  "qv3_root_report": "/tmp/oxide-qwen3vl-root-budget-life-v1/report.json",
+  "qv3_report_sha256": "b5827b6cbe405f37097b2218af00de172540bd9fd6bbe292f70910a1a1218503",
+  "qv3_jobs": [
+    {
+      "case": "qwen3-vl-8b",
+      "job": "quality-life-vectors",
+      "phase": "quality",
+      "kind": "container",
+      "returncode": 1,
+      "stdout": "",
+      "stderr": "Error: Inference(\"tensor view exceeds its device buffer\")\n"
+    }
+  ],
+  "qv3_status": "FAILED; Inference tensor view exceeds its device buffer; no quality/lifecycle pass",
+  "qv35_status": "FAILED actual raw numeric comparison; no proven corrective math patch; WIP frozen",
+  "source_archive": "/tmp/oxide-vl-urgent-recovery-20261102/vl-source-recovery.tar.gz",
+  "source_archive_sha256": "4422278ec6710b0b185851cd841caa1ad74d7ee4691d1b0cf88d80f9c2696215",
+  "no_new_gpu_or_builds": true
+}

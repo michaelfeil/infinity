@@ -1,0 +1,47 @@
+   Compiling proc-macro2 v1.0.94
+   Compiling serde_core v1.0.229
+   Compiling serde_json v1.0.151
+   Compiling serde v1.0.229
+   Compiling memchr v2.7.4
+   Compiling quote v1.0.47
+   Compiling syn v2.0.119
+   Compiling syn v3.0.6
+   Compiling thiserror-impl v1.0.69
+   Compiling serde_derive v1.0.229
+   Compiling thiserror v1.0.69
+   Compiling infinity_v3-backend-core v3.0.2-beta.1 (/tmp/oxide-all-model-feature-matrix-v1/mistral3-v4/libs/infinity-v3/backends/core)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 4.79s
+     Running unittests src/lib.rs (/tmp/oxide-all-model-feature-matrix-v1/mistral3-v4/.work/target-cpu-debug/debug/deps/infinity_v3_backend_core-3279ab8f2c645280)
+
+running 28 tests
+test block_attention_config::tests::current_and_legacy_metadata_select_the_same_attention ... ok
+test media::layout::tests::contiguous_and_padded_rows_have_checked_spans ... ok
+test block_attention_config::tests::metadata_modes_fail_closed ... ok
+test media::layout::tests::f32_views_borrow_and_preserve_the_checked_layout ... ok
+test media::layout::tests::future_checkpoint_dtypes_fail_without_a_parser ... ok
+test media::layout::tests::invalid_strides_and_offsets_are_rejected ... ok
+test media::packed::tests::feature_selection_allows_reorder_and_padding_but_rejects_aliases ... ok
+test media::packed::tests::embedding_gemma2_audio_padding_and_native_subsampling_are_checked ... ok
+test block_attention_config::tests::nested_encoder_layout_does_not_require_a_root_config ... ok
+test media::packed::tests::configurable_patch_size_is_family_scoped ... ok
+test media::packed::tests::from_encoding_retains_the_processor_memory_permit ... ok
+test media::packed::tests::mixed_image_and_audio_spans_are_checked_together ... ok
+test media::packed::tests::malformed_media_and_checked_overflows_are_typed ... ok
+test media::packed::tests::packed_media_can_use_a_checkpoint_image_policy ... ok
+test media::packed::tests::positions_accept_reordered_images_and_reject_bad_spans ... ok
+test media::packed::tests::reordered_image_descriptors_remap_by_token_start_without_cloning ... ok
+test media::packed::tests::qwen_ragged_temporal_grids_and_positions_match_native_contract ... ok
+test media::packed::tests::sequence_spans_reject_crossing_empty_and_reordered_boundaries ... ok
+test media::policy::tests::audio_subsampling_matches_the_native_clamped_two_stage_index ... ok
+test media::policy::tests::family_grid_rules_are_explicit_and_typed ... ok
+test media::policy::tests::qwen_merge_groups_are_not_mistral_spatial_rows ... ok
+test media::policy::tests::qwen_temporal_frames_offset_each_frame_in_both_orders ... ok
+test media::upload::tests::destination_alignment_inserts_checked_padding ... ok
+test media::upload::tests::malformed_plans_and_chunk_sizes_are_typed ... ok
+test multimodal::tests::radix_requires_identical_image_content_and_complete_prefix ... ok
+test result_memory::tests::held_outputs_and_transform_overlap_admit_and_recover ... ok
+test media::packed::tests::gemma_and_ultravbert_descriptors_keep_their_own_grid_rules ... ok
+test media::upload::tests::huge_plan_is_chunked_without_allocating_or_streaming_payloads ... ok
+
+test result: ok. 28 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.81s
+

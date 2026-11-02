@@ -1,0 +1,16 @@
+{
+  "schema": "q35moe-native-t7-root-freeze/v1",
+  "source": "/tmp/infinity-oxide-parity-20261101/q35moe-runtime-handoff-v1/run_native_t7_v1.py",
+  "source_sha256": "47ac651fc3800f5cf36f31fb35bb5438fc960023807c8d37e8900beed208756d",
+  "case": "/tmp/infinity-oxide-parity-20261101/q35moe-runtime-handoff-v1/starter-t7-a-v1.json",
+  "case_sha256": "607d76f3e1f08ebb0b18f6d6659fd1d07135712cf3f92a4b3bf36166d9ab4721",
+  "reuses_light_freeze_sha256": "904ad7f23fc9e5fa49794153abf500e39503b74ea96269557e8ffe4bac28856a",
+  "explicit_device": "cuda:0",
+  "native_engines": 1,
+  "case_t": 7,
+  "pool": "mean",
+  "fp8_dynamic": false,
+  "run_by_child": false,
+  "cpu_plan_parse": "passed",
+  "root_command": "taskset -c 40-47 env CUDA_VISIBLE_DEVICES=0 python3 /tmp/infinity-oxide-parity-20261101/q35moe-runtime-handoff-v1/run_native_t7_v1.py --run --timeout 1800"
+}

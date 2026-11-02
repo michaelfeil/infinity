@@ -1,0 +1,1319 @@
+{
+  "schema": "q35-emergency-source-recovery/v1",
+  "epoch": 1793640750.0134969,
+  "files": {
+    "REPORT.md": {
+      "bytes": 1543,
+      "sha256": "539c42f451a6a0fea2f5b56fb503e919d08641e6e8dc5d7b812547575a9cf57b"
+    },
+    "SERVICE-BLOCKING-V3-FREEZE.json": {
+      "bytes": 1593,
+      "sha256": "8f3eda07a545f07462f89245aa6b6d5c6731481029fd8b36880d6c1d33e73e0d"
+    },
+    "PATHS-AND-HASHES.json": {
+      "bytes": 30665,
+      "sha256": "8417f3e1e988be6b41785283f30afccfd14de0184c123d50ccc98b99ac76cf29"
+    },
+    "SERVICE-BLOCKING-V3-PINS.json": {
+      "bytes": 448,
+      "sha256": "06794cde40b272933d078d257bf9dad04f196c7a41316acef8e81b92b7599e52"
+    },
+    "SERVICE-BLOCKING-V3-vs-2d.patch": {
+      "bytes": 57496,
+      "sha256": "d8c1157016712b493f5fb9d0de04f54ed62becb6d32d47aa07062748c0aa2057"
+    },
+    "harness-v4b/HARNESS-FREEZE-v1.json": {
+      "bytes": 9117,
+      "sha256": "730d72de8d0042f6293f1bb7317eefad474ed8d861fc97452e8b71846b92d49a"
+    },
+    "harness-v4b/PINS.json": {
+      "bytes": 637,
+      "sha256": "50f9f18ec4dda59428192c6438d1f8792f252f48f83f4602b629f5c8eb326c2b"
+    },
+    "harness-v4b/CONTRACT.json": {
+      "bytes": 13828,
+      "sha256": "7a2eb6684a18e40620a19291736e14a1382befa830530ef863ac1000fb12f08d"
+    },
+    "harness-v4b/HARNESS-FREEZE-v2.json": {
+      "bytes": 10635,
+      "sha256": "7d16f01bfb19ddc8c7518de1f51e9c8b6fce23fa47efaf7856c092725b123a29"
+    },
+    "harness-v4b/SOURCE-INPUT.json": {
+      "bytes": 402,
+      "sha256": "8e37d8b27b3994d4215651ae37d9208a482363a0f627dab6dac6ee8a38ac0c3b"
+    },
+    "harness-v4b/opencode.json": {
+      "bytes": 332,
+      "sha256": "a40b3685c578dd2578c77cbc4383de3accd99f51d63d593927e4f2d5b45f960f"
+    },
+    "harness-v4b/NATIVE-HANDOFF.json": {
+      "bytes": 3176,
+      "sha256": "43abb9ddd13c04aa95bec593f6912093ca0e86c3b540e7b26fb2da2d63654dda"
+    },
+    "fa4-canonical31-host/fa4.before.rs": {
+      "bytes": 97853,
+      "sha256": "54add1613c36e778ecf50c811ed2c659a242aa7047bad0fb6bc7e0396b650639"
+    },
+    "fa4-canonical31-host/profiles.inc": {
+      "bytes": 1969,
+      "sha256": "cf00361dc418c97a1a147723ccb72cce4884978ba3a4e36257cee9723c471f10"
+    },
+    "fa4-canonical31-host/opencode.json": {
+      "bytes": 332,
+      "sha256": "a40b3685c578dd2578c77cbc4383de3accd99f51d63d593927e4f2d5b45f960f"
+    },
+    "fa4-canonical31-host/fa4.rs": {
+      "bytes": 114455,
+      "sha256": "a0c939d1891f9bd44f653f8cd80d4ba7decd1a050705f7c17137f26ccf5d1a0e"
+    },
+    "fa4-canonical31-host/canonical31-manifest.json": {
+      "bytes": 47730,
+      "sha256": "fdf799b3f25556b1fc520d3835e80eaad1d3815aa8e7451fa78e250cb8648fc4"
+    },
+    "fa4-canonical31-host/PATCH-notes.json": {
+      "bytes": 5105,
+      "sha256": "397eecb0cae92ca28131a00deacc45020eabf45f37a194b7aac770c13f0c9c18"
+    },
+    "cold-zero-v3/CPU-HANDOFF.json": {
+      "bytes": 1480,
+      "sha256": "1bc060c32219c0a878f37ac7cb0b335af21ca148fe787fa6c2cd9672f213ede1"
+    },
+    "cold-zero-v3/source-review-v2.json": {
+      "bytes": 3973,
+      "sha256": "72be89c222f83a2edc7b4f0a9d21daf33dfc9f8bed7be998e73a2696c377eac9"
+    },
+    "cold-zero-v3/format-only.json": {
+      "bytes": 1274,
+      "sha256": "094e98117d2e62266d22f32b6c6c709753c4444ade93b657a1ea026bcabf1a53"
+    },
+    "native-control/starter-t7-a-v1.json": {
+      "bytes": 895,
+      "sha256": "607d76f3e1f08ebb0b18f6d6659fd1d07135712cf3f92a4b3bf36166d9ab4721"
+    },
+    "native-control/root-native-light-v2.report.json": {
+      "bytes": 24586,
+      "sha256": "77215a86720771e58678f583c88aa7d3697723a694f1f137995be54424497e77"
+    },
+    "native-control/root-native-t7-v2.report.json": {
+      "bytes": 27171,
+      "sha256": "371b6fedcc7ebd982699b2aff60ff61f4009cb5496577729b2a1b2c0b68796cc"
+    },
+    "native-control/native-control-preflight-failure-v1.json": {
+      "bytes": 254,
+      "sha256": "2ecb1aae9021a45381ddd38ec90a3bce77e9da09341e9fed195028ad92005c1b"
+    },
+    "native-control/NATIVE-CPU-HANDOFF.json": {
+      "bytes": 1041,
+      "sha256": "93d7625b783713cf1944270efab10def4dd351c78c0ae6c3e3398142e577692d"
+    },
+    "native-control/ROOT-NATIVE-CPU-COMMAND-v2.txt": {
+      "bytes": 402,
+      "sha256": "d3d43adf17cd1f93f2c7479d78fff0fb2a09f720d4ec18c991bf5e964d0449ad"
+    },
+    "native-control/native-light-plan-v2.json": {
+      "bytes": 1319,
+      "sha256": "818d8891199a873aff5d88eb646c67215aef999e14dfc2cb00be28d92da9e016"
+    },
+    "native-control/native-t7-plan-v1.json": {
+      "bytes": 1982,
+      "sha256": "208c8f6e8421e46d7f0f4ec5298530902b031adc0793ef7e380943b15c097d90"
+    },
+    "native-control/run_native_t7_v2.py": {
+      "bytes": 4413,
+      "sha256": "aa6078059eea41573dfed4d05e7ca6ff865ec3ad25b814f2db46bc1bcf1d46bf"
+    },
+    "native-control/native-light-freeze.json": {
+      "bytes": 3602,
+      "sha256": "f267b0dc8493b93377a2987f14b380c6c1417850d64ace92c63bdf4a364522a9"
+    },
+    "native-control/root-native-t7-v2.gold.json": {
+      "bytes": 125515,
+      "sha256": "80d2a4423cf5116e74bf165e00ece8c73ad2fde2b64970cc5d20a6ee7dd6c977"
+    },
+    "native-control/native-options-parser-receipt-v1.json": {
+      "bytes": 634,
+      "sha256": "ed5300c80752ffb87fff1b9e19c5fb0b02289dce50f5634432b6107d887c692b"
+    },
+    "native-control/native-light-freeze-v2.json": {
+      "bytes": 3597,
+      "sha256": "904ad7f23fc9e5fa49794153abf500e39503b74ea96269557e8ffe4bac28856a"
+    },
+    "native-control/native-options-parser-receipt-v1.py": {
+      "bytes": 4447,
+      "sha256": "f44ecc7f92f4b82425c43fc8ad36308430299845ffa68d1c9be3dca2981d00e4"
+    },
+    "native-control/ROOT-native-t7-v2-fix.json": {
+      "bytes": 328,
+      "sha256": "25dbb3232a118673f61c030ff78a3274c8882f49ec3ae769a98ab507ac8f6c9c"
+    },
+    "native-control/local-header-preflight.json": {
+      "bytes": 7888,
+      "sha256": "5bfb18c4b6df1a41b52e12513b421483b23a83b0a89519abc938421c694acaae"
+    },
+    "native-control/ROOT-NATIVE-CPU-COMMAND.txt": {
+      "bytes": 399,
+      "sha256": "3c4884a7c5f6c9b2e61c7450095d81096d6ae18dc8db59b28f29e4d7651f65c0"
+    },
+    "native-control/native-light-plan.json": {
+      "bytes": 1319,
+      "sha256": "39c6529ad05273ecf4e605768da45b15a79228032c93b09cf4dcccc97de7c309"
+    },
+    "native-control/native-t7-freeze-v1.json": {
+      "bytes": 857,
+      "sha256": "9014da635172b946d49c5d6d58acedef17f8e32c175e497ba3490634aef42984"
+    },
+    "native-control/root-native-t7-v1.report.json": {
+      "bytes": 2468,
+      "sha256": "e88deddc54c6d91e4a908049ca195b4de8ab6bb45a811f3c13f9fb3034db8694"
+    },
+    "native-control/run_native_t7_v1.py": {
+      "bytes": 4301,
+      "sha256": "47ac651fc3800f5cf36f31fb35bb5438fc960023807c8d37e8900beed208756d"
+    },
+    "fa4-provider-source/alibi_score.py": {
+      "bytes": 6259,
+      "sha256": "1fa1ea1c3c4647e248329e8d203713bd128438c10e9836ced61900524db6e8ec"
+    },
+    "fa4-provider-source/test_development_export.py": {
+      "bytes": 18811,
+      "sha256": "1b2d18893bbc5fb28e212a7d3491d84fccb37c203fecefd22721a8a324f5cc6d"
+    },
+    "fa4-provider-source/LICENSE-UPSTREAM": {
+      "bytes": 1558,
+      "sha256": "8c9ccb96c065e706135b6cbad279b721da6156e51f3a5f27c6b3329af9416d73"
+    },
+    "fa4-provider-source/requirements-build.txt": {
+      "bytes": 193,
+      "sha256": "be772097e2c89e3c5508170994389becb833eb8b775e8aed2e4ee039cf2a8cdd"
+    },
+    "fa4-provider-source/build_contract.py": {
+      "bytes": 27506,
+      "sha256": "65ecb990d1b4c58e1d520b15b2a0e12cc10bd08261a7a08b0dc0dc208f75ae77"
+    },
+    "fa4-provider-source/README.md": {
+      "bytes": 4182,
+      "sha256": "230e8b65dfd37390df4bf3b63964fa1c376e8a6ac270643915f92987066abb36"
+    },
+    "fa4-provider-source/deberta_score.py": {
+      "bytes": 1237,
+      "sha256": "0d51d320fb4c17c3b954b7ea9d3f49e80638783db871b7e483a4dfb9fc2bebaf"
+    },
+    "fa4-provider-source/fa4_source.py": {
+      "bytes": 6288,
+      "sha256": "1e17e8598032758cf0bf549d936cd5b963c01d0bd1bcbea9fbff9a78bbb0ba22"
+    },
+    "fa4-provider-source/build_all.py": {
+      "bytes": 3751,
+      "sha256": "fe23e8d28e8aff0de6261f85fd225170016683cc575228939bcc1578abc3c495"
+    },
+    "fa4-provider-source/build.py": {
+      "bytes": 32006,
+      "sha256": "f54188ab585338b3b90b65b6659a918e9baf4bc74460481bc1169df174bfcd41"
+    },
+    "fa4-provider-source/compile_only.py": {
+      "bytes": 1264,
+      "sha256": "bcc990c5eb1cbc502dab009fe80737512ec339fe6343cc55044ca10e5a0e8d5e"
+    },
+    "fa4-provider-source/provenance.json": {
+      "bytes": 1348,
+      "sha256": "746c61f251e309430e53232695c62755f1153582f6f0af787551541208629690"
+    },
+    "fa4-provider-source/LICENSE-MIT": {
+      "bytes": 1023,
+      "sha256": "23f18e03dc49df91622fe2a76176497404e46ced8a715d9d2b67a7446571cca3"
+    },
+    "fa4-provider-source/profiles.inc": {
+      "bytes": 1969,
+      "sha256": "cf00361dc418c97a1a147723ccb72cce4884978ba3a4e36257cee9723c471f10"
+    },
+    "fa4-provider-source/AUTHORS": {
+      "bytes": 29,
+      "sha256": "f3bf4144826a62841b7f9aebc5057f75da2d32a652a573edc67250ec94a377a7"
+    },
+    "fa4-provider-source/requirements-sources.txt": {
+      "bytes": 436,
+      "sha256": "87105badd8a0c240e4b683e58ef02ee68b1950bd08654246a5096c5f6edf5e9a"
+    },
+    "fa4-provider-source/deberta_mul_score.py": {
+      "bytes": 2819,
+      "sha256": "b2a8f7b3a54bf3bfd60791095f3e885b4efb797f96b123e549ce5f215e0f6590"
+    },
+    "fa4-provider-source/bridge.cpp": {
+      "bytes": 21554,
+      "sha256": "9471922c3b0dd5e0cca2219bb6ea8e585ead731c1517b7f256fa6449db0ba580"
+    },
+    "fa4-provider-source/fa4_source_lock.json": {
+      "bytes": 6726,
+      "sha256": "faacd7714231747c3cdc66bd8e871fa05c6f5b6da10d3e2606f4ed2450deba6d"
+    },
+    "fa4-provider-source/gemma_sm100_local.py": {
+      "bytes": 2018,
+      "sha256": "d7cbd9772df8f9b81717c42f477bf7561c398978ff21ed317e64ef77977de65a"
+    },
+    "fa4-provider-source/test_compile_only.py": {
+      "bytes": 1728,
+      "sha256": "c9394400f3873f87bad17ad0f9b6a6aa67270ce8e45887b2fad7749ef5ab2213"
+    },
+    "fa4-provider-source/portable_host.py": {
+      "bytes": 2613,
+      "sha256": "2c14e93650fc6cad3f4c4e2f76938d227a15bb7fa6638a00a6c7e39e5ac469b2"
+    },
+    "fa4-provider-source/alibi12_native_score.py": {
+      "bytes": 2403,
+      "sha256": "97dde795457b90c222c6ccbdc02e3c784ef6c0dcdd76c1a3099dbd6abb3156cb"
+    },
+    "harness-v4b/api-input/service_backend.rs": {
+      "bytes": 82342,
+      "sha256": "45288b236ef2e875c4499aa5e3a25e2d76dcba6f51b0b14f8d31e5ed4ebcf1c4"
+    },
+    "harness-v4b/api-input/factory_api.rs": {
+      "bytes": 37185,
+      "sha256": "3983b186cc68f2d91ee6a4a4e1023b78d7cc8681dd5743ed6d8f932fc194e7f6"
+    },
+    "harness-v4b/api-input/result_memory.rs": {
+      "bytes": 8108,
+      "sha256": "c7a178dde1a3052f166371f92a37b62810594ea5ccc327f2b76953592022b3be"
+    },
+    "harness-v4b/api-input/core_backend.rs": {
+      "bytes": 7470,
+      "sha256": "97fdb4c76aaf336fc77701056467a08d6a2fc7ce88ddb2b56c0f6493f79ea72e"
+    },
+    "harness-v4b/control/product-pins-after.json": {
+      "bytes": 1702,
+      "sha256": "09258c364dbc4ebeb36a9cd59293bb0a9fae489971ed4742cc51ad0caf9a6759"
+    },
+    "harness-v4b/control/generate_fixtures.py": {
+      "bytes": 3950,
+      "sha256": "213a51595c1739a6bb31ecb237494954971a25a4bdbe73a94f2200d061ee5d6b"
+    },
+    "harness-v4b/control/product-pins-before.json": {
+      "bytes": 1702,
+      "sha256": "09258c364dbc4ebeb36a9cd59293bb0a9fae489971ed4742cc51ad0caf9a6759"
+    },
+    "harness-v4b/control/comparator.py": {
+      "bytes": 2988,
+      "sha256": "2a052806fbdb177a747c926c478a94eb72ff403c86d42e4787023fbbc5e50529"
+    },
+    "harness-v4b/control/freeze.py": {
+      "bytes": 3148,
+      "sha256": "2c42f7d013c848043c3552e5c6f866b2b15eec5ce3026693c52d41372c4fb8de"
+    },
+    "harness-v4b/control/controller.py": {
+      "bytes": 4169,
+      "sha256": "d347fffebd072836dcfd8c7df3222adb5cc883f624bb03004da157e243846bb7"
+    },
+    "harness-v4b/reports/metadata-cpu.json": {
+      "bytes": 5051,
+      "sha256": "6f4c4ed0c992c1c5ad289f440a101b5ea335db6df581e299ddfd1a9189149d45"
+    },
+    "harness-v4b/reports/COMMANDS.txt": {
+      "bytes": 744,
+      "sha256": "6539a55718ce46413d3687046353f137aad0ec1c11accde8e20a45aeeb6b93b9"
+    },
+    "harness-v4b/reports/rustc-version.txt": {
+      "bytes": 232,
+      "sha256": "db19261270b0428d1cffd44795917261238eab88402716d4f372b5b1c1350a6d"
+    },
+    "harness-v4b/reports/CPU-READY.md": {
+      "bytes": 3164,
+      "sha256": "0e120438a76c78ee1bccb10c2a8d2a1e1086027a0791e72a8e5bebe03645c56e"
+    },
+    "harness-v4b/reports/validate-only.json": {
+      "bytes": 1218,
+      "sha256": "e28b6fd762e3c280aa3e27331e914118d019af17a35d55b56abd0ae8857ed208"
+    },
+    "harness-v4b/input/native_batch.py": {
+      "bytes": 10729,
+      "sha256": "14734e70d4544983399bb5975c69f170bd56bdcc436994f72277436b6b5e425d"
+    },
+    "harness-v4b/input/outputs.rs": {
+      "bytes": 5723,
+      "sha256": "b5bd0babc59009be8a97a38c964bb00669460cfcb774eb73f56768dba6da6d5f"
+    },
+    "harness-v4b/input/batch.rs": {
+      "bytes": 16126,
+      "sha256": "a0906876ab08e6a35039ca795f6e1be88a5cbc2ede9fa81251ba7598bc2a3625"
+    },
+    "harness-v4b/input/widths.rs": {
+      "bytes": 9331,
+      "sha256": "620964fb67cc92aada278a14b7447993980f82aeb4af9e6932e3ba6386dfc631"
+    },
+    "harness-v4b/fixtures/duplicate_raw_t7.json": {
+      "bytes": 188,
+      "sha256": "d0a6c8e260c3d995bd08de8d96d090bc5f2ebf4129a1fa2acd4270e846123b45"
+    },
+    "harness-v4b/fixtures/mixed_ragged.json": {
+      "bytes": 190,
+      "sha256": "ddb6a24a3acb392d7e603f5b8f481d0a566992bf3bff8bc9fb0aba3e861610b6"
+    },
+    "harness-v4b/fixtures/ragged_3_4.json": {
+      "bytes": 189,
+      "sha256": "2dd6770f4d6c18491117bc1922cdf3efb79f687aadd73eca77552317dd4559f7"
+    },
+    "harness-v4b/fixtures/t7_a.json": {
+      "bytes": 185,
+      "sha256": "344def7466553b7d773cf92efc4bd5234cd53b4f24e9dbca334f47fafff05b8c"
+    },
+    "harness-v4b/fixtures/bounded_duplicate_ragged.json": {
+      "bytes": 189,
+      "sha256": "a437f109d745cb2bde5f4cc66c98f037061f5c5ecd80eb8786be0cd49ab889db"
+    },
+    "harness-v4b/fixtures/t1.json": {
+      "bytes": 143,
+      "sha256": "8c9e2dfe4fc473b1c35a5dc4c4c5f999899adac365630efc0abf9fb4a53d6d11"
+    },
+    "harness-v4b/fixtures/invalid_token_id.json": {
+      "bytes": 189,
+      "sha256": "94cb8368d8455c60183c672513749af4b2d325d92d7a8f62a5ae63d988a6cb2c"
+    },
+    "harness-v4b/fixtures/manifest.json": {
+      "bytes": 8965,
+      "sha256": "51ae20196e3659bab82ff967522ae52d6203ae6d2b92655b369d9fe871a1cf69"
+    },
+    "harness-v4b/fixtures/duplicate_t7.json": {
+      "bytes": 190,
+      "sha256": "52afa91177d62dbf67dd633414a8f7a180394e0fb548260ed19687f698554565"
+    },
+    "harness-v4b/fixtures/t7_no_selection.json": {
+      "bytes": 184,
+      "sha256": "20bd50b61ab79b65e5dea79979b4d47c0153e8e56faf58cb5aff4b85ace01f9c"
+    },
+    "harness-v4b/fixtures/rawoverride_t7.json": {
+      "bytes": 186,
+      "sha256": "addaf86ab10e2803e1842faf725290f70bb556aa8ffa335853578fe6e8f8d0ae"
+    },
+    "harness-v4b/fixtures/invalid_selection.json": {
+      "bytes": 185,
+      "sha256": "d2ad213e2b243a4da3e26d37973eb804fc818d089db245f611eb654775d25439"
+    },
+    "harness-v4b/fixtures/empty.json": {
+      "bytes": 139,
+      "sha256": "7613758871b98bfeace2a38c8ee0604ce9ec84ad8a4a38e9dbb4756ba8d0f997"
+    },
+    "harness-v4b/fixtures/raw_t7.json": {
+      "bytes": 185,
+      "sha256": "4dfc0d3bf906d8974568af70581cf59b98fad2ec43eb0af802a7f1af60553eea"
+    },
+    "harness-v4b/fixtures/subset_ragged.json": {
+      "bytes": 187,
+      "sha256": "98d96c8cfa9233d39d666c3de24c47e6e0e853f5b150fd9e6037699c3fb18df6"
+    },
+    "harness-v4b/fixtures/t8.json": {
+      "bytes": 193,
+      "sha256": "42b3a59e54eae72d4c685423f046c0f8f6201ff5323183602d92c6d53e67305c"
+    },
+    "harness-v4b/fixtures/invalid_media.json": {
+      "bytes": 185,
+      "sha256": "344def7466553b7d773cf92efc4bd5234cd53b4f24e9dbca334f47fafff05b8c"
+    },
+    "harness-v4b/fixtures/invalid_token_nosel.json": {
+      "bytes": 188,
+      "sha256": "da0691ee29bf7aa18f7ca74de7568031f3e4844da766ff4ab43c00601f769d42"
+    },
+    "harness-v4b/fixtures/invalid_media_nosel.json": {
+      "bytes": 184,
+      "sha256": "20bd50b61ab79b65e5dea79979b4d47c0153e8e56faf58cb5aff4b85ace01f9c"
+    },
+    "harness-v4b/fixtures/t7_b.json": {
+      "bytes": 199,
+      "sha256": "da5cd73fac7fd37254b75b4e38da9b5b061b6c6151e0b3514bc7374a94204f71"
+    },
+    "harness-v4b/fixtures/duplicate_pooled_t7.json": {
+      "bytes": 187,
+      "sha256": "fd36123435ec78eb04b6e3a6cc17ed5e794eacba7cfe0986cb8d6bd8aee5f0fb"
+    },
+    "harness-v4b/fixtures/t9.json": {
+      "bytes": 201,
+      "sha256": "80461f4532cd9ea55661b9fb875b4c817968a089934e3a8dfc7b10c6f066ab46"
+    },
+    "harness-v4b/fixtures/invalid_cumulative.json": {
+      "bytes": 187,
+      "sha256": "cc56265b651c03b529ec44767c096d4c881c77c4446be2ac722b998975653727"
+    },
+    "harness-v4b/fixtures/invalid_position.json": {
+      "bytes": 190,
+      "sha256": "025720ffe8704eba463d1496c68d4a49919df727b6c1b8788a54962455564e3c"
+    },
+    "harness-v4b/fixtures/invalid_compact_nosel.json": {
+      "bytes": 184,
+      "sha256": "20bd50b61ab79b65e5dea79979b4d47c0153e8e56faf58cb5aff4b85ace01f9c"
+    },
+    "harness-v4b/fixtures/invalid_compact.json": {
+      "bytes": 185,
+      "sha256": "344def7466553b7d773cf92efc4bd5234cd53b4f24e9dbca334f47fafff05b8c"
+    },
+    "harness-v4b/consumer/Cargo.lock": {
+      "bytes": 60315,
+      "sha256": "81d1f85ded4a9856c64dbfd21592f83bf7ca2ef82ba1c4d902bfe0c9bb0743d4"
+    },
+    "harness-v4b/consumer/rust-toolchain.toml": {
+      "bytes": 66,
+      "sha256": "02dee3b2b81f2c5e7064c6bb118cf19e859100fcc33c220e5ec52ce4b0586b12"
+    },
+    "harness-v4b/consumer/Cargo.toml": {
+      "bytes": 904,
+      "sha256": "dab837b9071ce86a891ddbf75ad79ab86d40d6f94f3dd8b6dac0f75b4f68d669"
+    },
+    "harness-v4b/fixtures/metadata-model/config.json": {
+      "bytes": 1452,
+      "sha256": "8b9794934edd4487c8fd47df039601cc8838aea1edbf57adc7956b57a7265a11"
+    },
+    "harness-v4b/fixtures/metadata-model/model.safetensors.index.json": {
+      "bytes": 96,
+      "sha256": "c3ca4c5d5a02bbcc5a0394a4c2e9ff6f0c40d3fde240aaedbfd05956022a0e88"
+    },
+    "harness-v4b/fixtures/metadata-model/tokenizer_config.json": {
+      "bytes": 28,
+      "sha256": "be8e94b2b5ebbd7ce4e5a52102e9ecea54c5205d97d582610d2346874b385dba"
+    },
+    "harness-v4b/fixtures/metadata-model/modules.json": {
+      "bytes": 90,
+      "sha256": "054fd39e0604d0fa7a810bf89a582414a5461e731a2a8c10fa575e48f176017a"
+    },
+    "harness-v4b/consumer/.cargo/config.toml": {
+      "bytes": 77,
+      "sha256": "e3fd055cdf231c676f0d966bd95fb6d7ad94893c12419ca8cd7b897a1e98e912"
+    },
+    "harness-v4b/consumer/src/fixtures.rs": {
+      "bytes": 3905,
+      "sha256": "cb69c6d9c376d1ef1de96f43afd58ed05eaef01f340ea95371ef340aff09dd7b"
+    },
+    "harness-v4b/consumer/src/life.rs": {
+      "bytes": 26643,
+      "sha256": "a2cc80543a3c999a22e566ccc23284cc6191901c41f9a1bb9e105b4e4f0bee6d"
+    },
+    "harness-v4b/consumer/src/lib.rs": {
+      "bytes": 128,
+      "sha256": "0c66faf91fa55dcf25c6a1864c3444a4a47ead8c3da44edcd97cbf8dcf7fca10"
+    },
+    "harness-v4b/consumer/src/metadata.rs": {
+      "bytes": 9718,
+      "sha256": "0b862792457d1e57f6b834fb5dec572b28d0833937a07fad5cb0fa8d408382a0"
+    },
+    "harness-v4b/consumer/src/main.rs": {
+      "bytes": 282,
+      "sha256": "477710b5911226329410efaf250e7f5468d9f459af2d61ed74fd652545112959"
+    },
+    "harness-v4b/consumer/src/outputs.rs": {
+      "bytes": 5723,
+      "sha256": "b5bd0babc59009be8a97a38c964bb00669460cfcb774eb73f56768dba6da6d5f"
+    },
+    "harness-v4b/consumer/src/report.rs": {
+      "bytes": 5472,
+      "sha256": "bc88942eff0345808494556a6cb170bc16b66357e536597f95ab82fda5d56dca"
+    },
+    "harness-v4b/consumer/src/batch.rs": {
+      "bytes": 16126,
+      "sha256": "a0906876ab08e6a35039ca795f6e1be88a5cbc2ede9fa81251ba7598bc2a3625"
+    },
+    "harness-v4b/consumer/src/cli.rs": {
+      "bytes": 7050,
+      "sha256": "1e2d38b5087d431ecb5dcafeb2b58fdc96532399bb07dcd9419bed9e47fd56f1"
+    },
+    "harness-v4b/consumer/src/quality.rs": {
+      "bytes": 10694,
+      "sha256": "b6411339c8d819cadd19de15862eb7d034791269cb481fba77e780eb9eb752e7"
+    },
+    "harness-v4b/consumer/src/widths.rs": {
+      "bytes": 9331,
+      "sha256": "620964fb67cc92aada278a14b7447993980f82aeb4af9e6932e3ba6386dfc631"
+    },
+    "harness-v4b/consumer/tests/cpu.rs": {
+      "bytes": 13431,
+      "sha256": "07c741b6af261af0ed3687c4dd025fce45e648eee8561dad53f7468cf247811f"
+    },
+    "source/libs/infinity-v3/Cargo.lock": {
+      "bytes": 136416,
+      "sha256": "cefcb50e072484d1071e862a028a6fb8ccc5971cf8087f4fbc149ebee0291471"
+    },
+    "source/libs/infinity-v3/Cargo.toml": {
+      "bytes": 1470,
+      "sha256": "3611abc177d08f6478e9767d8d1dcc28f2126398fa39e878ad6bc03a9e2c9618"
+    },
+    "source/libs/infinity-v3/backends/Cargo.toml": {
+      "bytes": 822,
+      "sha256": "6fcebdb612e0eaa0f04085f310ddd8dfb8efbd9cc9c2f8c5e179fdd61f4aace4"
+    },
+    "source/libs/infinity-v3/backends/src/lib.rs": {
+      "bytes": 82342,
+      "sha256": "45288b236ef2e875c4499aa5e3a25e2d76dcba6f51b0b14f8d31e5ed4ebcf1c4"
+    },
+    "source/libs/infinity-v3/backends/src/dtype.rs": {
+      "bytes": 983,
+      "sha256": "94b035c726676736564137f1a2e03b3490590c8e183a9b9a9b0bd6c3e44b6eb7"
+    },
+    "source/libs/infinity-v3/backends/core/Cargo.toml": {
+      "bytes": 538,
+      "sha256": "ad60f1f5e5f2497220949a1b2c8601a6424a4d6ad05321a46cfef93eb36c65d4"
+    },
+    "source/libs/infinity-v3/backends/oxide/Cargo.toml": {
+      "bytes": 750,
+      "sha256": "4585eb49e6335cb5c99b6d17a848795098aded709ea3ff5477a18c798d6d8323"
+    },
+    "source/libs/infinity-v3/backends/core/src/lib.rs": {
+      "bytes": 7470,
+      "sha256": "97fdb4c76aaf336fc77701056467a08d6a2fc7ce88ddb2b56c0f6493f79ea72e"
+    },
+    "source/libs/infinity-v3/backends/core/src/multimodal.rs": {
+      "bytes": 9354,
+      "sha256": "0fc88782a310edd546da9166e7cc7aab9fd493e9b5655bba5423ad90e6e12e75"
+    },
+    "source/libs/infinity-v3/backends/core/src/result_memory.rs": {
+      "bytes": 8108,
+      "sha256": "c7a178dde1a3052f166371f92a37b62810594ea5ccc327f2b76953592022b3be"
+    },
+    "source/libs/infinity-v3/backends/core/src/block_attention_config.rs": {
+      "bytes": 4951,
+      "sha256": "2f1a3b93142d2ca0b2796aac3755122cd679fe474be6bb6a7458a6d272710abc"
+    },
+    "source/libs/infinity-v3/backends/oxide/src/jina_code_host_tests.rs": {
+      "bytes": 9740,
+      "sha256": "1d5b3dd38dec63105908aff5dafdf4f089f0621b7e77d5f35d2220953790835b"
+    },
+    "source/libs/infinity-v3/backends/oxide/src/qwen35_tables.rs": {
+      "bytes": 12026,
+      "sha256": "e819cd61248bab20b0a680a99cba93197e9373783ac31fcd8915e805b9e29729"
+    },
+    "source/libs/infinity-v3/backends/oxide/src/fa4_deberta.rs": {
+      "bytes": 38031,
+      "sha256": "c01672c24196667a2e7e35c70e3336a05665749f6bb354cb0b3b986a3d180c9e"
+    },
+    "source/libs/infinity-v3/backends/oxide/src/nomic_encoder_model.rs": {
+      "bytes": 16429,
+      "sha256": "491d8c749a81754cecda833cc78246f5e9e6d3ca289048d1f9b271235d50a677"
+    },
+    "source/libs/infinity-v3/backends/oxide/src/qwen35_moe_router.rs": {
+      "bytes": 7398,
+      "sha256": "a40ee4a7ba45891d7c9a25a3937314886695b7518882fe2f33aa280178804b0a"
+    },
+    "source/libs/infinity-v3/backends/oxide/src/pytorch_checkpoint.rs": {
+      "bytes": 74322,
+      "sha256": "59cb0e9810eb5139c851bcfa01babbe247d517f4aede1e7cd24cb5203b12bbc2"
+    },
+    "source/libs/infinity-v3/backends/oxide/src/decoder_classifier.rs": {
+      "bytes": 75081,
+      "sha256": "22d68ca72825ce1046fa2453d996aaf72c196a13767a42157fba3cdc0fafd6d7"
+    },
+    "source/libs/infinity-v3/backends/oxide/src/model.rs": {
+      "bytes": 144862,
+      "sha256": "5328923723d2736cea82902c11de2e41473aab85cc281a773ecb278c141d1924"
+    },
+    "source/libs/infinity-v3/backends/oxide/src/jina_code_encoder_model.rs": {
+      "bytes": 23264,
+      "sha256": "5c4e17da20bab2c39908f7cd8c99731059194d6daa469d09f4598fd61b197797"
+    },
+    "source/libs/infinity-v3/backends/oxide/src/qwen35_prepared.rs": {
+      "bytes": 23982,
+      "sha256": "4624b6333644c8f75a0039ec4ea9fbbd2c69d7331e2de4a9c9406eeeecea3429"
+    },
+    "source/libs/infinity-v3/backends/oxide/src/gdn_prepared.rs": {
+      "bytes": 143475,
+      "sha256": "93abce7baeca98b9d9dd8aca9c6f5975057d8966e749dcb86994508d2b2ae78a"
+    },
+    "source/libs/infinity-v3/backends/oxide/src/decoder.rs": {
+      "bytes": 141663,
+      "sha256": "7a13f71b987b522ef800772909091aee0da2af1ce32901bc3474fec678f84f7b"
+    },
+    "source/libs/infinity-v3/backends/oxide/src/encoder_activation_bf16.rs": {
+      "bytes": 3593,
+      "sha256": "d9209dddd1c3ab313deb33d4ab0e46b839300bce45819c602927ef5b528874e2"
+    },
+    "source/libs/infinity-v3/backends/oxide/src/moe_api.rs": {
+      "bytes": 32466,
+      "sha256": "8ed251007b8179f26f90e4313443cad9c5ad8b5b2723a73659c1dcf8e514f26d"
+    },
+    "source/libs/infinity-v3/backends/oxide/src/cache.rs": {
+      "bytes": 9791,
+      "sha256": "0bacd55998d98673dd02e741892ff624e4017825f918aed79bbeb94cc2da85ae"
+    },
+    "source/libs/infinity-v3/backends/oxide/src/moe_config.rs": {
+      "bytes": 10218,
+      "sha256": "44550328676fda26e38556b7fa85c68e4743c05baf4935fd1ad060b53d918df9"
+    },
+    "source/libs/infinity-v3/backends/oxide/src/mpnet_numerics.rs": {
+      "bytes": 59434,
+      "sha256": "4c3011576e8d3c31d3b37d44fe8cc46d5ad34806ff8b0b1a6960845267e8d1de"
+    },
+    "source/libs/infinity-v3/backends/oxide/src/qwen35_serving.rs": {
+      "bytes": 18398,
+      "sha256": "1b405cdffe322c51f9b29cf4887d9b45047e39c3789d69154455565e7618252c"
+    },
+    "source/libs/infinity-v3/backends/oxide/src/qwen35_block_attention.rs": {
+      "bytes": 38584,
+      "sha256": "f26bc2f1ac5b42f9e89640deb22c42420b3a4c65c97af68c67b28e1da29e4167"
+    },
+    "source/libs/infinity-v3/backends/oxide/src/qwen35_moe_enqueue.rs": {
+      "bytes": 8943,
+      "sha256": "cb1b4b5a3506a08c0016f2f95b002588db4d4e9a94ce6bba3092e113fd33cc0d"
+    },
+    "source/libs/infinity-v3/backends/oxide/src/encoder_activation_reference.rs": {
+      "bytes": 7623,
+      "sha256": "a7ca36f357c741c20cf506180b6119c1be166133ec8983772d11045eeead1b91"
+    },
+    "source/libs/infinity-v3/backends/oxide/src/deberta.rs": {
+      "bytes": 25054,
+      "sha256": "8ab0ca541961058c757f01f55c664cb1a81391def06f8bab39a57e5d080d6c4f"
+    },
+    "source/libs/infinity-v3/backends/oxide/src/encoder_activation_prepared.rs": {
+      "bytes": 8690,
+      "sha256": "59d68a8c6596aea3cac22198ae5db106c1927fc4f79ff2c78ce6d83af11c8d8e"
+    },
+    "source/libs/infinity-v3/backends/oxide/src/gemma2_math.rs": {
+      "bytes": 31057,
+      "sha256": "d651fa85411a36d1a02f462a479263a6a9b10618aff1d3de55ab1f502bb5db1f"
+    },
+    "source/libs/infinity-v3/backends/oxide/src/lib.rs": {
+      "bytes": 366506,
+      "sha256": "7c7b9962e4e4d224963be53155de2807422f2d843c309a126c2f6f5a8f5e1b80"
+    },
+    "source/libs/infinity-v3/backends/oxide/src/gdn_frame.rs": {
+      "bytes": 21497,
+      "sha256": "64f3e5b714c97158008b39e4e30fb1745831718e5aa8645e4ee1e9d6e77b85e8"
+    },
+    "source/libs/infinity-v3/backends/oxide/src/qwen35_moe_engine.rs": {
+      "bytes": 82667,
+      "sha256": "4b6c343b1dbae54dc87e838bd17df39a2e2119cca9c40952bb5c1f3b7aca7fb8"
+    },
+    "source/libs/infinity-v3/backends/oxide/src/classifier_primitives.rs": {
+      "bytes": 9695,
+      "sha256": "8a90e7617bc713ec6e5020d9ec97570f6e035d2cc9b876e8e6f4636270befd71"
+    },
+    "source/libs/infinity-v3/backends/oxide/src/fa4_alibi.rs": {
+      "bytes": 11189,
+      "sha256": "a48d6189ae882b3fd0df92fc6a5ee4b7ee1faca6428857aefef26f915a6e48eb"
+    },
+    "source/libs/infinity-v3/backends/oxide/src/decoder_model.rs": {
+      "bytes": 95327,
+      "sha256": "af169bea839b2195267164d39049a07e3b805368636b3e772bb4b0a960c98c51"
+    },
+    "source/libs/infinity-v3/backends/oxide/src/classifier_head.rs": {
+      "bytes": 72459,
+      "sha256": "10653e90512f3733c44bfc0ab515d945177370ed9c08b2246ae94dd1c021766e"
+    },
+    "source/libs/infinity-v3/backends/oxide/src/qwen35_retirement_root_tests.rs": {
+      "bytes": 14222,
+      "sha256": "747f52caa1f536ff0dd2c76bac9f5ec505e072a6943c8a1f92c04a9fcfea38b4"
+    },
+    "source/libs/infinity-v3/backends/oxide/src/input_layout.rs": {
+      "bytes": 13698,
+      "sha256": "6a00903ddbca8b7e5f85c7d82cd1b0aec477cbdbf203f3668912fb439e4f4bb6"
+    },
+    "source/libs/infinity-v3/backends/oxide/src/qwen35_moe_schedule.rs": {
+      "bytes": 8094,
+      "sha256": "1175f0cd8c88f511a436b58f01211b1357db2979d08e7cdfe0f502ce2d745c10"
+    },
+    "source/libs/infinity-v3/backends/oxide/src/fp8.rs": {
+      "bytes": 29421,
+      "sha256": "947299272d6144afaaa70025d1c745d6a025e87fa71bc7776df9274024ae7b0f"
+    },
+    "source/libs/infinity-v3/backends/oxide/src/qwen35_moe_config.rs": {
+      "bytes": 42568,
+      "sha256": "467ac08ef0d891dc7896b36a3283fcf0919074d44809f0334bd7fd63f2c4d96a"
+    },
+    "source/libs/infinity-v3/backends/oxide/src/moe_artifact.rs": {
+      "bytes": 5440,
+      "sha256": "9cca6bccfa9ad70b4798b8d262c6aa1b9f6e9982e89501405476e155cc1c236d"
+    },
+    "source/libs/infinity-v3/backends/oxide/src/qwen35_model.rs": {
+      "bytes": 32165,
+      "sha256": "228c0f635aa0be638aecd97699eddcec0e07adc2a93b506bd5ce966a59401274"
+    },
+    "source/libs/infinity-v3/backends/oxide/src/qwen35_block_work.rs": {
+      "bytes": 6721,
+      "sha256": "c8eade46aad220dc7b636a4325bfedd23afa3cb830da070205c6ac8c1cd7adc8"
+    },
+    "source/libs/infinity-v3/backends/oxide/src/deberta_encoder_model.rs": {
+      "bytes": 62069,
+      "sha256": "c11a1457440d6f2d009c3c2ab546f260370f34c86b9114a8ebb88e01906e63a1"
+    },
+    "source/libs/infinity-v3/backends/oxide/src/qwen35_moe_full.rs": {
+      "bytes": 38480,
+      "sha256": "7fc72c2df8d0755de2ccaf61f6532dd7090880aa903407122c7f93873902425d"
+    },
+    "source/libs/infinity-v3/backends/oxide/src/lt.rs": {
+      "bytes": 121643,
+      "sha256": "87604545f0e7d1d15e93ba14c372799f4538d7ffe160935fbd2f8d37a1879913"
+    },
+    "source/libs/infinity-v3/backends/oxide/src/encoder_policy.rs": {
+      "bytes": 23842,
+      "sha256": "c54bd779f0020965004f51a3d8ef0216386f53cd472431692c4003792442d8ff"
+    },
+    "source/libs/infinity-v3/backends/oxide/src/cublas.rs": {
+      "bytes": 37962,
+      "sha256": "a397c445ae9b80f525e901649e79bd67b8e64197cb89b486bb1255672e412f5c"
+    },
+    "source/libs/infinity-v3/backends/oxide/src/qwen35_moe_v3_tests.rs": {
+      "bytes": 27579,
+      "sha256": "a9e8ab3b9f10882d4074f21c1eac779c1fae5a5243e957872624f67884f65635"
+    },
+    "source/libs/infinity-v3/backends/oxide/src/mpnet_attention.rs": {
+      "bytes": 31635,
+      "sha256": "67c19b3950b7acc07c3db89db1aa91282faaecffefbed9dd7d9bf31065ff5929"
+    },
+    "source/libs/infinity-v3/backends/oxide/src/staging.rs": {
+      "bytes": 33274,
+      "sha256": "a9f28855a1d32a57de76ddc842a8b2ddd14c9b24e52d99ce0182f981f7ccabff"
+    },
+    "source/libs/infinity-v3/backends/oxide/src/moe_abi.rs": {
+      "bytes": 7523,
+      "sha256": "c4be062665b6792d04ab443bbf84ce51c91db0c30773394cf764ac86f9cb2ef6"
+    },
+    "source/libs/infinity-v3/backends/oxide/src/decision_head.rs": {
+      "bytes": 52223,
+      "sha256": "23f6ebe731a01c41af99dcba08ebadd3a8f8575a7c6f2eb9b5dc7e371d920194"
+    },
+    "source/libs/infinity-v3/backends/oxide/src/qwen35_moe_provider.rs": {
+      "bytes": 12081,
+      "sha256": "12de3ac9018005e630ddcdbc57553bd840273c606bd38b684d52ac20d2c1fcca"
+    },
+    "source/libs/infinity-v3/backends/oxide/src/qwen35_weights.rs": {
+      "bytes": 22999,
+      "sha256": "e7d5ae35c686d79416c6bdb09b0233b7ce8a0c42386f9df83d283bfd0ea8a172"
+    },
+    "source/libs/infinity-v3/backends/oxide/src/dense.rs": {
+      "bytes": 71636,
+      "sha256": "31ae450ce14ea1c7c7e5d551a0734a1a6eb32cb6adcf9d5fee4c7fa768ea386e"
+    },
+    "source/libs/infinity-v3/backends/oxide/src/gdn_aot_provider.rs": {
+      "bytes": 55513,
+      "sha256": "f5a9307bd4f9cb978a55d796ff735f26c2369cb844fc0d19d88b8da8662f9d9f"
+    },
+    "source/libs/infinity-v3/backends/oxide/src/native_rope_tables.rs": {
+      "bytes": 8116,
+      "sha256": "3e9555784045218416f828491fd5513754fe73eeb031fc7ef09664d9289e12a3"
+    },
+    "source/libs/infinity-v3/backends/oxide/src/encoder_activation_plan.rs": {
+      "bytes": 14738,
+      "sha256": "79b51c052d34ce534e8c498a4f1c23695271dbf3d4253354d20ed06e9c5e50d3"
+    },
+    "source/libs/infinity-v3/backends/oxide/src/mpnet.rs": {
+      "bytes": 41254,
+      "sha256": "a7495b00993ad5e1a0e2e39e216b5ad4c048842a1d997a5e9384ac388ded9180"
+    },
+    "source/libs/infinity-v3/backends/oxide/src/encoder_linear.rs": {
+      "bytes": 6947,
+      "sha256": "9b5be8bc1976761497684c1e6a8557675a400c31ba0f90a2224eae79e0ca3245"
+    },
+    "source/libs/infinity-v3/backends/oxide/src/biased_linear.rs": {
+      "bytes": 18976,
+      "sha256": "2a774ef488af40fd264963ff833449091238d88d3e50834a84fb0d0e32b5e129"
+    },
+    "source/libs/infinity-v3/backends/oxide/src/qwen35_moe_factory.rs": {
+      "bytes": 47509,
+      "sha256": "869832e24779626c39f74de83d407f9a8fe973833dbb5cf81fbdd464ffb0dcb5"
+    },
+    "source/libs/infinity-v3/backends/oxide/src/moe_model.rs": {
+      "bytes": 428,
+      "sha256": "d3cf61adc14ff2620adf3041c032f6b72933541221f55e39587939abbca7dbe9"
+    },
+    "source/libs/infinity-v3/backends/oxide/src/work_retirement.rs": {
+      "bytes": 19526,
+      "sha256": "6c65a1946e7cbc4480ab98afb95344626e441203367d11218aee27915f372a65"
+    },
+    "source/libs/infinity-v3/backends/oxide/src/qwen35_block_layout.rs": {
+      "bytes": 23701,
+      "sha256": "cf88cd5cd619efc168c4545dfb25a4bad6b9c7e21d399a144ac5e2131855d204"
+    },
+    "source/libs/infinity-v3/backends/oxide/src/qwen35_backbone.rs": {
+      "bytes": 11693,
+      "sha256": "fcf1fa5ea474ad4a1187f4f52acad28fc89112fd0bb5e6c861ef8673ac840ac6"
+    },
+    "source/libs/infinity-v3/backends/oxide/src/math.rs": {
+      "bytes": 12753,
+      "sha256": "1881b2916f3a85a5f5d84dd9a99a6f5b19b07a2b5e6763c6a89dc16b936a0347"
+    },
+    "source/libs/infinity-v3/backends/oxide/src/fa4.rs": {
+      "bytes": 97853,
+      "sha256": "54add1613c36e778ecf50c811ed2c659a242aa7047bad0fb6bc7e0396b650639"
+    },
+    "source/libs/infinity-v3/backends/oxide/src/upload.rs": {
+      "bytes": 6039,
+      "sha256": "88b769a7cea1fb0faa9fb68a46642e694462b2f51768c2bc39ca83b0ae1e083e"
+    },
+    "source/libs/infinity-v3/backends/oxide/src/qwen35_moe_layout.rs": {
+      "bytes": 19916,
+      "sha256": "51d2a463a34ddbcbc12021ec18e418cdf784d3bed8500f61c4151135ab880cef"
+    },
+    "source/libs/infinity-v3/backends/oxide/src/tensor.rs": {
+      "bytes": 18051,
+      "sha256": "fcc5181afb73f32977dd053e15129059427718905fce29e74dab91ad69a200c6"
+    },
+    "source/libs/infinity-v3/backends/oxide/src/rotary_encoder.rs": {
+      "bytes": 4711,
+      "sha256": "25b5d0b5c4d1d711d8d5cd9444463de72c478ce1e1c1550b2a5d6d793bad12a8"
+    },
+    "source/libs/infinity-v3/backends/oxide/src/decision_head_gpu.rs": {
+      "bytes": 56055,
+      "sha256": "3ad5bf3ea540d4dae85ea5a2174ff2b5a7b523ecedf98c322e6f20f4c3c19080"
+    },
+    "source/libs/infinity-v3/backends/oxide/src/jina_encoder_model.rs": {
+      "bytes": 21377,
+      "sha256": "aebae0dec423c1445db0b1b7abc63dfc6c4974ace3c1a71955b3af4baa332733"
+    },
+    "source/libs/infinity-v3/backends/oxide/src/encoder_activation.rs": {
+      "bytes": 5886,
+      "sha256": "58c88bf7f6a9cb543b12cafe44d6eb6389b89232787e878faccaeb4c44843008"
+    },
+    "source/libs/infinity-v3/backends/oxide/src/workspace_retirement_root_tests.rs": {
+      "bytes": 14548,
+      "sha256": "e834a285840f51988341b284b600351884cfffc5f28b4dc9312407412bd8831f"
+    },
+    "source/libs/infinity-v3/backends/oxide/src/qwen35_execute.rs": {
+      "bytes": 16666,
+      "sha256": "309e11e7d351fd36c1bce956184ab7eb4330c3bbd3b113203aa0916ca8176088"
+    },
+    "source/libs/infinity-v3/backends/oxide/src/qwen35_moe_cases.rs": {
+      "bytes": 2508,
+      "sha256": "3ada3e653f4a905821fac30a781bf12a7488b9be38df6f1f16b50966b36c378e"
+    },
+    "source/libs/infinity-v3/backends/oxide/src/qwen35_fp8.rs": {
+      "bytes": 21528,
+      "sha256": "40a1fb4635862e64c3f33507301e0a2c6d097916b3a77d803237fc47b16cd814"
+    },
+    "source/libs/infinity-v3/backends/oxide/src/jina_code_loader_tests.rs": {
+      "bytes": 15449,
+      "sha256": "53276b78914f9ca6ba5f04541981d4ef4143fc32543248415dc594389bb56de0"
+    },
+    "source/libs/infinity-v3/backends/oxide/src/rotary.rs": {
+      "bytes": 18853,
+      "sha256": "5ac97a7e119ece22f84a34b692162b1306e1850338c026d555489103817d910a"
+    },
+    "source/libs/infinity-v3/backends/oxide/src/output.rs": {
+      "bytes": 16379,
+      "sha256": "7a868abd0af4bea2a685ff841378f2f1ed3e9b33cc2233e6ef2763ebbfeb91cf"
+    },
+    "source/libs/infinity-v3/backends/oxide/src/qwen35_moe_contract.rs": {
+      "bytes": 12912,
+      "sha256": "97080ac4cd2f7525b1f4562bdd430bfac201e74b92a9eff9c20e1993dff8b2f6"
+    },
+    "source/libs/infinity-v3/backends/oxide/src/qwen35_config.rs": {
+      "bytes": 40740,
+      "sha256": "e8dbce95e7dfa1c99bbbd0cb24579238c21005dc0428c56315ef6f4e763bf2ae"
+    },
+    "source/libs/infinity-v3/backends/oxide/src/qwen35_runtime.rs": {
+      "bytes": 41027,
+      "sha256": "c9844fef4c7caad17e4abacf4409ffc65ed2084690d970346a9427891c99e132"
+    },
+    "source/libs/infinity-v3/backends/oxide/src/moe_weights.rs": {
+      "bytes": 14803,
+      "sha256": "780ab4039727ae11cd6138770cd6e66ba18069741cfa20709fb2b2624e7cc4b6"
+    },
+    "source/libs/infinity-v3/backends/oxide/src/modern_encoder_model.rs": {
+      "bytes": 46439,
+      "sha256": "a7d29109bb8dfe479569412d1ec069f91d74b0ed5e9c5eab0991fd028b164df2"
+    },
+    "source/libs/infinity-v3/backends/oxide/src/qwen35_moe_weights.rs": {
+      "bytes": 21798,
+      "sha256": "95d7c80dd448c891dbd16e187e1c57af5a6348f4185def830c2120ec4ae5224e"
+    },
+    "source/libs/infinity-v3/backends/oxide/src/warm_head.rs": {
+      "bytes": 56273,
+      "sha256": "8441f05fdfdea61ebc89ca1e9a3a4b164bb354e046f166e80359d298f8ca2972"
+    },
+    "source/libs/infinity-v3/backends/oxide/src/qwen35_work.rs": {
+      "bytes": 17299,
+      "sha256": "cd62aa6e1d8b16732733d7def4c8dbed51b51fa75f20aef1fa48c37152c62acc"
+    },
+    "source/libs/infinity-v3/backends/oxide/src/qwen35_moe_device.rs": {
+      "bytes": 10232,
+      "sha256": "0a66ad3095ca062d4943f09179350dc8e7eecb10959bf1732d94b2ba1f0e1abc"
+    },
+    "source/libs/infinity-v3/backends/oxide/src/moe_runtime.rs": {
+      "bytes": 27716,
+      "sha256": "3d91b4643387703e4d279f55db6e543a28707a52c7917582e2687ee40030d733"
+    },
+    "source/libs/infinity-v3/backends/oxide/src/qwen35_layout.rs": {
+      "bytes": 29663,
+      "sha256": "7ee60d5de8acc03fa06d2e883258f948a849f8eb59207de277764c7daebc23a1"
+    },
+    "source/libs/infinity-v3/backends/oxide/src/gdn_block_frame.rs": {
+      "bytes": 35854,
+      "sha256": "528560d85a4916162e70ad71f05490cd2ddaae6981825a32cbf9f6d3b839a9ff"
+    },
+    "source/libs/infinity-v3/backends/oxide/src/rotary_encoder_model.rs": {
+      "bytes": 22835,
+      "sha256": "22f2aa47e3d86e575d70b22063bfe30919b1c86d85441a52c8ed35836767183f"
+    },
+    "source/libs/infinity-v3/backends/oxide/device/Cargo.lock": {
+      "bytes": 4999,
+      "sha256": "4a0c1bc1e58148720b27713a2d7788c8ae9ff5fe6518568d0323820925645345"
+    },
+    "source/libs/infinity-v3/backends/oxide/device/rust-toolchain.toml": {
+      "bytes": 85,
+      "sha256": "7f1358aa020f087542a096b150a015dd8660e394ab75dc6b56b040976fbd567b"
+    },
+    "source/libs/infinity-v3/backends/oxide/device/Cargo.toml": {
+      "bytes": 333,
+      "sha256": "a90176637948399a91f3be62c435d717a4737260e9fe79de9fbedb54a9dced80"
+    },
+    "source/libs/infinity-v3/backends/oxide/device/encoder_activation_exports.txt": {
+      "bytes": 157,
+      "sha256": "aa99cd6a99213ae4baa5f16119c2840329884d59b6163e752b8d606f0f5af8a0"
+    },
+    "source/libs/infinity-v3/backends/oxide/device/qwen35_exports.txt": {
+      "bytes": 317,
+      "sha256": "628bfc57557913d0f9bd0c6cbad387697fa002faaa0cc8c87f41b26dde85a3a5"
+    },
+    "source/libs/infinity-v3/backends/oxide/device/build.sh": {
+      "bytes": 21959,
+      "sha256": "125c535ce22e9cc16b0fc18ef87443b40e3a9b7bfbece83395619c2f50fe6048"
+    },
+    "source/libs/infinity-v3/backends/oxide/device/LICENSE-Candle-BSD3": {
+      "bytes": 1558,
+      "sha256": "8c9ccb96c065e706135b6cbad279b721da6156e51f3a5f27c6b3329af9416d73"
+    },
+    "source/libs/infinity-v3/backends/oxide/device/LICENSE-PyTorch-BSD3": {
+      "bytes": 3464,
+      "sha256": "bd018feef8825e88181c84eb7e3aa4eafb8f08a20d9fd6ef948569610c4a3e43"
+    },
+    "source/libs/infinity-v3/backends/oxide/src/lt/fp8.rs": {
+      "bytes": 18622,
+      "sha256": "17a03b67ca6b9a4b6f0fef3f8390e922a4c82edeba02740ac02eba99ed7eda37"
+    },
+    "source/libs/infinity-v3/backends/oxide/src/classifier_head/gold_control.rs": {
+      "bytes": 22825,
+      "sha256": "0d76961df5f6fc47e0c5496c3e7a6af5c3c24dbe15cc33f47e3c6ee331c64182"
+    },
+    "source/libs/infinity-v3/backends/oxide/src/qwen35_execute/enqueue.rs": {
+      "bytes": 16508,
+      "sha256": "cbb424d9618cab2fa2d0a7f18cadec8aa5730e5c05c6189389d8487af8e5444f"
+    },
+    "source/libs/infinity-v3/backends/oxide/src/qwen35_execute/prepare.rs": {
+      "bytes": 16050,
+      "sha256": "81bd2c03a408ed6e71595d56cc38f3a33f07850022fef616eb70e1d67b5c2193"
+    },
+    "source/libs/infinity-v3/backends/oxide/device/native_gdn_aot/qwen35_gdn_aot.cu": {
+      "bytes": 12674,
+      "sha256": "98828570666a5ab763e22472142136d7933628707fb5a3fb2d609523502d601f"
+    },
+    "source/libs/infinity-v3/backends/oxide/device/native_gdn_aot/NOTICE": {
+      "bytes": 1877,
+      "sha256": "4d89b6bb6912e5bfa90a2acc4ab9031a5ba512006e40155efb3818ab70096f37"
+    },
+    "source/libs/infinity-v3/backends/oxide/device/src/packed_mean_bf16.rs": {
+      "bytes": 5733,
+      "sha256": "d4ef9a263f9625601a0f80c4a96e99e900c89d4a8ffc31f39f843cc3438b4100"
+    },
+    "source/libs/infinity-v3/backends/oxide/device/src/gemma2.rs": {
+      "bytes": 13752,
+      "sha256": "a32363d7f4017e061b90dd118841b4cde4cff0df244cbc2942d149d23c45c82c"
+    },
+    "source/libs/infinity-v3/backends/oxide/device/src/norm512.rs": {
+      "bytes": 10991,
+      "sha256": "5136bca23eb43826d62db5333ea8e04758600de8753ddb534507aeac702efb1e"
+    },
+    "source/libs/infinity-v3/backends/oxide/device/src/decoder.rs": {
+      "bytes": 8073,
+      "sha256": "da942cb805528e6b1b6ef5c6564ada15ebdfaa17ff3cbc59f2af3f5a597e5202"
+    },
+    "source/libs/infinity-v3/backends/oxide/device/src/deberta_norm.rs": {
+      "bytes": 2328,
+      "sha256": "3bfb5907ae04034a8e1c9401e6845d44604fec1508e4da23de8fbff0293e6e4e"
+    },
+    "source/libs/infinity-v3/backends/oxide/device/src/classifier_norm384.rs": {
+      "bytes": 9632,
+      "sha256": "a457b9b0eb3047b16905efb5a57f03af6a93c7bfcc0f4e3d2665fb3a295de479"
+    },
+    "source/libs/infinity-v3/backends/oxide/device/src/deberta_math.rs": {
+      "bytes": 2538,
+      "sha256": "ca56924e9c2a04b4d201e33467c723d038329be99355f5680742f63c9dc67fca"
+    },
+    "source/libs/infinity-v3/backends/oxide/device/src/silu_pairs.rs": {
+      "bytes": 6302,
+      "sha256": "bf8e0f4830bac5a99766998d17c6e20c05765038db6f86078585437b2185ebe0"
+    },
+    "source/libs/infinity-v3/backends/oxide/device/src/aten_embedding.rs": {
+      "bytes": 9475,
+      "sha256": "297eed8b0746696d608470577c93016cd18369106ab3e22059cb1f1591fdf638"
+    },
+    "source/libs/infinity-v3/backends/oxide/device/src/gelu_exact.rs": {
+      "bytes": 980,
+      "sha256": "7e6c1486b8a7a41cfaadaccad869d986e72e4d13c5ba05561fd294db7c80afef"
+    },
+    "source/libs/infinity-v3/backends/oxide/device/src/classifier.rs": {
+      "bytes": 1977,
+      "sha256": "6518cf9115dc647a901daaf5c0c35768dff551edaffa1ff8da3b185e0f228025"
+    },
+    "source/libs/infinity-v3/backends/oxide/device/src/main.rs": {
+      "bytes": 66488,
+      "sha256": "46a275f9cbf774da1b4237c68bd954173ac4f0108f5c9fe6f8027cc0afa0e145"
+    },
+    "source/libs/infinity-v3/backends/oxide/device/src/encoder_prenorm.rs": {
+      "bytes": 12512,
+      "sha256": "d90127bb73e47d4a6f39e6ab1a8091551051b5cf923bf6cdc2a59bc1cb343ac3"
+    },
+    "source/libs/infinity-v3/backends/oxide/device/src/rms1536.rs": {
+      "bytes": 2584,
+      "sha256": "5da47ae791136034e8923560938d6be8c7f9595e09ee57705fedb3241bcedbd9"
+    },
+    "source/libs/infinity-v3/backends/oxide/device/src/norm2048_vector.rs": {
+      "bytes": 10122,
+      "sha256": "7c7700480f67906ec6ad12329d495358cddb6f1797bb3eaf8296e5d4b152b906"
+    },
+    "source/libs/infinity-v3/backends/oxide/device/src/qwen35_attention.rs": {
+      "bytes": 11881,
+      "sha256": "65f3eea89ed260551170c9ad4ec2472eb35108c09710c09965323d32e6fc6ee5"
+    },
+    "source/libs/infinity-v3/backends/oxide/device/src/encoder_f16.rs": {
+      "bytes": 16271,
+      "sha256": "053e58fd0b2a972f0c76d428fbe02b7169d7f7cc54a5dd48775d7ef94996b6ba"
+    },
+    "source/libs/infinity-v3/backends/oxide/device/src/rms4096_vector.rs": {
+      "bytes": 7233,
+      "sha256": "504892014977d12cc78748ed2375341cfb6288e579525f8ff3119ec1dd85754b"
+    },
+    "source/libs/infinity-v3/backends/oxide/device/src/mpnet_norm.rs": {
+      "bytes": 8218,
+      "sha256": "f3487ad7e570437cf6622efbe0a89e5c4751901b3462ef24c09befb54f1a87c8"
+    },
+    "source/libs/infinity-v3/backends/oxide/device/src/norm768_vector.rs": {
+      "bytes": 11623,
+      "sha256": "d5c7ea73f295f10ebbd597ac10d88cda49566dcdea7b9216088c828d283020be"
+    },
+    "source/libs/infinity-v3/backends/oxide/device/src/qwen35_norm.rs": {
+      "bytes": 12655,
+      "sha256": "0f8bbd183eaf1d85db0555d3fc46218ed51d3cb79b79d9dcad12ccb9198c083d"
+    },
+    "source/libs/infinity-v3/backends/oxide/device/src/silu_vector8.rs": {
+      "bytes": 4027,
+      "sha256": "ff3b47786d2e3795e77183e964d381e3d2cbbc1ce02582f33ea339bcfe3d5cc5"
+    },
+    "source/libs/infinity-v3/backends/oxide/device/src/rms1536_vector.rs": {
+      "bytes": 6734,
+      "sha256": "a5f84b8fab19a745f1f7c8afc62710c2aaabe99e4fbcb13cd0970a8b12b0bb0f"
+    },
+    "source/libs/infinity-v3/backends/oxide/device/src/readout.rs": {
+      "bytes": 3699,
+      "sha256": "2d158810465c003826b2f3ba60fc2627073ee4888c7af5ddfedfb39f9cdd50a7"
+    },
+    "source/libs/infinity-v3/backends/oxide/device/src/dense.rs": {
+      "bytes": 2069,
+      "sha256": "f32e7f6a146b2aa832396880f5b6fefe5b22821f48e01b18624b693344ca8295"
+    },
+    "source/libs/infinity-v3/backends/oxide/device/src/norm2048.rs": {
+      "bytes": 7386,
+      "sha256": "9fed6ddbf1643415c1da2cd70673198bb604d9582ba31961d05775c9f83d8392"
+    },
+    "source/libs/infinity-v3/backends/oxide/device/src/norm1024_exact_vector.rs": {
+      "bytes": 12459,
+      "sha256": "6347015eabc931bc699fe8cc3bc9794f7a31da23148fe04e44bd9dfe4cfc9038"
+    },
+    "source/libs/infinity-v3/backends/oxide/device/src/gated.rs": {
+      "bytes": 2381,
+      "sha256": "a577f5ca0c10648a504f983b45da1a6c5e819316af45c0435c557e8ebbd99902"
+    },
+    "source/libs/infinity-v3/backends/oxide/device/src/norm384.rs": {
+      "bytes": 3898,
+      "sha256": "7b7cb8f76b9eed72ebefc23166b6450149ea915d92b7bea5c07c0835d8b63f75"
+    },
+    "source/libs/infinity-v3/backends/oxide/device/src/qwen35_copy.rs": {
+      "bytes": 914,
+      "sha256": "17fa367da0e25aaf511f863673417a4e250faf848e65bdca44e453bd2ac48fab"
+    },
+    "source/libs/infinity-v3/backends/oxide/device/src/norm768.rs": {
+      "bytes": 8338,
+      "sha256": "1042ef07ff9c824abe56f62332eba07422c3e0a211b637253ebddd56f09dbf65"
+    },
+    "source/libs/infinity-v3/backends/oxide/device/src/jina_code_qk.rs": {
+      "bytes": 2140,
+      "sha256": "1553d5fd2ed02a9ab05c243727764c1622fa384a75572f872de0752401c97da7"
+    },
+    "source/libs/infinity-v3/backends/oxide/device/src/qk_norm_rope_128.rs": {
+      "bytes": 11059,
+      "sha256": "f9b74a9a3b7d1c2862710540bacf383398d89cb94f9ed3c19460ef4299ba0200"
+    },
+    "source/libs/infinity-v3/backends/oxide/device/src/encoder_activation.rs": {
+      "bytes": 3050,
+      "sha256": "d8dcb59c1be4f9142360422124440e3ecc7e247a6d5cb98a8f0134fbe7f3d5be"
+    },
+    "source/libs/infinity-v3/backends/oxide/device/src/nomic_embedding.rs": {
+      "bytes": 5497,
+      "sha256": "cb27950b43bd712f3a69fe8a69e75d5e263f5362940516f43efb6a307a0a26fe"
+    },
+    "source/libs/infinity-v3/backends/oxide/device/src/norm1024.rs": {
+      "bytes": 5931,
+      "sha256": "cbf36309cd34ddf0aefd68fd0cba791bad94714d7f88b8ec01aea53b973bec8e"
+    },
+    "source/libs/infinity-v3/backends/oxide/device/native_gdn/LICENSE.candle-MIT": {
+      "bytes": 1023,
+      "sha256": "23f18e03dc49df91622fe2a76176497404e46ced8a715d9d2b67a7446571cca3"
+    },
+    "source/libs/infinity-v3/backends/oxide/device/native_gdn/qwen35_gdn_native.cu": {
+      "bytes": 18278,
+      "sha256": "0678b7bba3fc3c80f887d0d58f934a08be033c2613804c538d54cb0f98e6ff4b"
+    },
+    "source/libs/infinity-v3/backends/oxide/device/native_gdn/NOTICE": {
+      "bytes": 1286,
+      "sha256": "55cf47f0510214a52b69f39a00dad492a6961fc12cd3a12764bc79379fdca58c"
+    },
+    "source/libs/infinity-v3/backends/oxide/device/tests/test_qwen35_export_registry.py": {
+      "bytes": 2663,
+      "sha256": "da4fe28f1cc21eb113401f9b18024c25c1b32d48b04eaea3cc12ea9184a6f337"
+    },
+    "source/libs/infinity-v3/backends/oxide/device/tests/test_build.py": {
+      "bytes": 25400,
+      "sha256": "fa9b15372657687c0427b4fdb030ff4a60a1ede84d3a506b9548c0143873fa8b"
+    },
+    "cold-zero-v3/source/libs/infinity-v3/backends/oxide/src/gdn_prepared.rs": {
+      "bytes": 154228,
+      "sha256": "efed0e7e612dbda74bdbd02c72f96ea1b273e047bc60ac68bdef8665dd7cd3ff"
+    },
+    "cold-zero-v3/source/libs/infinity-v3/backends/oxide/src/qwen35_block_work.rs": {
+      "bytes": 9576,
+      "sha256": "5f869642b9bd20788520519e7d9bbe54d3eed92e038ebaebb300a15648f6c48c"
+    },
+    "cold-zero-v3/source/libs/infinity-v3/backends/oxide/src/warm_head.rs": {
+      "bytes": 57502,
+      "sha256": "5ec63be968da8cb939c1a5a393823189cfa1ff972dc623203361692ea9dc7255"
+    },
+    "cold-zero-v3/source/libs/infinity-v3/backends/oxide/src/qwen35_work.rs": {
+      "bytes": 29312,
+      "sha256": "fd2abd2a7dfb0ac209f6add667cb322491a09c034e2e29f0ba0bc839b3df578a"
+    },
+    "native-control/native-control-v2/test_control.py": {
+      "bytes": 19828,
+      "sha256": "52c33dce7b4d1081269e60f183ce76432d8a8bac7fde5e542183668f43fed0e6"
+    },
+    "native-control/native-control-v2/CONTRACT.json": {
+      "bytes": 4372,
+      "sha256": "cee51fc41089e0261bf1ee264b721cab034e7dac8ab152627f5c9abccece90a2"
+    },
+    "native-control/native-control-v2/root_control.py": {
+      "bytes": 22239,
+      "sha256": "aac72c06b9b43a494e35b41b50a90e54a640d0771f312a8e6e1831ff1b6d40ce"
+    },
+    "native-control/native-control-v2/strict_compare.py": {
+      "bytes": 29864,
+      "sha256": "a747dc0aff08079af6f277ab53fe0ee92c560a2193b54ece335249fbe9925673"
+    },
+    "native-control/native-control-v2/test_readiness.py": {
+      "bytes": 9142,
+      "sha256": "f28061938831d3b4fe452b6049fb5a1a8aee8d9180c12f7ccb66d621d6360014"
+    },
+    "native-control/native-control-v2/remote_guard.py": {
+      "bytes": 4939,
+      "sha256": "e6dfe6c71c5eb68f481e269788219a938b12f3b0aaddfcda4ad9fc3ed4c2d76e"
+    },
+    "native-control/native-control-v2/native_light.py": {
+      "bytes": 20488,
+      "sha256": "55773f59d85a85d6fb0b045be6855cd95f87433bb170ea8dbefcc1caa6ce28c3"
+    },
+    "native-control/native-control-v2/native_gold.py": {
+      "bytes": 17185,
+      "sha256": "afbcca4ddab2ab3e03f9e045125d7bfb5c65c82a831de4372daaa530f08bf70d"
+    },
+    "native-control/native-control/test_control.py": {
+      "bytes": 19828,
+      "sha256": "52c33dce7b4d1081269e60f183ce76432d8a8bac7fde5e542183668f43fed0e6"
+    },
+    "native-control/native-control/CONTRACT.json": {
+      "bytes": 4372,
+      "sha256": "cee51fc41089e0261bf1ee264b721cab034e7dac8ab152627f5c9abccece90a2"
+    },
+    "native-control/native-control/root_control.py": {
+      "bytes": 21854,
+      "sha256": "0cf60cd6c650113e6b92e4587567edff657deda564634c0180ed73de1ee4e23f"
+    },
+    "native-control/native-control/strict_compare.py": {
+      "bytes": 29864,
+      "sha256": "a747dc0aff08079af6f277ab53fe0ee92c560a2193b54ece335249fbe9925673"
+    },
+    "native-control/native-control/test_readiness.py": {
+      "bytes": 6789,
+      "sha256": "277307e76c69e143fc8778e0acf521764dd78b29b71badc88cf34e0c9f9f6039"
+    },
+    "native-control/native-control/remote_guard.py": {
+      "bytes": 4939,
+      "sha256": "e6dfe6c71c5eb68f481e269788219a938b12f3b0aaddfcda4ad9fc3ed4c2d76e"
+    },
+    "native-control/native-control/native_light.py": {
+      "bytes": 20488,
+      "sha256": "55773f59d85a85d6fb0b045be6855cd95f87433bb170ea8dbefcc1caa6ce28c3"
+    },
+    "native-control/native-control/native_gold.py": {
+      "bytes": 17185,
+      "sha256": "afbcca4ddab2ab3e03f9e045125d7bfb5c65c82a831de4372daaa530f08bf70d"
+    },
+    "native-control/native-control-v2/input/container_sdk_got.py": {
+      "bytes": 13891,
+      "sha256": "4b39fe00bded39c5a10fdbc4e28c10a5bbcccf0fc34c38da8ef5878d5258f8a9"
+    },
+    "native-control/native-control-v2/input/qwen35_models.cpp": {
+      "bytes": 74067,
+      "sha256": "375f39a305177b8c6c8651b0ce0d59541295c1888a8425fdd23095fe31bdeac4"
+    },
+    "native-control/native-control-v2/input/native_base.py": {
+      "bytes": 28100,
+      "sha256": "0424a2eb3b204e14841b9ee0f32dc8cd475f8208ba7cbb709fb052a97c0af67c"
+    },
+    "native-control/native-control-v2/input/native_batch.py": {
+      "bytes": 10729,
+      "sha256": "14734e70d4544983399bb5975c69f170bd56bdcc436994f72277436b6b5e425d"
+    },
+    "native-control/native-control-v2/input/verify_bindings.py": {
+      "bytes": 3063,
+      "sha256": "1e6f3428d0119e08f86ee8996abb1133b4b999ecab8473d868603896ceb9240e"
+    },
+    "native-control/native-control-v2/input/bridge.h": {
+      "bytes": 10027,
+      "sha256": "ed5cd44f735cbe21160f43fbdec0f4e003acd477497ab4141e2625c37c5b3b69"
+    },
+    "native-control/native-control-v2/input/model_checkpoint.py": {
+      "bytes": 24007,
+      "sha256": "2b245c4c2f25e2b8e53082f0137642c3abca2b201eb6792d0d648c096b984343"
+    },
+    "native-control/native-control-v2/input/bridge.cpp": {
+      "bytes": 73715,
+      "sha256": "57e879da8baf21a7f846cfd1657a4c45d9670b49893ce750c490bbb31dac2115"
+    },
+    "native-control/native-control-v2/input/native_raw_probe.py": {
+      "bytes": 19914,
+      "sha256": "0c6ed626ccb2930cc3d170f1fc034846b04eae5641666238384f1051aa55a84d"
+    },
+    "native-control/native-control/input/container_sdk_got.py": {
+      "bytes": 13891,
+      "sha256": "4b39fe00bded39c5a10fdbc4e28c10a5bbcccf0fc34c38da8ef5878d5258f8a9"
+    },
+    "native-control/native-control/input/qwen35_models.cpp": {
+      "bytes": 74067,
+      "sha256": "375f39a305177b8c6c8651b0ce0d59541295c1888a8425fdd23095fe31bdeac4"
+    },
+    "native-control/native-control/input/native_base.py": {
+      "bytes": 28100,
+      "sha256": "0424a2eb3b204e14841b9ee0f32dc8cd475f8208ba7cbb709fb052a97c0af67c"
+    },
+    "native-control/native-control/input/native_batch.py": {
+      "bytes": 10729,
+      "sha256": "14734e70d4544983399bb5975c69f170bd56bdcc436994f72277436b6b5e425d"
+    },
+    "native-control/native-control/input/verify_bindings.py": {
+      "bytes": 3063,
+      "sha256": "1e6f3428d0119e08f86ee8996abb1133b4b999ecab8473d868603896ceb9240e"
+    },
+    "native-control/native-control/input/bridge.h": {
+      "bytes": 10027,
+      "sha256": "ed5cd44f735cbe21160f43fbdec0f4e003acd477497ab4141e2625c37c5b3b69"
+    },
+    "native-control/native-control/input/model_checkpoint.py": {
+      "bytes": 24007,
+      "sha256": "2b245c4c2f25e2b8e53082f0137642c3abca2b201eb6792d0d648c096b984343"
+    },
+    "native-control/native-control/input/bridge.cpp": {
+      "bytes": 73715,
+      "sha256": "57e879da8baf21a7f846cfd1657a4c45d9670b49893ce750c490bbb31dac2115"
+    },
+    "native-control/native-control/input/native_raw_probe.py": {
+      "bytes": 19914,
+      "sha256": "0c6ed626ccb2930cc3d170f1fc034846b04eae5641666238384f1051aa55a84d"
+    }
+  },
+  "status": {
+    "service_source": "latestV3 snapshot; review pending",
+    "harness": "source-only V4b UNBOUND product pin; no optimized host built",
+    "fa4_selector": "current one-file snapshot; CPU integration/review pending",
+    "cold_zero": "focusedCPU6passed; modelchurn/perf pending",
+    "native": "LIGHT actual Root PASS; T7 Root86402 active, not included as acceptedgold"
+  },
+  "do_not_apply_whole_private_tree_to_main": true,
+  "trained_weights_or_large_DSOs": false
+}

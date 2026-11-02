@@ -1,0 +1,69 @@
+Mistral3/Pixtral/Minstrall3 Oxide composer v7 WIP source pins
+=========================================================
+base_head: 55380b7
+base_tree: ba26a6aaf56ee255c3ab9eaf6c27200719768740
+base_overlay: 625DenseV5 + Qwen35 e3c38 + MeanV6 decoder fix 629 CPU six-file working-tree overlay
+patch_sha256: d2150d227f06ceea13a6ced405db5805d0d7bb78952f7d90ea3c341f4334a4a8  selective.patch
+
+Base overlay files:
+a397c445ae9b80f525e901649e79bd67b8e64197cb89b486bb1255672e412f5c  libs/infinity-v3/backends/oxide/src/cublas.rs
+6ec12338e7f48a5745aad5bb7ff3792d9fadd3088992e9eb81ae60b14858c669  libs/infinity-v3/backends/oxide/src/decoder.rs
+4e1a203166759a534e1abc9c278d8bda8d62990e001c0d520cc48e2cb58a67fd  libs/infinity-v3/backends/oxide/src/decoder_model.rs
+4c2d019c6c466eefa3ba4c87df9b541024855fee1d650c60cc8a4505be6ac607  libs/infinity-v3/backends/oxide/src/lib.rs
+3e9555784045218416f828491fd5513754fe73eeb031fc7ef09664d9289e12a3  libs/infinity-v3/backends/oxide/src/native_rope_tables.rs
+22d68ca72825ce1046fa2453d996aaf72c196a13767a42157fba3cdc0fafd6d7  libs/infinity-v3/backends/oxide/src/decoder_classifier.rs
+
+Actual cached trained checkpoint:
+/workspace/model-performance/michaelfeil/benchmark-overview/models/nvidia--Nemotron-3.5-Rerank-8B-BF16
+e1f442a21c464cf54259e7ca2ab09f6777f50a61fbf017efed8e6044894b4303  config.json
+e393acf4755990784568ec2bc8de5d67f94f36b86d056c370b090084e80ea51e  model.safetensors.index.json
+531 tensors, 4 shards; vision 218, projector 4, language 308, score 1
+
+Produced source sha256:
+aa743a3ab1e73ff3d37f57f3032fcafc53fb5b9107b959ec0a85655fbd3e04d9  MISTRAL3.md
+29bb94bdf8eab3fff7268f50b3e91885873aeddaf590443115c7137b6511b468  OFFICIAL-CONFIGS.md
+43b5fd39320ea797a598de48b20de1b30e6f68e504112be0d9cafe83bd6cc3b4  SHARED-DECODER-SPLIT.md
+417e1419525dc4dc6e0a8977366944c3632a7a26f09474119f1a101f18867e10  BASE-PINS.json
+d2150d227f06ceea13a6ced405db5805d0d7bb78952f7d90ea3c341f4334a4a8  selective.patch
+9b316d1ada1afb47290ca466ccc3ec707cffb3911cb3496b819d78d2ad5ad68e  run_cpu_checks.sh
+d9499a6fb1eacc6319799f5b1a04bf5fb724b5c5e66d34286dce13dd265ad758  libs/infinity-v3/backends/core/src/lib.rs
+7afdcc6620dae21635d28daad7937e902ca4c2c822e1d65daf5f43efae47544d  libs/infinity-v3/backends/oxide/src/mistral3.rs
+b54bc07e44684d4851ffdda090b0ae193727eebd5a456e920acc4e84e6ef5f8f  libs/infinity-v3/backends/oxide/src/mistral3_exec.rs
+cd4f3c815be6e6e20e3bae571d130feadba65926f47d0b2880ec13b20c193ce9  libs/infinity-v3/backends/oxide/src/decoder.rs
+a50f0883ecc94e80c4ffd7e6aba64f8c7507692867cec5387cb495fcf7b9e232  libs/infinity-v3/backends/oxide/src/decoder_model.rs
+75cd4d7d2efd1802a0ad56df187c9fc05dc0b7fa95afed62c7480c821915d3f6  libs/infinity-v3/backends/oxide/src/native_rope_tables.rs
+1f07961c72b70c92dcd5c1087b6d98ba8ce10c435e25bf499e0bd3de747ad74b  libs/infinity-v3/backends/oxide/src/lib.rs
+22d68ca72825ce1046fa2453d996aaf72c196a13767a42157fba3cdc0fafd6d7  libs/infinity-v3/backends/oxide/src/decoder_classifier.rs
+a91be1cc254e0bf7df13ddd0d2c12cc79c40c7f1fe86f15051a8ac5c2ecf06dc  libs/infinity-v3/backends/oxide/src/media_bridge.rs
+9905df37e93c3287cd8c171349dfd08df217925e1dc1bc77a5dea09f2cdce6af  libs/infinity-v3/backends/oxide/device/src/mistral3.rs
+42ad7c022555a09746bfbc700064b209cbce9fa0fb9fbe2f796a094b97fd066c  libs/infinity-v3/backends/oxide/device/src/norm3072_exact_vector.rs
+c62137f368fcd4703e283db3ce82b40bbe105f5bfa0f7a4cd893f380cc6e6ac7  libs/infinity-v3/backends/oxide/device/src/main.rs
+d52403766128f34dd58b0e8b2d22b86069d5817964bae3b1aa9e1d15b2bd7364  libs/infinity-v3/backends/oxide/device/build.sh
+9ec1cf1df6dc6ddd260ddbe648bd11747d82a7f266677a5d16ae57cf70aaa642  libs/infinity-v3/backends/oxide/examples/mistral3_admission.rs
+fa33364e7a983ed5e3ac48d8b63245dbd8f53c6e5fcbd014eda1e31c8ea529a9  libs/infinity-v3/backends/oxide/examples/mistral3_engine_qualification.rs
+1004c5e4fb4a2ca81bd678081ba8e2067c37f381c4121a972cfe26faa9e1ba05  libs/infinity-v3/backends/oxide/examples/mistral3_vectors.rs
+0e9fa0a18a5d33e29f2842b73769f81866f39545fa037e664ed84800cc84df7b  libs/infinity-v3/core/src/model_metadata.rs
+87d396433a982f0420cf5d00462b6eb0065645c86270b967da224a07eefcc81a  libs/infinity-v3/core/src/download.rs
+2dc597ede3c83ef12d76e793bdc5632c5e7fab4abba2c8ad8f6831dfb5528e3f  libs/infinity-v3/core/src/lib.rs
+922f357ab75d29b7bb8a1e4a39f01efccf9fb47990de9a245ad6d7f5e971663a  libs/infinity-v3/router/src/lib.rs
+a837dedcb7a0f0a96cf9a4b1a1ac32e1817a22dc5186c0dea87765e9015b1683  native/host-consumer/Cargo.toml
+5275fee536187a5eb39c7540543d6ef3ae4327d769927a32267e961de0185043  native/host-consumer/Cargo.lock
+ec96f8ce0504ec693ac9d409df75ea735609badada3445a13c236793e3e4f4b6  native/host-consumer/src/main.rs
+99105901cc4ddae5204adb8688eebd4cf8133bec099d0bdfdeb324ca431e92d1  native/native_b66_control.py
+3656bd87af8ae26df06efb4b8d1f9367775593f249ea6af6411dc7296c27a5f8  native/root_native_cpu_stage.py
+3b4247c35a0c04016093732d3e6e51efb0b3a9ff7597e676b89cce7d5e80f88f  native/root_paired_controller.py
+a11cf9ee05b971c8a427bf671ae2b16b776c06a447644d6d94b7cf1754f627b1  native/remote_guard.py
+d5ec1acabbdef141220e020653073f2ed6c7d90e1432a2ffeeeb62086cc7f094  native/root_device_abi.json
+f4e3df7570689ec4a0eda5152a767581704b67207e779b0174292f81fe85938d  native/src/mistral3_runner.cpp
+d80effba3f742d44dadb65793a45831c1d7689b8a5060b42d9a608a93b2fa5e6  native/include/mistral3_b66.h
+45afdd48cca7de83cf1784137511d82f7bf022b7650ef6319f8e55d56f99097f  native/consumer/src/main.rs
+e1f442a21c464cf54259e7ca2ab09f6777f50a61fbf017efed8e6044894b4303  native/original-config.json
+431413b7eee4dc0dae4cf2bacc66e89a4f951ae82026d827a0b019eade2fb04b  fixtures/make_fixtures.py
+13b62788530d9d6a392627ad7749bd51839cbb87f7659e5e10fff23ff0d4b30e  fixtures/processor-cases.json
+0750bcb0261d4db49072e0f3928f5c375fc7d5e5b9de276afd02baa3d1c6e5c2  native/container_sdk_got.py
+8c62fd59cda3e30e1468508e332ad41a59fe800a2298afca10d03df4fff60a34  native/root_staged_controller.py
+ed5cd44f735cbe21160f43fbdec0f4e003acd477497ab4141e2625c37c5b3b69  native/include/bridge.h
+ad3a49593d23ff969e4646585649fe4f5807fdc7d5c97f0b58357201980b43fe  native/test_staged_controller.py
+4722a71176eeb97b57cd40c637b3345ce10683fc519235f83720b822c1db0190  libs/infinity-v3/backends/oxide/device/src/mistral3_model_mean.rs
+19dd40b063e857aa170e9fd87346f193c43028b13abc20fe255bab764488a092  DEVICE-REQUEST.md
+668475503b366edd676690e59c322c86ebd8d75d70facc0d2eab32f15cee4868  ATEN-MEAN-PLAN.md

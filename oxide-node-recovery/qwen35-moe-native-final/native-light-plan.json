@@ -1,0 +1,39 @@
+{
+  "schema": "oxide-q35moe-root-control-plan/v4",
+  "phase": "light",
+  "run": false,
+  "mode": "cpu-source-plan-only",
+  "container": "infinity-torch214-compare-sdk",
+  "container_run_dir": "/tmp/qwen35-moe-sdk-root-v1/q35moe-native-light-v1",
+  "commands": [
+    {
+      "label": "light",
+      "env": {
+        "CUDA_VISIBLE_DEVICES": "",
+        "LD_BIND_NOW": "1",
+        "LD_PRELOAD": "/tmp/oxide-host-cublas-130200/libcublasLt.so.13:/tmp/oxide-host-cublas-130200/libcublas.so.13",
+        "LD_LIBRARY_PATH": "/tmp/oxide-host-cublas-130200",
+        "INFINITY_BENCH_REQUIRE_HOST_VENDOR": "1"
+      },
+      "copy_back": [
+        "light.json"
+      ],
+      "argv": [
+        "/opt/torch-sdk/bin/python3.12",
+        "/tmp/qwen35-moe-sdk-root-v1/q35moe-native-light-v1/native_light.py",
+        "--container",
+        "--model",
+        "/bench/michaelfeil/onejev-perf/models/qwen35-35b-a3b",
+        "--sdk",
+        "/tmp/native214-fa4-mode20/install/lib/libtei_torch.so",
+        "--vendor",
+        "/tmp/oxide-host-cublas-130200",
+        "--bridge-header",
+        "/tmp/qwen35-moe-sdk-root-v1/q35moe-native-light-v1/bridge.h",
+        "--output",
+        "/tmp/qwen35-moe-sdk-root-v1/q35moe-native-light-v1/light.json"
+      ]
+    }
+  ],
+  "note": "docker exec existing container only; --run required"
+}

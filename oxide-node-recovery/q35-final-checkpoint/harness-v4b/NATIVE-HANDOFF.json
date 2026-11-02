@@ -1,0 +1,63 @@
+{
+  "schema": "oxide-q35moe-unified-to-native-handoff/v1",
+  "status": "v4b-source-updated-unbuilt-no-cpu-build-no-gpu",
+  "product_source": "/tmp/oxide-all-model-feature-matrix-v1/qwen35-moe-factory-service-blocking-v2",
+  "product_freeze_sha256": "UNBOUND",
+  "product_freeze_sha256_policy": "explicit UNBOUND placeholder; Codex binds the final product sha256 before any build",
+  "product_read_or_compiled": false,
+  "native_control_path": "/tmp/oxide-q35moe-native-runtime-control-v2",
+  "native_writer": "separate Native author; this harness does not write Native/controller code",
+  "fixture_contract": {
+    "t9": {
+      "input_ids": [20, 33, 46, 59, 72, 85, 98, 111, 124],
+      "position_ids": [0, 1, 2, 3, 4, 5, 6, 7, 8],
+      "token_type_ids": [0, 0, 0, 0, 0, 0, 0, 0, 0],
+      "cumulative_seq_lengths": [0, 9],
+      "max_length": 9,
+      "pooled_indices": [0],
+      "raw_indices": []
+    },
+    "duplicate_t7": "valid normal metadata; canonicalizes duplicate pooled/raw selection",
+    "duplicate_raw_t7": "valid normal metadata; canonicalizes duplicate raw selection",
+    "no_capacity_guard": "no arbitrary selected_rows <= tokens + sequences rejection in the harness",
+    "sha256_owner": "control/generate_fixtures.py emits the t9 manifest sha256 before freeze/build"
+  },
+  "source_report": {
+    "schema": "oxide-q35moe-unified-runtime-report/v1",
+    "mode": "quality",
+    "path": "quality.cases"
+  },
+  "normalized": {
+    "schema": "oxide-q35moe-native-quality-normalized/v1",
+    "fields": {
+      "name": "exact fixture name",
+      "valid": "boolean",
+      "status": "ok for expected valid numeric or exact expected invalid variant",
+      "batch_sha256": "fixture file sha256",
+      "batch_fingerprint_sha256": "canonical seven-field JSON fingerprint",
+      "shape": {"D": "final pooled width", "H": "hidden width"},
+      "outputs": [
+        {
+          "index": "canonical Embeddings map index",
+          "kind": "pooled|raw",
+          "shape": "canonical shape",
+          "values": "real F32 JSON words",
+          "bits_u32": "f32::to_bits per value"
+        }
+      ],
+      "expected_error_variant": "only for invalid cases",
+      "actual_error_variant": "only for invalid cases"
+    },
+    "ordering": "cases by manifest order; outputs by canonical index",
+    "empty_outputs": "semantic-only; entry_count=0 is not a numeric pass",
+    "invalid": "compare exact BackendError variant; never compare error strings as gold and never count unexpected/invalid as a pass",
+    "lifecycle": "life-service/life-core reports are harness lifecycle evidence, not Native quality gold; core third-held submit must be exercised from an owned worker because the common two-slot pool blocks while both results are held",
+    "no_flattening": "identity index/kind/shape and F32 words/bits must remain grouped per entry"
+  },
+  "comparison": {
+    "numeric": "exact F32 bits by default; no tolerance",
+    "identity": "index, kind and shape must match before words",
+    "invalid": "exact expected/actual variant equality",
+    "fatal": "controller fails fatal; expected invalid is only a known manifest variant, not arbitrary BackendError"
+  }
+}

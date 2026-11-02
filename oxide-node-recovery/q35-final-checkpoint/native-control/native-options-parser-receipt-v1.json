@@ -1,0 +1,19 @@
+{
+  "schema": "q35moe-native-options-source-regression/v1",
+  "status": "passed",
+  "execution": "verbatim AST pure closures from pinned native_base plus actual native_gold.build_pool_options",
+  "parser_mocked": false,
+  "native_base_sha256": "0424a2eb3b204e14841b9ee0f32dc8cd475f8208ba7cbb709fb052a97c0af67c",
+  "native_gold_sha256": "afbcca4ddab2ab3e03f9e045125d7bfb5c65c82a831de4372daaa530f08bf70d",
+  "numeric_max_bytes": 536870912,
+  "old_unit_string_rejected": true,
+  "default_tokens_entries_reuse_captures": [
+    4096,
+    4,
+    3,
+    8
+  ],
+  "torch_imported": false,
+  "engine_created": false,
+  "gpu_executed": false
+}

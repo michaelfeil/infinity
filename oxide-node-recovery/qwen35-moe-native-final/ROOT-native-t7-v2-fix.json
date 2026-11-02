@@ -1,0 +1,5 @@
+{
+  "old_sha256": "47ac651fc3800f5cf36f31fb35bb5438fc960023807c8d37e8900beed208756d",
+  "new_sha256": "aa6078059eea41573dfed4d05e7ca6ff865ec3ad25b814f2db46bc1bcf1d46bf",
+  "reason": "Actual native_base.env_int rejects 512MiB string; equivalent 536870912 bytes preserves512MiB policy. New label/report/logs preserve failedV1."
+}

@@ -1,0 +1,13 @@
+{
+  "ok": true,
+  "errors": [],
+  "checkpoint": "/workspace/model-performance/michaelfeil/benchmark-overview/models/nvidia--Nemotron-3.5-Rerank-8B-BF16",
+  "tensor_count": 531,
+  "shards": 4,
+  "categories": {
+    "vision": 218,
+    "projector": 4,
+    "language": 308,
+    "score": 1
+  }
+}

@@ -1,0 +1,11 @@
+{
+  "scope": "Root diagnostic raw-only correspondence, canonical raw overrides pooled at same index; original controller failure preserved. No pooled parity claim.",
+  "elements": 357376,
+  "max_abs": 29.75,
+  "max_index": 316831,
+  "native_at_max": 29.75,
+  "oxide_at_max": 0.0,
+  "f32_mismatches": 325062,
+  "mean_abs": 0.23519036161011475,
+  "all_finite": true
+}

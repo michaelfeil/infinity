@@ -1,0 +1,94 @@
+{
+  "schema": "q35moe-native-cpu-stage-freeze/v1",
+  "source_root": "/tmp/infinity-oxide-parity-20261101/q35moe-runtime-handoff-v1/native-control",
+  "files": {
+    "test_control.py": {
+      "sha256": "52c33dce7b4d1081269e60f183ce76432d8a8bac7fde5e542183668f43fed0e6",
+      "bytes": 19828
+    },
+    "CONTRACT.json": {
+      "sha256": "cee51fc41089e0261bf1ee264b721cab034e7dac8ab152627f5c9abccece90a2",
+      "bytes": 4372
+    },
+    "root_control.py": {
+      "sha256": "0cf60cd6c650113e6b92e4587567edff657deda564634c0180ed73de1ee4e23f",
+      "bytes": 21854
+    },
+    "strict_compare.py": {
+      "sha256": "a747dc0aff08079af6f277ab53fe0ee92c560a2193b54ece335249fbe9925673",
+      "bytes": 29864
+    },
+    "test_readiness.py": {
+      "sha256": "277307e76c69e143fc8778e0acf521764dd78b29b71badc88cf34e0c9f9f6039",
+      "bytes": 6789
+    },
+    "remote_guard.py": {
+      "sha256": "e6dfe6c71c5eb68f481e269788219a938b12f3b0aaddfcda4ad9fc3ed4c2d76e",
+      "bytes": 4939
+    },
+    "native_light.py": {
+      "sha256": "55773f59d85a85d6fb0b045be6855cd95f87433bb170ea8dbefcc1caa6ce28c3",
+      "bytes": 20488
+    },
+    "native_gold.py": {
+      "sha256": "afbcca4ddab2ab3e03f9e045125d7bfb5c65c82a831de4372daaa530f08bf70d",
+      "bytes": 17185
+    },
+    "input/container_sdk_got.py": {
+      "sha256": "4b39fe00bded39c5a10fdbc4e28c10a5bbcccf0fc34c38da8ef5878d5258f8a9",
+      "bytes": 13891
+    },
+    "input/qwen35_models.cpp": {
+      "sha256": "375f39a305177b8c6c8651b0ce0d59541295c1888a8425fdd23095fe31bdeac4",
+      "bytes": 74067
+    },
+    "input/native_base.py": {
+      "sha256": "0424a2eb3b204e14841b9ee0f32dc8cd475f8208ba7cbb709fb052a97c0af67c",
+      "bytes": 28100
+    },
+    "input/native_batch.py": {
+      "sha256": "14734e70d4544983399bb5975c69f170bd56bdcc436994f72277436b6b5e425d",
+      "bytes": 10729
+    },
+    "input/verify_bindings.py": {
+      "sha256": "1e6f3428d0119e08f86ee8996abb1133b4b999ecab8473d868603896ceb9240e",
+      "bytes": 3063
+    },
+    "input/bridge.h": {
+      "sha256": "ed5cd44f735cbe21160f43fbdec0f4e003acd477497ab4141e2625c37c5b3b69",
+      "bytes": 10027
+    },
+    "input/model_checkpoint.py": {
+      "sha256": "2b245c4c2f25e2b8e53082f0137642c3abca2b201eb6792d0d648c096b984343",
+      "bytes": 24007
+    },
+    "input/bridge.cpp": {
+      "sha256": "57e879da8baf21a7f846cfd1657a4c45d9670b49893ce750c490bbb31dac2115",
+      "bytes": 73715
+    },
+    "input/native_raw_probe.py": {
+      "sha256": "0c6ed626ccb2930cc3d170f1fc034846b04eae5641666238384f1051aa55a84d",
+      "bytes": 19914
+    }
+  },
+  "cpu_tests": {
+    "count": 43,
+    "passed": 43,
+    "log": "/tmp/infinity-oxide-parity-20261101/q35moe-runtime-handoff-v1/native-control-tests-v7-hostproc.log",
+    "log_sha256": "bc23189539e8c941f375900669072a08edaa956e09491401c65e3a52dccf9a2f",
+    "matching_proc_required": true
+  },
+  "gpu_executed": false,
+  "torch_executed": false,
+  "docker_executed": false,
+  "source_only_review": "/tmp/oxide-q35moe-native-control-review-v2/REVIEW.json",
+  "closure": {
+    "all_required_sources_before_stage": "implemented and actual missing-source+actual staging tests passed",
+    "gold_missing_source_None": "implemented and actual source_hashes negative passed",
+    "numeric_empty_quality": "rejected by actual check_phase CPU test",
+    "proxy_values": "fixed literal key/value allowlist; proxy/CA passthrough by name only, actual synthetic sentinel test passed",
+    "guard_namespace_and_identity": "actual owned CPU dummy launch/stop/mismatch/reject escape passed"
+  },
+  "actual_sdk_stage_pending": true,
+  "actual_native_gold_exists": false
+}

@@ -1,0 +1,6 @@
+# Install with --no-deps after requirements-build.txt.
+# Quack's metadata pins CuTe 4.6.0.dev0. InfinityFA4 validates its imported
+# helpers with CuTe 4.7.1; it does not export Quack's GEMM kernels.
+quack-kernels==0.5.3
+# The FA4 export API and these source/helper versions are validated together.
+flash-attn-4 @ git+https://github.com/Dao-AILab/flash-attention.git@e9cf2c1651d2303191eb40a739a3c135fda00999#subdirectory=flash_attn/cute

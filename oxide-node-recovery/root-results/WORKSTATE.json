@@ -346,5 +346,13 @@
   "q35moe_native_light_actual_v2": {
     "status": "PASS actualSDK/GOT1811tensors14shards noengine/payload",
     "report": "/tmp/infinity-oxide-parity-20261101/q35moe-runtime-handoff-v1/root-native-light-v2.report.json"
+  },
+  "emergency_recovery": {
+    "branch": "wip/oxide-node-recovery-20261102",
+    "reason": "GPU node shutdown/data loss",
+    "native_q35moe_t7": "Actual passed: full model loaded onH100; oneT7BF16mean case; repeatidentity, source/config/headerpins stable. No OxideMoE3.5 quality/perfclaim.",
+    "qwen3vl_budget_actual": "Failed Inference(tensor view exceeds its device buffer); no output qualification.",
+    "node_gpu_jobs": "Root Native86402 complete0; QV3 11916 complete1; no Root GPU jobs running",
+    "pending_scope": "Q35VL numeric mismatch; MistralV7 unrevalidated; Q35MoE latestharness unbound/nooptimizedbuild; sharedFA431 review/assembledCPU pending"
   }
 }

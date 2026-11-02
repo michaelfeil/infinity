@@ -1,0 +1,76 @@
+{
+  "environment": {
+    "CUDA_VISIBLE_DEVICES": "0",
+    "gpu": "0",
+    "native_graphs": true,
+    "one_engine_at_a_time": true,
+    "oxide_graphs": false,
+    "vendor_version": 130200
+  },
+  "pool": "mean",
+  "preflight": {
+    "cases": [
+      {
+        "batch": "/tmp/oxide-qwen3-moe-paired-performance-v2/oxide-perf/cases/t7.json",
+        "bytes": 370,
+        "id": "t7",
+        "sha256": "d310918e4d36acda95d7de58ea212080d46e45bcef0d550193e38b60167a6f8a"
+      },
+      {
+        "batch": "/tmp/oxide-qwen3-moe-paired-performance-v2/oxide-perf/cases/ragged129.json",
+        "bytes": 3402,
+        "id": "ragged129",
+        "sha256": "d9a3e4539b5349fc18a702a1a04f303ede29dbfd0da8793368745f3274cb10d1"
+      },
+      {
+        "batch": "/tmp/oxide-qwen3-moe-paired-performance-v2/oxide-perf/cases/stable2k.json",
+        "bytes": 30370,
+        "id": "stable2k",
+        "sha256": "22c0b44d246e8d5920616d3343ba19932bf44af071419371938d8f7318a2125d"
+      }
+    ],
+    "docker_container": "infinity-torch214-compare-sdk",
+    "docker_selectors_cleared": [
+      "DOCKER_HOST",
+      "DOCKER_CONTEXT",
+      "DOCKER_TLS_VERIFY",
+      "DOCKER_CERT_PATH",
+      "DOCKER_API_VERSION"
+    ],
+    "docker_socket": "unix:///var/run/docker.sock",
+    "gold": {
+      "ragged129": {
+        "batch_sha256": "d9a3e4539b5349fc18a702a1a04f303ede29dbfd0da8793368745f3274cb10d1",
+        "native_report": "/tmp/infinity-oxide-parity-20261101/qwen3-moe-native-capi-v1/root-native-quality-all-v1/mean/ragged129-mixed.json",
+        "sha256": "0eeee85e0f91a681f8ca489f52ab191be277628a1a2cfedfb901ed698f49dbde"
+      },
+      "t7": {
+        "batch_sha256": "d310918e4d36acda95d7de58ea212080d46e45bcef0d550193e38b60167a6f8a",
+        "native_report": "/tmp/infinity-oxide-parity-20261101/qwen3-moe-native-capi-v1/root-native-quality-all-v1/mean/ragged7-pooled.json",
+        "sha256": "02a3fa1fa513d5edf955d32f28332b47906736e29f132b2378cd2efe21916307"
+      }
+    },
+    "host_vendor": 130200,
+    "kernel_root": "/tmp/oxide-moe-root629-v8-public126-bundle-v1",
+    "missing_inputs": [],
+    "model": {
+      "config_sha256": "2850ddb3bf7aecad20b611e2d44f3077fc8193f4827c93beddd4c02ad63c2297",
+      "manifest_sha256": "55be60f3bdfa41310a73bde32d2fdd352a3f11c6e4f3c2cc4affa2f16550fc88"
+    },
+    "native_helper": "/tmp/infinity-oxide-parity-20261101/qwen3-moe-native-capi-v1/bench_helper.so",
+    "native_model_container_path": "/bench/michaelfeil/oxide-staged-qwen3-moe-ad44e777",
+    "native_sdk_container": "/tmp/native214-fa4-mode20/install/lib/libtei_torch.so",
+    "public_commit": "252789b05ea2e09c14971c04dfcce458f863fead",
+    "schema": "qwen3-moe-paired-perf-preflight/v1",
+    "sidecar_root": "/tmp/oxide-moe-root629-v8-public126-bundle-v1/moe",
+    "status": "cpu-prepared"
+  },
+  "schema": "qwen3-moe-paired-perf/v1",
+  "status": "cpu-prepared",
+  "windows_order": [
+    "native-1",
+    "oxide-1",
+    "oxide-2",
+    "native-2"
+  ]
+}
