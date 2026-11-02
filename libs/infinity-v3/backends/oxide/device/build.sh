@@ -175,6 +175,10 @@ symbols = sorted(symbols + ["infinity_gemma2_norm_bf16_f32scale",
                             "infinity_gemma2_scale_bf16",
                             "infinity_gemma2_rope_tables_bf16",
                             "infinity_gemma2_mean_pool_bf16"])
+# Additive Gemma3 text exports: legacy +1 RMS norm trees and packed Q/K rotary.
+symbols = sorted(symbols + ["infinity_gemma3_rms_norm_bf16_f32scale",
+                            "infinity_gemma3_residual_norm_bf16_f32scale",
+                            "infinity_gemma3_qk_norm_rope_bf16"])
 
 # Additive optional encoder-activation exports live in their own leaf file so
 # composing another additive leaf cannot overwrite this source. The original
@@ -249,6 +253,7 @@ manifest["sources"]["src/colbert.rs"] = digest(root / "src/colbert.rs")
 manifest["sources"]["colbert_exports.txt"] = digest(root / "colbert_exports.txt")
 manifest["sources"]["SPARSE_COLBERT_ABI.json"] = digest(root / "SPARSE_COLBERT_ABI.json")
 manifest["sources"]["src/gemma2.rs"] = digest(root / "src/gemma2.rs")
+manifest["sources"]["src/gemma3.rs"] = digest(root / "src/gemma3.rs")
 manifest["sources"]["src/modern_norm1024.rs"] = digest(root / "src/modern_norm1024.rs")
 manifest["sources"]["src/plain_layer_norm_aten.rs"] = digest(root / "src/plain_layer_norm_aten.rs")
 manifest["sources"]["src/encoder_activation.rs"] = digest(root / "src/encoder_activation.rs")

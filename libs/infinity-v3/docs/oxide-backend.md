@@ -45,6 +45,12 @@ variant of these families.
 | Qwen3.5 dense text | BF16, d256 heads, partial rotary width 64, gated full attention and 128-wide GDN heads. Hidden width is at most 8192; the actual GQA ratio requires a matching FA4 profile. Query width may differ from hidden width. Model geometry is validated structurally rather than by checkpoint name. |
 | Llama | Hidden width 2048, dense SiLU, `default` RoPE with optional Native Llama3 NTK-by-parts scaling, and global causal or noncausal attention. The `llama_bidirec` alias normalizes to Llama and the bidirectional sequence head admits mean-pooled `LlamaBidirectionalForSequenceClassification` checkpoints with their optional temperature divisor. TinyLlama's 32 Q/4 KV heads at d64 and Nemotron rerank's 32 Q/8 KV d64 both require matching FA4 profiles. H4096 stays deferred. |
 
+Gemma3 text adds the documented Harrier 270M/27B and KaLM 12B configurations:
+BF16 H640/H3840/H5376, checkpoint-defined local/global attention, offset RMS
+scales, Q/K norms, embedding scaling and per-layer residual norms. Raw and
+pooled embeddings use the normal factory and deferred ownership. Trained
+checkpoint and performance qualification are pending.
+
 MPNet uses a separate [native attention provider](../backends/oxide/vendor/mpnet_attention/README.md),
 selected with `INFINITY_OXIDE_MPNET_ATTENTION_ROOT`. It shares the encoder
 workspace, deferred results, pooling, raw output and Dense-module handling.
@@ -65,7 +71,10 @@ ColBERT executes the trained token projection and model-dtype L2 normalization;
 query MASK rows remain output queries while excluded attention keys and document
 punctuation follow the tokenizer policy. Both paths share request ownership and
 deferred completion with ordinary encoders. These additions have CPU validation;
-device primitive and trained-checkpoint qualification remain separate gates.
+trained-checkpoint qualification remains a separate gate. The new plain
+LayerNorm, DeBERTa residual LayerNorm and ColBERT L2 operators match Native CUDA
+exactly across 243 cases and 1,411,840 values on H100, with zero memcheck or
+initcheck errors. See [the scoped evidence](oxide-encoder-primitives-qualification.json).
 
 Qwen3.5 uses the common serving constructor for ordinary text embeddings and
 OneJev lexical Decision heads. The checkpoint's modeling metadata selects causal
@@ -80,7 +89,7 @@ Elephant and Mammoth have separate native text and single-question Decision
 qualification; this does not establish every Qwen3.5 geometry or performance.
 The cold runtime dependencies are selected by `INFINITY_FA4_ROOT`,
 `INFINITY_OXIDE_GDN_RAW_KERNELS`, `INFINITY_OXIDE_GDN_PROVIDER`, and
-`INFINITY_OXIDE_GDN_AUX_KERNELS`. The current combined builder emits 112 Rust
+`INFINITY_OXIDE_GDN_AUX_KERNELS`. The current combined builder emits 115 Rust
 exports; Qwen3.5 requires its nine additive exports. Dense decoders require the
 90-export bundle or newer for Native BF16 mean pooling. Other existing families
 can retain their older qualified bundles. H5120 Qwen3 requires the additive

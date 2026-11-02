@@ -36,6 +36,15 @@ mod gdn_aot_provider;
 #[allow(dead_code)]
 pub mod gdn_prepared;
 pub mod gemma2_math;
+mod gemma3_executor;
+#[cfg_attr(not(test), allow(dead_code))]
+mod gemma3_model;
+#[cfg_attr(not(test), allow(dead_code))]
+mod gemma3_prepared;
+#[cfg(test)]
+mod gemma3_reference;
+#[allow(dead_code)]
+mod gemma3_tables;
 mod head_linear;
 mod input_layout;
 mod jina_code_encoder_model;
@@ -129,6 +138,8 @@ use decoder_model::{DecoderConfig, DecoderFamily, DecoderWeights};
 use dense::{DenseChainHost, DenseHead, DenseWork};
 use encoder_linear::ProjectionPlan;
 use encoder_policy::{EmbeddingInputs, ModernEncoder};
+use gemma3_executor::Gemma3Model;
+use gemma3_model::{Gemma3Config, Gemma3Weights};
 use infinity_v3_backend_core::{
     result_memory, Backend, BackendError, Batch, DecisionInput, DecisionOutput, Embedding,
     Embeddings, Inference, ModelType, Pool, Predictions, TokenPredictions,
@@ -1468,6 +1479,7 @@ enum ExecutableModel {
     Encoder(Box<EncoderModel<Bf16>>),
     EncoderF16(Box<EncoderModel<F16>>),
     Decoder(Box<decoder::DecoderModel>),
+    Gemma(Box<Gemma3Model>),
     Qwen35(Box<qwen35_runtime::Qwen35Model>),
 }
 impl ExecutableModel {
@@ -1493,7 +1505,7 @@ impl ExecutableModel {
         match self {
             Self::Encoder(model) => model.kernels.raw_cast.is_some(),
             Self::EncoderF16(model) => model.kernels.raw_cast.is_some(),
-            Self::Modern(_) | Self::Decoder(_) | Self::Qwen35(_) => true,
+            Self::Modern(_) | Self::Decoder(_) | Self::Gemma(_) | Self::Qwen35(_) => true,
         }
     }
     fn preflight(
@@ -1534,6 +1546,7 @@ impl ExecutableModel {
                 }
                 model.preflight(provider, batch, pool)
             }
+            Self::Gemma(model) => model.preflight(provider, batch, pool),
             Self::Qwen35(model) => model.preflight(batch),
         }
     }
@@ -1551,6 +1564,7 @@ impl ExecutableModel {
             Self::EncoderF16(model) => model.config.hidden_size,
             Self::Modern(model) => model.config.geometry.hidden_size,
             Self::Decoder(model) => model.config.hidden_size,
+            Self::Gemma(model) => model.config.hidden_size,
             Self::Qwen35(model) => model.weights.config.hidden_size,
         }
     }
@@ -1628,7 +1642,7 @@ impl ExecutableModel {
                 .as_ref()
                 .map(|classifier| classifier.scratch_layout(key))
                 .transpose(),
-            Self::EncoderF16(_) | Self::Decoder(_) | Self::Qwen35(_) => Ok(None),
+            Self::EncoderF16(_) | Self::Decoder(_) | Self::Gemma(_) | Self::Qwen35(_) => Ok(None),
         }
     }
     fn workspace_bytes(&self, key: WorkKey) -> Result<usize, BackendError> {
@@ -1650,6 +1664,7 @@ impl ExecutableModel {
                 self.classifier_layout(key)?,
             ),
             Self::Decoder(model) => model.workspace_bytes(key),
+            Self::Gemma(model) => model.workspace_bytes(key),
             Self::Qwen35(model) => model.workspace_bytes(key),
         }
     }
@@ -1678,6 +1693,7 @@ impl ExecutableModel {
                 self.classifier_layout(key)?,
             )?)),
             Self::Decoder(model) => Ok(Workspace::Decoder(model.workspace(stream, key)?)),
+            Self::Gemma(model) => Ok(Workspace::Decoder(model.workspace(stream, key)?)),
             Self::Qwen35(model) => Ok(Workspace::Qwen35(Box::new(model.workspace(stream, key)?))),
         }
     }
@@ -1693,7 +1709,7 @@ impl ExecutableModel {
                 },
                 width: model.classifier_width().unwrap_or(0),
             }),
-            Self::EncoderF16(_) | Self::Qwen35(_) => None,
+            Self::EncoderF16(_) | Self::Gemma(_) | Self::Qwen35(_) => None,
         }
     }
 }
@@ -3651,6 +3667,10 @@ impl Engine {
                 }
                 Ok(())
             }
+            (ExecutableModel::Gemma(model), Workspace::Decoder(work)) => {
+                model.enqueue(lt, plain_blas, s, work, b, pool, max_length, tokens)?;
+                Ok(())
+            }
             (ExecutableModel::Qwen35(model), Workspace::Qwen35(work)) => model
                 .enqueue(
                     plain_blas.ok_or_else(|| infer("Qwen3.5 requires plain cuBLAS"))?,
@@ -4844,6 +4864,7 @@ enum LoadedConfig {
     Modern(ModernConfig),
     Encoder(BertConfig),
     Decoder(DecoderConfig),
+    Gemma(Gemma3Config),
     Qwen35(qwen35_config::Qwen35Config),
     Qwen35Block(qwen35_config::Qwen35Config, usize),
     Qwen35DynamicBlock(qwen35_config::Qwen35Config),
@@ -4855,6 +4876,7 @@ impl LoadedConfig {
             Self::Encoder(config) => config.hidden_size,
             Self::Modern(config) => config.geometry.hidden_size,
             Self::Decoder(config) => config.hidden_size,
+            Self::Gemma(config) => config.hidden_size,
             Self::Qwen35(config)
             | Self::Qwen35Block(config, _)
             | Self::Qwen35DynamicBlock(config) => config.hidden_size,
@@ -4865,6 +4887,7 @@ impl LoadedConfig {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum CheckpointArchitecture {
     Decoder,
+    Gemma,
     Modern,
     Nomic,
     Jina,
@@ -4892,6 +4915,9 @@ fn selects_architecture(
     }
     if DecoderFamily::is_decoder_model_type(model_type) {
         return Ok(CheckpointArchitecture::Decoder);
+    }
+    if matches!(model_type, "gemma3_text" | "gemma3") {
+        return Ok(CheckpointArchitecture::Gemma);
     }
     if jina_encoder_model::is_jina_code_marker(head) {
         return Ok(CheckpointArchitecture::JinaCode);
@@ -5049,6 +5075,18 @@ impl OxideBackend {
         let admitted_model_type = model_type.clone();
         let mut deberta_host = None;
         let early_architecture = detects_architecture(path)?;
+        if early_architecture == CheckpointArchitecture::Gemma {
+            if precision != EncoderPrecision::Bf16 {
+                return Err(start("Gemma3 is admitted only for the BF16 runtime"));
+            }
+            if model_type == ModelType::Classifier {
+                return Err(start(
+                    "Gemma3 text embeddings do not expose a trained sequence head in Native",
+                ));
+            }
+            let config = Gemma3Config::load(path)?;
+            gemma3_executor::validate_admission(&config)?;
+        }
         if early_architecture == CheckpointArchitecture::Decoder {
             let config = DecoderConfig::load(path)?;
             validate_moe_admission(&config, dtype, &admitted_model_type, moe_candidate)?;
@@ -5296,6 +5334,30 @@ impl OxideBackend {
                         None,
                         attention_length_limit,
                         None,
+                        output_width,
+                    )
+                } else if architecture == CheckpointArchitecture::Gemma {
+                    let host = Gemma3Weights::load(path)?;
+                    let config = host.config.clone();
+                    gemma3_executor::validate_admission(&config)?;
+                    let dense_host = DenseChainHost::load_with_paths(
+                        path,
+                        config.hidden_size,
+                        dense_paths.clone(),
+                    )?;
+                    let output_width = dense_host
+                        .as_ref()
+                        .map_or(config.hidden_size, DenseChainHost::output_width);
+                    let model = Gemma3Model::new(host, &context, &stream, &lt)?;
+                    let dense = dense_host
+                        .map(|host| DenseHead::new(host, &context, &stream, &lt))
+                        .transpose()?;
+                    (
+                        ExecutableModel::Gemma(Box::new(model)),
+                        LoadedConfig::Gemma(config),
+                        Some(Blas::new(context.clone(), stream.clone())?),
+                        None,
+                        dense,
                         output_width,
                     )
                 } else if decoder {
@@ -6451,6 +6513,7 @@ fn validate_loaded(batch: &Batch, config: &LoadedConfig) -> Result<usize, Backen
             validate_encoder_inputs(batch, &config.geometry, EmbeddingInputs::WordsOnly)
         }
         LoadedConfig::Decoder(config) => validate_decoder(batch, config),
+        LoadedConfig::Gemma(config) => validate_gemma3(batch, config),
         LoadedConfig::Qwen35(c) => validate_qwen35_batch(batch, c),
         LoadedConfig::Qwen35Block(c, prefix) => {
             crate::qwen35_block_layout::validate_block_token_count(batch.input_ids.len())?;
@@ -6476,8 +6539,31 @@ fn validate_loaded(batch: &Batch, config: &LoadedConfig) -> Result<usize, Backen
     }
 }
 
-fn validate_decoder(batch: &Batch, c: &DecoderConfig) -> Result<usize, BackendError> {
-    let fail = || infer("Invalid or unsupported packed oxide decoder batch");
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum DecoderTypeIds {
+    /// Legacy decoder policy: type ids are staged but must all be zero.
+    ZeroOnly,
+    /// Gemma3 text consumes no type ids; values are ignored after length checks.
+    IgnoreValues,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct DecoderBatchShape {
+    vocab_size: usize,
+    max_position_embeddings: usize,
+    q_width: usize,
+    kv_width: usize,
+    intermediate_size: usize,
+    hidden_size: usize,
+    type_ids: DecoderTypeIds,
+    message: &'static str,
+}
+
+/// Shared decoder-shaped admission. Family configs supply only scalar geometry
+/// and their type-id policy; packed metadata, boundaries and checked products
+/// are validated identically.
+fn validate_decoder_batch(batch: &Batch, shape: DecoderBatchShape) -> Result<usize, BackendError> {
+    let fail = move || infer(shape.message);
     let tokens = batch.input_ids.len();
     let sequences = batch
         .cumulative_seq_lengths
@@ -6500,7 +6586,7 @@ fn validate_decoder(batch: &Batch, c: &DecoderConfig) -> Result<usize, BackendEr
         || batch.compact_position_ids.is_some()
         || batch.scatter_unfold.is_some()
         || batch.fold_gather.is_some()
-        || (c.family != DecoderFamily::Qwen3Moe
+        || (shape.type_ids == DecoderTypeIds::ZeroOnly
             && batch.token_type_ids.iter().any(|&kind| kind != 0))
     {
         return Err(fail());
@@ -6511,7 +6597,7 @@ fn validate_decoder(batch: &Batch, c: &DecoderConfig) -> Result<usize, BackendEr
             return Err(fail());
         };
         let length = end.checked_sub(start).filter(|n| *n > 0).ok_or_else(fail)? as usize;
-        if length > c.max_position_embeddings {
+        if length > shape.max_position_embeddings {
             return Err(fail());
         }
         max_length = max_length.max(length);
@@ -6522,19 +6608,53 @@ fn validate_decoder(batch: &Batch, c: &DecoderConfig) -> Result<usize, BackendEr
             .iter()
             .chain(&batch.raw_indices)
             .any(|&i| i as usize >= sequences)
-        || batch.input_ids.iter().any(|&i| i as usize >= c.vocab_size)
+        || batch
+            .input_ids
+            .iter()
+            .any(|&i| i as usize >= shape.vocab_size)
         || batch
             .position_ids
             .iter()
-            .any(|&i| i as usize >= c.max_position_embeddings)
+            .any(|&i| i as usize >= shape.max_position_embeddings)
     {
         return Err(fail());
     }
-    u32_size(product(tokens, c.q_width())?)?;
-    u32_size(product(tokens, c.kv_width())?)?;
-    u32_size(product(tokens, c.intermediate_size)?)?;
-    u32_size(product(tokens, c.hidden_size)?)?;
+    u32_size(product(tokens, shape.q_width)?)?;
+    u32_size(product(tokens, shape.kv_width)?)?;
+    u32_size(product(tokens, shape.intermediate_size)?)?;
+    u32_size(product(tokens, shape.hidden_size)?)?;
     Ok(max_length)
+}
+fn validate_decoder(batch: &Batch, c: &DecoderConfig) -> Result<usize, BackendError> {
+    validate_decoder_batch(
+        batch,
+        DecoderBatchShape {
+            vocab_size: c.vocab_size,
+            max_position_embeddings: c.max_position_embeddings,
+            q_width: c.q_width(),
+            kv_width: c.kv_width(),
+            intermediate_size: c.intermediate_size,
+            hidden_size: c.hidden_size,
+            type_ids: DecoderTypeIds::ZeroOnly,
+            message: "Invalid or unsupported packed oxide decoder batch",
+        },
+    )
+}
+
+fn validate_gemma3(batch: &Batch, c: &Gemma3Config) -> Result<usize, BackendError> {
+    validate_decoder_batch(
+        batch,
+        DecoderBatchShape {
+            vocab_size: c.vocab_size,
+            max_position_embeddings: c.max_position_embeddings,
+            q_width: c.q_width(),
+            kv_width: c.kv_width(),
+            intermediate_size: c.intermediate_size,
+            hidden_size: c.hidden_size,
+            type_ids: DecoderTypeIds::IgnoreValues,
+            message: "Invalid or unsupported packed oxide gemma3 batch",
+        },
+    )
 }
 
 impl Backend for OxideBackend {
@@ -7677,6 +7797,42 @@ mod tests {
         }
     }
     #[test]
+    fn gemma3_validation_ignores_type_values_but_keeps_packed_extents() {
+        let c = Gemma3Config {
+            hidden_size: 640,
+            intermediate_size: 2048,
+            num_hidden_layers: 18,
+            num_attention_heads: 4,
+            num_key_value_heads: 1,
+            head_dim: 256,
+            vocab_size: 262_144,
+            max_position_embeddings: 32_768,
+            rms_norm_eps: 1e-6,
+            rope_theta: 1_000_000.0,
+            rope_local_base_freq: 10_000.0,
+            sliding_window: 512,
+            sliding_window_pattern: 1,
+            query_pre_attn_scalar: 256.0,
+            is_causal: true,
+            global_rope_factor: 1.0,
+        };
+        let mut b = decoder_batch(&[3, 5, 2]);
+        b.token_type_ids.fill(u32::MAX);
+        assert_eq!(validate_gemma3(&b, &c).unwrap(), 5);
+        for mutate in [
+            |b: &mut Batch| b.position_ids[0] = 32_768,
+            |b: &mut Batch| b.input_ids[0] = 262_144,
+            |b: &mut Batch| b.pooled_indices = vec![3],
+            |b: &mut Batch| b.cumulative_seq_lengths = vec![0, 4, 3, 10],
+            |b: &mut Batch| b.cumulative_seq_lengths = vec![1, 3, 10],
+        ] {
+            let mut invalid = b.clone();
+            mutate(&mut invalid);
+            assert!(validate_gemma3(&invalid, &c).is_err());
+        }
+    }
+
+    #[test]
     fn decoder_validation_enforces_word_only_positions_and_boundaries() {
         let c = decoder_config();
         let b = decoder_batch(&[3, 5, 2]);
@@ -7966,6 +8122,7 @@ mod tests {
                     ExecutableModel::Encoder(model) => model,
                     ExecutableModel::EncoderF16(_)
                     | ExecutableModel::Decoder(_)
+                    | ExecutableModel::Gemma(_)
                     | ExecutableModel::Modern(_)
                     | ExecutableModel::Qwen35(_) => panic!("MiniLM must use BF16 encoder plans"),
                 };
@@ -8122,6 +8279,7 @@ mod tests {
         let encoder_config = match &reference.config {
             LoadedConfig::Encoder(config) => config,
             LoadedConfig::Decoder(_)
+            | LoadedConfig::Gemma(_)
             | LoadedConfig::Modern(_)
             | LoadedConfig::Qwen35(_)
             | LoadedConfig::Qwen35Block(_, _)
@@ -8543,6 +8701,7 @@ mod tests {
         let vocab_size = match &backend.config {
             LoadedConfig::Encoder(config) => config.vocab_size,
             LoadedConfig::Decoder(_)
+            | LoadedConfig::Gemma(_)
             | LoadedConfig::Modern(_)
             | LoadedConfig::Qwen35(_)
             | LoadedConfig::Qwen35Block(_, _)
@@ -8557,6 +8716,7 @@ mod tests {
                     config.max_position_embeddings.max(oversized_length);
             }
             LoadedConfig::Decoder(_)
+            | LoadedConfig::Gemma(_)
             | LoadedConfig::Modern(_)
             | LoadedConfig::Qwen35(_)
             | LoadedConfig::Qwen35Block(_, _)
@@ -8613,6 +8773,7 @@ mod tests {
                 assert!(config.is_causal);
             }
             LoadedConfig::Encoder(_)
+            | LoadedConfig::Gemma(_)
             | LoadedConfig::Modern(_)
             | LoadedConfig::Qwen35(_)
             | LoadedConfig::Qwen35Block(_, _)
@@ -8843,6 +9004,7 @@ mod tests {
                 )
             }
             LoadedConfig::Encoder(_)
+            | LoadedConfig::Gemma(_)
             | LoadedConfig::Modern(_)
             | LoadedConfig::Qwen35(_)
             | LoadedConfig::Qwen35Block(_, _)
@@ -9040,6 +9202,8 @@ mod tests {
             ("gte", CheckpointArchitecture::Gte),
             ("bert", CheckpointArchitecture::Encoder),
             ("qwen2", CheckpointArchitecture::Decoder),
+            ("gemma3_text", CheckpointArchitecture::Gemma),
+            ("gemma3", CheckpointArchitecture::Gemma),
         ] {
             let path = config_fixture(
                 model_type,
@@ -9055,6 +9219,7 @@ mod tests {
         assert!(CheckpointArchitecture::Gte.uses_native_default());
         for architecture in [
             CheckpointArchitecture::Decoder,
+            CheckpointArchitecture::Gemma,
             CheckpointArchitecture::Modern,
             CheckpointArchitecture::Nomic,
             CheckpointArchitecture::Jina,
@@ -9192,6 +9357,7 @@ mod tests {
             ExecutableModel::EncoderF16(_)
             | ExecutableModel::Modern(_)
             | ExecutableModel::Decoder(_)
+            | ExecutableModel::Gemma(_)
             | ExecutableModel::Qwen35(_) => {
                 panic!("GTE must use encoder plans")
             }
@@ -9309,6 +9475,7 @@ mod tests {
                 LoadedConfig::Encoder(config) => config,
                 LoadedConfig::Modern(_)
                 | LoadedConfig::Decoder(_)
+                | LoadedConfig::Gemma(_)
                 | LoadedConfig::Qwen35(_)
                 | LoadedConfig::Qwen35Block(_, _)
                 | LoadedConfig::Qwen35DynamicBlock(_) => {

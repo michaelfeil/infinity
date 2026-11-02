@@ -2288,13 +2288,13 @@ pub(crate) struct DecoderWork {
     sequences: usize,
     selections: usize,
     bytes: usize,
-    input: ManuallyDrop<DeviceBuffer<u32>>,
-    residual: ManuallyDrop<DeviceBuffer<Bf16>>,
-    residual_next: ManuallyDrop<DeviceBuffer<Bf16>>,
-    branch: ManuallyDrop<DeviceBuffer<Bf16>>,
-    normalized: ManuallyDrop<DeviceBuffer<Bf16>>,
-    projection: ManuallyDrop<DeviceBuffer<Bf16>>,
-    activation: ManuallyDrop<DeviceBuffer<Bf16>>,
+    pub(crate) input: ManuallyDrop<DeviceBuffer<u32>>,
+    pub(crate) residual: ManuallyDrop<DeviceBuffer<Bf16>>,
+    pub(crate) residual_next: ManuallyDrop<DeviceBuffer<Bf16>>,
+    pub(crate) branch: ManuallyDrop<DeviceBuffer<Bf16>>,
+    pub(crate) normalized: ManuallyDrop<DeviceBuffer<Bf16>>,
+    pub(crate) projection: ManuallyDrop<DeviceBuffer<Bf16>>,
+    pub(crate) activation: ManuallyDrop<DeviceBuffer<Bf16>>,
     pooled: Option<ManuallyDrop<DeviceBuffer<f32>>>,
     classifier: Option<Box<DecoderClassifierScratchBuffers>>,
     moe: Option<MoeScratch>,
@@ -2321,9 +2321,23 @@ impl DecoderWork {
         c: &DecoderConfig,
         classifier: Option<DecoderClassifierScratchLayout>,
     ) -> Result<usize, BackendError> {
+        Self::allocation_bytes_with_geometry(key, &DecoderGeometry::new(c)?, classifier)
+    }
+
+    pub(crate) fn allocation_bytes_geometry(
+        key: WorkKey,
+        geometry: &DecoderGeometry,
+    ) -> Result<usize, BackendError> {
+        Self::allocation_bytes_with_geometry(key, geometry, None)
+    }
+
+    fn allocation_bytes_with_geometry(
+        key: WorkKey,
+        geometry: &DecoderGeometry,
+        classifier: Option<DecoderClassifierScratchLayout>,
+    ) -> Result<usize, BackendError> {
         let (tokens, _, selections) = key;
         i32::try_from(tokens).map_err(infer)?;
-        let geometry = DecoderGeometry::new(c)?;
         let hidden = product(tokens, geometry.hidden)?;
         let projection = product(tokens, geometry.projection_width)?;
         let activation = product(tokens, geometry.activation_width)?;
@@ -2354,10 +2368,26 @@ impl DecoderWork {
         key: WorkKey,
         classifier_layout: Option<DecoderClassifierScratchLayout>,
     ) -> Result<Self, BackendError> {
-        let bytes = Self::allocation_bytes_with_classifier(key, c, classifier_layout)?;
+        Self::new_with_geometry(stream, &DecoderGeometry::new(c)?, key, classifier_layout)
+    }
+
+    pub(crate) fn new_geometry(
+        stream: Arc<Stream>,
+        geometry: &DecoderGeometry,
+        key: WorkKey,
+    ) -> Result<Self, BackendError> {
+        Self::new_with_geometry(stream, geometry, key, None)
+    }
+
+    fn new_with_geometry(
+        stream: Arc<Stream>,
+        geometry: &DecoderGeometry,
+        key: WorkKey,
+        classifier_layout: Option<DecoderClassifierScratchLayout>,
+    ) -> Result<Self, BackendError> {
+        let bytes = Self::allocation_bytes_with_geometry(key, geometry, classifier_layout)?;
         let (tokens, sequences, selections) = key;
         let input_len = staging::input_capacity(key)?;
-        let geometry = DecoderGeometry::new(c)?;
         let hidden = product(tokens, geometry.hidden)?;
         let projection = product(tokens, geometry.projection_width)?;
         let activation = product(tokens, geometry.activation_width)?;
@@ -2594,6 +2624,11 @@ impl DecoderWork {
     }
     pub(crate) fn stream(&self) -> &Arc<Stream> {
         &self.stream
+    }
+    pub(crate) fn pooled(&self) -> Result<&DeviceBuffer<f32>, BackendError> {
+        self.pooled
+            .as_deref()
+            .ok_or_else(|| infer("Decoder embedding workspace has no pooled slab"))
     }
     pub(crate) fn classifier_scratch(&self) -> Option<&DecoderClassifierScratchBuffers> {
         self.classifier.as_deref()

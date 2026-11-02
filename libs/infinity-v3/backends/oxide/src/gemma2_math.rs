@@ -943,7 +943,11 @@ mod tests {
             "infinity_splade_pool_bf16_f32",
         ];
         let symbols = build_symbols();
-        assert_eq!(symbols.len(), 91);
+        let gemma3_count = symbols
+            .iter()
+            .filter(|name| name.starts_with("infinity_gemma3_"))
+            .count();
+        assert_eq!(symbols.len(), 91 + gemma3_count);
         let gemma2: Vec<_> = symbols
             .iter()
             .copied()
@@ -959,7 +963,11 @@ mod tests {
         let legacy: Vec<_> = symbols
             .iter()
             .copied()
-            .filter(|name| !name.starts_with("infinity_gemma2_") && !HEAD_ADDITIONS.contains(name))
+            .filter(|name| {
+                !name.starts_with("infinity_gemma2_")
+                    && !name.starts_with("infinity_gemma3_")
+                    && !HEAD_ADDITIONS.contains(name)
+            })
             .collect();
         assert_eq!(legacy.len(), 78);
         assert_eq!(

@@ -1,0 +1,52 @@
+{
+  "scope": "H100 BF16 encoder operators; whole trained models and performance remain unqualified",
+  "source_commit": "c57c6611533f237f68129625a164eb30adb9d46c",
+  "cases": 243,
+  "exact_values": 1411840,
+  "operators": {
+    "plain_ATen_layer_norm": {
+      "widths": [
+        384,
+        768,
+        1024
+      ],
+      "cases": 87,
+      "values": 837760
+    },
+    "DeBERTa_residual_plain_ATen_norm": {
+      "widths": [
+        384,
+        1024
+      ],
+      "cases": 48,
+      "values": 439296
+    },
+    "ColBERT_model_dtype_L2": {
+      "widths": [
+        64,
+        96,
+        128
+      ],
+      "cases": 108,
+      "values": 134784
+    }
+  },
+  "plain_repeats": 3,
+  "memcheck_errors": 0,
+  "initcheck_errors": 0,
+  "native_gold": {
+    "torch": "2.14.1+cu130",
+    "torch_revision": "5c4886908584029761b579af026dcfb627c84070",
+    "sdk_sha256": "b66d70b61b39e1bf0d565aca33bac7c5e21849677396ce5216f5baf73027d37e",
+    "gold_sha256": "ba75a04d83a55e62e0487f6c83abafdae6de68d97031d721c17a4a629450a894"
+  },
+  "kernel_sha256": "4f3d161525af0b64d9441e40ac18b8ea848f521ddc7900064d37a7bb9860b714",
+  "reports_sha256": {
+    "reports/root-plain-v2.json": "ba09e7edffa42cc7dd0df8b143e7b7eaab0755907e7f1a407cc85bb71f7d5b25",
+    "reports/root-memcheck-v2.json": "649a12e316e41b72abf816c8f50382e12051a5a2d058a1870e5f0cecf4b34f5b",
+    "reports/root-initcheck-v1.json": "649a12e316e41b72abf816c8f50382e12051a5a2d058a1870e5f0cecf4b34f5b",
+    "reports/root-memcheck-v2.log": "614a3d6bb2ac147aa3fa9c795640fe0524a12619bcb05c6cc06f51db8c471780",
+    "reports/root-initcheck-v1.log": "614a3d6bb2ac147aa3fa9c795640fe0524a12619bcb05c6cc06f51db8c471780"
+  },
+  "recovery_branch": "wip/oxide-node-recovery-20261102"
+}

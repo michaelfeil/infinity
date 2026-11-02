@@ -21,6 +21,7 @@ mod encoder_prenorm;
 mod gated;
 mod gelu_exact;
 mod gemma2;
+mod gemma3;
 mod jina_code_qk;
 mod mpnet_norm;
 mod nomic_embedding;
@@ -2302,6 +2303,76 @@ mod kernels {
         width: u32,
     ) {
         unsafe { crate::gemma2::mean_pool_bf16(input, cu_seqlens, selected, out, count, width) };
+    }
+    /// Gemma3 exact RMS norm with F32 scale, one CTA per row.
+    #[kernel]
+    pub unsafe fn infinity_gemma3_rms_norm_bf16_f32scale(
+        input: *const u16,
+        scale: *const f32,
+        out: *mut u16,
+        rows: u32,
+        width: u32,
+        eps: f32,
+    ) {
+        unsafe { crate::gemma3::rms_norm_bf16_f32scale(input, scale, out, rows, width, eps) };
+    }
+
+    /// Gemma3 exact residual RMS norm; statistics from input only.
+    #[kernel]
+    pub unsafe fn infinity_gemma3_residual_norm_bf16_f32scale(
+        input: *const u16,
+        residual: *const u16,
+        scale: *const f32,
+        out: *mut u16,
+        rows: u32,
+        width: u32,
+        eps: f32,
+    ) {
+        unsafe {
+            crate::gemma3::residual_norm_bf16_f32scale(
+                input, residual, scale, out, rows, width, eps,
+            )
+        };
+    }
+
+    /// Gemma3 in-place Q/K norm plus rotary for even head widths up to 256.
+    #[kernel]
+    pub unsafe fn infinity_gemma3_qk_norm_rope_bf16(
+        q: *mut u16,
+        k: *mut u16,
+        qscale: *const f32,
+        kscale: *const f32,
+        cosine: *const f32,
+        sine: *const f32,
+        positions: *const u32,
+        tokens: u32,
+        qheads: u32,
+        kvheads: u32,
+        head_dim: u32,
+        qstride: u64,
+        kstride: u64,
+        table_stride: u32,
+        eps: f32,
+    ) {
+        unsafe {
+            crate::gemma3::qk_norm_rope_bf16(
+                q,
+                k,
+                qscale,
+                kscale,
+                cosine,
+                sine,
+                positions,
+                tokens,
+                qheads,
+                kvheads,
+                head_dim,
+                qstride,
+                kstride,
+                table_stride,
+                eps,
+            )
+        };
     }
     /// Native model-dtype BF16 mean, widened to F32.
     /// Grid=(count,ceil(hidden/8),1), block=256.
