@@ -37,10 +37,12 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 /// Dispatches the registered row-width and dtype specializations.
 
 #include "kernels/decoder_norm.h"
+#include "kernels/fp8_quant_pair.cuh"
 #include <ATen/cuda/CUDAContext.h>
 #include <c10/cuda/CUDAGuard.h>
 #include <c10/cuda/CUDAException.h>
 #include <vector>
+#include <type_traits>
 #include <cstdint>
 #define layer_norm tei_decoder_exact_norm
 #include "vendor/candle_kernels/layer_norm/ln_fwd_kernels.cuh"
@@ -62,12 +64,14 @@ __device__ float2 combine_exact_stats(float2 a, float2 b, float count, float inv
   return {mean, m2};
 }
 
+template <bool Quantize>
 __global__ void exact_bf16_4096_kernel(const __nv_bfloat16* x,
                                        const __nv_bfloat16* residual,
                                        const __nv_bfloat16* weight,
                                        __nv_bfloat16* out,
                                        __nv_bfloat16* summed,
-                                       float epsilon) {
+                                       float epsilon,
+                                       float* scales) {
   __shared__ float2 warp_stats[4];
   const int64_t row = blockIdx.x;
   const int lane = threadIdx.x % 32, warp = threadIdx.x / 32;
@@ -114,15 +118,49 @@ __global__ void exact_bf16_4096_kernel(const __nv_bfloat16* x,
   auto odd = combine_exact_stats(warp_stats[1], warp_stats[3], 1024, 1.f / 2048);
   auto stats = combine_exact_stats(even, odd, 2048, 1.f / 4096);
   float inverse = rsqrtf(stats.y * (1.f / 4096) + epsilon + stats.x * stats.x);
+  float amax = 0;
 #pragma unroll
   for (int j = 0; j < 4; ++j) {
     const int group = threadIdx.x + j * 128;
     auto gamma = reinterpret_cast<const ExactBf16Vector*>(weight)[group];
     ExactBf16Vector result;
 #pragma unroll
-    for (int i = 0; i < 8; ++i)
+    for (int i = 0; i < 8; ++i) {
       result.v[i] = __nv_bfloat16(float(gamma.v[i]) * (inverse * (values[j * 8 + i] - 0.f)) + 0.f);
-    reinterpret_cast<ExactBf16Vector*>(out)[row * 512 + group] = result;
+      if constexpr (Quantize) {
+        values[j * 8 + i] = float(result.v[i]);
+        amax = fmaxf(amax, fabsf(values[j * 8 + i]));
+      }
+    }
+    if constexpr (!Quantize)
+      reinterpret_cast<ExactBf16Vector*>(out)[row * 512 + group] = result;
+  }
+  if constexpr (Quantize) {
+    __shared__ float maxima[4];
+    for (int d = 16; d; d /= 2)
+      amax = fmaxf(amax, __shfl_down_sync(0xffffffff, amax, d));
+    if (!lane)
+      maxima[warp] = amax;
+    __syncthreads();
+    float scale =
+        __fmul_rn(fmaxf(fmaxf(maxima[0], maxima[1]), fmaxf(fmaxf(maxima[2], maxima[3]), 1e-12f)),
+                  1.f / 448.f);
+    if (!threadIdx.x)
+      scales[row] = scale;
+
+    struct alignas(8) Fp8Vector {
+      __nv_fp8x2_e4m3 value[4];
+    };
+
+#pragma unroll
+    for (int j = 0; j < 4; ++j) {
+      Fp8Vector result;
+#pragma unroll
+      for (int i = 0; i < 4; ++i)
+        result.value[i] =
+            fp8_quantize_pair(values[j * 8 + 2 * i], values[j * 8 + 2 * i + 1], scale);
+      reinterpret_cast<Fp8Vector*>(out)[row * 512 + threadIdx.x + j * 128] = result;
+    }
   }
 }
 
@@ -176,12 +214,22 @@ exact_norm(const at::Tensor& x, const at::Tensor& residual, const at::Tensor& w,
 }
 }
 
+std::pair<at::Tensor, at::Tensor> decoder_exact_rms_norm(const at::Tensor& x,
+                                                         const at::Tensor& residual,
+                                                         const at::Tensor& w,
+                                                         double epsilon) {
+  return decoder_exact_rms_norm(x, residual, w, epsilon, nullptr);
+}
+
 /// Select the registered dtype/width reduction geometry after validating contiguous row layout. The
 /// vectorized BF16-4096 route retains the same statistics and residual-rounding boundaries.
 std::pair<at::Tensor, at::Tensor> decoder_exact_rms_norm(const at::Tensor& x,
                                                          const at::Tensor& residual,
                                                          const at::Tensor& w,
-                                                         double epsilon) {
+                                                         double epsilon,
+                                                         at::Tensor* scales) {
+  if (scales)
+    *scales = at::Tensor();
   // The following width list matches explicit template registrations below, including masked width
   // 896. Adding a width requires a matching reduction/warp layout; accepting it here alone would
   // select the wrong registration.
@@ -200,6 +248,18 @@ std::pair<at::Tensor, at::Tensor> decoder_exact_rms_norm(const at::Tensor& x,
                   (residual.device() == x.device() && residual.scalar_type() == x.scalar_type() &&
                    residual.sizes() == x.sizes() && residual.is_contiguous()),
               "Invalid exact decoder RMS residual");
+  // The retained registration also uses vector loads; contiguous offset views
+  // must be aligned before either implementation accesses their storage.
+  auto aligned = [](const at::Tensor& t) {
+    return !t.defined() || reinterpret_cast<uintptr_t>(t.const_data_ptr()) % 16 == 0;
+  };
+  if (!aligned(x) || !aligned(w) || !aligned(residual)) {
+    auto result = decoder_exact_rms_norm(
+        x.clone(), residual.defined() ? residual.clone() : residual, w.clone(), epsilon, scales);
+    if (!residual.defined())
+      result.second = x;
+    return result;
+  }
   // Width and 16-byte alignment match the vectorized kernel's loads. The row threshold selects that
   // implementation; smaller batches retain the registered reduction path
   // instead of rejecting the input.
@@ -208,17 +268,28 @@ std::pair<at::Tensor, at::Tensor> decoder_exact_rms_norm(const at::Tensor& x,
       reinterpret_cast<uintptr_t>(w.const_data_ptr()) % 16 == 0 &&
       (!residual.defined() || reinterpret_cast<uintptr_t>(residual.const_data_ptr()) % 16 == 0)) {
     const c10::cuda::CUDAGuard guard(x.device());
-    auto out = at::empty_like(x), sum = residual.defined() ? at::empty_like(x) : x;
+    auto out = at::empty_like(x, x.options().dtype(scales ? at::kFloat8_e4m3fn : at::kBFloat16));
+    auto sum = residual.defined() ? at::empty_like(x) : x;
+    if (scales)
+      *scales = at::empty({x.size(0), 1}, x.options().dtype(at::kFloat));
     auto ptr = [](const at::Tensor& t) {
       return reinterpret_cast<const __nv_bfloat16*>(t.const_data_ptr());
     };
-    exact_bf16_4096_kernel<<<x.size(0), 128, 0, at::cuda::getCurrentCUDAStream()>>>(
-        ptr(x),
-        residual.defined() ? ptr(residual) : nullptr,
-        ptr(w),
-        reinterpret_cast<__nv_bfloat16*>(out.mutable_data_ptr()),
-        reinterpret_cast<__nv_bfloat16*>(sum.mutable_data_ptr()),
-        epsilon);
+    auto launch = [&](auto quantize) {
+      exact_bf16_4096_kernel<decltype(quantize)::value>
+          <<<x.size(0), 128, 0, at::cuda::getCurrentCUDAStream()>>>(
+              ptr(x),
+              residual.defined() ? ptr(residual) : nullptr,
+              ptr(w),
+              reinterpret_cast<__nv_bfloat16*>(out.mutable_data_ptr()),
+              reinterpret_cast<__nv_bfloat16*>(sum.mutable_data_ptr()),
+              epsilon,
+              scales ? scales->data_ptr<float>() : nullptr);
+    };
+    if (scales)
+      launch(std::true_type{});
+    else
+      launch(std::false_type{});
     C10_CUDA_KERNEL_LAUNCH_CHECK();
     return {out, sum};
   }
