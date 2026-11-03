@@ -3,6 +3,7 @@
 /// Public wrappers expose eligibility and preserve their documented fallback paths.
 
 #pragma once
+#include "helpers/fp8_activation.h"
 #include <ATen/ATen.h>
 #include <utility>
 #include <memory>
@@ -52,6 +53,12 @@ class Fp8Linear {
   at::Tensor matrix_, scales_, unit_;
   at::ScalarType dtype_;
   bool rowwise_;
+  at::Tensor unscaled_product(const at::Tensor& input) const;
+  std::pair<at::Tensor, at::Tensor> forward_gated_quantized_impl(const at::Tensor& input,
+                                                                 const at::Tensor& row_scales,
+                                                                 Fp8GatedActivation kind,
+                                                                 bool gate_first,
+                                                                 bool preserve_legacy_scalar) const;
 
 public:
   /// Quantize checkpoint weights once and retain scales for subsequent activation projections.
@@ -62,6 +69,28 @@ public:
   at::Tensor forward_quantized(const at::Tensor& input,
                                const at::Tensor& scales,
                                const at::Tensor& bias = {}) const;
+  /// Fuse the projection's FP8 output scaling, one rounded gated activation, and row FP8
+  /// quantization without materializing the model-dtype gate/up intermediate. `input` is either
+  /// model-dtype rows (quantized once here, matching forward) or prequantized E4M3 rows with
+  /// `row_scales`. gate_first selects the original packed gate/up orientation. The projection must
+  /// be bias-free; bias, clipping and casts stay outside this boundary.
+  std::pair<at::Tensor, at::Tensor> forward_gated_quantized(const at::Tensor& input,
+                                                            const at::Tensor& row_scales,
+                                                            Fp8GatedActivation kind,
+                                                            bool gate_first = true) const;
+
+  /// Legacy gate-first rounded SwiGLU wrapper over forward_gated_quantized, retaining the original
+  /// projection boundary and bytes.
+  std::pair<at::Tensor, at::Tensor>
+  forward_swiglu_quantized(const at::Tensor& input, const at::Tensor& row_scales = {}) const;
+
+  /// Fuse the projection, a unary rounded activation, an optional bias, and row FP8 quantization.
+  /// `input` is either model-dtype rows (quantized once here) or prequantized E4M3 rows with
+  /// `row_scales`. Bias is added once after the projection's model-dtype rounding.
+  std::pair<at::Tensor, at::Tensor> forward_activation_quantized(const at::Tensor& input,
+                                                                 const at::Tensor& row_scales,
+                                                                 const at::Tensor& bias,
+                                                                 Fp8Activation kind) const;
 
   int64_t input_width() const {
     return matrix_.size(1);

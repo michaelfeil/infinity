@@ -367,6 +367,10 @@ class Qwen35 final : public Model {
                           const PackedInput& input,
                           const QuantizedRows* quantized = nullptr) const {
     const auto& m = mlps[layer];
+    // Dense FP8 consumes the prepared rows directly and may omit its BF16 input.
+    TORCH_CHECK(x.defined() || (quantized && quantized->first.defined() &&
+                                quantized->second.defined() && !m.router.defined()),
+                "Missing Qwen3.5 feed-forward activations");
     MlpContext context;
     context.gemm = [&](const MlpProjection& projection, const at::Tensor& rows) {
       return prefix_linear(rows, projection.weight(), projection.gemm_bias(), input);
@@ -414,11 +418,12 @@ class Qwen35 final : public Model {
   std::pair<at::Tensor, at::Tensor> residual_norm(const at::Tensor& x,
                                                   const at::Tensor& addition,
                                                   const std::string& name,
-                                                  QuantizedRows* quantized = nullptr) const {
+                                                  QuantizedRows* quantized = nullptr,
+                                                  bool materialize_norm = true) const {
 #ifdef TEI_TORCH_CUDA_KERNELS
     if (device.is_cuda() && dtype == at::kBFloat16 && x.size(-1) <= 8192)
       return qwen35_reference_residual_norm_cuda(
-          x, addition, w(name + ".weight"), epsilon, quantized);
+          x, addition, w(name + ".weight"), epsilon, quantized, materialize_norm);
 #endif
     auto updated = x + addition;
     return {updated, norm(updated, name)};
@@ -1060,10 +1065,13 @@ class Qwen35 final : public Model {
         attended = prefix_projection(attended, output_name, input);
       }
       QuantizedRows mlp_rows;
+      const bool quantize_mlp = mlps[layer].dense_mlp.fp8();
+      // Dense FP8 consumes the rounded norm through mlp_rows; no BF16 copy is needed.
       auto post = residual_norm(hidden,
                                 attended,
                                 p + "post_attention_layernorm",
-                                mlps[layer].dense_mlp.fp8() ? &mlp_rows : nullptr);
+                                quantize_mlp ? &mlp_rows : nullptr,
+                                !quantize_mlp);
       auto mlp =
           feed_forward(post.second, layer, input, mlp_rows.first.defined() ? &mlp_rows : nullptr);
       auto next = residual_norm(

@@ -430,6 +430,9 @@ struct Bert : infinity::Model {
         activation.quantized_custom = [kind](const at::Tensor& rows) {
           return infinity::mlp_activation(rows, kind);
         };
+        activation.fp8_activation = kind == infinity::MlpActivation::RoundedSilu
+                                        ? infinity::Fp8Activation::RoundedSilu
+                                        : infinity::Fp8Activation::RoundedGelu;
         if (private_flash_embedding && config.activation != 3)
           activation.fusion = infinity::MlpFusion::RoundedBiasGelu;
       }

@@ -31,35 +31,14 @@ DEALINGS IN THE SOFTWARE.
 
 #include "kernels/encoder_activation.h"
 #include "kernels/dependent_launch.cuh"
+#include "kernels/encoder_activation_math.cuh"
 #include <ATen/cuda/CUDAContext.h>
 #include <c10/cuda/CUDAGuard.h>
 #include <c10/cuda/CUDAException.h>
-#include <cuda_fp16.h>
-#include <cuda_bf16.h>
 #include <cstdint>
 
 namespace infinity {
 namespace {
-__device__ __forceinline__ half model_fma(half a, half b, half c) {
-  return __hfma(a, b, c);
-}
-
-__device__ __forceinline__ nv_bfloat16 model_fma(nv_bfloat16 a, nv_bfloat16 b, nv_bfloat16 c) {
-  return __hfma(a, b, c);
-}
-
-__device__ __forceinline__ float model_fma(float a, float b, float c) {
-  return fmaf(a, b, c);
-}
-
-template <class T> __device__ __forceinline__ T gelu(T x) {
-  T square = T(x * x), cube = T(square * x);
-  T alpha = model_fma(T(0.044715), cube, x);
-  T argument = T(T(0.7978845608028654) * alpha);
-  T tangent = T(tanhf(float(argument)));
-  return T(T(T(0.5) * x) * T(T(1.0) + tangent));
-}
-
 /// Aligned group of four scalar values used by vectorized activation loads and stores.
 template <class T> struct alignas(sizeof(T) * 4) Four {
   T values[4];
@@ -73,11 +52,11 @@ template <class T> __global__ void gelu_kernel(const T* input, T* output, int64_
     auto values = *reinterpret_cast<const Four<T>*>(input + i);
 #pragma unroll
     for (int j = 0; j < 4; ++j)
-      values.values[j] = gelu(values.values[j]);
+      values.values[j] = activation_math::rounded_gelu(values.values[j]);
     *reinterpret_cast<Four<T>*>(output + i) = values;
   } else {
     for (int64_t j = i; j < count && j < i + 4; ++j)
-      output[j] = gelu(input[j]);
+      output[j] = activation_math::rounded_gelu(input[j]);
   }
 }
 
@@ -101,7 +80,7 @@ bias_gelu_kernel(const T* input, const T* bias, T* output, int64_t count, int64_
     if (i + j < count) {
       // ATen add rounds model-dtype GEMM output+bias before Candle unary GELU.
       T added = T(input[i + j] + bias[(i + j) % width]);
-      output[i + j] = gelu(added);
+      output[i + j] = activation_math::rounded_gelu(added);
     }
 }
 

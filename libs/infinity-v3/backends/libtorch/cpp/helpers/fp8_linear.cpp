@@ -5,6 +5,7 @@
 #include "helpers/fp8_linear.h"
 #include "helpers/workspace_admission.h"
 #include "helpers/vendor_error.h"
+#include "kernels/fp8_fusions.h"
 #include <ATen/ops/_scaled_mm.h>
 #include <string>
 #include <mutex>
@@ -630,6 +631,10 @@ at::Tensor Fp8Linear::forward(const at::Tensor& input, const at::Tensor& bias) c
   return forward_quantized(quantized.first, quantized.second, bias);
 }
 
+at::Tensor Fp8Linear::unscaled_product(const at::Tensor& input) const {
+  return at::_scaled_mm(input, matrix_.t(), unit_, unit_, {}, {}, at::kFloat, false);
+}
+
 /// Consume E4M3 [rows, input_width] activations and F32 [rows, 1] scales. Hopper uses rowwise
 /// scaled GEMM; other qualified devices scale FP32 output before model-dtype rounding. Bias is
 /// added after GEMM rounding, matching the unfused checkpoint recipe.
@@ -672,11 +677,123 @@ at::Tensor Fp8Linear::forward_quantized(const at::Tensor& input,
   } else {
     // Match the portable recipe: scale full FP32 accumulation before the
     // single model-dtype rounding. No tensorwide activation scale is inferred.
-    output = (at::_scaled_mm(input, matrix_.t(), unit_, unit_, {}, {}, at::kFloat, false) *
-              row_scales * scales_.t())
-                 .to(dtype_);
+#ifdef TEI_TORCH_CUDA_KERNELS
+    output = fp8_scale_output(unscaled_product(input), row_scales, scales_, dtype_);
+#else
+    output = (unscaled_product(input) * row_scales * scales_.t()).to(dtype_);
+#endif
   }
   // Candle's quantized MLP applies bias after GEMM model-dtype rounding.
   return bias.defined() ? output + bias : output;
+}
+
+/// Fuse portable output scaling, one rounded gated activation and row FP8 quantization. The GEMM,
+/// activation input and weight scales are identical to forward_quantized; Hopper keeps its exact
+/// rowwise scaled GEMM followed by the existing gated quantizer.
+std::pair<at::Tensor, at::Tensor>
+Fp8Linear::forward_gated_quantized_impl(const at::Tensor& input,
+                                        const at::Tensor& row_scales,
+                                        Fp8GatedActivation kind,
+                                        bool gate_first,
+                                        bool preserve_legacy_scalar) const {
+  const bool prequantized = input.scalar_type() == at::kFloat8_e4m3fn;
+  TORCH_CHECK(input.dim() == 2 && input.device() == matrix_.device() &&
+                  (prequantized || input.scalar_type() == dtype_) && input.size(1) == input_width(),
+              "Invalid dynamic FP8 gated activations");
+  TORCH_CHECK(output_width() % 2 == 0 && output_width() / 2 <= 32768,
+              "Dynamic FP8 gated activation requires an even gate/up width up to 65536");
+  if (prequantized) {
+    TORCH_CHECK(input.is_contiguous() && row_scales.dim() == 2 &&
+                    row_scales.size(0) == input.size(0) && row_scales.size(1) == 1 &&
+                    row_scales.device() == input.device() &&
+                    row_scales.scalar_type() == at::kFloat && row_scales.is_contiguous(),
+                "Invalid prequantized FP8 gated row scales");
+  } else {
+    TORCH_CHECK(!row_scales.defined(),
+                "Model-dtype gated rows are quantized once and take no precomputed scales");
+  }
+  if (input.size(0) == 0)
+    return {at::empty({0, output_width() / 2}, input.options().dtype(at::kFloat8_e4m3fn)),
+            at::empty({0, 1}, input.options().dtype(at::kFloat))};
+#ifdef TEI_TORCH_CUDA_KERNELS
+  c10::cuda::CUDAGuard guard(input.device());
+  auto rows = input;
+  auto scales = row_scales;
+  if (!prequantized) {
+    auto quantized = fp8_quantize_rows(input.contiguous());
+    rows = std::move(quantized.first);
+    scales = std::move(quantized.second);
+  }
+  if (rowwise_ || output_width() / 2 > fp8_scaled_swiglu_max_width)
+    return detail::fp8_gated_quantize_impl(
+        forward_quantized(rows, scales), kind, gate_first, preserve_legacy_scalar);
+  // Preserve the portable recipe: full FP32 accumulation, then the two separate FP32 scale
+  // products and one model-dtype rounding inside the fused scaling/gated kernel.
+  return detail::fp8_scaled_gated_quantize_impl(
+      unscaled_product(rows), scales, scales_, dtype_, kind, gate_first, preserve_legacy_scalar);
+#else
+  TORCH_CHECK(false, "Dynamic FP8 requires a CUDA LibTorch build");
+  return {};
+#endif
+}
+
+std::pair<at::Tensor, at::Tensor> Fp8Linear::forward_gated_quantized(const at::Tensor& input,
+                                                                     const at::Tensor& row_scales,
+                                                                     Fp8GatedActivation kind,
+                                                                     bool gate_first) const {
+  return forward_gated_quantized_impl(input, row_scales, kind, gate_first, false);
+}
+
+std::pair<at::Tensor, at::Tensor>
+Fp8Linear::forward_swiglu_quantized(const at::Tensor& input, const at::Tensor& row_scales) const {
+  return forward_gated_quantized_impl(
+      input, row_scales, Fp8GatedActivation::RoundedSilu, true, true);
+}
+
+/// Fuse the projection with an optional separate bias, one rounded unary activation and row FP8
+/// quantization. Hopper consumes its rowwise projection before the activation; other devices scale
+/// the FP32 accumulation inside the activation quantizer.
+std::pair<at::Tensor, at::Tensor>
+Fp8Linear::forward_activation_quantized(const at::Tensor& input,
+                                        const at::Tensor& row_scales,
+                                        const at::Tensor& bias,
+                                        Fp8Activation kind) const {
+  const bool prequantized = input.scalar_type() == at::kFloat8_e4m3fn;
+  TORCH_CHECK(input.dim() == 2 && input.device() == matrix_.device() &&
+                  (prequantized || input.scalar_type() == dtype_) && input.size(1) == input_width(),
+              "Invalid dynamic FP8 activation rows");
+  TORCH_CHECK(!bias.defined() || (bias.dim() == 1 && bias.size(0) == output_width() &&
+                                  bias.device() == input.device() && bias.scalar_type() == dtype_),
+              "Invalid dynamic FP8 activation bias");
+  if (prequantized) {
+    TORCH_CHECK(input.is_contiguous() && row_scales.dim() == 2 &&
+                    row_scales.size(0) == input.size(0) && row_scales.size(1) == 1 &&
+                    row_scales.device() == input.device() &&
+                    row_scales.scalar_type() == at::kFloat && row_scales.is_contiguous(),
+                "Invalid prequantized FP8 activation row scales");
+  } else {
+    TORCH_CHECK(!row_scales.defined(),
+                "Model-dtype activation rows are quantized once and take no precomputed scales");
+  }
+  if (input.size(0) == 0)
+    return {at::empty({0, output_width()}, input.options().dtype(at::kFloat8_e4m3fn)),
+            at::empty({0, 1}, input.options().dtype(at::kFloat))};
+#ifdef TEI_TORCH_CUDA_KERNELS
+  c10::cuda::CUDAGuard guard(input.device());
+  auto rows = input;
+  auto scales = row_scales;
+  if (!prequantized) {
+    auto quantized = fp8_quantize_rows(input.contiguous());
+    rows = std::move(quantized.first);
+    scales = std::move(quantized.second);
+  }
+  if (rowwise_)
+    return fp8_activation_quantize(forward_quantized(rows, scales), bias, kind);
+  return fp8_scaled_activation_quantize(
+      unscaled_product(rows), scales, scales_, dtype_, bias, kind);
+#else
+  TORCH_CHECK(false, "Dynamic FP8 requires a CUDA LibTorch build");
+  return {};
+#endif
 }
 }

@@ -70,6 +70,12 @@ __global__ void norm_tree(const __nv_bfloat16* x,
                           __nv_fp8_e4m3* quantized = nullptr,
                           float* scales = nullptr) {
   __shared__ float sums[1024];
+  // Quantized launches stage the rounded source row in dynamic shared memory, then overwrite it
+  // with the rounded norm row. Each element stays with the thread that produced it, so one
+  // width-sized buffer covers both phases; later passes reuse exact BF16 values without global
+  // reads.
+  extern __shared__ __align__(16) unsigned char norm_staging[];
+  [[maybe_unused]] auto staged = reinterpret_cast<__nv_bfloat16*>(norm_staging);
   int row = blockIdx.x, tid = threadIdx.x * V, threads = blockDim.x * V;
   long base = int64_t(row / heads) * stride0 + (row % heads) * stride1;
   float sum[V] = {};
@@ -83,6 +89,8 @@ __global__ void norm_tree(const __nv_bfloat16* x,
             __fadd_rn(__bfloat162float(values.values[j]), __bfloat162float(delta.values[j])));
       *reinterpret_cast<NormValues<V>*>(updated + base + d) = values;
     }
+    if constexpr (Quantize)
+      *reinterpret_cast<NormValues<V>*>(staged + d) = values;
 #pragma unroll
     for (int j = 0; j < V; ++j) {
       float z = __bfloat162float(values.values[j]);
@@ -123,7 +131,11 @@ __global__ void norm_tree(const __nv_bfloat16* x,
   __syncthreads();
   float inv = sums[0], amax = 0.f;
   for (int d = tid; d < width; d += threads) {
-    auto values = *reinterpret_cast<const NormValues<V>*>((Residual ? updated : x) + base + d);
+    NormValues<V> values;
+    if constexpr (Quantize)
+      values = *reinterpret_cast<const NormValues<V>*>(staged + d);
+    else
+      values = *reinterpret_cast<const NormValues<V>*>((Residual ? updated : x) + base + d);
     auto weights = *reinterpret_cast<const NormValues<V>*>(gamma + d);
     NormValues<V> result;
 #pragma unroll
@@ -134,11 +146,17 @@ __global__ void norm_tree(const __nv_bfloat16* x,
       if constexpr (Quantize)
         amax = fmaxf(amax, fabsf(__bfloat162float(result.values[j])));
     }
-    *reinterpret_cast<NormValues<V>*>(out + int64_t(row) * width + d) = result;
+    if constexpr (Quantize) {
+      if (out)
+        *reinterpret_cast<NormValues<V>*>(out + int64_t(row) * width + d) = result;
+      *reinterpret_cast<NormValues<V>*>(staged + d) = result;
+    } else {
+      *reinterpret_cast<NormValues<V>*>(out + int64_t(row) * width + d) = result;
+    }
   }
   if constexpr (Quantize) {
-    // Quantize the rounded BF16 norm, using the existing row-scale contract.
-    // The same shared storage is reusable after every lane has read its inverse.
+    // Quantize the rounded BF16 norm staged in shared memory, using the existing
+    // row-scale contract.
     __syncthreads();
     const int lane = threadIdx.x % 32, warp = threadIdx.x / 32;
     const int active = min(int(blockDim.x), 32);
@@ -167,7 +185,7 @@ __global__ void norm_tree(const __nv_bfloat16* x,
     if (!threadIdx.x)
       scales[row] = scale;
     for (int d = tid; d < width; d += threads) {
-      const auto values = *reinterpret_cast<const NormValues<V>*>(out + int64_t(row) * width + d);
+      const auto values = *reinterpret_cast<const NormValues<V>*>(staged + d);
       if constexpr (V == 4) {
 #pragma unroll
         for (int j = 0; j < V / 2; ++j)
@@ -231,7 +249,8 @@ qwen35_reference_residual_norm_cuda(const at::Tensor& x,
                                     const at::Tensor& addition,
                                     const at::Tensor& gamma,
                                     double eps,
-                                    std::pair<at::Tensor, at::Tensor>* quantized) {
+                                    std::pair<at::Tensor, at::Tensor>* quantized,
+                                    bool materialize_norm) {
   TORCH_CHECK(x.is_cuda() && x.dim() == 2 && x.scalar_type() == at::kBFloat16 &&
                   x.is_contiguous() && addition.device() == x.device() &&
                   addition.scalar_type() == x.scalar_type() && addition.sizes() == x.sizes() &&
@@ -242,8 +261,11 @@ qwen35_reference_residual_norm_cuda(const at::Tensor& x,
   const auto rows = x.size(0), width = x.size(1);
   TORCH_CHECK(rows > 0 && rows <= INT32_MAX && width > 0 && width <= 8192 && gamma.numel() == width,
               "Invalid Qwen3.5 residual norm geometry");
+  TORCH_CHECK(materialize_norm || quantized,
+              "Omitting normalized Qwen norm output requires FP8 quantized storage");
   c10::cuda::CUDAGuard guard(x.device());
-  auto updated = at::empty_like(x), normalized = at::empty_like(x);
+  auto updated = at::empty_like(x);
+  auto normalized = materialize_norm ? at::empty_like(x) : at::Tensor();
   if (quantized)
     *quantized = {at::empty_like(x, x.options().dtype(at::kFloat8_e4m3fn)),
                   at::empty({rows, 1}, x.options().dtype(at::kFloat))};
@@ -251,10 +273,14 @@ qwen35_reference_residual_norm_cuda(const at::Tensor& x,
   while (threads < width && threads < 1024)
     threads *= 2;
   auto launch = [&]<int V, bool Quantize>() {
-    norm_tree<V, true, Quantize><<<rows, threads / V, 0, at::cuda::getCurrentCUDAStream()>>>(
+    const size_t staging = Quantize ? width * sizeof(__nv_bfloat16) : 0;
+    auto* norm_out = materialize_norm
+                         ? reinterpret_cast<__nv_bfloat16*>(normalized.mutable_data_ptr())
+                         : nullptr;
+    norm_tree<V, true, Quantize><<<rows, threads / V, staging, at::cuda::getCurrentCUDAStream()>>>(
         reinterpret_cast<const __nv_bfloat16*>(x.const_data_ptr()),
         reinterpret_cast<const __nv_bfloat16*>(gamma.const_data_ptr()),
-        reinterpret_cast<__nv_bfloat16*>(normalized.mutable_data_ptr()),
+        norm_out,
         rows,
         width,
         1,

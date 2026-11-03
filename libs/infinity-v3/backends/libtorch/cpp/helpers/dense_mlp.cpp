@@ -96,6 +96,36 @@ public:
     return true;
   }
 
+  std::pair<at::Tensor, at::Tensor> apply_swiglu_quantized(const MlpProjection& projection,
+                                                           const at::Tensor& x,
+                                                           const at::Tensor& scales,
+                                                           const MlpContext&) const override {
+    TORCH_CHECK(x.dim() == 2 && x.size(1) == projection.input_width(),
+                "Fused SwiGLU requires 2D projection rows");
+    return linear_.forward_swiglu_quantized(x, scales);
+  }
+
+  std::pair<at::Tensor, at::Tensor> apply_gated_quantized(const MlpProjection& projection,
+                                                          const at::Tensor& x,
+                                                          const at::Tensor& scales,
+                                                          const MlpContext&,
+                                                          Fp8GatedActivation kind,
+                                                          bool gate_first) const override {
+    TORCH_CHECK(x.dim() == 2 && x.size(1) == projection.input_width(),
+                "Fused gated activation requires 2D projection rows");
+    return linear_.forward_gated_quantized(x, scales, kind, gate_first);
+  }
+
+  std::pair<at::Tensor, at::Tensor> apply_activation_quantized(const MlpProjection& projection,
+                                                               const at::Tensor& x,
+                                                               const at::Tensor& scales,
+                                                               const MlpContext&,
+                                                               Fp8Activation kind) const override {
+    TORCH_CHECK(x.dim() == 2 && x.size(1) == projection.input_width(),
+                "Fused activation requires 2D projection rows");
+    return linear_.forward_activation_quantized(x, scales, projection.bias(), kind);
+  }
+
   at::Tensor apply(const MlpProjection& projection,
                    const at::Tensor& x,
                    const at::Tensor& bias,
@@ -265,6 +295,22 @@ at::Tensor DenseMlp::forward(const at::Tensor& x,
                       ? activation_.epilogue
                       : MlpEpilogue::None;
 #ifdef TEI_TORCH_CUDA_KERNELS
+  auto fp8_activation = activation_.fp8_activation;
+  if (!fp8_activation && activation_.fusion == MlpFusion::RoundedBiasGelu)
+    fp8_activation = Fp8Activation::RoundedGelu;
+  if (!fp8_activation && !activation_.custom && !activation_.quantized_custom &&
+      activation_.kind == MlpActivation::Relu)
+    fp8_activation = Fp8Activation::Relu;
+  if (fp8_activation && input_.fp8() && input_.output_width() <= 65536 &&
+      output_.method().accepts_fp8_rows() && !activation_.packed && !up_ &&
+      !input_.recipe_.input_clip && !input_.recipe_.cast_input && !input_.recipe_.output_clip &&
+      !output_.recipe_.input_clip && !output_.recipe_.cast_input && x.is_cuda() && x.dim() == 2 &&
+      x.size(1) == input_.input_width()) {
+    auto fused = input_.method().apply_activation_quantized(
+        input_, x, input_scales, context, *fp8_activation);
+    if (fused.first.defined() && fused.second.defined())
+      return output_.execute(fused.first, context, fused.second);
+  }
   if ((fp8() || input_.recipe_.separate_bias) && activation_.fusion == MlpFusion::RoundedBiasGelu &&
       x.is_cuda() && x.dim() == 2 && input_.bias_.defined() && !input_.recipe_.output_clip &&
       !activation_.packed && !up_) {
@@ -273,13 +319,54 @@ at::Tensor DenseMlp::forward(const at::Tensor& x,
                            context);
   }
 #endif
+#ifdef TEI_TORCH_CUDA_KERNELS
+  // One eligibility rule for both fused forms below: the packed rounded SwiGLU output must be
+  // consumable as FP8 rows without output transforms.
+  const bool rounded_swiglu =
+      output_.method().accepts_fp8_rows() && activation_.fusion == MlpFusion::RoundedSwiGlu &&
+      activation_.packed && !up_ && !output_.recipe_.input_clip && !output_.recipe_.cast_input;
+  // Explicit gated recipes cover the native rounded GELU form and reversed gate/up layouts while
+  // the legacy RoundedSwiGlu tag above keeps using its original hook.
+  const bool explicit_gated = activation_.fp8_gated_activation.has_value() && input_.fp8() &&
+                              output_.method().accepts_fp8_rows() && activation_.packed && !up_ &&
+                              !input_.bias().defined() && !input_.recipe_.input_clip &&
+                              !input_.recipe_.cast_input && !input_.recipe_.output_clip &&
+                              !output_.recipe_.input_clip && !output_.recipe_.cast_input &&
+                              x.is_cuda() && x.dim() == 2 && x.size(1) == input_.input_width();
+  bool explicit_gated_hook_declined = false;
+  // The fused hooks keep the input projection's exact GEMM and scales. They are used only when the
+  // input projection needs no bias, cast, or clipping that the fused boundary cannot express.
+  if (rounded_swiglu && input_.fp8() && !input_.bias().defined() && !input_.recipe_.input_clip &&
+      !input_.recipe_.cast_input && !input_.recipe_.output_clip && x.is_cuda() && x.dim() == 2 &&
+      x.size(1) == input_.input_width() &&
+      input_.output_width() / 2 <= fp8_scaled_swiglu_max_width) {
+    auto fused = input_.method().apply_swiglu_quantized(input_, x, input_scales, context);
+    if (fused.first.defined() && fused.second.defined())
+      return output_.execute(fused.first, context, fused.second);
+  }
+  if (explicit_gated && input_.output_width() / 2 <= fp8_scaled_swiglu_max_width) {
+    auto fused = input_.method().apply_gated_quantized(input_,
+                                                       x,
+                                                       input_scales,
+                                                       context,
+                                                       *activation_.fp8_gated_activation,
+                                                       activation_.gate_first);
+    if (fused.first.defined() && fused.second.defined())
+      return output_.execute(fused.first, context, fused.second);
+    explicit_gated_hook_declined = true;
+  }
+#endif
   auto middle = input_.execute(x, context, input_scales, epilogue);
 #ifdef TEI_TORCH_CUDA_KERNELS
-  if (output_.method().accepts_fp8_rows() && activation_.fusion == MlpFusion::RoundedSwiGlu &&
-      activation_.packed && !up_ && !output_.recipe_.input_clip && !output_.recipe_.cast_input &&
-      middle.is_cuda() && middle.dim() == 2 && middle.is_contiguous() &&
+  if (rounded_swiglu && middle.is_cuda() && middle.dim() == 2 && middle.is_contiguous() &&
       middle.size(1) / 2 <= 32768) {
     auto quantized = fp8_swiglu_quantize(middle);
+    return output_.execute(quantized.first, context, quantized.second);
+  }
+  if (explicit_gated && !explicit_gated_hook_declined && middle.is_cuda() && middle.dim() == 2 &&
+      middle.is_contiguous() && middle.size(1) / 2 <= 32768) {
+    auto quantized =
+        fp8_gated_quantize(middle, *activation_.fp8_gated_activation, activation_.gate_first);
     return output_.execute(quantized.first, context, quantized.second);
   }
 #endif
