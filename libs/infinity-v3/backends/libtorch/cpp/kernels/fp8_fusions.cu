@@ -324,8 +324,7 @@ __global__ void rms_quant_vector(const __nv_bfloat16* x,
   }
 }
 
-template <typename T>
-struct alignas(sizeof(T) * 4) PackedScaleOutput {
+template <typename T> struct alignas(sizeof(T) * 4) PackedScaleOutput {
   T value[4];
 };
 
@@ -349,14 +348,10 @@ __global__ void scale_output_kernel(const float* values,
         const float4 value = *reinterpret_cast<const float4*>(values + offset + column);
         const float4 scale = *reinterpret_cast<const float4*>(column_scales + column);
         PackedScaleOutput<T> packed;
-        packed.value[0] =
-            convert_scaled_output<T>(scale_output_value(value.x, row_scale, scale.x));
-        packed.value[1] =
-            convert_scaled_output<T>(scale_output_value(value.y, row_scale, scale.y));
-        packed.value[2] =
-            convert_scaled_output<T>(scale_output_value(value.z, row_scale, scale.z));
-        packed.value[3] =
-            convert_scaled_output<T>(scale_output_value(value.w, row_scale, scale.w));
+        packed.value[0] = convert_scaled_output<T>(scale_output_value(value.x, row_scale, scale.x));
+        packed.value[1] = convert_scaled_output<T>(scale_output_value(value.y, row_scale, scale.y));
+        packed.value[2] = convert_scaled_output<T>(scale_output_value(value.z, row_scale, scale.z));
+        packed.value[3] = convert_scaled_output<T>(scale_output_value(value.w, row_scale, scale.w));
         *reinterpret_cast<PackedScaleOutput<T>*>(output + offset + column) = packed;
       } else {
         output[offset + column] = convert_scaled_output<T>(

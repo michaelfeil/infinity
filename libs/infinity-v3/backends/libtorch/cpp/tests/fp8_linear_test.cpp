@@ -19,8 +19,7 @@
 
 namespace {
 void check_same_or_nan(const at::Tensor& expected, const at::Tensor& actual, const char* label) {
-  TORCH_CHECK(expected.sizes() == actual.sizes() &&
-                  expected.scalar_type() == actual.scalar_type(),
+  TORCH_CHECK(expected.sizes() == actual.sizes() && expected.scalar_type() == actual.scalar_type(),
               label,
               " changed shape or dtype");
   auto expected_nan = at::isnan(expected.to(at::kFloat));
@@ -449,12 +448,11 @@ int main() {
     if (at::cuda::getCurrentDeviceProperties()->major != 9) {
       // Portable output scaling: ragged rows and varied scales must match the
       // reference's separate FP32 products and final model-dtype rounding.
-      for (auto [rows, width] :
-           {std::pair<int64_t, int64_t>            {1, 1024},
-            {17, 2560},
-            {257, 8192},
-            {1025, 2560},
-            {4097, 256}}) {
+      for (auto [rows, width] : {std::pair<int64_t, int64_t>{1, 1024},
+                                 {17, 2560},
+                                 {257, 8192},
+                                 {1025, 2560},
+                                 {4097, 256}}) {
         auto weight = at::randn({512, width}, options) * .05;
         weight.select(0, 0).zero_();
         weight.select(0, 511).mul_(1e4);
@@ -488,12 +486,11 @@ int main() {
                     dtype);
       }
       // Direct helper coverage: vector, ragged-width scalar and unaligned borrowed storage.
-      for (auto shape :
-           {std::array<int64_t, 4>{7, 256, 0, 0},
-            std::array<int64_t, 4>{65536, 16, 0, 0},
-            std::array<int64_t, 4>{7, 257, 0, 0},
-            std::array<int64_t, 4>{7, 256, 1, 0},
-            std::array<int64_t, 4>{7, 256, 0, 1}}) {
+      for (auto shape : {std::array<int64_t, 4>{7, 256, 0, 0},
+                         std::array<int64_t, 4>{65536, 16, 0, 0},
+                         std::array<int64_t, 4>{7, 257, 0, 0},
+                         std::array<int64_t, 4>{7, 256, 1, 0},
+                         std::array<int64_t, 4>{7, 256, 0, 1}}) {
         const auto [rows, width, offset, scale_offset] = shape;
         auto value_storage = at::randn({rows * width + offset}, options.dtype(at::kFloat));
         auto values = value_storage.narrow(0, offset, rows * width).view({rows, width});
