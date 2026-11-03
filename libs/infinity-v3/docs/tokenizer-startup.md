@@ -1,9 +1,12 @@
 # Tokenizer and frontend startup
 
 Infinity temporarily pins Basetenkenizer through Cargo's git dependency to
-commit `148c2d89f18ca087452b50aa333dfb29355ff594`, with default features disabled.
+commit `8e95fd5e983c0bd0556331bd3352384af4dfb825`, with default features disabled.
 That commit contains the constructor improvements in
 [Basetenkenizer #16](https://github.com/basetenlabs/basetenkenizer/pull/16).
+The pinned revision retains independent Fancy VM programs and the BPE prefix
+automaton to preserve throughput; see the upstream
+[validation](https://github.com/basetenlabs/basetenkenizer/blob/8e95fd5e983c0bd0556331bd3352384af4dfb825/docs/startup-throughput.md).
 Cargo fetches the source; no copy is checked into Infinity. Replace the git pin
 with a published crate version once a release contains these changes.
 
