@@ -13,6 +13,14 @@ struct Replica {
     busy: bool,
     healthy: bool,
     batches: u64,
+    pending_tokens: usize,
+    best_tokens_per_second: f64,
+}
+
+impl Replica {
+    fn can_prefetch(&self) -> bool {
+        self.pending_tokens > 0 && self.pending_tokens as f64 / self.best_tokens_per_second < 0.002
+    }
 }
 
 #[derive(Debug)]
@@ -85,6 +93,8 @@ impl BackendPool {
                             busy: false,
                             healthy: true,
                             batches: 0,
+                            pending_tokens: 0,
+                            best_tokens_per_second: 100.,
                         })
                         .collect(),
                     idle: (0..backends.len()).collect(),
@@ -132,10 +142,39 @@ impl BackendPool {
     pub(crate) fn changes(&self) -> watch::Receiver<()> {
         self.inner.changed.subscribe()
     }
-    pub(crate) async fn acquire_replica(&self, id: usize) -> Result<Execution, BackendError> {
-        self.acquire_matching(Some(id)).await
+    pub(crate) async fn acquire_replica(
+        &self,
+        id: usize,
+        tokens: usize,
+    ) -> Result<Execution, BackendError> {
+        self.acquire_matching(Some(id), tokens).await
     }
-    async fn acquire_matching(&self, target: Option<usize>) -> Result<Execution, BackendError> {
+    // Leave the shared prepared batch for idle replicas when this one is slow.
+    // Fast replicas may prefetch; this wait never takes an idle health lease.
+    pub(crate) async fn wait_to_dequeue(
+        &self,
+        id: usize,
+        changed: &mut watch::Receiver<()>,
+    ) -> Result<(), BackendError> {
+        loop {
+            changed.borrow_and_update();
+            {
+                let state = self.inner.state.lock().unwrap();
+                if state.closed || !state.replicas[id].healthy {
+                    return Err(BackendError::Unhealthy);
+                }
+                if !state.replicas[id].busy || state.replicas[id].can_prefetch() {
+                    return Ok(());
+                }
+            }
+            let _ = changed.changed().await;
+        }
+    }
+    async fn acquire_matching(
+        &self,
+        target: Option<usize>,
+        tokens: usize,
+    ) -> Result<Execution, BackendError> {
         let mut changed = self.inner.changed.subscribe();
         let start = Instant::now();
         loop {
@@ -154,7 +193,11 @@ impl BackendPool {
                     .position(|&id| target.is_none_or(|target| target == id));
                 if let Some(position) = position {
                     let id = state.idle.remove(position).unwrap();
-                    state.replicas[id].busy = true;
+                    let r = &mut state.replicas[id];
+                    r.busy = true;
+                    // Deferred submissions retain their tokens until completion, even if their
+                    // model lease is already free. Forecast the GPU backlog with this new batch.
+                    r.pending_tokens += tokens;
                     self.inner.signal(&state);
                     metrics::histogram!("infinity_pipeline_pool_wait_duration", "model" => self.inner.model_name.clone())
                         .record(start.elapsed().as_secs_f64());
@@ -165,6 +208,7 @@ impl BackendPool {
                         submitted: false,
                         released: false,
                         reserved_at: Instant::now(),
+                        pending_tokens: tokens,
                         max_sequence_tokens: 0,
                         block_prefix_tokens: 0,
                     });
@@ -199,6 +243,7 @@ impl BackendPool {
                         submitted: false,
                         released: false,
                         reserved_at: Instant::now(),
+                        pending_tokens: 0,
                         max_sequence_tokens: 0,
                         block_prefix_tokens: 0,
                     }
@@ -334,6 +379,7 @@ pub(crate) struct Execution {
     submitted: bool,
     released: bool,
     reserved_at: Instant,
+    pending_tokens: usize,
     max_sequence_tokens: u32,
     block_prefix_tokens: usize,
 }
@@ -362,6 +408,7 @@ impl Execution {
     ) {
         let mut state = self.pool.inner.state.lock().unwrap();
         let r = &mut state.replicas[self.id];
+        r.pending_tokens -= self.pending_tokens;
         if !self.released {
             r.busy = false;
         }
@@ -376,6 +423,13 @@ impl Execution {
                 .increment(tokens as u64);
             if !duration.is_zero() {
                 r.batches += 1;
+                // Calibrate on short batches, where the early-preparation decision matters.
+                // Larger batches can inflate throughput through better GPU utilization.
+                if tokens > 0 && tokens < 500 {
+                    r.best_tokens_per_second = r
+                        .best_tokens_per_second
+                        .max(tokens as f64 / duration.as_secs_f64());
+                }
                 if r.batches.is_multiple_of(100) {
                     // Sample the latest batch, using native inference time only.
                     let inference_seconds = duration.as_secs_f64();
@@ -393,6 +447,9 @@ impl Execution {
                             / 1000.,
                         inference_ms = (inference_seconds * 100_000.).round() / 100.,
                         tokens_per_second = (tokens as f64 / inference_seconds).round(),
+                        best_short_batch_tokens_per_second = r.best_tokens_per_second.round(),
+                        prefetch_token_limit = (r.best_tokens_per_second * 0.002).floor(),
+                        pending_tokens = r.pending_tokens,
                         "Replica inference throughput (latest batch)"
                     );
                 }
@@ -425,6 +482,7 @@ impl Drop for Execution {
         if !self.finished {
             let mut state = self.pool.inner.state.lock().unwrap();
             let r = &mut state.replicas[self.id];
+            r.pending_tokens -= self.pending_tokens;
             if !self.released {
                 r.busy = false;
             }
@@ -452,6 +510,8 @@ mod completion_tests {
                         busy: true,
                         healthy: true,
                         batches: 0,
+                        pending_tokens: 0,
+                        best_tokens_per_second: 100.,
                     }],
                     idle: VecDeque::new(),
                     closed: false,
@@ -469,10 +529,154 @@ mod completion_tests {
             submitted: true,
             released: false,
             reserved_at: Instant::now(),
+            pending_tokens: 0,
             max_sequence_tokens: 0,
             block_prefix_tokens: 0,
         }
     }
+    #[tokio::test]
+    async fn prefetch_predicts_current_tokens_from_best_short_batch_throughput() {
+        let first = execution();
+        let pool = first.pool.clone();
+        first.finish(10, 1, &Ok(((), Duration::ZERO)));
+        let seeded = pool.acquire_replica(0, 10).await.unwrap();
+        assert!(!pool.inner.state.lock().unwrap().replicas[0].can_prefetch());
+        // 400 tokens/ms calibrates the boundary to 800 tokens. A large running
+        // batch can use that forecast, although it cannot recalibrate the rate.
+        seeded.finish(400, 1, &Ok(((), Duration::from_millis(1))));
+        let small = pool.acquire_replica(0, 600).await.unwrap();
+        let mut changed = pool.changes();
+        pool.wait_to_dequeue(0, &mut changed).await.unwrap();
+        assert!(pool.inner.state.lock().unwrap().replicas[0].busy);
+        small.finish(600, 1, &Ok(((), Duration::from_micros(100))));
+        let large = pool.acquire_replica(0, 800).await.unwrap();
+        assert!(!pool.inner.state.lock().unwrap().replicas[0].can_prefetch());
+        large.finish(800, 1, &Ok(((), Duration::from_micros(100))));
+        // Slower samples and zero-duration health calls do not erase the best rate.
+        let slow = pool.acquire_replica(0, 100).await.unwrap();
+        slow.finish(100, 1, &Ok(((), Duration::from_millis(3))));
+        let health = pool.acquire_replica(0, 0).await.unwrap();
+        health.finish(0, 0, &Ok(((), Duration::ZERO)));
+        let fast = pool.acquire_replica(0, 600).await.unwrap();
+        assert!(pool.inner.state.lock().unwrap().replicas[0].can_prefetch());
+        fast.finish(600, 1, &Ok(((), Duration::from_millis(1))));
+    }
+
+    #[tokio::test]
+    async fn deferred_tokens_remain_in_forecast_until_completion() {
+        let calibration = execution();
+        let pool = calibration.pool.clone();
+        calibration.finish(400, 1, &Ok(((), Duration::from_millis(1))));
+        let mut previous = pool.acquire_replica(0, 600).await.unwrap();
+        previous.release();
+        let current = pool.acquire_replica(0, 600).await.unwrap();
+        assert!(!pool.inner.state.lock().unwrap().replicas[0].can_prefetch());
+        previous.finish(600, 1, &Ok(((), Duration::from_millis(1))));
+        {
+            let state = pool.inner.state.lock().unwrap();
+            assert!(state.replicas[0].busy);
+            assert_eq!(state.replicas[0].pending_tokens, 600);
+            assert!(state.replicas[0].can_prefetch());
+            assert!(state.idle.is_empty());
+        }
+        current.finish(600, 1, &Ok(((), Duration::from_millis(1))));
+        let canceled = pool.acquire_replica(0, 600).await.unwrap();
+        drop(canceled);
+        let state = pool.inner.state.lock().unwrap();
+        assert_eq!(state.replicas[0].pending_tokens, 0);
+        assert!(!state.replicas[0].busy);
+        assert_eq!(state.idle, VecDeque::from([0]));
+    }
+
+    #[tokio::test]
+    async fn throughput_forecasts_are_independent_across_eight_replicas() {
+        let first = execution();
+        let pool = first.pool.clone();
+        {
+            let mut state = pool.inner.state.lock().unwrap();
+            for id in 1..8 {
+                state.replicas.push(Replica {
+                    busy: false,
+                    healthy: true,
+                    batches: 0,
+                    pending_tokens: 0,
+                    best_tokens_per_second: 100.,
+                });
+                state.idle.push_back(id);
+            }
+        }
+        first.finish(400, 1, &Ok(((), Duration::from_millis(1))));
+        let calibrated = pool.acquire_replica(0, 600).await.unwrap();
+        assert!(pool.inner.state.lock().unwrap().replicas[0].can_prefetch());
+        for id in 1..8 {
+            let unmeasured = pool.acquire_replica(id, 1).await.unwrap();
+            assert!(!pool.inner.state.lock().unwrap().replicas[id].can_prefetch());
+            unmeasured.finish(1, 1, &Ok(((), Duration::from_millis(1))));
+        }
+        calibrated.finish(600, 1, &Ok(((), Duration::from_millis(1))));
+    }
+
+    #[tokio::test]
+    async fn short_batch_calibration_excludes_500_tokens_and_zero_tokens() {
+        let sample = execution();
+        let pool = sample.pool.clone();
+        sample.finish(500, 1, &Ok(((), Duration::from_micros(1))));
+        assert_eq!(
+            pool.inner.state.lock().unwrap().replicas[0].best_tokens_per_second,
+            100.
+        );
+        let empty = pool.acquire_replica(0, 0).await.unwrap();
+        empty.finish(0, 0, &Ok(((), Duration::from_micros(1))));
+        assert_eq!(
+            pool.inner.state.lock().unwrap().replicas[0].best_tokens_per_second,
+            100.
+        );
+        let sample = pool.acquire_replica(0, 0).await.unwrap();
+        sample.finish(499, 1, &Ok(((), Duration::from_millis(1))));
+        assert_eq!(
+            pool.inner.state.lock().unwrap().replicas[0].best_tokens_per_second,
+            499_000.
+        );
+    }
+
+    #[tokio::test]
+    async fn ready_wait_wakes_on_release_without_taking_the_idle_lease() {
+        let mut active = execution();
+        let pool = active.pool.clone();
+        let mut changed = pool.changes();
+        let ready = pool.wait_to_dequeue(0, &mut changed);
+        tokio::pin!(ready);
+        let first =
+            std::future::poll_fn(|cx| std::task::Poll::Ready(ready.as_mut().poll(cx))).await;
+        assert!(first.is_pending());
+        active.release();
+        tokio::time::timeout(Duration::from_secs(1), ready)
+            .await
+            .unwrap()
+            .unwrap();
+        active.finish(1, 1, &Ok(((), Duration::from_millis(1))));
+        let state = pool.inner.state.lock().unwrap();
+        assert!(!state.replicas[0].busy);
+        assert_eq!(state.idle, VecDeque::from([0]));
+    }
+
+    #[tokio::test]
+    async fn ready_wait_wakes_on_close() {
+        let active = execution();
+        let pool = active.pool.clone();
+        let mut changed = pool.changes();
+        let ready = pool.wait_to_dequeue(0, &mut changed);
+        tokio::pin!(ready);
+        let first =
+            std::future::poll_fn(|cx| std::task::Poll::Ready(ready.as_mut().poll(cx))).await;
+        assert!(first.is_pending());
+        pool.close();
+        assert!(tokio::time::timeout(Duration::from_secs(1), ready)
+            .await
+            .unwrap()
+            .is_err());
+    }
+
     #[tokio::test]
     async fn overload_keeps_replica_available_for_the_next_request() {
         let rejected = execution();
@@ -483,7 +687,7 @@ mod completion_tests {
             &Err(BackendError::Overloaded("memory admission".into())),
         );
         assert!(!pool.is_closed());
-        let next = tokio::time::timeout(Duration::from_secs(1), pool.acquire_replica(0))
+        let next = tokio::time::timeout(Duration::from_secs(1), pool.acquire_replica(0, 0))
             .await
             .unwrap()
             .unwrap();
@@ -506,6 +710,7 @@ mod completion_tests {
         previous.finish(1, 1, &Ok(((), Duration::from_millis(1))));
         let state = pool.inner.state.lock().unwrap();
         assert!(state.replicas[0].busy);
+        assert!(!state.replicas[0].can_prefetch());
         assert!(state.idle.is_empty());
     }
     #[test]
