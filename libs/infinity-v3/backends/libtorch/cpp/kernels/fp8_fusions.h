@@ -2,6 +2,7 @@
 /// Fused activation/normalization and per-row FP8 quantization interfaces.
 
 #pragma once
+#include "helpers/fp8_activation.h"
 #include <ATen/ATen.h>
 #include <tuple>
 
@@ -21,6 +22,19 @@ std::pair<at::Tensor, at::Tensor> fp8_scaled_swiglu_quantize(const at::Tensor& v
                                                              const at::Tensor& row_scales,
                                                              const at::Tensor& column_scales,
                                                              at::ScalarType dtype);
+// Add an optional model-dtype bias, apply one rounded unary activation, then dynamically quantize
+// every row to E4M3 with an F32 scale. Ragged and wide rows retain the same scalar arithmetic.
+std::pair<at::Tensor, at::Tensor>
+fp8_activation_quantize(const at::Tensor& input, const at::Tensor& bias, Fp8Activation kind);
+// Apply FP32 row and column scales, round once to dtype, add an optional model-dtype bias, apply one
+// rounded unary activation, then dynamically quantize every row to E4M3. Aligned rows up to 20480
+// activation columns avoid the scaled intermediate; wider or unaligned rows compose the same steps.
+std::pair<at::Tensor, at::Tensor> fp8_scaled_activation_quantize(const at::Tensor& values,
+                                                                 const at::Tensor& row_scales,
+                                                                 const at::Tensor& column_scales,
+                                                                 at::ScalarType dtype,
+                                                                 const at::Tensor& bias,
+                                                                 Fp8Activation kind);
 // BF16 residual/RMS rounding and reduction match fused_add_rms_norm.
 // Returns quantized normalized rows, residual output, and FP32 row scales.
 std::tuple<at::Tensor, at::Tensor, at::Tensor> fp8_add_rms_quantize(const at::Tensor& x,

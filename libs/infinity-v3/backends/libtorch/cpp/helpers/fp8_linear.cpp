@@ -730,4 +730,51 @@ Fp8Linear::forward_swiglu_quantized(const at::Tensor& input, const at::Tensor& r
   return {};
 #endif
 }
+
+/// Fuse the projection with an optional separate bias, one rounded unary activation and row FP8
+/// quantization. Hopper consumes its rowwise projection before the activation; other devices scale
+/// the FP32 accumulation inside the activation quantizer.
+std::pair<at::Tensor, at::Tensor>
+Fp8Linear::forward_activation_quantized(const at::Tensor& input,
+                                        const at::Tensor& row_scales,
+                                        const at::Tensor& bias,
+                                        Fp8Activation kind) const {
+  const bool prequantized = input.scalar_type() == at::kFloat8_e4m3fn;
+  TORCH_CHECK(input.dim() == 2 && input.device() == matrix_.device() &&
+                  (prequantized || input.scalar_type() == dtype_) && input.size(1) == input_width(),
+              "Invalid dynamic FP8 activation rows");
+  TORCH_CHECK(!bias.defined() || (bias.dim() == 1 && bias.size(0) == output_width() &&
+                                  bias.device() == input.device() && bias.scalar_type() == dtype_),
+              "Invalid dynamic FP8 activation bias");
+  if (prequantized) {
+    TORCH_CHECK(input.is_contiguous() && row_scales.dim() == 2 &&
+                    row_scales.size(0) == input.size(0) && row_scales.size(1) == 1 &&
+                    row_scales.device() == input.device() &&
+                    row_scales.scalar_type() == at::kFloat && row_scales.is_contiguous(),
+                "Invalid prequantized FP8 activation row scales");
+  } else {
+    TORCH_CHECK(!row_scales.defined(),
+                "Model-dtype activation rows are quantized once and take no precomputed scales");
+  }
+  if (input.size(0) == 0)
+    return {at::empty({0, output_width()}, input.options().dtype(at::kFloat8_e4m3fn)),
+            at::empty({0, 1}, input.options().dtype(at::kFloat))};
+#ifdef TEI_TORCH_CUDA_KERNELS
+  c10::cuda::CUDAGuard guard(input.device());
+  auto rows = input;
+  auto scales = row_scales;
+  if (!prequantized) {
+    auto quantized = fp8_quantize_rows(input.contiguous());
+    rows = std::move(quantized.first);
+    scales = std::move(quantized.second);
+  }
+  if (rowwise_)
+    return fp8_activation_quantize(forward_quantized(rows, scales), bias, kind);
+  return fp8_scaled_activation_quantize(
+      unscaled_product(rows), scales, scales_, dtype_, bias, kind);
+#else
+  TORCH_CHECK(false, "Dynamic FP8 requires a CUDA LibTorch build");
+  return {};
+#endif
+}
 }

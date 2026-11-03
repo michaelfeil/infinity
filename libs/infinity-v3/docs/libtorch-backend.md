@@ -67,11 +67,15 @@ default and enables the FP8 optimizations automatically. GDN activations remain
 BF16 and stored recurrent states remain FP32.
 
 Dense FP8 MLPs combine portable projection scaling, rounded SwiGLU and row
-quantization for aligned intermediate widths up to 20480. The fused path keeps
-the two FP32 scale products and model-dtype rounding of the separate operations.
-Wider rows, projection bias or clipping, and Hopper's rowwise projection retain
-their existing recipes. Qwen3.5 post-attention normalization can also produce
-the dense MLP's FP8 input directly, omitting its unused BF16 copy.
+quantization for aligned intermediate widths up to 20480. The fused SwiGLU path
+keeps the two FP32 scale products and model-dtype rounding of the separate
+operations; wider rows, projection bias or clipping retain their existing
+recipes for that gated form. Unary FP8 MLPs can fuse ReLU, Candle-rounded SiLU,
+or encoder-rounded GELU with the projection, an optional separate bias, and row
+quantization, including for Hopper's rowwise projection. Custom rounded recipes
+opt in explicitly; standard erf/tanh GELU, packed gate/up activation, clipping,
+and casts keep the composed path. Qwen3.5 post-attention normalization can also
+produce the dense MLP's FP8 input directly, omitting its unused BF16 copy.
 
 Eligible cached GDN suffixes use the existing tensor-core prefill kernels by
 default. Batch geometry and provider support are selected automatically; other

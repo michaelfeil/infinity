@@ -3,6 +3,7 @@
 /// Public wrappers expose eligibility and preserve their documented fallback paths.
 
 #pragma once
+#include "helpers/fp8_activation.h"
 #include <ATen/ATen.h>
 #include <utility>
 #include <memory>
@@ -69,6 +70,13 @@ public:
   /// The projection must be bias-free; bias, clipping and casts stay outside this boundary.
   std::pair<at::Tensor, at::Tensor>
   forward_swiglu_quantized(const at::Tensor& input, const at::Tensor& row_scales = {}) const;
+  /// Fuse the projection, a unary rounded activation, an optional bias, and row FP8 quantization.
+  /// `input` is either model-dtype rows (quantized once here) or prequantized E4M3 rows with
+  /// `row_scales`. Bias is added once after the projection's model-dtype rounding.
+  std::pair<at::Tensor, at::Tensor> forward_activation_quantized(const at::Tensor& input,
+                                                                 const at::Tensor& row_scales,
+                                                                 const at::Tensor& bias,
+                                                                 Fp8Activation kind) const;
 
   int64_t input_width() const {
     return matrix_.size(1);

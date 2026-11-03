@@ -105,6 +105,16 @@ public:
     return linear_.forward_swiglu_quantized(x, scales);
   }
 
+  std::pair<at::Tensor, at::Tensor> apply_activation_quantized(const MlpProjection& projection,
+                                                               const at::Tensor& x,
+                                                               const at::Tensor& scales,
+                                                               const MlpContext&,
+                                                               Fp8Activation kind) const override {
+    TORCH_CHECK(x.dim() == 2 && x.size(1) == projection.input_width(),
+                "Fused activation requires 2D projection rows");
+    return linear_.forward_activation_quantized(x, scales, projection.bias(), kind);
+  }
+
   at::Tensor apply(const MlpProjection& projection,
                    const at::Tensor& x,
                    const at::Tensor& bias,
@@ -274,6 +284,21 @@ at::Tensor DenseMlp::forward(const at::Tensor& x,
                       ? activation_.epilogue
                       : MlpEpilogue::None;
 #ifdef TEI_TORCH_CUDA_KERNELS
+  auto fp8_activation = activation_.fp8_activation;
+  if (!fp8_activation && activation_.fusion == MlpFusion::RoundedBiasGelu)
+    fp8_activation = Fp8Activation::RoundedGelu;
+  if (!fp8_activation && !activation_.custom && !activation_.quantized_custom &&
+      activation_.kind == MlpActivation::Relu)
+    fp8_activation = Fp8Activation::Relu;
+  if (fp8_activation && input_.fp8() && output_.method().accepts_fp8_rows() &&
+      !activation_.packed && !up_ && !input_.recipe_.input_clip && !input_.recipe_.cast_input &&
+      !input_.recipe_.output_clip && !output_.recipe_.input_clip && !output_.recipe_.cast_input &&
+      x.is_cuda() && x.dim() == 2 && x.size(1) == input_.input_width()) {
+    auto fused = input_.method().apply_activation_quantized(
+        input_, x, input_scales, context, *fp8_activation);
+    if (fused.first.defined() && fused.second.defined())
+      return output_.execute(fused.first, context, fused.second);
+  }
   if ((fp8() || input_.recipe_.separate_bias) && activation_.fusion == MlpFusion::RoundedBiasGelu &&
       x.is_cuda() && x.dim() == 2 && input_.bias_.defined() && !input_.recipe_.output_clip &&
       !activation_.packed && !up_) {

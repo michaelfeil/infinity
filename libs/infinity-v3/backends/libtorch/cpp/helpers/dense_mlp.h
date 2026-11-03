@@ -65,6 +65,17 @@ public:
                                                                    const MlpContext&) const {
     return {};
   }
+
+  /// Optional fused unary activation + row FP8 quantization. An undefined result retains the
+  /// ordinary projection/activation path; implementations must apply any projection bias exactly
+  /// once after the same model-dtype GEMM rounding.
+  virtual std::pair<at::Tensor, at::Tensor> apply_activation_quantized(const MlpProjection&,
+                                                                       const at::Tensor&,
+                                                                       const at::Tensor&,
+                                                                       const MlpContext&,
+                                                                       Fp8Activation) const {
+    return {};
+  }
 };
 
 // A loader selects a method using projection metadata, without changing forward.
@@ -142,6 +153,8 @@ struct MlpActivationRecipe {
   std::function<at::Tensor(const at::Tensor&)> custom, quantized_custom;
   MlpEpilogue epilogue = MlpEpilogue::None;
   MlpFusion fusion = MlpFusion::None;
+  // Explicit opt-in for custom rounded recipes whose FP8 form is one of the bounded unary kernels.
+  std::optional<Fp8Activation> fp8_activation;
   MlpActivationRecipe() = default;
 
   MlpActivationRecipe(MlpActivation activation) : kind(activation) {}

@@ -191,6 +191,118 @@ void check(const c10::Device& device, at::ScalarType dtype) {
   TORCH_CHECK(failed && *calls == before + 2, "Failed preparation replaced a live method");
 #ifdef TEI_TORCH_CUDA_KERNELS
   if (device.is_cuda()) {
+    // Explicit composition retains the projection's model-dtype rounding, bias position,
+    // activation recipe and output transforms for comparison with the fused candidate.
+    auto project = [&](const at::Tensor& value,
+                       const at::Tensor& weight,
+                       const at::Tensor& bias,
+                       const infinity::ProjectionRecipe& projection) {
+      auto input = value;
+      if (projection.input_clip)
+        input = input.clamp((*projection.input_clip)[0], (*projection.input_clip)[1]);
+      if (projection.cast_input)
+        input = input.to(dtype);
+      auto output = projection.separate_bias ? infinity::Fp8Linear(weight).forward(input)
+                                             : infinity::Fp8Linear(weight).forward(input, bias);
+      if (projection.separate_bias && bias.defined())
+        output = output + bias;
+      if (projection.output_clip)
+        output = output.clamp((*projection.output_clip)[0], (*projection.output_clip)[1]);
+      return output;
+    };
+    auto check_activation_recipe = [&](const infinity::MlpActivationRecipe& activation,
+                                       infinity::MlpActivation expected_activation) {
+      for (bool use_bias : {false, true})
+        for (bool separate_bias : {false, true}) {
+          infinity::ProjectionRecipe input_recipe, output_recipe;
+          input_recipe.separate_bias = separate_bias;
+          output_recipe.separate_bias = separate_bias;
+          auto input_bias = use_bias ? bi : at::Tensor();
+          auto output_bias = use_bias ? bo : at::Tensor();
+          infinity::DenseMlp mlp(
+              {wi, input_bias, input_recipe}, {wo, output_bias, output_recipe}, activation);
+          mlp.prepare(infinity::MlpPrecision::Fp8);
+          auto projected = project(x, wi, input_bias, input_recipe);
+          auto activated = infinity::mlp_activation(projected, expected_activation);
+          auto expected = project(activated, wo, output_bias, output_recipe);
+          check_equal(mlp.forward(x), expected);
+          auto quantized = infinity::fp8_quantize_rows(x);
+          check_equal(mlp.forward(quantized.first, {}, quantized.second), expected);
+        }
+    };
+    check_activation_recipe(infinity::MlpActivationRecipe(infinity::MlpActivation::Relu),
+                            infinity::MlpActivation::Relu);
+    {
+      infinity::MlpActivationRecipe activation(infinity::MlpActivation::RoundedSilu);
+      activation.fp8_activation = infinity::Fp8Activation::RoundedSilu;
+      check_activation_recipe(activation, infinity::MlpActivation::RoundedSilu);
+    }
+    {
+      infinity::MlpActivationRecipe activation(infinity::MlpActivation::RoundedGelu);
+      activation.fp8_activation = infinity::Fp8Activation::RoundedGelu;
+      check_activation_recipe(activation, infinity::MlpActivation::RoundedGelu);
+    }
+    {
+      infinity::MlpActivationRecipe activation(infinity::MlpActivation::RoundedGelu);
+      activation.fusion = infinity::MlpFusion::RoundedBiasGelu;
+      check_activation_recipe(activation, infinity::MlpActivation::RoundedGelu);
+    }
+    // A custom activation remains authoritative unless a rounded kernel is explicitly selected.
+    for (bool quantized_callback : {false, true}) {
+      int calls = 0;
+      auto callback = [&](const at::Tensor& rows) {
+        ++calls;
+        return at::relu(rows) + at::ones({}, rows.options());
+      };
+      infinity::MlpActivationRecipe activation(infinity::MlpActivation::Relu);
+      if (quantized_callback)
+        activation.quantized_custom = callback;
+      else
+        activation.custom = callback;
+      infinity::DenseMlp mlp({wi, bi}, {wo, bo}, activation);
+      mlp.prepare(infinity::MlpPrecision::Fp8);
+      auto expected = infinity::Fp8Linear(wo).forward(
+          at::relu(infinity::Fp8Linear(wi).forward(x, bi)) + at::ones({}, opts), bo);
+      check_equal(mlp.forward(x), expected);
+      TORCH_CHECK(calls == 1, "Custom FP8 activation callback was bypassed");
+    }
+    auto check_guarded = [&](const at::Tensor& values,
+                             infinity::ProjectionRecipe input_recipe,
+                             infinity::ProjectionRecipe output_recipe) {
+      infinity::MlpActivationRecipe activation(infinity::MlpActivation::RoundedSilu);
+      activation.fp8_activation = infinity::Fp8Activation::RoundedSilu;
+      infinity::DenseMlp mlp({wi, bi, input_recipe}, {wo, bo, output_recipe}, activation);
+      mlp.prepare(infinity::MlpPrecision::Fp8);
+      auto projected = project(values, wi, bi, input_recipe);
+      auto activated = infinity::mlp_activation(projected, infinity::MlpActivation::RoundedSilu);
+      check_equal(mlp.forward(values), project(activated, wo, bo, output_recipe));
+    };
+    {
+      infinity::ProjectionRecipe input_recipe;
+      input_recipe.separate_bias = true;
+      input_recipe.input_clip = std::array<double, 2>{-.4, .5};
+      check_guarded(x, input_recipe, {});
+      input_recipe = {};
+      input_recipe.separate_bias = true;
+      input_recipe.cast_input = true;
+      check_guarded(x.to(at::kFloat), input_recipe, {});
+      input_recipe = {};
+      input_recipe.separate_bias = true;
+      input_recipe.output_clip = std::array<double, 2>{-.1, .2};
+      check_guarded(x, input_recipe, {});
+      infinity::ProjectionRecipe output_recipe;
+      output_recipe.separate_bias = true;
+      output_recipe.input_clip = std::array<double, 2>{-.2, .3};
+      check_guarded(x, {}, output_recipe);
+      output_recipe = {};
+      output_recipe.separate_bias = true;
+      output_recipe.cast_input = true;
+      check_guarded(x, {}, output_recipe);
+      output_recipe = {};
+      output_recipe.separate_bias = true;
+      output_recipe.output_clip = std::array<double, 2>{-.05, .1};
+      check_guarded(x, {}, output_recipe);
+    }
     auto packed = at::cat({wi, up}, 0);
     auto recipe = infinity::MlpActivationRecipe::numerical(
         [](const at::Tensor& rows) { return infinity::fused_gated_activation(rows, 5); }, true);

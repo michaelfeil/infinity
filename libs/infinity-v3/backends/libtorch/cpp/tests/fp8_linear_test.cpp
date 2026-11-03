@@ -1,4 +1,6 @@
+#include "helpers/dense_mlp.h"
 #include "helpers/fp8_linear.h"
+#include "kernels/encoder_activation.h"
 #include "kernels/fp8_fusions.h"
 #include "kernels/fast_kernels.h"
 #include "helpers/workspace_admission.h"
@@ -45,6 +47,71 @@ void check_same_or_nan(const at::Tensor& expected, const at::Tensor& actual, con
   TORCH_CHECK(at::equal(expected_cpu.masked_select(non_nan), actual_cpu.masked_select(non_nan)),
               label,
               " changed non-NaN bytes");
+}
+
+constexpr std::array<infinity::Fp8Activation, 3> activation_kinds{
+    infinity::Fp8Activation::Relu,
+    infinity::Fp8Activation::RoundedSilu,
+    infinity::Fp8Activation::RoundedGelu};
+
+at::Tensor reference_activation(const at::Tensor& input,
+                                const at::Tensor& bias,
+                                infinity::Fp8Activation kind) {
+  switch (kind) {
+  case infinity::Fp8Activation::Relu:
+    return at::relu(bias.defined() ? input + bias : input);
+  case infinity::Fp8Activation::RoundedSilu:
+    return infinity::mlp_activation(bias.defined() ? input + bias : input,
+                                    infinity::MlpActivation::RoundedSilu);
+  case infinity::Fp8Activation::RoundedGelu:
+    return bias.defined() ? infinity::encoder_bias_gelu(input, bias)
+                          : infinity::encoder_gelu(input);
+  }
+  TORCH_CHECK(false, "Invalid reference activation");
+  return {};
+}
+
+void check_activation_quantize(const at::Tensor& input,
+                               const at::Tensor& bias,
+                               infinity::Fp8Activation kind,
+                               const char* label) {
+  auto expected = infinity::fp8_quantize_rows(reference_activation(input, bias, kind));
+  auto actual = infinity::fp8_activation_quantize(input, bias, kind);
+  check_same_or_nan(expected.first, actual.first, label);
+  check_same_or_nan(expected.second, actual.second, label);
+}
+
+void check_scaled_activation_quantize(const at::Tensor& values,
+                                      const at::Tensor& row_scales,
+                                      const at::Tensor& column_scales,
+                                      at::ScalarType dtype,
+                                      const at::Tensor& bias,
+                                      infinity::Fp8Activation kind,
+                                      const char* label) {
+  auto scaled = infinity::fp8_scale_output(values, row_scales, column_scales, dtype);
+  auto expected = infinity::fp8_quantize_rows(reference_activation(scaled, bias, kind));
+  auto actual = infinity::fp8_scaled_activation_quantize(
+      values, row_scales, column_scales, dtype, bias, kind);
+  check_same_or_nan(expected.first, actual.first, label);
+  check_same_or_nan(expected.second, actual.second, label);
+}
+
+void check_linear_activation(const at::Tensor& input,
+                             const at::Tensor& bias,
+                             infinity::Fp8Activation kind,
+                             const infinity::Fp8Linear& linear,
+                             const char* label) {
+  auto quantized = infinity::fp8_quantize_rows(input);
+  auto projected = fp8_original_recipe(
+      quantized.first, linear.matrix(), quantized.second, linear.scales(), input.scalar_type());
+  auto expected = infinity::fp8_quantize_rows(reference_activation(projected, bias, kind));
+  auto actual = linear.forward_activation_quantized(input, {}, bias, kind);
+  check_same_or_nan(expected.first, actual.first, label);
+  check_same_or_nan(expected.second, actual.second, label);
+  auto prequantized =
+      linear.forward_activation_quantized(quantized.first, quantized.second, bias, kind);
+  check_same_or_nan(expected.first, prequantized.first, label);
+  check_same_or_nan(expected.second, prequantized.second, label);
 }
 }
 
@@ -263,6 +330,194 @@ int main() {
     }
     auto empty = linear.forward(at::empty({0, 256}, options));
     TORCH_CHECK(empty.sizes() == at::IntArrayRef({0, 512}), "FP8 empty rows not preserved");
+
+    // The fused unary activation quantizers must equal the original composed recipe:
+    // model-dtype projection/bias rounding, the original activation helper, then row quantization.
+    for (auto kind : activation_kinds) {
+      for (int64_t rows : {0, 1, 17}) {
+        auto input = at::randn({rows, 256}, options) * .5;
+        if (rows) {
+          input.select(0, 0).zero_();
+          if (rows > 1)
+            input.select(0, 1).fill_(1e-14);
+        }
+        auto bias = at::randn({256}, options) * .01;
+        check_activation_quantize(input, {}, kind, "Unbiased fused activation differs");
+        check_activation_quantize(input, bias, kind, "Biased fused activation differs");
+      }
+    }
+    // Width 20480 is the vector boundary; wider or unaligned rows use the scalar fallback.
+    for (const auto& [width, rows] : std::array<std::pair<int64_t, int64_t>, 10>{std::pair{513, 2},
+                                                                                 {8193, 2},
+                                                                                 {12288, 2},
+                                                                                 {12289, 2},
+                                                                                 {16384, 2},
+                                                                                 {20480, 2},
+                                                                                 {20481, 2},
+                                                                                 {20488, 2},
+                                                                                 {32768, 1},
+                                                                                 {65536, 1}})
+      for (bool aligned : {false, true}) {
+        auto storage = at::randn({rows * width + 1}, options) * 3;
+        auto input = storage.narrow(0, aligned ? 0 : 1, rows * width).view({rows, width});
+        input.select(0, 0).zero_();
+        if (rows > 1)
+          input.select(0, 1).narrow(0, 0, 8).fill_(
+              std::ldexp(1.f, dtype == at::kHalf ? -24 : -133));
+        auto bias = at::randn({width}, options) * .01;
+        for (auto kind : activation_kinds) {
+          check_activation_quantize(input, {}, kind, "Wide/unaligned fused activation differs");
+          check_activation_quantize(input, bias, kind, "Wide biased fused activation differs");
+        }
+      }
+    // Every finite model-dtype bit pattern, in both the vector and scalar fallback layouts.
+    {
+      auto words = at::arange(65536, at::TensorOptions().dtype(at::kInt)).to(at::kShort);
+      auto finite = words.view(dtype).to(at::kFloat);
+      finite = finite.masked_select(at::isfinite(finite));
+      for (int64_t width : {2048, 17}) {
+        auto padded = at::zeros({(finite.numel() + width - 1) / width * width}, finite.options());
+        padded.narrow(0, 0, finite.numel()).copy_(finite);
+        auto rows = padded.view({-1, width}).to(options);
+        for (auto kind : activation_kinds)
+          check_activation_quantize(rows, {}, kind, "Exhaustive fused activation differs");
+      }
+    }
+    // Portable row/column scaling must round once to model dtype before the same activation.
+    const auto activation_f32 = at::TensorOptions().device(at::kCUDA, 0).dtype(at::kFloat);
+    for (bool aligned : {false, true})
+      for (const auto& [rows, width] : std::array<std::pair<int64_t, int64_t>, 5>{
+               std::pair{7, 2048}, {5, 2056}, {2, 20480}, {2, 20481}, {2, 20488}}) {
+        auto value_storage = at::randn({rows * width + 1}, activation_f32) * 8;
+        auto column_storage = at::rand({width + 1}, activation_f32) + .5;
+        auto values = value_storage.narrow(0, aligned ? 0 : 1, rows * width).view({rows, width});
+        auto columns = column_storage.narrow(0, aligned ? 0 : 1, width).view({width, 1});
+        auto row_scales = at::rand({rows, 1}, activation_f32) + .5;
+        const std::array<float, 6> scales{.25f, 2.f, 1e-40f, 1e6f, 0.f, -1.5f};
+        for (int64_t row = 0; row < rows && row < int64_t(scales.size()); ++row)
+          row_scales.select(0, row).fill_(scales[row]);
+        columns.select(0, 0).fill_(2.f);
+        columns.select(0, 1).fill_(.25f);
+        columns.select(0, 2).fill_(0.f);
+        columns.select(0, 3).fill_(std::ldexp(1.f, -149));
+        columns.select(0, 4).fill_(1e6f);
+        columns.select(0, 5).fill_(-.5f);
+        values.select(0, 0).zero_();
+        if (rows > 1) {
+          auto row = values.select(0, 1);
+          row.narrow(0, 0, 8).fill_(std::ldexp(1.f, -149));
+          row.narrow(0, 8, 8).fill_(448.f);
+          row.narrow(0, 16, 8).fill_(448.5f);
+          row.narrow(0, 24, 8).fill_(464.f);
+        }
+        if (rows > 2)
+          values.select(0, 2).fill_(1e4f);
+        auto bias = at::randn({width}, options) * .01;
+        for (auto kind : activation_kinds) {
+          check_scaled_activation_quantize(
+              values, row_scales, columns, dtype, {}, kind, "Scaled fused activation differs");
+          check_scaled_activation_quantize(values,
+                                           row_scales,
+                                           columns,
+                                           dtype,
+                                           bias,
+                                           kind,
+                                           "Scaled biased fused activation differs");
+        }
+      }
+    for (auto kind : activation_kinds) {
+      auto empty_values = at::empty({0, 2048}, activation_f32);
+      auto empty_rows = at::empty({0, 1}, activation_f32);
+      auto empty_columns = at::empty({2048, 1}, activation_f32);
+      check_scaled_activation_quantize(empty_values,
+                                       empty_rows,
+                                       empty_columns,
+                                       dtype,
+                                       {},
+                                       kind,
+                                       "Scaled fused activation changed zero-row geometry");
+      check_scaled_activation_quantize(empty_values,
+                                       empty_rows,
+                                       empty_columns,
+                                       dtype,
+                                       at::randn({2048}, options) * .01,
+                                       kind,
+                                       "Scaled biased activation changed zero-row geometry");
+    }
+    // NaN/Inf inputs and scales retain the composed classification; NaN payloads are not compared.
+    for (bool aligned : {false, true}) {
+      constexpr int64_t rows = 5, width = 2056;
+      const float nan = std::numeric_limits<float>::quiet_NaN();
+      const float inf = std::numeric_limits<float>::infinity();
+      auto storage = at::randn({rows * width + 1}, options) * 3;
+      auto input = storage.narrow(0, aligned ? 0 : 1, rows * width).view({rows, width});
+      input.select(0, 0).fill_(nan);
+      input.select(0, 1).fill_(inf);
+      input.select(0, 2).fill_(-inf);
+      auto mixed = input.select(0, 3);
+      mixed.narrow(0, 0, 8).fill_(nan);
+      mixed.narrow(0, 8, 8).fill_(inf);
+      mixed.narrow(0, 16, 8).fill_(-inf);
+      auto bias = at::randn({width}, options) * .01;
+      for (auto kind : activation_kinds) {
+        check_activation_quantize(input, {}, kind, "Nonfinite fused activation differs");
+        check_activation_quantize(input, bias, kind, "Nonfinite biased fused activation differs");
+      }
+    }
+    for (bool aligned : {false, true}) {
+      constexpr int64_t rows = 5, width = 2048;
+      const float nan = std::numeric_limits<float>::quiet_NaN();
+      const float inf = std::numeric_limits<float>::infinity();
+      auto value_storage = at::randn({rows * width + 1}, activation_f32) * 3;
+      auto column_storage = at::rand({width + 1}, activation_f32) + .5;
+      auto values = value_storage.narrow(0, aligned ? 0 : 1, rows * width).view({rows, width});
+      auto columns = column_storage.narrow(0, aligned ? 0 : 1, width).view({width, 1});
+      auto row_scales = at::rand({rows, 1}, activation_f32) + .5;
+      values.select(0, 0).fill_(nan);
+      values.select(0, 1).fill_(inf);
+      values.select(0, 2).fill_(-inf);
+      row_scales.select(0, 0).fill_(nan);
+      row_scales.select(0, 1).fill_(inf);
+      row_scales.select(0, 2).fill_(-inf);
+      row_scales.select(0, 3).fill_(0.f);
+      columns.select(0, 0).fill_(nan);
+      columns.select(0, 1).fill_(inf);
+      columns.select(0, 2).fill_(-inf);
+      columns.select(0, 3).fill_(0.f);
+      for (auto kind : activation_kinds) {
+        check_scaled_activation_quantize(
+            values, row_scales, columns, dtype, {}, kind, "Nonfinite scaled activation differs");
+        check_scaled_activation_quantize(values,
+                                         row_scales,
+                                         columns,
+                                         dtype,
+                                         at::randn({width}, options) * .01,
+                                         kind,
+                                         "Nonfinite scaled biased activation differs");
+      }
+    }
+    // The projection boundary must use the same GEMM, bias and activation rounding.
+    for (auto kind : activation_kinds)
+      for (bool use_bias : {false, true})
+        for (int64_t rows : {1, 17}) {
+          auto input = at::randn({rows, 256}, options) * .5;
+          auto bias = use_bias ? at::randn({512}, options) * .01 : at::Tensor();
+          check_linear_activation(input, bias, kind, linear, "Fused linear activation differs");
+        }
+    for (auto kind : activation_kinds) {
+      auto bias = at::randn({512}, options) * .01;
+      auto empty_input = at::empty({0, 256}, options);
+      auto empty_activation = linear.forward_activation_quantized(empty_input, {}, bias, kind);
+      auto quantized_empty = infinity::fp8_quantize_rows(empty_input);
+      auto empty_prequantized = linear.forward_activation_quantized(
+          quantized_empty.first, quantized_empty.second, bias, kind);
+      for (const auto& result : {empty_activation, empty_prequantized})
+        TORCH_CHECK(result.first.sizes() == at::IntArrayRef({0, 512}) &&
+                        result.first.scalar_type() == at::kFloat8_e4m3fn &&
+                        result.second.sizes() == at::IntArrayRef({0, 1}) &&
+                        result.second.scalar_type() == at::kFloat,
+                    "Fused linear activation changed zero-row geometry");
+    }
     for (int64_t width : {1024, 1032, 2048, 2056, 4096, 4104, 5120, 6144, 6152})
       for (int64_t offset : {0, 1}) {
         auto storage = at::randn({17 * width + offset}, options) * 3;

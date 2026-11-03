@@ -3,6 +3,7 @@
 // Preserve its reduction order and BF16 rounding before row quantization.
 #include "kernels/fp8_fusions.h"
 #include "kernels/dependent_launch.cuh"
+#include "kernels/encoder_activation_math.cuh"
 #include <ATen/cuda/CUDAContext.h>
 #include <c10/cuda/CUDAGuard.h>
 #include <c10/cuda/CUDAException.h>
@@ -109,6 +110,21 @@ template <class T> __device__ __forceinline__ T swiglu_rounded(T gate, T up) {
   return T(float(activated) * float(up));
 }
 
+template <class T> __device__ __forceinline__ T activation_rounded(T value, int kind) {
+  switch (kind) {
+  case static_cast<int>(Fp8Activation::Relu):
+    return activation_math::rounded_relu(value);
+  case static_cast<int>(Fp8Activation::RoundedSilu):
+    return activation_math::rounded_silu(value);
+  default:
+    return activation_math::rounded_gelu(value);
+  }
+}
+
+template <class T> __device__ __forceinline__ T activation_bias(T value, T bias) {
+  return T(float(value) + float(bias));
+}
+
 template <class T, bool Scaled>
 __device__ __forceinline__ void load_swiglu_pair(const T* input,
                                                  const float* scaled_input,
@@ -200,6 +216,110 @@ __global__ __launch_bounds__(512) void swiglu_quant_vector_kernel(const T* input
               fp8_quantize_pair(values[j][2 * pair], values[j][2 * pair + 1], scale);
       }
       reinterpret_cast<Packed<__nv_fp8x2_e4m3, 4>*>(out)[row * stride + col] = result;
+    }
+  }
+}
+
+template <class T, int Groups, bool Scaled>
+__global__ __launch_bounds__(512) void activation_quant_vector_kernel(const T* input,
+                                                                      const float* scaled_input,
+                                                                      const float* row_scales,
+                                                                      const float* column_scales,
+                                                                      const T* bias,
+                                                                      __nv_fp8_e4m3* out,
+                                                                      float* scales,
+                                                                      int width,
+                                                                      int kind) {
+  wait_for_producer();
+  const int64_t row = blockIdx.x;
+  // Aligned rows use at most five groups (about 40 KiB shared); other rows use the scalar kernel.
+  __shared__ Packed<T, 8> staged[Groups * 512];
+  float amax = 0;
+  int stride = width / 8;
+#pragma unroll
+  for (int j = 0; j < Groups; ++j) {
+    int col = threadIdx.x + j * blockDim.x;
+    if (col >= stride)
+      continue;
+    Packed<T, 8> rounded;
+    if constexpr (Scaled) {
+      const auto raw = reinterpret_cast<const Packed<float, 8>*>(scaled_input)[row * stride + col];
+      const auto columns = reinterpret_cast<const Packed<float, 8>*>(column_scales)[col];
+      const float row_scale_value = row_scales[row];
+#pragma unroll
+      for (int lane = 0; lane < 8; ++lane) {
+        T value = convert_scaled_output<T>(
+            scale_output_value(raw.value[lane], row_scale_value, columns.value[lane]));
+        if (bias)
+          value = activation_bias(value, bias[col * 8 + lane]);
+        rounded.value[lane] = activation_rounded(value, kind);
+      }
+    } else {
+      const auto values = reinterpret_cast<const Packed<T, 8>*>(input)[row * stride + col];
+#pragma unroll
+      for (int lane = 0; lane < 8; ++lane) {
+        T value = values.value[lane];
+        if (bias)
+          value = activation_bias(value, bias[col * 8 + lane]);
+        rounded.value[lane] = activation_rounded(value, kind);
+      }
+    }
+#pragma unroll
+    for (int lane = 0; lane < 8; ++lane)
+      amax = fmaxf(amax, fabsf(float(rounded.value[lane])));
+    staged[col] = rounded;
+  }
+  // row_scale also synchronizes the completed shared row before reuse below.
+  float scale = row_scale(amax);
+
+  if (!threadIdx.x)
+    scales[row] = scale;
+#pragma unroll
+  for (int j = 0; j < Groups; ++j) {
+    int col = threadIdx.x + j * blockDim.x;
+    if (col < stride) {
+      Packed<__nv_fp8x2_e4m3, 4> result;
+      const auto rounded = staged[col];
+#pragma unroll
+      for (int pair = 0; pair < 4; ++pair)
+        result.value[pair] = fp8_quantize_pair(
+            float(rounded.value[2 * pair]), float(rounded.value[2 * pair + 1]), scale);
+      reinterpret_cast<Packed<__nv_fp8x2_e4m3, 4>*>(out)[row * stride + col] = result;
+    }
+  }
+}
+
+template <class T, int Columns>
+__global__ void activation_quant_kernel(
+    const T* input, const T* bias, __nv_fp8_e4m3* out, float* scales, int width, int kind) {
+  wait_for_producer();
+  const int64_t row = blockIdx.x;
+  float amax = 0;
+#pragma unroll 1
+  for (int j = 0; j < Columns; ++j) {
+    int col = threadIdx.x + j * 256;
+    float value = 0;
+    if (col < width) {
+      T input_value = input[row * width + col];
+      if (bias)
+        input_value = activation_bias(input_value, bias[col]);
+      value = float(activation_rounded(input_value, kind));
+    }
+    amax = fmaxf(amax, fabsf(value));
+  }
+  float scale = row_scale(amax);
+
+  if (!threadIdx.x)
+    scales[row] = scale;
+#pragma unroll 1
+  for (int j = 0; j < Columns; ++j) {
+    int col = threadIdx.x + j * 256;
+    if (col < width) {
+      T input_value = input[row * width + col];
+      if (bias)
+        input_value = activation_bias(input_value, bias[col]);
+      out[row * width + col] =
+          __nv_fp8_e4m3(__fdiv_rn(float(activation_rounded(input_value, kind)), scale));
     }
   }
 }
@@ -486,6 +606,104 @@ void launch_swiglu(const at::Tensor& input, at::Tensor& output, at::Tensor& scal
   }
 #undef RUN
 }
+
+void validate_activation(Fp8Activation kind) {
+  switch (kind) {
+  case Fp8Activation::Relu:
+  case Fp8Activation::RoundedSilu:
+  case Fp8Activation::RoundedGelu:
+    return;
+  }
+  TORCH_CHECK(false, "Unsupported FP8 activation");
+}
+
+template <class T, bool Scaled>
+void launch_activation_vector(const T* input,
+                              const float* scaled_input,
+                              const float* row_scales,
+                              const float* column_scales,
+                              const T* bias,
+                              __nv_fp8_e4m3* output,
+                              float* scales,
+                              int64_t rows,
+                              int width,
+                              cudaStream_t stream,
+                              int kind) {
+  const int threads = width <= 4096 ? 256 : 512;
+#define VECTOR(C)                                                                                  \
+  launch_dependent<activation_quant_vector_kernel<T, C, Scaled>>(rows,                             \
+                                                                 threads,                          \
+                                                                 stream,                           \
+                                                                 input,                            \
+                                                                 scaled_input,                     \
+                                                                 row_scales,                       \
+                                                                 column_scales,                    \
+                                                                 bias,                             \
+                                                                 output,                           \
+                                                                 scales,                           \
+                                                                 width,                            \
+                                                                 kind)
+  if (width <= 2048) {
+    VECTOR(1);
+  } else if (width <= 8192) {
+    VECTOR(2);
+  } else if (width <= 12288) {
+    VECTOR(3);
+  } else if (width <= 16384) {
+    VECTOR(4);
+  } else {
+    VECTOR(5);
+  }
+#undef VECTOR
+}
+
+template <class T>
+void launch_activation(const at::Tensor& input,
+                       const at::Tensor& bias,
+                       at::Tensor& output,
+                       at::Tensor& scales,
+                       Fp8Activation kind) {
+  int width = input.size(1);
+  auto stream = at::cuda::getCurrentCUDAStream(input.get_device());
+  auto x = reinterpret_cast<const T*>(input.const_data_ptr());
+  auto b = bias.defined() ? reinterpret_cast<const T*>(bias.const_data_ptr()) : nullptr;
+  auto y = reinterpret_cast<__nv_fp8_e4m3*>(output.mutable_data_ptr());
+  int code = static_cast<int>(kind);
+  if (width <= fp8_scaled_swiglu_max_width && width % 8 == 0 &&
+      reinterpret_cast<uintptr_t>(x) % alignof(Packed<T, 8>) == 0) {
+    launch_activation_vector<T, false>(x,
+                                       nullptr,
+                                       nullptr,
+                                       nullptr,
+                                       b,
+                                       y,
+                                       scales.data_ptr<float>(),
+                                       input.size(0),
+                                       width,
+                                       stream,
+                                       code);
+    return;
+  }
+#define RUN(C)                                                                                     \
+  launch_dependent<activation_quant_kernel<T, C>>(                                                 \
+      input.size(0), 256, stream, x, b, y, scales.data_ptr<float>(), width, code)
+  if (width <= 256) {
+    RUN(1);
+  } else if (width <= 1024) {
+    RUN(4);
+  } else if (width <= 4096) {
+    RUN(16);
+  } else if (width <= 12288) {
+    RUN(48);
+  } else if (width <= 16384) {
+    RUN(64);
+  } else if (width <= 32768) {
+    RUN(128);
+  } else {
+    RUN(256);
+  }
+#undef RUN
+}
 }
 
 at::Tensor fp8_scale_output(const at::Tensor& values,
@@ -593,6 +811,103 @@ std::pair<at::Tensor, at::Tensor> fp8_scaled_swiglu_quantize(const at::Tensor& v
                                               rows,
                                               width,
                                               stream);
+  C10_CUDA_KERNEL_LAUNCH_CHECK();
+  return {output, scales};
+}
+
+std::pair<at::Tensor, at::Tensor>
+fp8_activation_quantize(const at::Tensor& input, const at::Tensor& bias, Fp8Activation kind) {
+  validate_matrix(input);
+  validate_activation(kind);
+  TORCH_CHECK(input.scalar_type() == at::kHalf || input.scalar_type() == at::kBFloat16,
+              "FP8 activation quantization requires FP16 or BF16 input");
+  TORCH_CHECK(!bias.defined() ||
+                  (bias.is_cuda() && bias.dim() == 1 && bias.size(0) == input.size(1) &&
+                   bias.device() == input.device() && bias.scalar_type() == input.scalar_type()),
+              "Invalid FP8 activation bias");
+  c10::cuda::CUDAGuard guard(input.device());
+  auto output = at::empty(input.sizes(), input.options().dtype(at::kFloat8_e4m3fn));
+  auto scales = at::empty({input.size(0), 1}, input.options().dtype(at::kFloat));
+  if (input.size(0)) {
+    const auto bias_values = bias.defined() ? bias.contiguous() : at::Tensor();
+    if (input.scalar_type() == at::kHalf)
+      launch_activation<__half>(input, bias_values, output, scales, kind);
+    else
+      launch_activation<__nv_bfloat16>(input, bias_values, output, scales, kind);
+    C10_CUDA_KERNEL_LAUNCH_CHECK();
+  }
+  return {output, scales};
+}
+
+std::pair<at::Tensor, at::Tensor> fp8_scaled_activation_quantize(const at::Tensor& values,
+                                                                 const at::Tensor& row_scales,
+                                                                 const at::Tensor& column_scales,
+                                                                 at::ScalarType dtype,
+                                                                 const at::Tensor& bias,
+                                                                 Fp8Activation kind) {
+  validate_matrix(values);
+  validate_activation(kind);
+  TORCH_CHECK(values.scalar_type() == at::kFloat,
+              "Scaled FP8 activation quantization requires contiguous FP32 rows");
+  const auto rows = values.size(0), width = values.size(1);
+  TORCH_CHECK(row_scales.is_cuda() && row_scales.dim() == 2 && row_scales.size(0) == rows &&
+                  row_scales.size(1) == 1 && row_scales.is_contiguous() &&
+                  row_scales.scalar_type() == at::kFloat && row_scales.device() == values.device(),
+              "Invalid Scaled FP8 activation row scales");
+  TORCH_CHECK(column_scales.is_cuda() && column_scales.dim() == 2 &&
+                  column_scales.size(0) == width && column_scales.size(1) == 1 &&
+                  column_scales.is_contiguous() && column_scales.scalar_type() == at::kFloat &&
+                  column_scales.device() == values.device(),
+              "Invalid Scaled FP8 activation column scales");
+  TORCH_CHECK(dtype == at::kHalf || dtype == at::kBFloat16,
+              "Scaled FP8 activation requires FP16 or BF16 output");
+  TORCH_CHECK(!bias.defined() || (bias.is_cuda() && bias.dim() == 1 && bias.size(0) == width &&
+                                  bias.device() == values.device() && bias.scalar_type() == dtype),
+              "Invalid Scaled FP8 activation bias");
+  c10::cuda::CUDAGuard guard(values.device());
+  const auto* input = values.const_data_ptr<float>();
+  const auto* columns = column_scales.const_data_ptr<float>();
+  const bool vectorized = width <= fp8_scaled_swiglu_max_width && width % 8 == 0 &&
+                          reinterpret_cast<uintptr_t>(input) % alignof(Packed<float, 8>) == 0 &&
+                          reinterpret_cast<uintptr_t>(columns) % alignof(Packed<float, 8>) == 0;
+  if (rows && !vectorized)
+    return fp8_activation_quantize(
+        fp8_scale_output(values, row_scales, column_scales, dtype), bias, kind);
+  auto output = at::empty({rows, width}, values.options().dtype(at::kFloat8_e4m3fn));
+  auto scales = at::empty({rows, 1}, values.options().dtype(at::kFloat));
+  if (!rows)
+    return {output, scales};
+  const auto bias_values = bias.defined() ? bias.contiguous() : at::Tensor();
+  auto stream = at::cuda::getCurrentCUDAStream(values.get_device());
+  auto* quantized = reinterpret_cast<__nv_fp8_e4m3*>(output.mutable_data_ptr());
+  const int code = static_cast<int>(kind);
+  if (dtype == at::kHalf)
+    launch_activation_vector<__half, true>(
+        nullptr,
+        input,
+        row_scales.const_data_ptr<float>(),
+        columns,
+        bias.defined() ? reinterpret_cast<const __half*>(bias_values.const_data_ptr()) : nullptr,
+        quantized,
+        scales.data_ptr<float>(),
+        rows,
+        width,
+        stream,
+        code);
+  else
+    launch_activation_vector<__nv_bfloat16, true>(
+        nullptr,
+        input,
+        row_scales.const_data_ptr<float>(),
+        columns,
+        bias.defined() ? reinterpret_cast<const __nv_bfloat16*>(bias_values.const_data_ptr())
+                       : nullptr,
+        quantized,
+        scales.data_ptr<float>(),
+        rows,
+        width,
+        stream,
+        code);
   C10_CUDA_KERNEL_LAUNCH_CHECK();
   return {output, scales};
 }
