@@ -694,7 +694,20 @@ async fn initialize_model(
     } else {
         None
     };
-    let tokenization = Tokenization::with_queue_capacity_and_pooled_text_acceleration(
+    // Only start the generic accelerator for routes that encode text in this pool.
+    // Processor-owned embeddings retain their own tokenization; raw-text Qwen
+    // retrieval and EmbeddingGemma2 still need the generic text path.
+    let accelerate_pooled_text = match &backend_model_type {
+        infinity_v3_backend::ModelType::Decision => false,
+        infinity_v3_backend::ModelType::Embedding(_) => {
+            mistral3.is_none()
+                && multimodal
+                    .as_ref()
+                    .is_none_or(|processor| processor.accepts_raw_text())
+        }
+        infinity_v3_backend::ModelType::Classifier => true,
+    };
+    let tokenization = Tokenization::with_queue_capacity(
         tokenization_workers,
         tokenization_queue_capacity,
         tokenizer,
@@ -703,10 +716,7 @@ async fn initialize_model(
         default_prompt,
         prompts,
         chat,
-        !matches!(
-            &backend_model_type,
-            infinity_v3_backend::ModelType::Decision
-        ),
+        accelerate_pooled_text,
     )
     .with_token_input_vocab_size(
         config

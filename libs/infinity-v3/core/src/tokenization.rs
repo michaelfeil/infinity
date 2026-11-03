@@ -82,40 +82,15 @@ impl Tokenization {
             default_prompt,
             prompts,
             chat,
-        )
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    pub fn with_queue_capacity(
-        workers: usize,
-        queue_capacity: NonZeroUsize,
-        tokenizer: Tokenizer,
-        max_input_length: usize,
-        position_offset: usize,
-        default_prompt: Option<String>,
-        prompts: Option<HashMap<String, String>>,
-        chat: Option<crate::chat::ChatProcessor>,
-    ) -> Self {
-        Self::with_queue_capacity_and_pooled_text_acceleration(
-            workers,
-            queue_capacity,
-            tokenizer,
-            max_input_length,
-            position_offset,
-            default_prompt,
-            prompts,
-            chat,
             true,
         )
     }
 
-    /// Build tokenization workers with an explicit pooled-text acceleration choice.
-    ///
-    /// `accelerate_pooled_text` controls only the Basetenkenizer used by
-    /// embedding/classifier `IdsOnly` encoding. Metadata `tokenize`/`decode`
-    /// workers and multimodal processor tokenizers are unaffected.
+    /// Start HF workers while optional pooled-text acceleration builds in the background.
+    /// Disable the accelerator when inference owns its tokenization; metadata
+    /// tokenize/decode workers still serve with HF.
     #[allow(clippy::too_many_arguments)]
-    pub fn with_queue_capacity_and_pooled_text_acceleration(
+    pub fn with_queue_capacity(
         workers: usize,
         queue_capacity: NonZeroUsize,
         tokenizer: Tokenizer,
@@ -1526,7 +1501,12 @@ mod fast_embedding_tests {
 
     #[test]
     fn concurrent_requests_preserve_fast_and_fallback_ids() {
-        for capacity in [1, DEFAULT_TOKENIZATION_QUEUE_CAPACITY] {
+        for (capacity, accelerate_pooled_text) in [
+            (1, false),
+            (1, true),
+            (DEFAULT_TOKENIZATION_QUEUE_CAPACITY, false),
+            (DEFAULT_TOKENIZATION_QUEUE_CAPACITY, true),
+        ] {
             let tokenizer = Tokenization::with_queue_capacity(
                 4,
                 NonZeroUsize::new(capacity).unwrap(),
@@ -1536,6 +1516,7 @@ mod fast_embedding_tests {
                 None,
                 None,
                 None,
+                accelerate_pooled_text,
             );
             assert_eq!(tokenizer.sender.capacity(), Some(capacity));
             tokio::runtime::Runtime::new().unwrap().block_on(async {
@@ -1549,11 +1530,22 @@ mod fast_embedding_tests {
                             .await
                             .unwrap();
                         let actual = tokenizer
-                            .encode_embedding(pair.into(), true, TruncationDirection::Right, None)
+                            .encode_embedding(
+                                pair.clone().into(),
+                                true,
+                                TruncationDirection::Right,
+                                None,
+                            )
                             .await
                             .unwrap();
                         assert_eq!(actual.input_ids, expected.input_ids);
                         assert_eq!(actual.token_type_ids, expected.token_type_ids);
+                        let classification = tokenizer
+                            .encode_classification(pair.into(), true, TruncationDirection::Right)
+                            .await
+                            .unwrap();
+                        assert_eq!(classification.input_ids, expected.input_ids);
+                        assert_eq!(classification.token_type_ids, expected.token_type_ids);
                         let text = format!("request {i} 東京 👩🏽‍💻");
                         let expected = tokenizer
                             .encode(text.clone().into(), true, TruncationDirection::Left, None)
