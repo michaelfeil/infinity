@@ -216,15 +216,9 @@ struct ModelFrontend {
     systemone: Option<std::sync::Arc<http::systemone::SystemOne>>,
 }
 
-impl ModelFrontend {
+impl startup::Shutdown for ModelFrontend {
     async fn shutdown(self) {
         self.tokenization.shutdown().await;
-    }
-}
-
-impl startup::Shutdown for ModelFrontend {
-    fn shutdown(self) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send>> {
-        Box::pin(ModelFrontend::shutdown(self))
     }
 }
 
@@ -235,10 +229,8 @@ struct BackendStartup {
 }
 
 impl startup::Shutdown for BackendStartup {
-    fn shutdown(self) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send>> {
-        Box::pin(async move {
-            self.backend.shutdown().await;
-        })
+    async fn shutdown(self) {
+        self.backend.shutdown().await;
     }
 }
 

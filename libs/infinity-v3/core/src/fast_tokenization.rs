@@ -1,6 +1,6 @@
 //! BPE ID encoding for pooled inference. HF remains responsible for request-specific
 //! truncation and post-processing, and for endpoints requiring source alignment.
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::{Arc, OnceLock};
 use tokenizers::{Encoding, Tokenizer};
 
 pub(crate) struct FastTokenizer {
@@ -18,7 +18,7 @@ pub(crate) struct BackgroundFastTokenizer {
 
 struct BackgroundFastTokenizerInner {
     ready: Arc<OnceLock<Option<FastTokenizer>>>,
-    builder: Mutex<Option<std::thread::JoinHandle<()>>>,
+    builder: Option<std::thread::JoinHandle<()>>,
 }
 
 impl BackgroundFastTokenizer {
@@ -53,7 +53,7 @@ impl BackgroundFastTokenizer {
             Ok(handle) => Self {
                 inner: Some(Arc::new(BackgroundFastTokenizerInner {
                     ready,
-                    builder: Mutex::new(Some(handle)),
+                    builder: Some(handle),
                 })),
             },
             Err(error) => {
@@ -85,11 +85,7 @@ impl BackgroundFastTokenizer {
 
 impl Drop for BackgroundFastTokenizerInner {
     fn drop(&mut self) {
-        let handle = match self.builder.get_mut() {
-            Ok(builder) => builder.take(),
-            Err(poisoned) => poisoned.into_inner().take(),
-        };
-        if let Some(handle) = handle {
+        if let Some(handle) = self.builder.take() {
             if handle.join().is_err() {
                 tracing::error!("Basetenkenizer builder panicked");
             }

@@ -702,22 +702,12 @@ fn spawn_tokenizer_worker(
 }
 
 fn run_tokenizer_supervisor(config: TokenizerWorkerConfig) {
-    let TokenizerWorkerConfig {
-        workers,
-        receiver,
-        tokenizer,
-        accelerate_pooled_text,
-        max_input_length,
-        position_offset,
-        default_prompt,
-        prompts,
-        chat,
-    } = config;
-    let accelerate = accelerate_pooled_text && crate::fast_tokenization::is_bpe(&tokenizer);
+    let accelerate =
+        config.accelerate_pooled_text && crate::fast_tokenization::is_bpe(&config.tokenizer);
     // Keep one clone for the builder and remaining workers. Worker 1 consumes
     // the original so it can serve HF requests without waiting for Baseten.
-    let seed = if !receiver.is_closed() && (workers > 1 || accelerate) {
-        Some(Arc::new(tokenizer.clone()))
+    let seed = if !config.receiver.is_closed() && (config.workers > 1 || accelerate) {
+        Some(Arc::new(config.tokenizer.clone()))
     } else {
         None
     };
@@ -729,33 +719,25 @@ fn run_tokenizer_supervisor(config: TokenizerWorkerConfig) {
     } else {
         crate::fast_tokenization::BackgroundFastTokenizer::disabled()
     };
-    run_worker_pool(
+    run_worker_pool(config, seed, fast_tokenizer);
+}
+
+fn run_worker_pool(
+    config: TokenizerWorkerConfig,
+    mut seed: Option<Arc<Tokenizer>>,
+    fast_tokenizer: crate::fast_tokenization::BackgroundFastTokenizer,
+) {
+    let TokenizerWorkerConfig {
         workers,
         receiver,
         tokenizer,
-        seed,
-        fast_tokenizer,
         max_input_length,
         position_offset,
         default_prompt,
         prompts,
         chat,
-    );
-}
-
-#[allow(clippy::too_many_arguments)]
-fn run_worker_pool(
-    workers: usize,
-    receiver: async_channel::Receiver<QueuedTokenizerRequest>,
-    tokenizer: Tokenizer,
-    mut seed: Option<Arc<Tokenizer>>,
-    fast_tokenizer: crate::fast_tokenization::BackgroundFastTokenizer,
-    max_input_length: usize,
-    position_offset: usize,
-    default_prompt: Option<String>,
-    prompts: Option<HashMap<String, String>>,
-    chat: Option<Arc<crate::chat::ChatProcessor>>,
-) {
+        ..
+    } = config;
     // A single worker consumes the original tokenizer. Drop any unused seed here
     // so it cannot outlive a completed background builder.
     if workers <= 1 {
@@ -1924,21 +1906,21 @@ mod fast_embedding_tests {
     ) -> Tokenization {
         let workers = workers.clamp(1, MAX_TOKENIZATION_WORKERS);
         let (sender, receiver) = async_channel::bounded(queue_capacity);
+        let config = TokenizerWorkerConfig {
+            workers,
+            receiver,
+            tokenizer,
+            accelerate_pooled_text: false,
+            max_input_length,
+            position_offset,
+            default_prompt,
+            prompts,
+            chat: None,
+        };
         let supervisor = std::thread::Builder::new()
             .name("test-tokenization-supervisor".into())
             .spawn(move || {
-                run_worker_pool(
-                    workers,
-                    receiver,
-                    tokenizer,
-                    seed,
-                    fast_tokenizer,
-                    max_input_length,
-                    position_offset,
-                    default_prompt,
-                    prompts,
-                    None,
-                );
+                run_worker_pool(config, seed, fast_tokenizer);
             })
             .unwrap();
         Tokenization {

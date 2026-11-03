@@ -1,10 +1,10 @@
 use anyhow::Result;
-use std::{future::Future, pin::Pin};
+use std::future::Future;
 
 /// Owned startup output whose worker threads must be stopped before a failed
 /// peer can return from initialization.
 pub(crate) trait Shutdown {
-    fn shutdown(self) -> Pin<Box<dyn Future<Output = ()> + Send>>;
+    fn shutdown(self) -> impl Future<Output = ()> + Send;
 }
 
 /// Run required frontend and checkpoint initialization together.
@@ -109,15 +109,13 @@ mod tests {
     struct Resource(Arc<AtomicBool>);
 
     impl Shutdown for Resource {
-        fn shutdown(self) -> Pin<Box<dyn Future<Output = ()> + Send>> {
-            Box::pin(async move { self.0.store(true, Ordering::SeqCst) })
+        async fn shutdown(self) {
+            self.0.store(true, Ordering::SeqCst);
         }
     }
 
     impl Shutdown for () {
-        fn shutdown(self) -> Pin<Box<dyn Future<Output = ()> + Send>> {
-            Box::pin(async {})
-        }
+        async fn shutdown(self) {}
     }
 
     fn resource(cleaned: &Arc<AtomicBool>) -> Resource {
