@@ -357,11 +357,12 @@ checksum = "72b3254f16251a8381aa12e40e3c4d2f0199f8c6508fbecb9d91f575e0fbb8c6"
 [[package]]
 name = "basetenkenizer"
 version = "0.2.9"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "370b74a776779a158eb432006cd4935fbe25627bf830656c6260d4455b6cd6e5"
 dependencies = [
  "chrono",
  "daachorse",
  "fancy-regex",
- "hf-hub",
  "icu_normalizer 2.3.0",
  "icu_properties 2.3.0",
  "memchr",
@@ -373,7 +374,6 @@ dependencies = [
  "serde_json",
  "strum",
  "thiserror 2.0.21",
- "tokenizers",
 ]
 
 [[package]]
@@ -4151,7 +4151,6 @@ dependencies = [
  "derive_builder",
  "esaxx-rs",
  "getrandom 0.2.15",
- "hf-hub",
  "itertools 0.13.0",
  "lazy_static",
  "log",

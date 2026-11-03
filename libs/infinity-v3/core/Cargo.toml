@@ -25,7 +25,7 @@ serde_json = { workspace = true }
 infinity_v3-backend = { path = "../backends", default-features = false }
 thiserror = { workspace = true }
 tokenizers = { workspace = true }
-basetenkenizer = { version = "=0.2.9", path = "../vendor/basetenkenizer", default-features = false }
+basetenkenizer = { version = "=0.2.9", default-features = false }
 tracing = { workspace = true }
 tokio = { workspace = true, features = ["net", "time", "process", "io-util"] }
 radix_mlp = {workspace = true}
