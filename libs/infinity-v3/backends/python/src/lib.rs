@@ -107,12 +107,12 @@ impl PythonBackend {
         })
     }
 
-    fn submit(
+    fn submit<T>(
         &self,
         route: &str,
         inputs: Arc<PaddedInputs>,
-        complete: impl FnOnce(OutputSnapshot, &PaddedInputs) -> Result<InferenceResult, BackendError>,
-    ) -> Result<Inference<InferenceResult>, BackendError> {
+        complete: impl FnOnce(OutputSnapshot, &PaddedInputs) -> Result<T, BackendError>,
+    ) -> Result<Inference<T>, BackendError> {
         let output = Python::attach(|py| {
             let (envelope, mut receiver) = ResponseEnvelope::channel(py)
                 .map_err(|error| BackendError::Inference(error.to_string()))?;
@@ -143,11 +143,6 @@ fn forward_error(py: Python<'_>, error: PyErr) -> BackendError {
     }
 }
 
-enum InferenceResult {
-    Embeddings(Embeddings),
-    Predictions(Predictions),
-}
-
 impl Backend for PythonBackend {
     fn submit_embed(&self, batch: Batch) -> Result<Inference<Embeddings>, BackendError> {
         if self.classifier {
@@ -161,15 +156,7 @@ impl Backend for PythonBackend {
                 "Python embedding batch has no requested rows".into(),
             ));
         }
-        self.submit("embed", inputs, |output, inputs| {
-            pack_embeddings(output, inputs).map(InferenceResult::Embeddings)
-        })?
-        .try_map(|result| match result {
-            InferenceResult::Embeddings(value) => Ok(value),
-            InferenceResult::Predictions(_) => Err(BackendError::Inference(
-                "Python backend returned predictions for an embedding request".into(),
-            )),
-        })
+        self.submit("embed", inputs, pack_embeddings)
     }
 
     fn submit_predict(&self, batch: Batch) -> Result<Inference<Predictions>, BackendError> {
@@ -181,13 +168,7 @@ impl Backend for PythonBackend {
         let inputs = Arc::new(pad_batch(&batch)?);
         self.submit("predict", inputs, |output, inputs| {
             let pool = infinity_v3_backend_core::result_memory::global_pool()?;
-            pack_predictions(output, inputs, &pool).map(InferenceResult::Predictions)
-        })?
-        .try_map(|result| match result {
-            InferenceResult::Predictions(value) => Ok(value),
-            InferenceResult::Embeddings(_) => Err(BackendError::Inference(
-                "Python backend returned embeddings for a prediction request".into(),
-            )),
+            pack_predictions(output, inputs, &pool)
         })
     }
 

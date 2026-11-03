@@ -35,7 +35,6 @@ bytemuck = "1"
 [dev-dependencies]
 bytes = "1"
 hf-hub = { workspace = true, features = ["ureq"] }
-tokio = { workspace = true, features = ["test-util"] }
 
 [features]
 openapi = ["dep:utoipa"]

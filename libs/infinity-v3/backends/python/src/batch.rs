@@ -2,7 +2,7 @@ use crate::envelope::OutputSnapshot;
 use infinity_v3_backend_core::{
     result_memory, BackendError, Batch, Embedding, Embeddings, Predictions, SharedF32,
 };
-use numpy::PyArray1;
+use numpy::{PyArray1, PyArrayMethods};
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
 use std::sync::Arc;
@@ -22,7 +22,7 @@ pub(crate) struct PaddedInputs {
     pub raw_indices: Vec<i64>,
 }
 
-/// Keeps the Rust input buffers alive while queued numpy views reference them.
+/// Keeps Rust input buffers alive while Python views reference them.
 #[pyclass]
 struct PaddedInputOwner {
     _inputs: Arc<PaddedInputs>,
@@ -43,48 +43,25 @@ impl PaddedInputs {
         let payload = PyDict::new(py);
         payload.set_item("batch_size", inputs.batch_size)?;
         payload.set_item("seq_len", inputs.seq_len)?;
-        payload.set_item("input_ids", unsafe {
-            PyArray1::borrow_from_array(
-                &numpy::ndarray::ArrayView1::from(&inputs.input_ids[..]),
-                owner.clone(),
-            )
-        })?;
-        payload.set_item("attention_mask", unsafe {
-            PyArray1::borrow_from_array(
-                &numpy::ndarray::ArrayView1::from(&inputs.attention_mask[..]),
-                owner.clone(),
-            )
-        })?;
-        payload.set_item("token_type_ids", unsafe {
-            PyArray1::borrow_from_array(
-                &numpy::ndarray::ArrayView1::from(&inputs.token_type_ids[..]),
-                owner.clone(),
-            )
-        })?;
-        payload.set_item("position_ids", unsafe {
-            PyArray1::borrow_from_array(
-                &numpy::ndarray::ArrayView1::from(&inputs.position_ids[..]),
-                owner.clone(),
-            )
-        })?;
-        payload.set_item("lengths", unsafe {
-            PyArray1::borrow_from_array(
-                &numpy::ndarray::ArrayView1::from(&inputs.lengths[..]),
-                owner.clone(),
-            )
-        })?;
-        payload.set_item("pooled_indices", unsafe {
-            PyArray1::borrow_from_array(
-                &numpy::ndarray::ArrayView1::from(&inputs.pooled_indices[..]),
-                owner.clone(),
-            )
-        })?;
-        payload.set_item("raw_indices", unsafe {
-            PyArray1::borrow_from_array(
-                &numpy::ndarray::ArrayView1::from(&inputs.raw_indices[..]),
-                owner,
-            )
-        })?;
+        for (name, values) in [
+            ("input_ids", &inputs.input_ids),
+            ("attention_mask", &inputs.attention_mask),
+            ("token_type_ids", &inputs.token_type_ids),
+            ("position_ids", &inputs.position_ids),
+            ("lengths", &inputs.lengths),
+            ("pooled_indices", &inputs.pooled_indices),
+            ("raw_indices", &inputs.raw_indices),
+        ] {
+            // SAFETY: owner retains these immutable buffers for the array's lifetime.
+            let array = unsafe {
+                PyArray1::borrow_from_array(
+                    &numpy::ndarray::ArrayView1::from(values.as_slice()),
+                    owner.clone(),
+                )
+            };
+            array.try_readwrite()?.make_nonwriteable();
+            payload.set_item(name, array)?;
+        }
         Ok(payload)
     }
 
@@ -370,7 +347,6 @@ pub(crate) fn pack_predictions(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use numpy::PyArrayMethods;
 
     fn batch() -> Batch {
         Batch {
@@ -438,6 +414,41 @@ mod tests {
             assert!(Arc::strong_count(&inputs) > 1);
             drop(payload);
             assert_eq!(Arc::strong_count(&inputs), 1);
+        });
+    }
+
+    #[test]
+    fn borrowed_inputs_reject_mutation_and_write_flag_changes() {
+        Python::initialize();
+        let inputs = Arc::new(pad_batch(&batch()).unwrap());
+        Python::attach(|py| {
+            let payload = PaddedInputs::to_python(inputs.clone(), py).unwrap();
+            let locals = PyDict::new(py);
+            locals.set_item("payload", payload).unwrap();
+            py.run(
+                c"
+for name, arr in payload.items():
+    if name in ('batch_size', 'seq_len'):
+        continue
+    assert not arr.flags.writeable, name
+    for action in (
+        lambda: arr.__setitem__(slice(None), 0),
+        lambda: arr.setflags(write=True),
+        lambda: setattr(arr.flags, 'writeable', True),
+        lambda: arr[:].setflags(write=True),
+    ):
+        try:
+            action()
+        except ValueError:
+            pass
+        else:
+            raise AssertionError(name + ' unexpectedly allowed mutation')
+",
+                Some(&locals),
+                Some(&locals),
+            )
+            .unwrap();
+            assert_eq!(inputs.input_ids, pad_batch(&batch()).unwrap().input_ids);
         });
     }
 

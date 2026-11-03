@@ -48,37 +48,17 @@ The frontend pads each batch to its longest sequence. `input_ids`,
 `attention_mask`, `token_type_ids`, and `position_ids` are flattened row-major
 arrays that reshape to `[batch_size, seq_len]`. The mask is 1 for real tokens
 and 0 for padding; `lengths` contains the unpadded length of each sequence.
-Input arrays are numpy views over Rust-owned buffers; the payload keeps those
-buffers alive for the synchronous `submit` call. Treat the arrays as read-only.
+Input arrays are read-only numpy views over Rust-owned buffers; their owner
+keeps the buffers alive while Python references them. Plugins that need to mutate
+an input must copy it first.
 The plugin owns model loading, device placement, and model-specific preprocessing.
 The response is one contiguous `float32` numpy array.
 
-## Optional Rust batch collection wait
-
-`INFINITY_PYTHON_BATCH_COALESCE_WAIT_US` sets an optional collection wait in
-Rust before selecting a Python batch. It defaults to zero; absent, empty, or
-invalid values disable the wait. The requested wait is capped at 5000
-microseconds. This process setting applies to Python backends only.
-
-For example, `INFINITY_PYTHON_BATCH_COALESCE_WAIT_US=1000` lets more pending
-requests arrive while the accelerator is idle. Collection ends early when the
-queue has enough selectable work, a priority request arrives, or shutdown
-begins. Batch selection still enforces all request, token, grouping, and
-cancellation limits. Rust holds the replica lease throughout collection and
-execution; Python receives one synchronous call and has no request queue or
-prepared-batch lookahead.
-
-This can improve batch fullness under concurrent traffic, but an isolated
-request can pay the collection delay. Tokio timer resolution and scheduling
-can make actual waits longer than the requested duration, especially below
-one millisecond. Keep the default for latency-sensitive workloads unless a
-measurement justifies the wait.
-
-`infinity_python_batch_coalesce_wait_total` records the exit reason
-(`capacity`, `priority`, `timeout`, or `close`), and
-`infinity_python_batch_coalesce_wait_duration` records actual wait time.
-Pending-entry scans and queue-state publication during normal operation are
-disabled when the wait is zero.
+Rust selects the next Python batch after the replica becomes available. Requests
+that arrive during a forward remain in the existing router queue and can join
+the next batch. There is no additional collection delay, queue-state publication,
+or prepared-batch lookahead for Python backends. The shared queue continues to
+enforce token limits, request limits, grouping, priorities, and cancellation.
 
 ## Plugin contract
 
@@ -169,9 +149,9 @@ must release model resources.
 
 ## Buffer ownership
 
-- **Rust to Python:** input arrays are borrowed numpy views over the Rust
-  `PaddedInputs` buffers. A Python owner object keeps the `Arc` alive for the
-  duration of the synchronous `submit` call.
+- **Rust to Python:** input arrays are borrowed, read-only numpy views over the
+  Rust `PaddedInputs` buffers. A Python owner object keeps the `Arc` alive as long
+  as Python retains a view, including after `submit` returns.
 - **Python to Rust:** `set_result` validates the array and copies its values into
   one Rust-owned snapshot. Making a numpy view read-only cannot prevent writes
   through its base array, so Python-owned output memory is never shared with
