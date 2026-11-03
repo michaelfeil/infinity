@@ -12,8 +12,42 @@
 #include "tests/fp8_reference_test.h"
 #include <cstdlib>
 #include <array>
+#include <cmath>
+#include <limits>
 #include <c10/core/InferenceMode.h>
 #include <iostream>
+
+namespace {
+void check_same_or_nan(const at::Tensor& expected, const at::Tensor& actual, const char* label) {
+  TORCH_CHECK(expected.sizes() == actual.sizes() &&
+                  expected.scalar_type() == actual.scalar_type(),
+              label,
+              " changed shape or dtype");
+  auto expected_nan = at::isnan(expected.to(at::kFloat));
+  auto actual_nan = at::isnan(actual.to(at::kFloat));
+  TORCH_CHECK(at::equal(expected_nan, actual_nan), label, " changed NaN classification");
+  auto non_nan = at::logical_not(expected_nan).to(at::kCPU);
+  const auto element_size = expected.element_size();
+  at::Tensor expected_exact, actual_exact;
+  if (element_size == 1) {
+    expected_exact = expected.view(at::kByte);
+    actual_exact = actual.view(at::kByte);
+  } else if (element_size == 2) {
+    expected_exact = expected.view(at::kShort);
+    actual_exact = actual.view(at::kShort);
+  } else if (element_size == 4) {
+    expected_exact = expected.view(at::kInt);
+    actual_exact = actual.view(at::kInt);
+  } else {
+    TORCH_CHECK(false, label, " unsupported element size ", element_size);
+  }
+  auto expected_cpu = expected_exact.to(at::kCPU).contiguous();
+  auto actual_cpu = actual_exact.to(at::kCPU).contiguous();
+  TORCH_CHECK(at::equal(expected_cpu.masked_select(non_nan), actual_cpu.masked_select(non_nan)),
+              label,
+              " changed non-NaN bytes");
+}
+}
 
 int main() {
   // Match the original independently implemented recipe's workspace budget.
@@ -24,6 +58,7 @@ int main() {
   at::globalContext().setAllowTF32CuBLAS(false);
   for (auto dtype : {at::kHalf, at::kBFloat16}) {
     auto options = at::TensorOptions().device(at::kCUDA, 0).dtype(dtype);
+    c10::cuda::CUDAGuard device_guard(options.device());
     // Cover every input bit pattern against every row-maximum significand.
     // Include a maximum sentinel per row so every pattern sees the intended
     // scale, including FP8 midpoints and the BF16 scale floor.
@@ -263,6 +298,133 @@ int main() {
                               down.forward(activated, bias)),
                     "Fused MLP changed output or bias rounding");
       }
+    // Large gates and dtype-subnormal operands, including the misaligned scalar fallback.
+    auto check_swiglu_pattern = [&](int64_t width, float gate_value, float up_value, bool aligned) {
+      auto storage = at::empty({17 * 2 * width + 1}, options);
+      auto gate_up = storage.narrow(0, aligned ? 0 : 1, 17 * 2 * width).view({17, 2 * width});
+      gate_up.narrow(1, 0, width).fill_(gate_value);
+      gate_up.narrow(1, width, width).fill_(up_value);
+      auto activated = infinity::fused_gated_activation(gate_up, 5);
+      auto reference = infinity::fp8_quantize_rows(activated);
+      auto fused = infinity::fp8_swiglu_quantize(gate_up);
+      TORCH_CHECK(at::equal(fused.first.view(at::kByte), reference.first.view(at::kByte)) &&
+                      at::equal(fused.second, reference.second),
+                  "Fused SwiGLU changed large/subnormal FP8 bytes/scales: width=",
+                  width,
+                  " gate=",
+                  gate_value,
+                  " up=",
+                  up_value,
+                  " aligned=",
+                  aligned);
+    };
+    const float subnormal = dtype == at::kHalf ? std::ldexp(1.f, -24) : std::ldexp(1.f, -133);
+    for (int64_t width : {6144, 12288, 17408})
+      for (bool aligned : {false, true}) {
+        check_swiglu_pattern(width, 80.f, 100.f, aligned);
+        check_swiglu_pattern(width, subnormal, 2.f, aligned);
+      }
+    // Fused FP32 row/column scaling plus rounded SwiGLU must equal the composed recipe.
+    auto check_scaled_swiglu = [&](const at::Tensor& values,
+                                   const at::Tensor& row_scales,
+                                   const at::Tensor& column_scales) {
+      auto expected = infinity::fp8_swiglu_quantize(
+          infinity::fp8_scale_output(values, row_scales, column_scales, dtype));
+      auto actual = infinity::fp8_scaled_swiglu_quantize(values, row_scales, column_scales, dtype);
+      TORCH_CHECK(actual.first.sizes() == expected.first.sizes() &&
+                      actual.second.sizes() == expected.second.sizes() &&
+                      at::equal(actual.first.view(at::kByte), expected.first.view(at::kByte)) &&
+                      at::equal(actual.second, expected.second),
+                  "Scaled fused SwiGLU differs from scale_output + swiglu: rows=",
+                  values.size(0),
+                  " width=",
+                  values.size(1) / 2,
+                  " dtype=",
+                  dtype);
+    };
+    const auto f32 = at::TensorOptions().device(at::kCUDA, 0).dtype(at::kFloat);
+    for (int64_t width : {2048, 2056, 4096, 6144, 12288, 17408, 20480, 20481})
+      for (int64_t rows : {1, 17, 257}) {
+        // Bound rows for the max-shared and wide-fallback widths.
+        if (width >= 20480 && rows > 17)
+          continue;
+        for (bool aligned : {false, true}) {
+          auto raw_storage = at::randn({rows * 2 * width + 1}, f32) * 8;
+          auto column_storage = at::rand({2 * width + 1}, f32) + .5;
+          auto values =
+              raw_storage.narrow(0, aligned ? 0 : 1, rows * 2 * width).view({rows, 2 * width});
+          auto columns = column_storage.narrow(0, aligned ? 0 : 1, 2 * width).view({2 * width, 1});
+          auto row_scales = at::rand({rows, 1}, f32) + .5;
+          values.select(0, 0).zero_();
+          row_scales.select(0, 0).fill_(.25f);
+          if (rows > 1) {
+            values.select(0, 1).fill_(std::ldexp(1.f, -149));
+            row_scales.select(0, 1).fill_(2.f);
+          }
+          if (rows > 2)
+            row_scales.select(0, 2).fill_(.5f);
+          columns.select(0, 0).fill_(2.f);
+          columns.select(0, 1).fill_(.25f);
+          check_scaled_swiglu(values, row_scales, columns);
+        }
+      }
+    // Wider rows retain the original composed scaling/quantization recipe.
+    {
+      auto values = at::randn({17, 2 * 32768}, f32) * 8;
+      auto columns = at::rand({2 * 32768, 1}, f32) + .5;
+      auto row_scales = at::rand({17, 1}, f32) + .5;
+      check_scaled_swiglu(values, row_scales, columns);
+    }
+    {
+      auto empty_values = at::empty({0, 2 * 6144}, f32);
+      auto empty_rows = at::empty({0, 1}, f32);
+      auto empty_columns = at::empty({2 * 6144, 1}, f32);
+      auto empty =
+          infinity::fp8_scaled_swiglu_quantize(empty_values, empty_rows, empty_columns, dtype);
+      TORCH_CHECK(empty.first.sizes() == at::IntArrayRef({0, 6144}) &&
+                      empty.second.sizes() == at::IntArrayRef({0, 1}),
+                  "Scaled fused SwiGLU changed zero-row geometry");
+    }
+    auto check_nonfinite_scaled_swiglu = [&](int64_t width, int64_t rows, bool aligned) {
+      auto raw_storage = at::randn({rows * 2 * width + 1}, f32) * 3;
+      auto column_storage = at::rand({2 * width + 1}, f32) + .5;
+      auto values =
+          raw_storage.narrow(0, aligned ? 0 : 1, rows * 2 * width).view({rows, 2 * width});
+      auto columns = column_storage.narrow(0, aligned ? 0 : 1, 2 * width).view({2 * width, 1});
+      auto row_scales = at::rand({rows, 1}, f32) + .5;
+      const float nan = std::numeric_limits<float>::quiet_NaN();
+      const float inf = std::numeric_limits<float>::infinity();
+      values.select(0, 0).fill_(nan);
+      values.select(0, 1).fill_(inf);
+      values.select(0, 2).fill_(-inf);
+      values.select(0, 3).narrow(0, 0, 8).fill_(nan);
+      values.select(0, 3).narrow(0, 8, 8).fill_(inf);
+      values.select(0, 3).narrow(0, 16, 8).fill_(-inf);
+      row_scales.select(0, 0).fill_(nan);
+      row_scales.select(0, 1).fill_(inf);
+      row_scales.select(0, 2).fill_(-inf);
+      row_scales.select(0, 3).fill_(0.f);
+      columns.select(0, 0).fill_(nan);
+      columns.select(0, 1).fill_(inf);
+      columns.select(0, 2).fill_(-inf);
+      columns.select(0, 3).fill_(0.f);
+      // Compare against the original separate ATen products, then composed SwiGLU.
+      auto expected_scaled = (values * row_scales * columns.t()).to(dtype);
+      TORCH_CHECK(at::isnan(expected_scaled).any().item<bool>(),
+                  "nonfinite fixture produced no NaN");
+      TORCH_CHECK(at::isinf(expected_scaled).any().item<bool>(),
+                  "nonfinite fixture produced no Inf");
+      auto actual_scaled = infinity::fp8_scale_output(values, row_scales, columns, dtype);
+      check_same_or_nan(expected_scaled, actual_scaled, "nonfinite scale output");
+      auto expected = infinity::fp8_swiglu_quantize(expected_scaled);
+      auto actual = infinity::fp8_scaled_swiglu_quantize(values, row_scales, columns, dtype);
+      check_same_or_nan(expected.first, actual.first, "nonfinite scaled SwiGLU bytes");
+      check_same_or_nan(expected.second, actual.second, "nonfinite scaled SwiGLU scales");
+    };
+    for (bool aligned : {false, true}) {
+      check_nonfinite_scaled_swiglu(2056, 5, aligned);
+      check_nonfinite_scaled_swiglu(20480, 4, aligned);
+    }
     if (dtype == at::kBFloat16) {
       for (int64_t width : {768, 896, 2560, 4096, 5120, 8192})
         for (int64_t rows : {1, 17})
@@ -283,6 +445,77 @@ int main() {
                             "Fused RMS changed FP8 bytes, scales or residual rounding");
               }
           }
+    }
+    if (at::cuda::getCurrentDeviceProperties()->major != 9) {
+      // Portable output scaling: ragged rows and varied scales must match the
+      // reference's separate FP32 products and final model-dtype rounding.
+      for (auto [rows, width] :
+           {std::pair<int64_t, int64_t>            {1, 1024},
+            {17, 2560},
+            {257, 8192},
+            {1025, 2560},
+            {4097, 256}}) {
+        auto weight = at::randn({512, width}, options) * .05;
+        weight.select(0, 0).zero_();
+        weight.select(0, 511).mul_(1e4);
+        infinity::Fp8Linear projection(weight);
+        auto input = at::randn({rows, width}, options) * .3;
+        auto quantized = infinity::fp8_quantize_rows(input);
+        auto row_scales = at::rand({rows, 1}, options.dtype(at::kFloat)) + .5;
+        row_scales.select(0, 0).fill_(1.0f);
+        if (rows > 1)
+          row_scales.select(0, 1).fill_(-1.0f);
+        if (rows > 2)
+          row_scales.select(0, 2).fill_(.5f);
+        if (rows > 3)
+          row_scales.select(0, 3).fill_(2.0f);
+        if (rows > 4)
+          row_scales.select(0, 4).fill_(1e-6f);
+        if (rows > 5)
+          row_scales.select(0, 5).fill_(1e6f);
+        if (rows > 6)
+          row_scales.select(0, 6).fill_(1e-40f);
+        auto expected = fp8_original_recipe(
+            quantized.first, projection.matrix(), row_scales, projection.scales(), dtype);
+        auto actual = projection.forward_quantized(quantized.first, row_scales);
+        TORCH_CHECK(actual.sizes() == expected.sizes() &&
+                        at::equal(actual.view(at::kByte), expected.view(at::kByte)),
+                    "Portable FP8 output scaling differs from reference: rows=",
+                    rows,
+                    " width=",
+                    width,
+                    " dtype=",
+                    dtype);
+      }
+      // Direct helper coverage: vector, ragged-width scalar and unaligned borrowed storage.
+      for (auto shape :
+           {std::array<int64_t, 4>{7, 256, 0, 0},
+            std::array<int64_t, 4>{65536, 16, 0, 0},
+            std::array<int64_t, 4>{7, 257, 0, 0},
+            std::array<int64_t, 4>{7, 256, 1, 0},
+            std::array<int64_t, 4>{7, 256, 0, 1}}) {
+        const auto [rows, width, offset, scale_offset] = shape;
+        auto value_storage = at::randn({rows * width + offset}, options.dtype(at::kFloat));
+        auto values = value_storage.narrow(0, offset, rows * width).view({rows, width});
+        auto row_scales = at::rand({rows, 1}, options.dtype(at::kFloat)) + .5;
+        auto scale_storage = at::rand({width + scale_offset}, options.dtype(at::kFloat)) + .5;
+        auto column_scales = scale_storage.narrow(0, scale_offset, width).view({width, 1});
+        auto expected = (values * row_scales * column_scales.t()).to(dtype);
+        auto actual = infinity::fp8_scale_output(values, row_scales, column_scales, dtype);
+        TORCH_CHECK(values.is_contiguous() && column_scales.is_contiguous() &&
+                        actual.sizes() == expected.sizes() &&
+                        at::equal(actual.view(at::kByte), expected.view(at::kByte)),
+                    "Portable FP8 output scaling failed ragged/unaligned storage: rows=",
+                    rows,
+                    " width=",
+                    width,
+                    " value offset=",
+                    offset,
+                    " scale offset=",
+                    scale_offset,
+                    " dtype=",
+                    dtype);
+      }
     }
     std::cout << "FP8 row-scale/bytes, odd real rows, model-dtype GEMM and bias: " << dtype
               << " passed\n";

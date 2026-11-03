@@ -52,6 +52,7 @@ class Fp8Linear {
   at::Tensor matrix_, scales_, unit_;
   at::ScalarType dtype_;
   bool rowwise_;
+  at::Tensor unscaled_product(const at::Tensor& input) const;
 
 public:
   /// Quantize checkpoint weights once and retain scales for subsequent activation projections.
@@ -62,6 +63,12 @@ public:
   at::Tensor forward_quantized(const at::Tensor& input,
                                const at::Tensor& scales,
                                const at::Tensor& bias = {}) const;
+  /// Fuse the projection's FP8 output scaling, rounded SwiGLU, and row FP8 quantization without
+  /// materializing the model-dtype gate/up intermediate. `input` is either model-dtype rows
+  /// (quantized once here, matching forward) or prequantized E4M3 rows with `row_scales`.
+  /// The projection must be bias-free; bias, clipping and casts stay outside this boundary.
+  std::pair<at::Tensor, at::Tensor>
+  forward_swiglu_quantized(const at::Tensor& input, const at::Tensor& row_scales = {}) const;
 
   int64_t input_width() const {
     return matrix_.size(1);

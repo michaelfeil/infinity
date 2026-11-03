@@ -96,6 +96,15 @@ public:
     return true;
   }
 
+  std::pair<at::Tensor, at::Tensor> apply_swiglu_quantized(const MlpProjection& projection,
+                                                           const at::Tensor& x,
+                                                           const at::Tensor& scales,
+                                                           const MlpContext&) const override {
+    TORCH_CHECK(x.dim() == 2 && x.size(1) == projection.input_width(),
+                "Fused SwiGLU requires 2D projection rows");
+    return linear_.forward_swiglu_quantized(x, scales);
+  }
+
   at::Tensor apply(const MlpProjection& projection,
                    const at::Tensor& x,
                    const at::Tensor& bias,
@@ -273,11 +282,26 @@ at::Tensor DenseMlp::forward(const at::Tensor& x,
                            context);
   }
 #endif
+#ifdef TEI_TORCH_CUDA_KERNELS
+  // One eligibility rule for both fused forms below: the packed rounded SwiGLU output must be
+  // consumable as FP8 rows without output transforms.
+  const bool rounded_swiglu =
+      output_.method().accepts_fp8_rows() && activation_.fusion == MlpFusion::RoundedSwiGlu &&
+      activation_.packed && !up_ && !output_.recipe_.input_clip && !output_.recipe_.cast_input;
+  // The fused hook keeps the input projection's exact GEMM and scales. It is used only when the
+  // input projection needs no bias, cast, or clipping that the fused boundary cannot express.
+  if (rounded_swiglu && input_.fp8() && !input_.bias().defined() && !input_.recipe_.input_clip &&
+      !input_.recipe_.cast_input && !input_.recipe_.output_clip && x.is_cuda() && x.dim() == 2 &&
+      x.size(1) == input_.input_width() &&
+      input_.output_width() / 2 <= fp8_scaled_swiglu_max_width) {
+    auto fused = input_.method().apply_swiglu_quantized(input_, x, input_scales, context);
+    if (fused.first.defined() && fused.second.defined())
+      return output_.execute(fused.first, context, fused.second);
+  }
+#endif
   auto middle = input_.execute(x, context, input_scales, epilogue);
 #ifdef TEI_TORCH_CUDA_KERNELS
-  if (output_.method().accepts_fp8_rows() && activation_.fusion == MlpFusion::RoundedSwiGlu &&
-      activation_.packed && !up_ && !output_.recipe_.input_clip && !output_.recipe_.cast_input &&
-      middle.is_cuda() && middle.dim() == 2 && middle.is_contiguous() &&
+  if (rounded_swiglu && middle.is_cuda() && middle.dim() == 2 && middle.is_contiguous() &&
       middle.size(1) / 2 <= 32768) {
     auto quantized = fp8_swiglu_quantize(middle);
     return output_.execute(quantized.first, context, quantized.second);

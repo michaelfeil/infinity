@@ -43,6 +43,12 @@ FP8 is opt-in and can change outputs; check accuracy on your task before enablin
 it. Model and hardware support varies. Use `INFINITY_TORCH_FP8_SCOPE=mlp` to
 restrict eligible models to MLP projections. See [model coverage](libtorch-model-coverage.md).
 
+Portable FP8 projections fuse output scaling and conversion into one kernel.
+They retain the two separately rounded FP32 scale products and the final
+model-dtype rounding, including subnormal values. Aligned matrices use vector
+loads and stores; other contiguous layouts use the same arithmetic with scalar
+accesses. The existing Hopper row-scaled projection policy is unchanged.
+
 ## InfinityFA4
 
 The NVIDIA image enables FlashAttention-4 for supported attention shapes and
@@ -59,6 +65,13 @@ cross-request cache.
 For dense Qwen3.5, `--enable-fp8-dynamic` uses all-linear dynamic FP8 by
 default and enables the FP8 optimizations automatically. GDN activations remain
 BF16 and stored recurrent states remain FP32.
+
+Dense FP8 MLPs combine portable projection scaling, rounded SwiGLU and row
+quantization for aligned intermediate widths up to 20480. The fused path keeps
+the two FP32 scale products and model-dtype rounding of the separate operations.
+Wider rows, projection bias or clipping, and Hopper's rowwise projection retain
+their existing recipes. Qwen3.5 post-attention normalization can also produce
+the dense MLP's FP8 input directly, omitting its unused BF16 copy.
 
 Eligible cached GDN suffixes use the existing tensor-core prefill kernels by
 default. Batch geometry and provider support are selected automatically; other

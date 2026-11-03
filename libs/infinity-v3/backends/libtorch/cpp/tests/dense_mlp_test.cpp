@@ -201,6 +201,32 @@ void check(const c10::Device& device, at::ScalarType dtype) {
         mlp.forward(x),
         infinity::Fp8Linear(wo).forward(
             infinity::fused_gated_activation(infinity::Fp8Linear(packed).forward(x), 5), bo));
+    for (int64_t rows : {0, 1, 17, 65}) {
+      auto values = at::randn({rows, 32}, opts);
+      auto quantized = infinity::fp8_quantize_rows(values);
+      auto expected = infinity::Fp8Linear(wo).forward(
+          infinity::fused_gated_activation(infinity::Fp8Linear(packed).forward(values), 5), bo);
+      check_equal(mlp.forward(values), expected);
+      check_equal(mlp.forward(quantized.first, {}, quantized.second), expected);
+    }
+    // Input bias and clipping must retain their positions around model-dtype rounding.
+    // These recipes cannot use the fused projection boundary.
+    for (int transform : {0, 1, 2}) {
+      infinity::ProjectionRecipe projection;
+      auto bias = transform == 0 ? at::cat({bi, bu}) : at::Tensor();
+      if (transform == 1)
+        projection.input_clip = std::array<double, 2>{-.1, .2};
+      if (transform == 2)
+        projection.output_clip = std::array<double, 2>{-.01, .02};
+      infinity::DenseMlp guarded({packed, bias, projection}, {wo, bo}, recipe);
+      guarded.prepare(infinity::MlpPrecision::Fp8);
+      auto values = transform == 1 ? x.clamp(-.1, .2) : x;
+      auto middle = infinity::Fp8Linear(packed).forward(values, bias);
+      if (transform == 2)
+        middle = middle.clamp(-.01, .02);
+      check_equal(guarded.forward(x),
+                  infinity::Fp8Linear(wo).forward(infinity::fused_gated_activation(middle, 5), bo));
+    }
     infinity::DenseMlp invalid({wi}, {at::zeros({17, 64}, opts)}, {infinity::MlpActivation::Relu});
     bool rejected = false;
     try {

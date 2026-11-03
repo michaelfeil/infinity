@@ -5,6 +5,7 @@
 #include <functional>
 #include <optional>
 #include <string>
+#include <utility>
 
 namespace infinity {
 enum class MlpPrecision { Model, Fp8 };
@@ -54,6 +55,16 @@ public:
                            const MlpContext&,
                            MlpEpilogue,
                            const at::Tensor& scales) const = 0;
+
+  /// Optional fused projection scaling + rounded SwiGLU + row FP8 quantization. An undefined
+  /// result retains the ordinary projection/activation path; implementations must preserve the
+  /// same GEMM operands, scales and rounding order.
+  virtual std::pair<at::Tensor, at::Tensor> apply_swiglu_quantized(const MlpProjection&,
+                                                                   const at::Tensor&,
+                                                                   const at::Tensor&,
+                                                                   const MlpContext&) const {
+    return {};
+  }
 };
 
 // A loader selects a method using projection metadata, without changing forward.
