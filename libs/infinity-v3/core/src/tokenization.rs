@@ -1,9 +1,7 @@
 /// Payload tokenization logic
 use crate::TextEmbeddingsError;
-use infinity_v3_backend::BackendError;
 use std::collections::HashMap;
 use std::num::NonZeroUsize;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use tokenizers::tokenizer::Tokenizer;
 pub use tokenizers::Encoding as RawEncoding;
@@ -43,110 +41,16 @@ pub struct SimpleToken {
     pub stop: Option<usize>,
 }
 
-struct TokenizerWorkerConfig {
-    workers: usize,
-    receiver: async_channel::Receiver<QueuedTokenizerRequest>,
-    tokenizer: Tokenizer,
-    accelerate_pooled_text: bool,
-    max_input_length: usize,
-    position_offset: usize,
-    default_prompt: Option<String>,
-    prompts: Option<HashMap<String, String>>,
-    chat: Option<Arc<crate::chat::ChatProcessor>>,
-}
-
-enum WorkerState {
-    Idle(Option<Box<TokenizerWorkerConfig>>),
-    Started(Option<std::thread::JoinHandle<()>>),
-    Failed,
-    Shutdown,
-}
-
+#[derive(Debug)]
 struct TokenizerWorkers {
     sender: async_channel::Sender<QueuedTokenizerRequest>,
-    state: std::sync::Mutex<WorkerState>,
-    started: AtomicBool,
-    #[cfg(test)]
-    supervisor_starts: std::sync::atomic::AtomicUsize,
+    supervisor: std::sync::Mutex<Option<std::thread::JoinHandle<()>>>,
 }
-
-impl std::fmt::Debug for TokenizerWorkers {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("TokenizerWorkers").finish_non_exhaustive()
-    }
-}
-
-fn workers_shutdown_error() -> TextEmbeddingsError {
-    TextEmbeddingsError::Backend(BackendError::Inference(
-        "Tokenization workers are shutting down; the request was not queued".into(),
-    ))
-}
-
-fn workers_start_error() -> TextEmbeddingsError {
-    TextEmbeddingsError::Backend(BackendError::Start(
-        "Tokenization workers failed to start".into(),
-    ))
-}
-
-fn workers_response_error() -> TextEmbeddingsError {
-    TextEmbeddingsError::Backend(BackendError::Inference(
-        "Tokenization workers stopped before responding".into(),
-    ))
-}
-
-impl TokenizerWorkers {
-    fn ensure_started(&self) -> Result<(), TextEmbeddingsError> {
-        if self.started.load(Ordering::Acquire) {
-            return Ok(());
-        }
-        let mut state = self.state.lock().map_err(|_| workers_start_error())?;
-        if self.started.load(Ordering::Acquire) {
-            return Ok(());
-        }
-        let config = match &mut *state {
-            WorkerState::Idle(config) => config.take(),
-            WorkerState::Started(_) => {
-                self.started.store(true, Ordering::Release);
-                return Ok(());
-            }
-            WorkerState::Failed => return Err(workers_start_error()),
-            WorkerState::Shutdown => return Err(workers_shutdown_error()),
-        };
-        let config = match config {
-            Some(config) => *config,
-            None => {
-                *state = WorkerState::Failed;
-                return Err(workers_start_error());
-            }
-        };
-        let handle = match spawn_worker_supervisor(config) {
-            Ok(handle) => handle,
-            Err(error) => {
-                tracing::error!(%error, "Failed to start tokenization supervisor");
-                *state = WorkerState::Failed;
-                return Err(workers_start_error());
-            }
-        };
-        #[cfg(test)]
-        self.supervisor_starts
-            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        *state = WorkerState::Started(Some(handle));
-        self.started.store(true, Ordering::Release);
-        Ok(())
-    }
-}
-
 impl Drop for TokenizerWorkers {
     fn drop(&mut self) {
         self.sender.close();
-        let state = match self.state.get_mut() {
-            Ok(state) => state,
-            Err(poisoned) => poisoned.into_inner(),
-        };
-        if let WorkerState::Started(handle) = state {
-            if let Some(handle) = handle.take() {
-                let _ = handle.join();
-            }
+        if let Some(handle) = self.supervisor.get_mut().unwrap().take() {
+            let _ = handle.join();
         }
     }
 }
@@ -154,22 +58,7 @@ impl Drop for TokenizerWorkers {
 impl Tokenization {
     pub async fn shutdown(&self) {
         self.sender.close();
-        let handle = {
-            let mut state = match self.workers.state.lock() {
-                Ok(state) => state,
-                Err(poisoned) => poisoned.into_inner(),
-            };
-            let handle = match &mut *state {
-                WorkerState::Started(handle) => handle.take(),
-                WorkerState::Idle(config) => {
-                    config.take();
-                    None
-                }
-                WorkerState::Failed | WorkerState::Shutdown => None,
-            };
-            *state = WorkerState::Shutdown;
-            handle
-        };
+        let handle = self.workers.supervisor.lock().unwrap().take();
         if let Some(handle) = handle {
             let _ = tokio::task::spawn_blocking(move || handle.join()).await;
         }
@@ -220,36 +109,6 @@ impl Tokenization {
         )
     }
 
-    /// Build tokenization workers that start on the first queued request.
-    ///
-    /// This is intended for metadata-only tokenization where no pooled-text
-    /// Basetenkenizer is needed. Existing constructors keep their eager
-    /// startup behavior.
-    #[allow(clippy::too_many_arguments)]
-    pub fn with_lazy_queue_capacity(
-        workers: usize,
-        queue_capacity: NonZeroUsize,
-        tokenizer: Tokenizer,
-        max_input_length: usize,
-        position_offset: usize,
-        default_prompt: Option<String>,
-        prompts: Option<HashMap<String, String>>,
-        chat: Option<crate::chat::ChatProcessor>,
-    ) -> Self {
-        Self::with_queue_capacity_and_start_mode(
-            workers,
-            queue_capacity,
-            tokenizer,
-            max_input_length,
-            position_offset,
-            default_prompt,
-            prompts,
-            chat,
-            false,
-            true,
-        )
-    }
-
     /// Build tokenization workers with an explicit pooled-text acceleration choice.
     ///
     /// `accelerate_pooled_text` controls only the Basetenkenizer used by
@@ -267,77 +126,57 @@ impl Tokenization {
         chat: Option<crate::chat::ChatProcessor>,
         accelerate_pooled_text: bool,
     ) -> Self {
-        Self::with_queue_capacity_and_start_mode(
-            workers,
-            queue_capacity,
-            tokenizer,
-            max_input_length,
-            position_offset,
-            default_prompt,
-            prompts,
-            chat,
-            accelerate_pooled_text,
-            false,
-        )
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    fn with_queue_capacity_and_start_mode(
-        workers: usize,
-        queue_capacity: NonZeroUsize,
-        tokenizer: Tokenizer,
-        max_input_length: usize,
-        position_offset: usize,
-        default_prompt: Option<String>,
-        prompts: Option<HashMap<String, String>>,
-        chat: Option<crate::chat::ChatProcessor>,
-        accelerate_pooled_text: bool,
-        lazy: bool,
-    ) -> Self {
         let workers = workers.clamp(1, MAX_TOKENIZATION_WORKERS);
         let chat = chat.map(Arc::new);
         tracing::info!(
             workers,
             queue_capacity = queue_capacity.get(),
             accelerate_pooled_text,
-            lazy,
-            "Configuring tokenization workers"
+            "Starting tokenization workers"
         );
 
+        // Create channel
         let (sender, receiver) = async_channel::bounded(queue_capacity.get());
-        let config = TokenizerWorkerConfig {
-            workers,
-            receiver,
-            tokenizer,
-            accelerate_pooled_text,
-            max_input_length,
-            position_offset,
-            default_prompt,
-            prompts,
-            chat,
-        };
-        let state = if lazy {
-            WorkerState::Idle(Some(Box::new(config)))
-        } else {
-            match spawn_worker_supervisor(config) {
-                Ok(handle) => WorkerState::Started(Some(handle)),
-                Err(error) => {
-                    tracing::error!(%error, "Failed to start tokenization supervisor");
-                    WorkerState::Failed
-                }
+
+        // Spawn a background thread that creates all workers
+        // since tokenizer.clone() require 0.2s.
+        let supervisor = std::thread::spawn(move || {
+            let mut handles = Vec::with_capacity(workers);
+            let tokenizer = Arc::new(tokenizer);
+            let fast_tokenizer = if accelerate_pooled_text {
+                crate::fast_tokenization::BackgroundFastTokenizer::new(Arc::clone(&tokenizer))
+            } else {
+                crate::fast_tokenization::BackgroundFastTokenizer::disabled()
+            };
+            for _ in 0..workers {
+                let chat = chat.clone();
+                let tokenizer_clone = tokenizer.as_ref().clone();
+                let fast_tokenizer = fast_tokenizer.clone();
+                let receiver_clone = receiver.clone();
+                let default_prompt_clone = default_prompt.clone();
+                let prompts_clone = prompts.clone();
+                handles.push(std::thread::spawn(move || {
+                    tokenizer_worker(
+                        tokenizer_clone,
+                        fast_tokenizer,
+                        max_input_length,
+                        position_offset,
+                        default_prompt_clone,
+                        prompts_clone,
+                        receiver_clone,
+                        chat,
+                    )
+                }));
             }
-        };
-        let started = matches!(&state, WorkerState::Started(_));
-        #[cfg(test)]
-        let supervisor_starts = usize::from(started);
+            for handle in handles {
+                let _ = handle.join();
+            }
+        });
 
         Self {
             workers: Arc::new(TokenizerWorkers {
                 sender: sender.clone(),
-                state: std::sync::Mutex::new(state),
-                started: AtomicBool::new(started),
-                #[cfg(test)]
-                supervisor_starts: std::sync::atomic::AtomicUsize::new(supervisor_starts),
+                supervisor: std::sync::Mutex::new(Some(supervisor)),
             }),
             sender,
             multimodal: None,
@@ -574,10 +413,10 @@ impl Tokenization {
             ));
         }
 
-        self.workers.ensure_started()?;
         // Create response channel
         let (response_sender, response_receiver) = oneshot::channel();
         // Send request to the background validation task
+        // Unwrap is safe here
         self.sender
             .send(QueuedTokenizerRequest::new(TokenizerRequest::Encode(
                 inputs,
@@ -589,12 +428,11 @@ impl Tokenization {
                 Span::current(),
             )))
             .await
-            .map_err(|_| workers_shutdown_error())?;
+            .expect("Tokenization background task dropped the receiver. This is a bug.");
 
         // Await on response channel
-        response_receiver
-            .await
-            .map_err(|_| workers_response_error())?
+        // Unwrap is safe here
+        response_receiver.await.expect("Tokenization background task dropped the sender without sending a response. This is a bug.")
     }
 
     #[instrument(skip_all)]
@@ -611,10 +449,10 @@ impl Tokenization {
             ));
         }
 
-        self.workers.ensure_started()?;
         // Create response channel
         let (response_sender, response_receiver) = oneshot::channel();
         // Send request to the background validation task
+        // Unwrap is safe here
         self.sender
             .send(QueuedTokenizerRequest::new(TokenizerRequest::Tokenize(
                 inputs,
@@ -624,12 +462,11 @@ impl Tokenization {
                 Span::current(),
             )))
             .await
-            .map_err(|_| workers_shutdown_error())?;
+            .expect("Tokenization background task dropped the receiver. This is a bug.");
 
         // Await on response channel
-        response_receiver
-            .await
-            .map_err(|_| workers_response_error())?
+        // Unwrap is safe here
+        response_receiver.await.expect("Tokenization background task dropped the sender without sending a response. This is a bug.")
     }
 
     #[instrument(skip_all)]
@@ -645,10 +482,10 @@ impl Tokenization {
             ));
         }
 
-        self.workers.ensure_started()?;
         // Create response channel
         let (response_sender, response_receiver) = oneshot::channel();
         // Send request to the background validation task
+        // Unwrap is safe here
         self.sender
             .send(QueuedTokenizerRequest::new(TokenizerRequest::Decode(
                 ids,
@@ -657,146 +494,11 @@ impl Tokenization {
                 Span::current(),
             )))
             .await
-            .map_err(|_| workers_shutdown_error())?;
+            .expect("Tokenization background task dropped the receiver. This is a bug.");
 
         // Await on response channel
-        response_receiver
-            .await
-            .map_err(|_| workers_response_error())?
-    }
-}
-
-fn spawn_worker_supervisor(
-    config: TokenizerWorkerConfig,
-) -> std::io::Result<std::thread::JoinHandle<()>> {
-    std::thread::Builder::new()
-        .name("tokenization-supervisor".into())
-        .spawn(move || run_tokenizer_supervisor(config))
-}
-
-#[allow(clippy::too_many_arguments)]
-fn spawn_tokenizer_worker(
-    tokenizer: Tokenizer,
-    fast_tokenizer: crate::fast_tokenization::BackgroundFastTokenizer,
-    max_input_length: usize,
-    position_offset: usize,
-    default_prompt: Option<String>,
-    prompts: Option<HashMap<String, String>>,
-    receiver: async_channel::Receiver<QueuedTokenizerRequest>,
-    chat: Option<Arc<crate::chat::ChatProcessor>>,
-) -> std::io::Result<std::thread::JoinHandle<()>> {
-    std::thread::Builder::new()
-        .name("tokenization-worker".into())
-        .spawn(move || {
-            tokenizer_worker(
-                tokenizer,
-                fast_tokenizer,
-                max_input_length,
-                position_offset,
-                default_prompt,
-                prompts,
-                receiver,
-                chat,
-            )
-        })
-}
-
-fn run_tokenizer_supervisor(config: TokenizerWorkerConfig) {
-    let accelerate =
-        config.accelerate_pooled_text && crate::fast_tokenization::is_bpe(&config.tokenizer);
-    // Keep one clone for the builder and remaining workers. Worker 1 consumes
-    // the original so it can serve HF requests without waiting for Baseten.
-    let seed = if !config.receiver.is_closed() && (config.workers > 1 || accelerate) {
-        Some(Arc::new(config.tokenizer.clone()))
-    } else {
-        None
-    };
-    let fast_tokenizer = if accelerate {
-        match seed.as_ref() {
-            Some(seed) => crate::fast_tokenization::BackgroundFastTokenizer::new(Arc::clone(seed)),
-            None => crate::fast_tokenization::BackgroundFastTokenizer::disabled(),
-        }
-    } else {
-        crate::fast_tokenization::BackgroundFastTokenizer::disabled()
-    };
-    run_worker_pool(config, seed, fast_tokenizer);
-}
-
-fn run_worker_pool(
-    config: TokenizerWorkerConfig,
-    mut seed: Option<Arc<Tokenizer>>,
-    fast_tokenizer: crate::fast_tokenization::BackgroundFastTokenizer,
-) {
-    let TokenizerWorkerConfig {
-        workers,
-        receiver,
-        tokenizer,
-        max_input_length,
-        position_offset,
-        default_prompt,
-        prompts,
-        chat,
-        ..
-    } = config;
-    // A single worker consumes the original tokenizer. Drop any unused seed here
-    // so it cannot outlive a completed background builder.
-    if workers <= 1 {
-        seed = None;
-    }
-    let mut handles = Vec::with_capacity(workers);
-    // The first worker always starts so a request queued before shutdown can
-    // drain. Once the queue is closed, skip cloning and spawning the rest.
-    let worker = spawn_tokenizer_worker(
-        tokenizer,
-        fast_tokenizer.clone(),
-        max_input_length,
-        position_offset,
-        default_prompt.clone(),
-        prompts.clone(),
-        receiver.clone(),
-        chat.clone(),
-    );
-    match worker {
-        Ok(handle) => handles.push(handle),
-        Err(error) => tracing::error!(%error, "Failed to start tokenization worker"),
-    }
-    if workers > 1 && seed.is_some() {
-        for index in 1..workers {
-            if receiver.is_closed() {
-                break;
-            }
-            let tokenizer_clone = if index + 1 == workers {
-                match seed.take() {
-                    Some(seed) => match Arc::try_unwrap(seed) {
-                        Ok(tokenizer) => tokenizer,
-                        Err(seed) => (*seed).clone(),
-                    },
-                    None => break,
-                }
-            } else {
-                match seed.as_ref() {
-                    Some(seed) => (**seed).clone(),
-                    None => break,
-                }
-            };
-            let worker = spawn_tokenizer_worker(
-                tokenizer_clone,
-                fast_tokenizer.clone(),
-                max_input_length,
-                position_offset,
-                default_prompt.clone(),
-                prompts.clone(),
-                receiver.clone(),
-                chat.clone(),
-            );
-            match worker {
-                Ok(handle) => handles.push(handle),
-                Err(error) => tracing::error!(%error, "Failed to start tokenization worker"),
-            }
-        }
-    }
-    for handle in handles {
-        let _ = handle.join();
+        // Unwrap is safe here
+        response_receiver.await.expect("Tokenization background task dropped the sender without sending a response. This is a bug.")
     }
 }
 
@@ -1457,10 +1159,7 @@ mod fast_embedding_tests {
             position_offset: 0,
             workers: Arc::new(TokenizerWorkers {
                 sender: sender.clone(),
-                state: std::sync::Mutex::new(WorkerState::Started(None)),
-                started: AtomicBool::new(true),
-                #[cfg(test)]
-                supervisor_starts: std::sync::atomic::AtomicUsize::new(0),
+                supervisor: std::sync::Mutex::new(None),
             }),
             sender,
         };
@@ -1825,724 +1524,6 @@ mod fast_embedding_tests {
         });
     }
 
-    fn metadata_tokenizer() -> Tokenizer {
-        let mut tokenizer = crate::fast_tokenization::test_tokenizer();
-        tokenizer.add_special_tokens(&[
-            tokenizers::AddedToken::from("<s>", true),
-            tokenizers::AddedToken::from("</s>", true),
-        ]);
-        tokenizer.with_post_processor(Some(
-            tokenizers::processors::template::TemplateProcessing::builder()
-                .try_single("<s>:0 $A:0 </s>:0")
-                .unwrap()
-                .try_pair("<s>:0 $A:0 </s>:0 $B:1 </s>:1")
-                .unwrap()
-                .special_tokens(vec![("<s>", 256), ("</s>", 257)])
-                .build()
-                .unwrap(),
-        ));
-        tokenizer
-    }
-
-    fn assert_encoding_ids(actual: &ValidEncoding, expected: &RawEncoding) {
-        assert_eq!(actual.input_ids, expected.get_ids());
-        assert_eq!(actual.token_type_ids, expected.get_type_ids());
-        assert_eq!(
-            actual.position_ids,
-            (2..2 + expected.get_ids().len() as u32).collect::<Vec<_>>()
-        );
-    }
-
-    fn hf_single_encoding(
-        hf: &Tokenizer,
-        text: &str,
-        prompt: Option<&str>,
-        add_special_tokens: bool,
-        truncation: Option<(usize, TruncationDirection)>,
-    ) -> RawEncoding {
-        let mut hf = hf.clone();
-        hf.with_truncation(truncation.map(|(max_length, direction)| TruncationParams {
-            direction,
-            max_length,
-            strategy: TruncationStrategy::LongestFirst,
-            stride: 0,
-        }))
-        .unwrap();
-        let text = match prompt {
-            Some(prompt) => format!("{prompt}{text}"),
-            None => text.to_owned(),
-        };
-        hf.encode(text, add_special_tokens).unwrap()
-    }
-
-    fn hf_pair_encoding(
-        hf: &Tokenizer,
-        pair: (&str, &str),
-        add_special_tokens: bool,
-        truncation: Option<(usize, TruncationDirection)>,
-    ) -> RawEncoding {
-        let mut hf = hf.clone();
-        hf.with_truncation(truncation.map(|(max_length, direction)| TruncationParams {
-            direction,
-            max_length,
-            strategy: TruncationStrategy::LongestFirst,
-            stride: 0,
-        }))
-        .unwrap();
-        hf.encode(pair, add_special_tokens).unwrap()
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    fn tokenization_with_seed_and_fast(
-        workers: usize,
-        queue_capacity: usize,
-        tokenizer: Tokenizer,
-        seed: Option<Arc<Tokenizer>>,
-        fast_tokenizer: crate::fast_tokenization::BackgroundFastTokenizer,
-        max_input_length: usize,
-        position_offset: usize,
-        default_prompt: Option<String>,
-        prompts: Option<HashMap<String, String>>,
-    ) -> Tokenization {
-        let workers = workers.clamp(1, MAX_TOKENIZATION_WORKERS);
-        let (sender, receiver) = async_channel::bounded(queue_capacity);
-        let config = TokenizerWorkerConfig {
-            workers,
-            receiver,
-            tokenizer,
-            accelerate_pooled_text: false,
-            max_input_length,
-            position_offset,
-            default_prompt,
-            prompts,
-            chat: None,
-        };
-        let supervisor = std::thread::Builder::new()
-            .name("test-tokenization-supervisor".into())
-            .spawn(move || {
-                run_worker_pool(config, seed, fast_tokenizer);
-            })
-            .unwrap();
-        Tokenization {
-            workers: Arc::new(TokenizerWorkers {
-                sender: sender.clone(),
-                state: std::sync::Mutex::new(WorkerState::Started(Some(supervisor))),
-                started: AtomicBool::new(true),
-                #[cfg(test)]
-                supervisor_starts: std::sync::atomic::AtomicUsize::new(0),
-            }),
-            sender,
-            multimodal: None,
-            mistral3: None,
-            embedding_gemma2: None,
-            token_input_vocab_size: None,
-            max_input_length,
-            position_offset,
-        }
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    fn tokenization_with_fast(
-        workers: usize,
-        queue_capacity: usize,
-        tokenizer: Tokenizer,
-        max_input_length: usize,
-        position_offset: usize,
-        default_prompt: Option<String>,
-        prompts: Option<HashMap<String, String>>,
-        fast_tokenizer: crate::fast_tokenization::BackgroundFastTokenizer,
-    ) -> Tokenization {
-        let workers = workers.clamp(1, MAX_TOKENIZATION_WORKERS);
-        let seed = if workers > 1 {
-            Some(Arc::new(tokenizer.clone()))
-        } else {
-            None
-        };
-        tokenization_with_seed_and_fast(
-            workers,
-            queue_capacity,
-            tokenizer,
-            seed,
-            fast_tokenizer,
-            max_input_length,
-            position_offset,
-            default_prompt,
-            prompts,
-        )
-    }
-
-    struct ReleaseOnDrop(Option<std::sync::mpsc::Sender<()>>);
-
-    impl ReleaseOnDrop {
-        fn release(&mut self) {
-            if let Some(sender) = self.0.take() {
-                let _ = sender.send(());
-            }
-        }
-    }
-
-    impl Drop for ReleaseOnDrop {
-        fn drop(&mut self) {
-            self.release();
-        }
-    }
-
-    fn lazy_metadata_tokenizer(
-        workers: usize,
-        queue_capacity: usize,
-        tokenizer: Tokenizer,
-    ) -> Tokenization {
-        Tokenization::with_lazy_queue_capacity(
-            workers,
-            NonZeroUsize::new(queue_capacity).unwrap(),
-            tokenizer,
-            64,
-            2,
-            None,
-            None,
-            None,
-        )
-    }
-
-    fn supervisor_starts(tokenization: &Tokenization) -> usize {
-        tokenization
-            .workers
-            .supervisor_starts
-            .load(std::sync::atomic::Ordering::Relaxed)
-    }
-
-    #[test]
-    fn decision_selected_worker_keeps_metadata_tokenize_and_decode() {
-        let hf = metadata_tokenizer();
-        let expected = hf.clone();
-        let tokenization = Tokenization::with_queue_capacity_and_pooled_text_acceleration(
-            2,
-            NonZeroUsize::new(4).unwrap(),
-            hf,
-            64,
-            2,
-            None,
-            None,
-            None,
-            false,
-        );
-        tokio::runtime::Runtime::new().unwrap().block_on(async {
-            let text = "hello 東京 👩🏽‍💻 <s> longer text";
-            let (rendered, encoding) = tokenization
-                .tokenize(EncodingInput::Single(text.into()), true, None)
-                .await
-                .unwrap();
-            let expected_encoding = expected.encode(text, true).unwrap();
-            assert_eq!(rendered.as_deref(), Some(text));
-            assert_eq!(encoding.get_ids(), expected_encoding.get_ids());
-            assert_eq!(encoding.get_type_ids(), expected_encoding.get_type_ids());
-            assert_eq!(encoding.get_offsets(), expected_encoding.get_offsets());
-            assert!(!encoding.get_tokens().is_empty());
-
-            let decoded = tokenization
-                .decode(encoding.get_ids().to_vec(), false)
-                .await
-                .unwrap();
-            assert_eq!(
-                decoded,
-                expected.decode(encoding.get_ids(), false).unwrap(),
-                "decision tokenization workers must retain HF decode behavior"
-            );
-            assert!(decoded.contains("hello 東京"));
-        });
-    }
-
-    #[test]
-    fn pooled_text_acceleration_choice_preserves_embedding_and_classifier_ids() {
-        let hf = metadata_tokenizer();
-        let expected = hf.clone();
-        let accelerated = Tokenization::with_queue_capacity_and_pooled_text_acceleration(
-            1,
-            NonZeroUsize::new(8).unwrap(),
-            hf.clone(),
-            64,
-            2,
-            None,
-            None,
-            None,
-            true,
-        );
-        let unaccelerated = Tokenization::with_queue_capacity_and_pooled_text_acceleration(
-            1,
-            NonZeroUsize::new(8).unwrap(),
-            hf,
-            64,
-            2,
-            None,
-            None,
-            None,
-            false,
-        );
-        tokio::runtime::Runtime::new().unwrap().block_on(async {
-            let single = "hello 東京 👩🏽‍💻 longer text";
-            let pair = ("query 東京", "a longer document 👩🏽‍💻");
-            for use_pair in [false, true] {
-                let input = || {
-                    if use_pair {
-                        EncodingInput::Dual(pair.0.into(), pair.1.into())
-                    } else {
-                        EncodingInput::Single(single.into())
-                    }
-                };
-                let expected_encoding = if use_pair {
-                    expected.encode(pair, true).unwrap()
-                } else {
-                    expected.encode(single, true).unwrap()
-                };
-
-                let accelerated_embedding = accelerated
-                    .encode_embedding(input(), false, TruncationDirection::Right, None)
-                    .await
-                    .unwrap();
-                let unaccelerated_embedding = unaccelerated
-                    .encode_embedding(input(), false, TruncationDirection::Right, None)
-                    .await
-                    .unwrap();
-                assert_encoding_ids(&accelerated_embedding, &expected_encoding);
-                assert_encoding_ids(&unaccelerated_embedding, &expected_encoding);
-                assert!(accelerated_embedding.tokens.is_empty());
-                assert!(unaccelerated_embedding.offsets.is_empty());
-
-                let accelerated_classification = accelerated
-                    .encode_classification(input(), false, TruncationDirection::Right)
-                    .await
-                    .unwrap();
-                let unaccelerated_classification = unaccelerated
-                    .encode_classification(input(), false, TruncationDirection::Right)
-                    .await
-                    .unwrap();
-                assert_encoding_ids(&accelerated_classification, &expected_encoding);
-                assert_encoding_ids(&unaccelerated_classification, &expected_encoding);
-                assert!(accelerated_classification.tokens.is_empty());
-                assert!(unaccelerated_classification.offsets.is_empty());
-            }
-        });
-    }
-
-    #[test]
-    fn lazy_workers_start_once_on_first_metadata_request() {
-        let hf = metadata_tokenizer();
-        let text = "hello 東京 👩‍💻 <s> longer text";
-        let ids = hf.encode(text, true).unwrap().get_ids().to_vec();
-        for operation in ["tokenize", "decode", "encode"] {
-            let expected = hf.clone();
-            let tokenization = lazy_metadata_tokenizer(2, 4, hf.clone());
-            assert_eq!(supervisor_starts(&tokenization), 0);
-            assert!(matches!(
-                &*tokenization.workers.state.lock().unwrap(),
-                WorkerState::Idle(_)
-            ));
-            tokio::runtime::Runtime::new().unwrap().block_on(async {
-                match operation {
-                    "tokenize" => {
-                        let (rendered, actual) = tokenization
-                            .tokenize(EncodingInput::Single(text.into()), true, None)
-                            .await
-                            .unwrap();
-                        let expected_encoding = expected.encode(text, true).unwrap();
-                        assert_eq!(rendered.as_deref(), Some(text));
-                        assert_eq!(actual.get_ids(), expected_encoding.get_ids());
-                        assert_eq!(actual.get_type_ids(), expected_encoding.get_type_ids());
-                        assert_eq!(actual.get_offsets(), expected_encoding.get_offsets());
-                    }
-                    "decode" => {
-                        let actual = tokenization.decode(ids.clone(), false).await.unwrap();
-                        assert_eq!(actual, expected.decode(ids.as_slice(), false).unwrap());
-                    }
-                    "encode" => {
-                        let actual = tokenization
-                            .encode(
-                                EncodingInput::Single(text.into()),
-                                true,
-                                TruncationDirection::Right,
-                                None,
-                            )
-                            .await
-                            .unwrap();
-                        assert_encoding_ids(&actual, &expected.encode(text, true).unwrap());
-                        assert!(!actual.tokens.is_empty());
-                        assert!(!actual.offsets.is_empty());
-                    }
-                    _ => unreachable!(),
-                }
-            });
-            assert_eq!(supervisor_starts(&tokenization), 1);
-            assert!(matches!(
-                &*tokenization.workers.state.lock().unwrap(),
-                WorkerState::Started(_)
-            ));
-        }
-    }
-
-    #[test]
-    fn concurrent_first_lazy_requests_start_one_pool_and_preserve_outputs() {
-        let hf = metadata_tokenizer();
-        let tokenization = lazy_metadata_tokenizer(4, 2, hf.clone());
-        assert_eq!(supervisor_starts(&tokenization), 0);
-        tokio::runtime::Runtime::new().unwrap().block_on(async {
-            let mut tasks = tokio::task::JoinSet::new();
-            for i in 0..64 {
-                let tokenization = tokenization.clone();
-                let expected = hf.clone();
-                tasks.spawn(async move {
-                    let text = format!("request {i} 東京 👩‍💻 <s>");
-                    let expected_encoding = expected.encode(text.as_str(), true).unwrap();
-                    let (rendered, actual) = tokenization
-                        .tokenize(EncodingInput::Single(text.clone()), true, None)
-                        .await
-                        .unwrap();
-                    assert_eq!(rendered.as_deref(), Some(text.as_str()));
-                    assert_eq!(actual.get_ids(), expected_encoding.get_ids());
-                    assert_eq!(actual.get_type_ids(), expected_encoding.get_type_ids());
-                    assert_eq!(actual.get_offsets(), expected_encoding.get_offsets());
-                    let decoded = tokenization
-                        .decode(actual.get_ids().to_vec(), false)
-                        .await
-                        .unwrap();
-                    assert_eq!(decoded, expected.decode(actual.get_ids(), false).unwrap());
-                    let encoded = tokenization
-                        .encode(
-                            EncodingInput::Single(text),
-                            true,
-                            TruncationDirection::Right,
-                            None,
-                        )
-                        .await
-                        .unwrap();
-                    assert_eq!(encoded.input_ids, expected_encoding.get_ids());
-                    assert_eq!(encoded.token_type_ids, expected_encoding.get_type_ids());
-                });
-            }
-            while let Some(result) = tasks.join_next().await {
-                result.unwrap();
-            }
-        });
-        assert_eq!(supervisor_starts(&tokenization), 1);
-    }
-
-    #[test]
-    fn shutdown_before_first_use_starts_no_workers_and_rejects_requests() {
-        let tokenization = lazy_metadata_tokenizer(2, 4, metadata_tokenizer());
-        assert_eq!(supervisor_starts(&tokenization), 0);
-        tokio::runtime::Runtime::new().unwrap().block_on(async {
-            tokenization.shutdown().await;
-            assert!(matches!(
-                tokenization
-                    .tokenize(EncodingInput::Single("hello".into()), true, None)
-                    .await,
-                Err(TextEmbeddingsError::Backend(BackendError::Inference(_)))
-            ));
-            assert!(matches!(
-                tokenization.decode(vec![1, 2], false).await,
-                Err(TextEmbeddingsError::Backend(BackendError::Inference(_)))
-            ));
-            assert!(matches!(
-                tokenization
-                    .encode(
-                        EncodingInput::Single("hello".into()),
-                        true,
-                        TruncationDirection::Right,
-                        None,
-                    )
-                    .await,
-                Err(TextEmbeddingsError::Backend(BackendError::Inference(_)))
-            ));
-        });
-        assert_eq!(supervisor_starts(&tokenization), 0);
-        assert!(matches!(
-            &*tokenization.workers.state.lock().unwrap(),
-            WorkerState::Shutdown
-        ));
-    }
-
-    #[test]
-    fn shutdown_and_first_request_race_never_restarts_workers() {
-        let runtime = tokio::runtime::Runtime::new().unwrap();
-        for _ in 0..16 {
-            let tokenization = lazy_metadata_tokenizer(2, 2, metadata_tokenizer());
-            let (first, after) = runtime.block_on(async {
-                let request = tokenization.clone();
-                let first = tokio::join!(
-                    request.tokenize(EncodingInput::Single("hello".into()), true, None),
-                    tokenization.shutdown(),
-                )
-                .0;
-                let after = tokenization
-                    .tokenize(EncodingInput::Single("hello".into()), true, None)
-                    .await;
-                (first, after)
-            });
-            assert!(matches!(
-                first,
-                Ok(_) | Err(TextEmbeddingsError::Backend(BackendError::Inference(_)))
-            ));
-            assert!(matches!(
-                after,
-                Err(TextEmbeddingsError::Backend(BackendError::Inference(_)))
-            ));
-            assert!(supervisor_starts(&tokenization) <= 1);
-            assert!(matches!(
-                &*tokenization.workers.state.lock().unwrap(),
-                WorkerState::Shutdown
-            ));
-        }
-    }
-
-    #[test]
-    fn embedding_and_classifier_finish_while_fast_tokenizer_initializes() {
-        let hf = metadata_tokenizer();
-        let expected = hf.clone();
-        let (started_tx, started_rx) = std::sync::mpsc::sync_channel(0);
-        let (release_tx, release_rx) = std::sync::mpsc::channel();
-        let fast = crate::fast_tokenization::BackgroundFastTokenizer::new_gated(
-            Arc::new(hf.clone()),
-            started_tx,
-            release_rx,
-        );
-        let probe = fast.clone();
-        let tokenization = tokenization_with_fast(
-            4,
-            8,
-            hf,
-            8,
-            2,
-            None,
-            Some(HashMap::from([("query".into(), "query: ".into())])),
-            fast,
-        );
-        started_rx
-            .recv_timeout(std::time::Duration::from_secs(5))
-            .unwrap();
-        assert!(probe.get().is_none());
-        tokio::runtime::Runtime::new().unwrap().block_on(async {
-            let text = "hello 東京 👩‍💻 <s> longer text";
-            let pair = ("query 東京", "a longer document 👩‍💻");
-            for pass in 0..2 {
-                if pass == 1 {
-                    release_tx.send(()).unwrap();
-                    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
-                    while probe.get().is_none() {
-                        assert!(
-                            std::time::Instant::now() < deadline,
-                            "fast tokenizer did not publish"
-                        );
-                        std::thread::sleep(std::time::Duration::from_millis(1));
-                    }
-                }
-                for direction in [TruncationDirection::Left, TruncationDirection::Right] {
-                    let expected_embedding = hf_single_encoding(
-                        &expected,
-                        text,
-                        Some("query: "),
-                        true,
-                        Some((8, direction)),
-                    );
-                    let actual = tokio::time::timeout(
-                        std::time::Duration::from_secs(2),
-                        tokenization.encode_embedding(
-                            EncodingInput::Single(text.into()),
-                            true,
-                            direction,
-                            Some("query".into()),
-                        ),
-                    )
-                    .await
-                    .expect("embedding request blocked on fast initialization")
-                    .unwrap();
-                    assert_encoding_ids(&actual, &expected_embedding);
-                    assert!(actual.tokens.is_empty() && actual.offsets.is_empty());
-
-                    let expected_pair =
-                        hf_pair_encoding(&expected, pair, true, Some((8, direction)));
-                    let actual = tokio::time::timeout(
-                        std::time::Duration::from_secs(2),
-                        tokenization.encode_embedding(
-                            EncodingInput::Dual(pair.0.into(), pair.1.into()),
-                            true,
-                            direction,
-                            None,
-                        ),
-                    )
-                    .await
-                    .expect("dual embedding blocked on fast initialization")
-                    .unwrap();
-                    assert_encoding_ids(&actual, &expected_pair);
-                    assert!(actual.tokens.is_empty() && actual.offsets.is_empty());
-
-                    let expected_classification =
-                        hf_single_encoding(&expected, text, None, true, Some((8, direction)));
-                    let actual = tokio::time::timeout(
-                        std::time::Duration::from_secs(2),
-                        tokenization.encode_classification(
-                            EncodingInput::Single(text.into()),
-                            true,
-                            direction,
-                        ),
-                    )
-                    .await
-                    .expect("classification request blocked on fast initialization")
-                    .unwrap();
-                    assert_encoding_ids(&actual, &expected_classification);
-                    assert!(actual.tokens.is_empty() && actual.offsets.is_empty());
-
-                    let expected_classification_pair =
-                        hf_pair_encoding(&expected, pair, true, Some((8, direction)));
-                    let actual = tokio::time::timeout(
-                        std::time::Duration::from_secs(2),
-                        tokenization.encode_classification(
-                            EncodingInput::Dual(pair.0.into(), pair.1.into()),
-                            true,
-                            direction,
-                        ),
-                    )
-                    .await
-                    .expect("dual classification blocked on fast initialization")
-                    .unwrap();
-                    assert_encoding_ids(&actual, &expected_classification_pair);
-                    assert!(actual.tokens.is_empty() && actual.offsets.is_empty());
-                }
-
-                let expected_rendered = format!("query: {text}");
-                let expected_metadata =
-                    hf_single_encoding(&expected, text, Some("query: "), true, None);
-                let (rendered, actual) = tokio::time::timeout(
-                    std::time::Duration::from_secs(2),
-                    tokenization.tokenize(
-                        EncodingInput::Single(text.into()),
-                        true,
-                        Some("query".into()),
-                    ),
-                )
-                .await
-                .expect("metadata tokenization blocked on fast initialization")
-                .unwrap();
-                assert_eq!(rendered.as_deref(), Some(expected_rendered.as_str()));
-                assert_eq!(actual.get_ids(), expected_metadata.get_ids());
-                assert_eq!(actual.get_type_ids(), expected_metadata.get_type_ids());
-                assert_eq!(actual.get_offsets(), expected_metadata.get_offsets());
-                assert_eq!(actual.get_tokens(), expected_metadata.get_tokens());
-                let decoded = tokio::time::timeout(
-                    std::time::Duration::from_secs(2),
-                    tokenization.decode(actual.get_ids().to_vec(), false),
-                )
-                .await
-                .expect("decode blocked on fast initialization")
-                .unwrap();
-                assert_eq!(decoded, expected.decode(actual.get_ids(), false).unwrap());
-            }
-        });
-        assert!(probe.get().is_some());
-    }
-
-    #[test]
-    fn shutdown_waits_for_blocked_fast_tokenizer_builder() {
-        let hf = metadata_tokenizer();
-        let (started_tx, started_rx) = std::sync::mpsc::sync_channel(0);
-        let (release_tx, release_rx) = std::sync::mpsc::channel();
-        let fast = crate::fast_tokenization::BackgroundFastTokenizer::new_gated(
-            Arc::new(hf.clone()),
-            started_tx,
-            release_rx,
-        );
-        let tokenization = tokenization_with_fast(1, 4, hf, 64, 0, None, None, fast);
-        started_rx
-            .recv_timeout(std::time::Duration::from_secs(5))
-            .unwrap();
-        tokio::runtime::Runtime::new().unwrap().block_on(async {
-            let shutdown_tokenization = tokenization.clone();
-            let shutdown = tokio::spawn(async move { shutdown_tokenization.shutdown().await });
-            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-            assert!(!shutdown.is_finished());
-            release_tx.send(()).unwrap();
-            tokio::time::timeout(std::time::Duration::from_secs(5), shutdown)
-                .await
-                .expect("shutdown blocked after builder release")
-                .unwrap();
-        });
-    }
-
-    #[test]
-    fn single_worker_releases_unused_fast_tokenizer_seed_after_publication() {
-        let hf = metadata_tokenizer();
-        let expected = hf.clone();
-        let template = Arc::new(hf.clone());
-        let template_weak = Arc::downgrade(&template);
-        let (started_tx, started_rx) = std::sync::mpsc::sync_channel(0);
-        let (release_tx, release_rx) = std::sync::mpsc::channel();
-        let fast = crate::fast_tokenization::BackgroundFastTokenizer::new_gated(
-            Arc::clone(&template),
-            started_tx,
-            release_rx,
-        );
-        let probe = fast.clone();
-        let tokenization =
-            tokenization_with_seed_and_fast(1, 4, hf, Some(template), fast, 64, 2, None, None);
-        let mut release = ReleaseOnDrop(Some(release_tx));
-        started_rx
-            .recv_timeout(std::time::Duration::from_secs(5))
-            .expect("background tokenizer builder did not start");
-        assert!(probe.get().is_none());
-
-        let runtime = tokio::runtime::Runtime::new().unwrap();
-        let text = "hello 東京 👩‍💻 <s> longer text";
-        let expected_encoding = hf_single_encoding(&expected, text, None, true, None);
-        runtime.block_on(async {
-            let actual = tokio::time::timeout(
-                std::time::Duration::from_secs(2),
-                tokenization.encode_embedding(
-                    EncodingInput::Single(text.into()),
-                    false,
-                    TruncationDirection::Right,
-                    None,
-                ),
-            )
-            .await
-            .expect("request blocked on background tokenizer initialization")
-            .unwrap();
-            assert_encoding_ids(&actual, &expected_encoding);
-            assert!(actual.tokens.is_empty() && actual.offsets.is_empty());
-        });
-
-        release.release();
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
-        while probe.get().is_none() {
-            assert!(
-                std::time::Instant::now() < deadline,
-                "background tokenizer did not publish"
-            );
-            std::thread::sleep(std::time::Duration::from_millis(1));
-        }
-        while template_weak.upgrade().is_some() {
-            assert!(
-                std::time::Instant::now() < deadline,
-                "single-worker pool retained the unused HF seed template"
-            );
-            std::thread::sleep(std::time::Duration::from_millis(1));
-        }
-
-        runtime.block_on(async {
-            let actual = tokenization
-                .encode_embedding(
-                    EncodingInput::Single(text.into()),
-                    false,
-                    TruncationDirection::Right,
-                    None,
-                )
-                .await
-                .unwrap();
-            assert_encoding_ids(&actual, &expected_encoding);
-            assert!(actual.tokens.is_empty() && actual.offsets.is_empty());
-            tokio::time::timeout(std::time::Duration::from_secs(5), tokenization.shutdown())
-                .await
-                .expect("tokenization shutdown timed out");
-        });
-    }
-
     #[test]
     fn concurrent_requests_preserve_fast_and_fallback_ids() {
         for capacity in [1, DEFAULT_TOKENIZATION_QUEUE_CAPACITY] {
@@ -2591,5 +1572,118 @@ mod fast_embedding_tests {
                 }
             });
         }
+    }
+
+    fn assert_encoding_matches(actual: &ValidEncoding, expected: &ValidEncoding) {
+        assert_eq!(actual.input_ids, expected.input_ids);
+        assert_eq!(actual.token_type_ids, expected.token_type_ids);
+        assert_eq!(actual.position_ids, expected.position_ids);
+        assert!(actual.tokens.is_empty() && actual.offsets.is_empty());
+    }
+
+    #[test]
+    fn gated_accelerator_serves_pooled_paths_before_publication_and_matches_after() {
+        let mut hf = crate::fast_tokenization::test_tokenizer();
+        hf.with_post_processor(Some(
+            tokenizers::processors::template::TemplateProcessing::builder()
+                .try_single("$A:2")
+                .unwrap()
+                .try_pair("$A:2 $B:3")
+                .unwrap()
+                .build()
+                .unwrap(),
+        ));
+        let hf = Arc::new(hf);
+        let (started_tx, started_rx) = std::sync::mpsc::sync_channel(0);
+        let (release_tx, release_rx) = std::sync::mpsc::channel();
+        let fast = crate::fast_tokenization::BackgroundFastTokenizer::new_gated(
+            Arc::clone(&hf),
+            started_tx,
+            release_rx,
+        );
+        let probe = fast.clone();
+        let (sender, receiver) = async_channel::bounded(4);
+        let supervisor = std::thread::spawn(move || {
+            tokenizer_worker((*hf).clone(), fast, 32, 2, None, None, receiver, None);
+        });
+        let tokenization = Tokenization {
+            workers: Arc::new(TokenizerWorkers {
+                sender: sender.clone(),
+                supervisor: std::sync::Mutex::new(Some(supervisor)),
+            }),
+            sender,
+            multimodal: None,
+            mistral3: None,
+            embedding_gemma2: None,
+            token_input_vocab_size: None,
+            max_input_length: 32,
+            position_offset: 2,
+        };
+        started_rx
+            .recv_timeout(std::time::Duration::from_secs(5))
+            .unwrap();
+        assert!(probe.get().is_none());
+
+        let make_input = |pair: bool| {
+            if pair {
+                EncodingInput::Dual("query 東京".into(), "a longer document 👩🏽‍💻".into())
+            } else {
+                EncodingInput::Single("hello 東京 👩🏽‍💻 longer text".into())
+            }
+        };
+        tokio::runtime::Runtime::new().unwrap().block_on(async {
+            let before = tokio::time::timeout(std::time::Duration::from_secs(5), async {
+                let mut outputs = Vec::new();
+                for pair in [false, true] {
+                    let embedding = tokenization
+                        .encode_embedding(make_input(pair), true, TruncationDirection::Right, None)
+                        .await
+                        .unwrap();
+                    let classification = tokenization
+                        .encode_classification(make_input(pair), true, TruncationDirection::Right)
+                        .await
+                        .unwrap();
+                    outputs.push((embedding, classification));
+                }
+                outputs
+            })
+            .await
+            .expect("pooled requests must not wait for Basetenkenizer publication");
+            assert!(
+                probe.get().is_none(),
+                "requests must be served before publication"
+            );
+
+            release_tx.send(()).unwrap();
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+            while probe.get().is_none() {
+                assert!(
+                    std::time::Instant::now() < deadline,
+                    "Basetenkenizer did not publish after release"
+                );
+                tokio::time::sleep(std::time::Duration::from_millis(1)).await;
+            }
+
+            let mut after = Vec::new();
+            for pair in [false, true] {
+                let embedding = tokenization
+                    .encode_embedding(make_input(pair), true, TruncationDirection::Right, None)
+                    .await
+                    .unwrap();
+                let classification = tokenization
+                    .encode_classification(make_input(pair), true, TruncationDirection::Right)
+                    .await
+                    .unwrap();
+                after.push((embedding, classification));
+            }
+            for (
+                (embedding_before, classification_before),
+                (embedding_after, classification_after),
+            ) in before.into_iter().zip(after)
+            {
+                assert_encoding_matches(&embedding_before, &embedding_after);
+                assert_encoding_matches(&classification_before, &classification_after);
+            }
+        });
     }
 }

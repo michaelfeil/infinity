@@ -2,7 +2,6 @@
 mod logging;
 mod prometheus;
 mod replicas;
-mod startup;
 
 #[cfg(feature = "http")]
 mod http;
@@ -27,7 +26,7 @@ use serde::Serialize;
 use std::collections::HashMap;
 use std::fs;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::OnceLock;
 use std::time::{Duration, Instant};
 use tokenizers::processors::sequence::Sequence;
@@ -191,246 +190,13 @@ async fn finish_startup_validation(
     Ok(())
 }
 
-struct FrontendStartupInput {
-    model_root: PathBuf,
-    tokenizer_path: PathBuf,
-    model_type: String,
-    add_qwen2_post_processor: bool,
-    position_offset: usize,
-    max_input_length: usize,
-    tokenization_workers: usize,
-    tokenization_queue_capacity: std::num::NonZeroUsize,
-    default_prompt: Option<String>,
-    prompts: Option<HashMap<String, String>>,
-    backend_model_type: infinity_v3_backend::ModelType,
-    token_input_vocab_size: Option<usize>,
-    systemone: bool,
-    decision_protocol: Option<DecisionProtocol>,
-    vela_policy: Option<vela3::Policy>,
-    multimodal_config: infinity_v3_core::multimodal::MultimodalConfig,
-}
-
-struct ModelFrontend {
-    tokenization: Tokenization,
-    #[cfg(feature = "http")]
-    systemone: Option<std::sync::Arc<http::systemone::SystemOne>>,
-}
-
-impl startup::Shutdown for ModelFrontend {
-    async fn shutdown(self) {
-        self.tokenization.shutdown().await;
-    }
-}
-
-struct BackendStartup {
-    backend: infinity_v3_core::backend_pool::BackendPool,
-    dtype: DType,
-    devices: Vec<usize>,
-}
-
-impl startup::Shutdown for BackendStartup {
-    async fn shutdown(self) {
-        self.backend.shutdown().await;
-    }
-}
-
-fn initialize_frontend(input: FrontendStartupInput) -> Result<ModelFrontend> {
-    let frontend_started = Instant::now();
-    let FrontendStartupInput {
-        model_root,
-        tokenizer_path,
-        model_type,
-        add_qwen2_post_processor,
-        position_offset,
-        max_input_length,
-        tokenization_workers,
-        tokenization_queue_capacity,
-        default_prompt,
-        prompts,
-        backend_model_type,
-        token_input_vocab_size,
-        systemone,
-        decision_protocol,
-        vela_policy,
-        multimodal_config,
-    } = input;
-
-    // Load tokenizer
-    let tokenizer_load_started = Instant::now();
-    let mut tokenizer = Tokenizer::from_file(tokenizer_path)
-        .map_err(|error| anyhow!("Could not load fast tokenizer: {error}"))?;
-    tracing::info!(
-        elapsed_ms = tokenizer_load_started.elapsed().as_secs_f64() * 1000.0,
-        "Loaded Hugging Face tokenizer"
-    );
-    tokenizer.with_padding(None);
-    // Old Qwen2  repos updates the post processor manually instead of into the tokenizer.json.
-    // Newer ones (https://huggingface.co/jinaai/jina-code-embeddings-0.5b/tree/main) have it in the tokenizer.json. This is to support both cases.
-    // https://huggingface.co/Alibaba-NLP/gte-Qwen2-1.5B-instruct/blob/main/tokenization_qwen.py#L246
-    if add_qwen2_post_processor {
-        tracing::warn!("Model is detected as a Qwen2 model with remote code. Adding a post processor manually as the tokenizer.json does not contain a post processor.");
-        let template = TemplateProcessing::builder()
-            .try_single("$A:0 <|endoftext|>:0")
-            .map_err(|error| anyhow!("Could not configure Qwen2 tokenizer template: {error}"))?
-            .try_pair("$A:0 <|endoftext|>:0 $B:1 <|endoftext|>:1")
-            .map_err(|error| anyhow!("Could not configure Qwen2 tokenizer template: {error}"))?
-            .special_tokens(vec![("<|endoftext|>", 151643)])
-            .build()
-            .map_err(|error| anyhow!("Could not build Qwen2 tokenizer template: {error}"))?;
-        match tokenizer.get_post_processor() {
-            None => tokenizer.with_post_processor(Some(template)),
-            Some(post_processor) => {
-                let post_processor = Sequence::new(vec![
-                    post_processor.clone(),
-                    PostProcessorWrapper::Template(template),
-                ]);
-                tokenizer.with_post_processor(Some(post_processor))
-            }
-        };
-    }
-
-    #[cfg(feature = "http")]
-    let systemone = if systemone {
-        Some(std::sync::Arc::new(
-            http::systemone::SystemOne::load(
-                &model_root,
-                tokenizer.clone(),
-                max_input_length,
-                multimodal_config.clone(),
-                decision_protocol,
-            )?
-            .with_vela_policy(vela_policy),
-        ))
-    } else {
-        None
-    };
-    #[cfg(not(feature = "http"))]
-    let _ = (systemone, decision_protocol, vela_policy);
-
-    // Tokenization logic
-    let chat = if matches!(
-        &backend_model_type,
-        infinity_v3_backend::ModelType::Embedding(_) | infinity_v3_backend::ModelType::Classifier
-    ) {
-        infinity_v3_core::chat::ChatProcessor::load(&model_root).unwrap_or_else(|error| {
-            tracing::warn!("Native conversations disabled: {error}");
-            None
-        })
-    } else {
-        None
-    };
-    let multimodal = if model_type == "qwen3_vl" {
-        Some(
-            infinity_v3_core::multimodal::Qwen3VlProcessor::load(
-                &model_root,
-                tokenizer.clone(),
-                max_input_length,
-                multimodal_config.clone(),
-            )
-            .map_err(|error| anyhow!(error.to_string()))?,
-        )
-    } else {
-        None
-    };
-    let mistral3 = if model_type == "mistral3" {
-        Some(
-            infinity_v3_core::multimodal::Mistral3Processor::load(
-                &model_root,
-                tokenizer.clone(),
-                max_input_length,
-                multimodal_config.clone(),
-                prompts.clone(),
-                default_prompt.clone(),
-            )
-            .map_err(|e| anyhow!(e.to_string()))?,
-        )
-    } else {
-        None
-    };
-    let embedding_gemma2 = if model_type == "embedding_gemma2" {
-        Some(
-            infinity_v3_core::multimodal::EmbeddingGemma2Processor::load(
-                &model_root,
-                tokenizer.clone(),
-                max_input_length,
-                multimodal_config,
-                prompts.clone(),
-                default_prompt.clone(),
-            )
-            .map_err(|error| anyhow!(error.to_string()))?,
-        )
-    } else {
-        None
-    };
-    // Decision inference and processor-owned embedding paths do not use the
-    // generic pooled-text workers while preparing requests. They still retain
-    // metadata tokenize/decode support, starting workers on first metadata use.
-    // Raw-text Qwen variants, EmbeddingGemma2, generic embeddings and
-    // classifiers/rerankers keep eager workers.
-    let lazy_generic_workers = startup::generic_workers_can_start_lazily(
-        &backend_model_type,
-        mistral3.is_some(),
-        multimodal
-            .as_ref()
-            .map(infinity_v3_core::multimodal::Qwen3VlProcessor::accepts_raw_text),
-    );
-    let tokenization = if lazy_generic_workers {
-        Tokenization::with_lazy_queue_capacity(
-            tokenization_workers,
-            tokenization_queue_capacity,
-            tokenizer,
-            max_input_length,
-            position_offset,
-            default_prompt,
-            prompts,
-            chat,
-        )
-    } else {
-        Tokenization::with_queue_capacity(
-            tokenization_workers,
-            tokenization_queue_capacity,
-            tokenizer,
-            max_input_length,
-            position_offset,
-            default_prompt,
-            prompts,
-            chat,
-        )
-    }
-    .with_token_input_vocab_size(token_input_vocab_size);
-
-    let tokenization = match multimodal {
-        Some(processor) => tokenization.with_multimodal(processor),
-        None => tokenization,
-    };
-
-    let tokenization = match mistral3 {
-        Some(p) => tokenization.with_mistral3(p),
-        None => tokenization,
-    };
-
-    let tokenization = match embedding_gemma2 {
-        Some(processor) => tokenization.with_embedding_gemma2(processor),
-        None => tokenization,
-    };
-
-    tracing::info!(
-        seconds = frontend_started.elapsed().as_secs_f64(),
-        "Model frontend initialized"
-    );
-    Ok(ModelFrontend {
-        tokenization,
-        #[cfg(feature = "http")]
-        systemone,
-    })
-}
-
 async fn initialize_model(
     config: ModelSettings,
     hf_token: Option<String>,
     huggingface_hub_cache: Option<String>,
     validation: &mut Option<tokio::task::JoinHandle<Result<()>>>,
 ) -> Result<ModelRuntime> {
+    let frontend_started = std::time::Instant::now();
     let ModelSettings {
         priority_queue_bonus_ms,
         flex_queue_offset_ms,
@@ -559,13 +325,12 @@ async fn initialize_model(
         !readout || pplx || d3,
         "This checkpoint requires --decision-protocol pplx or d3"
     );
-    let mut perplexity_joint = false;
     if readout {
         let metadata: serde_json::Value =
             serde_json::from_slice(&fs::read(model_root.join("decision_config.json"))?)?;
-        perplexity_joint = metadata["format_version"] == 2;
         anyhow::ensure!(
-            !perplexity_joint || backend_kind == infinity_v3_backend::BackendKind::Libtorch,
+            metadata["format_version"] != 2
+                || backend_kind == infinity_v3_backend::BackendKind::Libtorch,
             "Perplexity joint readouts require --backend libtorch"
         );
         anyhow::ensure!(
@@ -696,6 +461,45 @@ async fn initialize_model(
         }),
     };
 
+    // Load tokenizer
+    let tokenizer_path = model_root.join(if laya {
+        "tokenizer/tokenizer.json"
+    } else {
+        "tokenizer.json"
+    });
+    let mut tokenizer = Tokenizer::from_file(tokenizer_path)
+        .map_err(|error| anyhow!("Could not load fast tokenizer: {error}"))?;
+    tokenizer.with_padding(None);
+    // Old Qwen2  repos updates the post processor manually instead of into the tokenizer.json.
+    // Newer ones (https://huggingface.co/jinaai/jina-code-embeddings-0.5b/tree/main) have it in the tokenizer.json. This is to support both cases.
+    // https://huggingface.co/Alibaba-NLP/gte-Qwen2-1.5B-instruct/blob/main/tokenization_qwen.py#L246
+    if config.model_type == "qwen2"
+        && config
+            .auto_map
+            .as_ref()
+            .is_some_and(|m| m.get("AutoModel") == Some(&"modeling_qwen.Qwen2Model".to_string()))
+    {
+        tracing::warn!("Model is detected as a Qwen2 model with remote code. Adding a post processor manually as the tokenizer.json does not contain a post processor.");
+        let template = TemplateProcessing::builder()
+            .try_single("$A:0 <|endoftext|>:0")
+            .unwrap()
+            .try_pair("$A:0 <|endoftext|>:0 $B:1 <|endoftext|>:1")
+            .unwrap()
+            .special_tokens(vec![("<|endoftext|>", 151643)])
+            .build()
+            .unwrap();
+        match tokenizer.get_post_processor() {
+            None => tokenizer.with_post_processor(Some(template)),
+            Some(post_processor) => {
+                let post_processor = Sequence::new(vec![
+                    post_processor.clone(),
+                    PostProcessorWrapper::Template(template),
+                ]);
+                tokenizer.with_post_processor(Some(post_processor))
+            }
+        };
+    }
+
     // Position IDs offset. Used for Roberta and camembert.
     let position_offset = if &config.model_type == "xlm-roberta"
         || &config.model_type == "camembert"
@@ -705,27 +509,6 @@ async fn initialize_model(
     } else {
         0
     };
-    let add_qwen2_post_processor = config.model_type == "qwen2"
-        && config
-            .auto_map
-            .as_ref()
-            .is_some_and(|m| m.get("AutoModel") == Some(&"modeling_qwen.Qwen2Model".to_string()));
-    let tokenizer_path = model_root.join(if laya {
-        "tokenizer/tokenizer.json"
-    } else {
-        "tokenizer.json"
-    });
-    let tokenizer_metadata = fs::metadata(&tokenizer_path).with_context(|| {
-        format!(
-            "Could not read tokenizer metadata: {}",
-            tokenizer_path.display()
-        )
-    })?;
-    anyhow::ensure!(
-        tokenizer_metadata.is_file(),
-        "Fast tokenizer path is not a file: {}",
-        tokenizer_path.display()
-    );
 
     // Try to load ST Config
     let mut st_config: Option<STConfig> = None;
@@ -836,210 +619,215 @@ async fn initialize_model(
         default_prompt
     };
 
-    let token_input_vocab_size = config
-        .text_config
-        .as_ref()
-        .and_then(|text| text.vocab_size)
-        .or(config.vocab_size);
-    if config.model_type == "mistral3" {
+    #[cfg(feature = "http")]
+    let systemone = if laya || decoder_decision {
+        Some(std::sync::Arc::new(
+            http::systemone::SystemOne::load(
+                &model_root,
+                tokenizer.clone(),
+                max_input_length,
+                multimodal_config.clone(),
+                decision_protocol,
+            )?
+            .with_vela_policy(vela_policy),
+        ))
+    } else {
+        None
+    };
+
+    // Tokenization logic
+    let chat = if matches!(
+        &backend_model_type,
+        infinity_v3_backend::ModelType::Embedding(_) | infinity_v3_backend::ModelType::Classifier
+    ) {
+        infinity_v3_core::chat::ChatProcessor::load(&model_root).unwrap_or_else(|error| {
+            tracing::warn!("Native conversations disabled: {error}");
+            None
+        })
+    } else {
+        None
+    };
+    let multimodal = if config.model_type == "qwen3_vl" {
+        Some(
+            infinity_v3_core::multimodal::Qwen3VlProcessor::load(
+                &model_root,
+                tokenizer.clone(),
+                max_input_length,
+                multimodal_config.clone(),
+            )
+            .map_err(|error| anyhow!(error.to_string()))?,
+        )
+    } else {
+        None
+    };
+    let mistral3 = if config.model_type == "mistral3" {
         anyhow::ensure!(
             backend_kind == infinity_v3_backend::BackendKind::Libtorch,
             "Mistral3 multimodal support requires the LibTorch backend"
         );
-    }
-    let onejev_multimodal = onejev
-        && config
-            .vision_config
-            .as_ref()
-            .is_some_and(serde_json::Value::is_object)
-        && (model_root.join("processor_config.json").exists()
-            || model_root.join("preprocessor_config.json").exists());
-    let rune_multimodal = rune
-        && config
-            .vision_config
-            .as_ref()
-            .is_some_and(serde_json::Value::is_object)
-        && config
-            .text_config
-            .as_ref()
-            .and_then(|text| text.use_bidirectional_attention.as_ref())
-            .and_then(serde_json::Value::as_str)
-            == Some("vision")
-        && config
-            .text_config
-            .as_ref()
-            .and_then(|text| text.hidden_size_per_layer_input.as_ref())
-            .and_then(serde_json::Value::as_u64)
-            .unwrap_or(0)
-            == 0;
-    let vela_multimodal = vela_encoder && config.model_type == "ultravbert";
-    let multimodal_processor = matches!(
-        config.model_type.as_str(),
-        "qwen3_vl" | "mistral3" | "embedding_gemma2"
-    ) || onejev_multimodal
-        || rune_multimodal
-        || d3
-        || (pplx && perplexity_joint)
-        || vela_multimodal;
-    if multimodal_processor {
-        let qwen_max_input_length =
-            (config.model_type == "qwen3_vl" || onejev_multimodal).then_some(max_input_length);
-        startup::validate_multimodal_config(&multimodal_config, qwen_max_input_length)?;
-    }
-
-    // Invalid token limits are cheap configuration failures and must be caught
-    // before any checkpoint weights can be loaded.
-    let queue_limits =
-        match std::env::var(infinity_v3_config::infinity_env!("QUEUE_TOKEN_LIMITS_K")) {
-            Ok(value) => startup::parse_queue_token_limits(Some(&value))?,
-            Err(std::env::VarError::NotPresent) => None,
-            Err(error) => return Err(error.into()),
-        };
-
-    let frontend_input = FrontendStartupInput {
-        model_root: model_root.clone(),
-        tokenizer_path,
-        model_type: config.model_type.clone(),
-        add_qwen2_post_processor,
-        position_offset,
-        max_input_length,
+        Some(
+            infinity_v3_core::multimodal::Mistral3Processor::load(
+                &model_root,
+                tokenizer.clone(),
+                max_input_length,
+                multimodal_config.clone(),
+                prompts.clone(),
+                default_prompt.clone(),
+            )
+            .map_err(|e| anyhow!(e.to_string()))?,
+        )
+    } else {
+        None
+    };
+    let embedding_gemma2 = if config.model_type == "embedding_gemma2" {
+        Some(
+            infinity_v3_core::multimodal::EmbeddingGemma2Processor::load(
+                &model_root,
+                tokenizer.clone(),
+                max_input_length,
+                multimodal_config.clone(),
+                prompts.clone(),
+                default_prompt.clone(),
+            )
+            .map_err(|error| anyhow!(error.to_string()))?,
+        )
+    } else {
+        None
+    };
+    let tokenization = Tokenization::with_queue_capacity_and_pooled_text_acceleration(
         tokenization_workers,
         tokenization_queue_capacity,
+        tokenizer,
+        max_input_length,
+        position_offset,
         default_prompt,
         prompts,
-        backend_model_type: backend_model_type.clone(),
-        token_input_vocab_size,
-        systemone: laya || decoder_decision,
-        decision_protocol,
-        vela_policy,
-        multimodal_config,
-    };
-    let frontend_task = tokio::task::spawn_blocking(move || initialize_frontend(frontend_input));
-    let frontend = async move {
-        frontend_task
-            .await
-            .context("Frontend initialization task failed")?
+        chat,
+        !matches!(
+            &backend_model_type,
+            infinity_v3_backend::ModelType::Decision
+        ),
+    )
+    .with_token_input_vocab_size(
+        config
+            .text_config
+            .as_ref()
+            .and_then(|text| text.vocab_size)
+            .or(config.vocab_size),
+    );
+
+    let tokenization = match multimodal {
+        Some(processor) => tokenization.with_multimodal(processor),
+        None => tokenization,
     };
 
+    let tokenization = match mistral3 {
+        Some(p) => tokenization.with_mistral3(p),
+        None => tokenization,
+    };
+    let tokenization = match embedding_gemma2 {
+        Some(processor) => tokenization.with_embedding_gemma2(processor),
+        None => tokenization,
+    };
+
+    tracing::info!(
+        seconds = frontend_started.elapsed().as_secs_f64(),
+        "Model frontend initialized"
+    );
+    // All models must pass validation before any checkpoint weights are loaded.
+    finish_startup_validation(validation).await?;
+    let torch_device = backend_kind.resolve_device(torch_device)?;
+    let python_backend_config = infinity_v3_backend::PythonBackendConfig {
+        config: python_config.clone(),
+    };
+    let model_dtype = if vela_encoder {
+        Some("bfloat16")
+    } else {
+        config.dtype.as_deref().or(config.torch_dtype.as_deref())
+    };
+    let dtype = match backend_kind {
+        infinity_v3_backend::BackendKind::Libtorch => resolve_libtorch_dtype(
+            dtype,
+            model_dtype,
+            &config.model_type,
+            torch_device == infinity_v3_backend::TorchDevice::Cpu,
+        ),
+        infinity_v3_backend::BackendKind::PythonBackend => resolve_python_dtype(dtype, model_dtype),
+    };
+
+    anyhow::ensure!(
+        !d3 || dtype == DType::Bfloat16,
+        "D3 requires --dtype bfloat16 for its backbone (the readout remains FP32)"
+    );
+
+    // Create backend
+    let devices = replicas::resolve_devices(
+        backend_device_ids.as_deref(),
+        device_id,
+        backend_kind,
+        torch_device,
+    )?;
+    tracing::info!("Starting model backend");
     let api_repo = api_repo.map(std::sync::Arc::new);
-    let backend_model_name = metric_model_name.clone();
-    let config_dtype = config.dtype.clone();
-    let config_torch_dtype = config.torch_dtype.clone();
-    let dtype_model_type = config.model_type.clone();
-    let backend = async move {
-        tracing::info!("Starting model backend");
-        // CUDA discovery can block on the driver. Configuration validation and
-        // the required frontend are already running before this point.
-        let (torch_device, devices) = tokio::task::spawn_blocking(move || {
-            let torch_device = backend_kind.resolve_device(torch_device)?;
-            let devices = replicas::resolve_devices(
-                backend_device_ids.as_deref(),
-                device_id,
+    let initializers = devices.iter().enumerate().map(|(replica, &device)| {
+        let model_root = model_root.clone();
+        let api_repo = api_repo.clone();
+        let dtype = dtype.clone();
+        let backend_model_type = backend_model_type.clone();
+        let dense_path = dense_path.clone();
+        let python_backend_config = python_backend_config.clone();
+        let startup_span = tracing::info_span!(
+            "backend_startup", model = %model_root.display(), replica, device,
+            pid = std::process::id()
+        );
+        let initialize = async move {
+            let started = std::time::Instant::now();
+            tracing::info!(device, replica, "Initializing backend replica");
+            let backend = infinity_v3_backend::Backend::new_selected(
+                model_root,
+                api_repo,
+                dtype,
+                backend_model_type,
+                dense_path,
+                device,
+                enable_fp8_dynamic,
                 backend_kind,
                 torch_device,
-            )?;
-            Ok::<_, anyhow::Error>((torch_device, devices))
-        })
-        .await
-        .context("Device discovery task failed")??;
-
-        let python_backend_config = infinity_v3_backend::PythonBackendConfig {
-            config: python_config,
-        };
-        let model_dtype = if vela_encoder {
-            Some("bfloat16")
-        } else {
-            config_dtype.as_deref().or(config_torch_dtype.as_deref())
-        };
-        let dtype = match backend_kind {
-            infinity_v3_backend::BackendKind::Libtorch => resolve_libtorch_dtype(
-                dtype,
-                model_dtype,
-                &dtype_model_type,
-                torch_device == infinity_v3_backend::TorchDevice::Cpu,
-            ),
-            infinity_v3_backend::BackendKind::PythonBackend => {
-                resolve_python_dtype(dtype, model_dtype)
-            }
-        };
-
-        anyhow::ensure!(
-            !d3 || dtype == DType::Bfloat16,
-            "D3 requires --dtype bfloat16 for its backbone (the readout remains FP32)"
-        );
-
-        let initializers = devices.iter().enumerate().map(|(replica, &device)| {
-            let model_root = model_root.clone();
-            let api_repo = api_repo.clone();
-            let dtype = dtype.clone();
-            let backend_model_type = backend_model_type.clone();
-            let dense_path = dense_path.clone();
-            let python_backend_config = python_backend_config.clone();
-            let startup_span = tracing::info_span!(
-                "backend_startup", model = %model_root.display(), replica, device,
-                pid = std::process::id()
-            );
-            let initialize = async move {
-                let started = std::time::Instant::now();
-                tracing::info!(device, replica, "Initializing backend replica");
-                let backend = infinity_v3_backend::Backend::new_selected(
-                    model_root,
-                    api_repo,
-                    dtype,
-                    backend_model_type,
-                    dense_path,
-                    device,
-                    enable_fp8_dynamic,
-                    backend_kind,
-                    torch_device,
-                    python_backend_config,
-                )
+                python_backend_config,
+            )
+            .await
+            .inspect_err(|error| {
+                tracing::error!(seconds = started.elapsed().as_secs_f64(), %error,
+                    "Backend initialization failed");
+            })
+            .with_context(|| format!("Could not create backend on device {device}"))?;
+            backend
+                .health()
                 .await
-                .inspect_err(|error| {
-                    tracing::error!(seconds = started.elapsed().as_secs_f64(), %error,
-                        "Backend initialization failed");
-                })
-                .with_context(|| format!("Could not create backend on device {device}"))?;
-                backend
-                    .health()
-                    .await
-                    .with_context(|| format!("Model backend on device {device} is not healthy"))?;
-                let replica_batch_limit = match (max_batch_requests, backend.max_batch_size) {
-                    (Some(a), Some(b)) => Some(a.min(b)),
-                    (a, b) => a.or(b),
-                };
-                backend
-                    .warmup(max_input_length, max_batch_tokens, replica_batch_limit)
-                    .await
-                    .with_context(|| format!("Warmup failed on device {device}"))?;
-                tracing::info!(device, replica, elapsed = ?started.elapsed(), "Backend replica ready");
-                Ok(backend)
+                .with_context(|| format!("Model backend on device {device} is not healthy"))?;
+            let replica_batch_limit = match (max_batch_requests, backend.max_batch_size) {
+                (Some(a), Some(b)) => Some(a.min(b)),
+                (a, b) => a.or(b),
             };
-            initialize.instrument(startup_span)
-        });
-        let backends = replicas::initialize_all(initializers).await?;
-        let backend =
-            infinity_v3_core::backend_pool::BackendPool::new_named(backends, backend_model_name)?;
-        tracing::info!(replicas = devices.len(), "Backend pool ready");
-        Ok(BackendStartup {
-            backend,
-            dtype,
-            devices,
-        })
-    };
-
-    let (frontend, backend) =
-        startup::initialize_concurrently(finish_startup_validation(validation), frontend, backend)
-            .await?;
-    let BackendStartup {
-        backend,
-        dtype,
-        devices,
-    } = backend;
+            backend
+                .warmup(max_input_length, max_batch_tokens, replica_batch_limit)
+                .await
+                .with_context(|| format!("Warmup failed on device {device}"))?;
+            tracing::info!(device, replica, elapsed = ?started.elapsed(), "Backend replica ready");
+            Ok(backend)
+        };
+        initialize.instrument(startup_span)
+    });
+    let backends = replicas::initialize_all(initializers).await?;
+    let backend = infinity_v3_core::backend_pool::BackendPool::new_named(
+        backends,
+        metric_model_name.clone(),
+    )?;
     let max_batch_requests = match (max_batch_requests, backend.max_batch_size) {
         (Some(a), Some(b)) => Some(a.min(b)),
         (a, b) => a.or(b),
     };
+    tracing::info!(replicas = devices.len(), "Backend pool ready");
 
     // Queue logic
     let radix_mlp_threshold = if config.model_type == "bert"
@@ -1074,6 +862,15 @@ async fn initialize_model(
         tracing::info!("RadixMLP disabled");
     }
 
+    let queue_limits =
+        match std::env::var(infinity_v3_config::infinity_env!("QUEUE_TOKEN_LIMITS_K")) {
+            Ok(value) => Some(
+                infinity_v3_core::queue_budget::QueueTokenLimits::from_thousands(&value)
+                    .map_err(anyhow::Error::msg)?,
+            ),
+            Err(std::env::VarError::NotPresent) => None,
+            Err(error) => return Err(error.into()),
+        };
     let queue = Queue::with_service_tiers_named(
         max_batch_tokens,
         max_batch_requests,
@@ -1088,10 +885,6 @@ async fn initialize_model(
     .with_token_limits(queue_limits);
 
     // Create infer task
-    let ModelFrontend {
-        tokenization,
-        systemone,
-    } = frontend;
     let infer = Infer::with_pool(tokenization, queue, max_concurrent_requests, backend);
 
     // Endpoint info
@@ -1357,7 +1150,6 @@ pub struct ModelConfig {
     #[serde(default)]
     pub n_positions: Option<usize>,
     pub text_config: Option<TextPositionConfig>,
-    pub vision_config: Option<serde_json::Value>,
     pub vocab_size: Option<usize>,
     #[serde(default)]
     pub pad_token_id: Option<usize>,
@@ -1462,8 +1254,6 @@ pub struct TextPositionConfig {
     pub max_position_embeddings: usize,
     pub dtype: Option<String>,
     pub torch_dtype: Option<String>,
-    pub use_bidirectional_attention: Option<serde_json::Value>,
-    pub hidden_size_per_layer_input: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Clone, PartialEq, Deserialize)]

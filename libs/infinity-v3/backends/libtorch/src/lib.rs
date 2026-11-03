@@ -193,6 +193,7 @@ extern "C" {
     fn tei_error() -> *const c_char;
     fn tei_last_error_kind() -> i32;
     fn tei_device_count(device: *const c_char) -> i64;
+    fn tei_device_preflight(device: *const c_char) -> i32;
     fn tei_create(config: *const NativeConfig, device: *const c_char, dtype: i32) -> *mut c_void;
     fn tei_weight(
         handle: *mut c_void,
@@ -448,22 +449,6 @@ pub fn device_count(device: &str) -> Result<usize, BackendError> {
     usize::try_from(count).map_err(|_| start(native_error()))
 }
 
-fn validate_device_options(device: &str, dtype: &str) -> Result<Option<usize>, BackendError> {
-    if matches!(device, "cpu" | "auto") {
-        return Ok(None);
-    }
-    let Some(index) = device.strip_prefix("cuda:") else {
-        return Err(start("LibTorch 2.14.1 varlen attention requires CUDA; only CPU reference and CUDA are supported"));
-    };
-    if !matches!(dtype, "float16" | "bfloat16") {
-        return Err(start("CUDA varlen attention requires float16 or bfloat16"));
-    }
-    index
-        .parse::<usize>()
-        .map(Some)
-        .map_err(|_| start(format!("Invalid CUDA device index for {device}")))
-}
-
 #[derive(Deserialize)]
 struct Config {
     model_type: String,
@@ -551,7 +536,12 @@ impl LibtorchBackend {
         dense_paths: Option<Vec<String>>,
         enable_fp8_dynamic: bool,
     ) -> Result<Self, BackendError> {
-        let cuda_index = validate_device_options(device, dtype)?;
+        if device != "cpu" && device != "auto" && !device.starts_with("cuda:") {
+            return Err(start("LibTorch 2.14.1 varlen attention requires CUDA; only CPU reference and CUDA are supported"));
+        }
+        if device.starts_with("cuda:") && !matches!(dtype, "float16" | "bfloat16") {
+            return Err(start("CUDA varlen attention requires float16 or bfloat16"));
+        }
         let pool = match &model_type {
             ModelType::Embedding(pool) => pool.clone(),
             ModelType::Classifier => Pool::Cls,
@@ -1115,16 +1105,22 @@ impl LibtorchBackend {
             "bfloat16" => 2,
             _ => return Err(start("Unsupported LibTorch dtype")),
         };
-        // Reject invalid checkpoint settings before querying hardware, while
-        // still validating the selected device before native or weight allocation.
-        if let Some(index) = cuda_index {
-            let count = device_count("cuda")
-                .map_err(|error| start(format!("CUDA device {device} is unavailable: {error}")))?;
-            if index >= count {
+        if device != "cpu" {
+            let name = CString::new(device).map_err(start)?;
+            let started = std::time::Instant::now();
+            tracing::info!("Starting LibTorch device check");
+            // SAFETY: the device string outlives this synchronous call; native
+            // code catches C++ exceptions and completes the CUDA check/readback.
+            if unsafe { tei_device_preflight(name.as_ptr()) } != 0 {
                 return Err(start(format!(
-                    "CUDA device {device} is unavailable: only {count} CUDA device(s) detected"
+                    "Device preflight failed for {device}: {}",
+                    native_error()
                 )));
             }
+            tracing::info!(
+                seconds = started.elapsed().as_secs_f64(),
+                "LibTorch device check passed"
+            );
         }
         let device = CString::new(device).map_err(start)?;
         // SAFETY: config and device stay valid during creation, and the bridge copies them.
@@ -1999,7 +1995,9 @@ mod tests {
         .err()
         .expect("Invalid device must fail initialization");
         assert!(
-            matches!(&error, BackendError::Start(message) if message.contains("cuda:999")),
+            error
+                .to_string()
+                .contains("Device preflight failed for cuda:999"),
             "{error}"
         );
     }

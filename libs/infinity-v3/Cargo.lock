@@ -1853,7 +1853,6 @@ dependencies = [
  "bytemuck",
  "bytes",
  "fast_image_resize",
- "futures",
  "hf-hub",
  "image",
  "infinity-v3-config",
