@@ -448,9 +448,9 @@ pub fn device_count(device: &str) -> Result<usize, BackendError> {
     usize::try_from(count).map_err(|_| start(native_error()))
 }
 
-fn validate_device(device: &str, dtype: &str) -> Result<(), BackendError> {
+fn validate_device_options(device: &str, dtype: &str) -> Result<Option<usize>, BackendError> {
     if matches!(device, "cpu" | "auto") {
-        return Ok(());
+        return Ok(None);
     }
     let Some(index) = device.strip_prefix("cuda:") else {
         return Err(start("LibTorch 2.14.1 varlen attention requires CUDA; only CPU reference and CUDA are supported"));
@@ -458,17 +458,10 @@ fn validate_device(device: &str, dtype: &str) -> Result<(), BackendError> {
     if !matches!(dtype, "float16" | "bfloat16") {
         return Err(start("CUDA varlen attention requires float16 or bfloat16"));
     }
-    let index = index
+    index
         .parse::<usize>()
-        .map_err(|_| start(format!("Invalid CUDA device index for {device}")))?;
-    let count = device_count("cuda")
-        .map_err(|error| start(format!("CUDA device {device} is unavailable: {error}")))?;
-    if index >= count {
-        return Err(start(format!(
-            "CUDA device {device} is unavailable: only {count} CUDA device(s) detected"
-        )));
-    }
-    Ok(())
+        .map(Some)
+        .map_err(|_| start(format!("Invalid CUDA device index for {device}")))
 }
 
 #[derive(Deserialize)]
@@ -558,7 +551,7 @@ impl LibtorchBackend {
         dense_paths: Option<Vec<String>>,
         enable_fp8_dynamic: bool,
     ) -> Result<Self, BackendError> {
-        validate_device(device, dtype)?;
+        let cuda_index = validate_device_options(device, dtype)?;
         let pool = match &model_type {
             ModelType::Embedding(pool) => pool.clone(),
             ModelType::Classifier => Pool::Cls,
@@ -1122,6 +1115,17 @@ impl LibtorchBackend {
             "bfloat16" => 2,
             _ => return Err(start("Unsupported LibTorch dtype")),
         };
+        // Reject invalid checkpoint settings before querying hardware, while
+        // still validating the selected device before native or weight allocation.
+        if let Some(index) = cuda_index {
+            let count = device_count("cuda")
+                .map_err(|error| start(format!("CUDA device {device} is unavailable: {error}")))?;
+            if index >= count {
+                return Err(start(format!(
+                    "CUDA device {device} is unavailable: only {count} CUDA device(s) detected"
+                )));
+            }
+        }
         let device = CString::new(device).map_err(start)?;
         // SAFETY: config and device stay valid during creation, and the bridge copies them.
         let host_result_pool = text_embeddings_backend_core::result_memory::global_pool()?;
