@@ -211,66 +211,6 @@ void fp8_encoder(const infinity::Options& options,
 #endif
 }
 
-void nomic_expert_shape_validation(c10::Device device, at::ScalarType dtype) {
-  constexpr int64_t experts = 3;
-  auto o = config("nomic_bert");
-  o.values["num_experts"] = std::to_string(experts);
-  o.values["moe_top_k"] = "2";
-  o.values["moe_every_n_layers"] = "2";
-  o.values["n_inner"] = std::to_string(I);
-  auto checkpoint = weights("nomic_bert", device, dtype);
-  const std::string p = "encoder.layers.1.mlp.";
-  linear(checkpoint, p + "router.layer", experts, H, device, dtype, false);
-  for (auto name : {"w1", "w2"})
-    add(checkpoint, p + "experts.mlp." + name, {experts * I, H}, device, dtype);
-  add(checkpoint, p + "experts.bias", {H}, device, dtype);
-
-  auto valid = infinity::create_encoder(o, checkpoint, device, dtype);
-  valid->ready();
-  auto opts = at::TensorOptions().device(device).dtype(at::kLong);
-  auto ids = at::tensor({1, 2, 3}, opts), types = at::zeros_like(ids);
-  auto positions = at::tensor({0, 1, 2}, opts),
-       cumulative = at::tensor({0, 3}, opts.dtype(at::kInt));
-  int32_t offsets[] = {0, 3};
-  auto output = valid->forward({ids, types, positions, cumulative, offsets, 1, 3});
-  TORCH_CHECK(output.sizes() == at::IntArrayRef({3, H}) && at::isfinite(output).all().item<bool>(),
-              "Valid Nomic expert checkpoint failed inference");
-
-  for (auto name : {"w1", "w2"}) {
-    const auto key = p + "experts.mlp." + name;
-    // Reject indivisible expert groups, indivisible hidden widths, and an
-    // otherwise divisible tensor that disagrees with the configured FFN width.
-    for (auto elements : {experts * I * H + 1, experts * (I * H + 1), experts * (I + 1) * H}) {
-      auto malformed = checkpoint;
-      malformed[key] = at::zeros({elements}, output.options());
-      auto model = infinity::create_encoder(o, malformed, device, dtype);
-      bool rejected = false;
-      try {
-        model->ready();
-      } catch (const c10::Error& error) {
-        rejected = std::string(error.what()).find("Invalid Nomic expert tensor dimensions") !=
-                   std::string::npos;
-      }
-      TORCH_CHECK(
-          rejected, "Malformed Nomic expert weights passed ready(): ", key, " elements=", elements);
-    }
-  }
-  // Expert tensors in an entirely dense configuration do not participate in
-  // inference, even if the checkpoint carries unused expert-count metadata.
-  for (int every : {0, 1}) {
-    auto dense = o;
-    dense.values["moe_every_n_layers"] = std::to_string(every);
-    auto unused = checkpoint;
-    unused[p + "experts.mlp.w1"] = at::zeros({1}, output.options());
-    auto model = infinity::create_encoder(dense, unused, device, dtype);
-    model->ready();
-    TORCH_CHECK(at::isfinite(model->forward({ids, types, positions, cumulative, offsets, 1, 3}))
-                    .all()
-                    .item<bool>(),
-                "Unused Nomic expert tensors affected dense inference");
-  }
-}
-
 void rotary_reuse_regression(c10::Device device, at::ScalarType dtype) {
   // Indexed rotary must match the materialized-frequency fallback for mixed
   // packed batches, scaled Nomic tables, and both CUDA model dtypes.
@@ -433,6 +373,66 @@ void rotary_reuse_regression(c10::Device device, at::ScalarType dtype) {
     run(dtype, false, nomic_base, gte_base);
   }
 }
+
+void nomic_expert_shape_validation(c10::Device device, at::ScalarType dtype) {
+  constexpr int64_t experts = 3;
+  auto o = config("nomic_bert");
+  o.values["num_experts"] = std::to_string(experts);
+  o.values["moe_top_k"] = "2";
+  o.values["moe_every_n_layers"] = "2";
+  o.values["n_inner"] = std::to_string(I);
+  auto checkpoint = weights("nomic_bert", device, dtype);
+  const std::string p = "encoder.layers.1.mlp.";
+  linear(checkpoint, p + "router.layer", experts, H, device, dtype, false);
+  for (auto name : {"w1", "w2"})
+    add(checkpoint, p + "experts.mlp." + name, {experts * I, H}, device, dtype);
+  add(checkpoint, p + "experts.bias", {H}, device, dtype);
+
+  auto valid = infinity::create_encoder(o, checkpoint, device, dtype);
+  valid->ready();
+  auto opts = at::TensorOptions().device(device).dtype(at::kLong);
+  auto ids = at::tensor({1, 2, 3}, opts), types = at::zeros_like(ids);
+  auto positions = at::tensor({0, 1, 2}, opts),
+       cumulative = at::tensor({0, 3}, opts.dtype(at::kInt));
+  int32_t offsets[] = {0, 3};
+  auto output = valid->forward({ids, types, positions, cumulative, offsets, 1, 3});
+  TORCH_CHECK(output.sizes() == at::IntArrayRef({3, H}) && at::isfinite(output).all().item<bool>(),
+              "Valid Nomic expert checkpoint failed inference");
+
+  for (auto name : {"w1", "w2"}) {
+    const auto key = p + "experts.mlp." + name;
+    // Reject indivisible expert groups, indivisible hidden widths, and an
+    // otherwise divisible tensor that disagrees with the configured FFN width.
+    for (auto elements : {experts * I * H + 1, experts * (I * H + 1), experts * (I + 1) * H}) {
+      auto malformed = checkpoint;
+      malformed[key] = at::zeros({elements}, output.options());
+      auto model = infinity::create_encoder(o, malformed, device, dtype);
+      bool rejected = false;
+      try {
+        model->ready();
+      } catch (const c10::Error& error) {
+        rejected = std::string(error.what()).find("Invalid Nomic expert tensor dimensions") !=
+                   std::string::npos;
+      }
+      TORCH_CHECK(
+          rejected, "Malformed Nomic expert weights passed ready(): ", key, " elements=", elements);
+    }
+  }
+  // Expert tensors in an entirely dense configuration do not participate in
+  // inference, even if the checkpoint carries unused expert-count metadata.
+  for (int every : {0, 1}) {
+    auto dense = o;
+    dense.values["moe_every_n_layers"] = std::to_string(every);
+    auto unused = checkpoint;
+    unused[p + "experts.mlp.w1"] = at::zeros({1}, output.options());
+    auto model = infinity::create_encoder(dense, unused, device, dtype);
+    model->ready();
+    TORCH_CHECK(at::isfinite(model->forward({ids, types, positions, cumulative, offsets, 1, 3}))
+                    .all()
+                    .item<bool>(),
+                "Unused Nomic expert tensors affected dense inference");
+  }
+}
 }
 
 int main(int argc, char** argv) {
@@ -498,8 +498,8 @@ int main(int argc, char** argv) {
   c10::Device device(argc > 1 ? "cuda:0" : "cpu");
   auto dtype = device.is_cuda() ? at::kHalf : at::kFloat;
   nomic_expert_shape_validation(device, dtype);
-  rotary_reuse_regression(device, dtype);
   auto opts = at::TensorOptions().device(device).dtype(at::kLong);
+  rotary_reuse_regression(device, dtype);
   int32_t offsets[] = {0, 3, 8}, short_offsets[] = {0, 3}, long_offsets[] = {0, 5};
   auto ids = at::tensor({2, 3, 4, 5, 6, 7, 8, 9}, opts), types = at::zeros({8}, opts),
        positions = at::tensor({0, 1, 2, 0, 1, 2, 3, 4}, opts);
