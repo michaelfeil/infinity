@@ -113,6 +113,67 @@ void check_linear_activation(const at::Tensor& input,
   check_same_or_nan(expected.first, prequantized.first, label);
   check_same_or_nan(expected.second, prequantized.second, label);
 }
+
+constexpr std::array<infinity::Fp8GatedActivation, 2> gated_kinds{
+    infinity::Fp8GatedActivation::RoundedSilu, infinity::Fp8GatedActivation::RoundedGelu};
+
+int gated_activation_code(infinity::Fp8GatedActivation kind) {
+  switch (kind) {
+  case infinity::Fp8GatedActivation::RoundedSilu:
+    return 5;
+  case infinity::Fp8GatedActivation::RoundedGelu:
+    return 4;
+  }
+  TORCH_CHECK(false, "Invalid gated activation reference");
+  return 0;
+}
+
+void check_gated_quantize(const at::Tensor& gate_up,
+                          infinity::Fp8GatedActivation kind,
+                          bool gate_first,
+                          const char* label) {
+  auto activated =
+      infinity::fused_gated_activation(gate_up, gated_activation_code(kind), gate_first);
+  auto expected = infinity::fp8_quantize_rows(activated);
+  auto actual = infinity::fp8_gated_quantize(gate_up, kind, gate_first);
+  check_same_or_nan(expected.first, actual.first, label);
+  check_same_or_nan(expected.second, actual.second, label);
+}
+
+void check_scaled_gated_quantize(const at::Tensor& values,
+                                 const at::Tensor& row_scales,
+                                 const at::Tensor& column_scales,
+                                 at::ScalarType dtype,
+                                 infinity::Fp8GatedActivation kind,
+                                 bool gate_first,
+                                 const char* label) {
+  auto scaled = infinity::fp8_scale_output(values, row_scales, column_scales, dtype);
+  auto expected = infinity::fp8_quantize_rows(
+      infinity::fused_gated_activation(scaled, gated_activation_code(kind), gate_first));
+  auto actual = infinity::fp8_scaled_gated_quantize(
+      values, row_scales, column_scales, dtype, kind, gate_first);
+  check_same_or_nan(expected.first, actual.first, label);
+  check_same_or_nan(expected.second, actual.second, label);
+}
+
+void check_linear_gated_quantize(const at::Tensor& input,
+                                 const infinity::Fp8Linear& linear,
+                                 infinity::Fp8GatedActivation kind,
+                                 bool gate_first,
+                                 const char* label) {
+  auto quantized = infinity::fp8_quantize_rows(input);
+  auto projected = fp8_original_recipe(
+      quantized.first, linear.matrix(), quantized.second, linear.scales(), input.scalar_type());
+  auto expected = infinity::fp8_quantize_rows(
+      infinity::fused_gated_activation(projected, gated_activation_code(kind), gate_first));
+  auto actual = linear.forward_gated_quantized(input, {}, kind, gate_first);
+  check_same_or_nan(expected.first, actual.first, label);
+  check_same_or_nan(expected.second, actual.second, label);
+  auto prequantized =
+      linear.forward_gated_quantized(quantized.first, quantized.second, kind, gate_first);
+  check_same_or_nan(expected.first, prequantized.first, label);
+  check_same_or_nan(expected.second, prequantized.second, label);
+}
 }
 
 int main() {
@@ -699,6 +760,330 @@ int main() {
                             "Fused RMS changed FP8 bytes, scales or residual rounding");
               }
           }
+    }
+    // The fused gated quantizer must equal the original gated helper followed by row quantization
+    // for both orientations, exact scalar/vector group boundaries and borrowed unaligned storage.
+    const float gated_subnormal = dtype == at::kHalf ? std::ldexp(1.f, -24) : std::ldexp(1.f, -133);
+    for (auto kind : gated_kinds)
+      for (bool gate_first : {false, true})
+        for (int64_t rows : {0, 1, 3, 17}) {
+          auto gate_up = at::randn({rows, 512}, options) * .5;
+          if (rows) {
+            gate_up.select(0, 0).zero_();
+            if (rows > 1) {
+              auto row = gate_up.select(0, 1);
+              row.narrow(0, 0, 8).fill_(gated_subnormal);
+              row.narrow(0, 256, 8).fill_(gated_subnormal);
+            }
+          }
+          check_gated_quantize(gate_up, kind, gate_first, "Fused gated activation differs");
+        }
+    for (const auto& [width, rows] : std::array<std::pair<int64_t, int64_t>, 14>{std::pair{17, 3},
+                                                                                 {128, 3},
+                                                                                 {2048, 3},
+                                                                                 {2056, 2},
+                                                                                 {8192, 2},
+                                                                                 {8193, 2},
+                                                                                 {12288, 2},
+                                                                                 {16384, 2},
+                                                                                 {20480, 2},
+                                                                                 {20481, 2},
+                                                                                 {20488, 2},
+                                                                                 {24576, 1},
+                                                                                 {28672, 1},
+                                                                                 {32768, 1}})
+      for (bool aligned : {false, true}) {
+        auto storage = at::randn({rows * 2 * width + (aligned ? 0 : 1)}, options) * 3;
+        auto gate_up = storage.narrow(0, aligned ? 0 : 1, rows * 2 * width).view({rows, 2 * width});
+        gate_up.select(0, 0).zero_();
+        if (rows > 1) {
+          auto row = gate_up.select(0, 1);
+          row.narrow(0, 0, 8).fill_(gated_subnormal);
+          row.narrow(0, width, 8).fill_(gated_subnormal);
+        }
+        for (auto kind : gated_kinds)
+          for (bool gate_first : {false, true})
+            check_gated_quantize(gate_up, kind, gate_first, "Gated width group/alignment differs");
+      }
+    // Every finite model-dtype gate pattern, ordered by magnitude so rows retain midrange
+    // sensitivity, with constant up and with varying moderate positive/negative up values.
+    {
+      auto words = at::arange(65536, at::TensorOptions().dtype(at::kInt)).to(at::kShort);
+      auto finite = words.view(dtype).to(at::kFloat);
+      finite = finite.masked_select(at::isfinite(finite));
+      finite = finite.index_select(0, at::argsort(finite.abs()));
+      for (int64_t width : {17, 128, 2048}) {
+        auto padded = at::zeros({(finite.numel() + width - 1) / width * width}, finite.options());
+        padded.narrow(0, 0, finite.numel()).copy_(finite);
+        auto gate_values = padded.view({-1, width});
+        for (int up_mode : {0, 1}) {
+          auto up = up_mode == 0 ? at::ones(gate_values.sizes(), gate_values.options())
+                                 : at::arange(width, gate_values.options())
+                                       .remainder(11)
+                                       .sub(5)
+                                       .mul(.5)
+                                       .unsqueeze(0)
+                                       .expand(gate_values.sizes());
+          for (auto kind : gated_kinds)
+            for (bool gate_first : {false, true}) {
+              auto gate_up =
+                  at::empty({gate_values.size(0), 2 * width}, gate_values.options().dtype(dtype));
+              auto gate_half =
+                  gate_first ? gate_up.narrow(1, 0, width) : gate_up.narrow(1, width, width);
+              auto up_half =
+                  gate_first ? gate_up.narrow(1, width, width) : gate_up.narrow(1, 0, width);
+              gate_half.copy_(gate_values);
+              up_half.copy_(up);
+              check_gated_quantize(
+                  gate_up.to(options), kind, gate_first, "Exhaustive gated activation differs");
+            }
+        }
+      }
+    }
+    // Focused width-8 fixture for hazard H1: every finite model-dtype gate is the only
+    // nonzero activation in its row, so the row maximum cannot hide a sub-ULP GELU staging
+    // difference after quantization. Aligned rows exercise the native pair recipe; offset-1
+    // storage exercises the separate scalar staging.
+    {
+      const int64_t isolated_width = 8;
+      auto isolated_words = at::arange(65536, at::TensorOptions().dtype(at::kInt)).to(at::kShort);
+      auto isolated_gates = isolated_words.view(dtype).to(at::kFloat);
+      isolated_gates = isolated_gates.masked_select(at::isfinite(isolated_gates));
+      const int64_t isolated_rows = isolated_gates.numel();
+      auto isolated_up = at::arange(isolated_rows, f32).remainder(9).sub(4).mul_(.5);
+      for (bool gate_first : {false, true})
+        for (bool aligned : {false, true}) {
+          auto isolated_storage =
+              at::zeros({isolated_rows * 2 * isolated_width + (aligned ? 0 : 1)}, options);
+          auto isolated_gate_up =
+              isolated_storage.narrow(0, aligned ? 0 : 1, isolated_rows * 2 * isolated_width)
+                  .view({isolated_rows, 2 * isolated_width});
+          auto isolated_gate_half =
+              gate_first ? isolated_gate_up.narrow(1, 0, isolated_width)
+                         : isolated_gate_up.narrow(1, isolated_width, isolated_width);
+          auto isolated_up_half = gate_first
+                                      ? isolated_gate_up.narrow(1, isolated_width, isolated_width)
+                                      : isolated_gate_up.narrow(1, 0, isolated_width);
+          isolated_up_half.fill_(1);
+          isolated_gate_half.select(1, 0).copy_(isolated_gates.to(options));
+          check_gated_quantize(isolated_gate_up,
+                               infinity::Fp8GatedActivation::RoundedGelu,
+                               gate_first,
+                               "Isolated aligned/misaligned GELU pattern differs");
+          isolated_up_half.select(1, 0).copy_(isolated_up);
+          check_gated_quantize(isolated_gate_up,
+                               infinity::Fp8GatedActivation::RoundedGelu,
+                               gate_first,
+                               "Isolated varying-up GELU pattern differs");
+        }
+      // The scaled reference allocates an aligned model-dtype tensor, so its native pair
+      // staging is selected from width alone even when the raw FP32 source is unaligned.
+      auto isolated_row_scales = at::ones({isolated_rows, 1}, f32);
+      auto isolated_columns = at::ones({2 * isolated_width, 1}, f32);
+      for (bool gate_first : {false, true})
+        for (bool aligned : {false, true}) {
+          auto isolated_value_storage =
+              at::zeros({isolated_rows * 2 * isolated_width + (aligned ? 0 : 1)}, f32);
+          auto isolated_values =
+              isolated_value_storage.narrow(0, aligned ? 0 : 1, isolated_rows * 2 * isolated_width)
+                  .view({isolated_rows, 2 * isolated_width});
+          auto isolated_gate_half = gate_first
+                                        ? isolated_values.narrow(1, 0, isolated_width)
+                                        : isolated_values.narrow(1, isolated_width, isolated_width);
+          auto isolated_up_half = gate_first
+                                      ? isolated_values.narrow(1, isolated_width, isolated_width)
+                                      : isolated_values.narrow(1, 0, isolated_width);
+          isolated_up_half.fill_(1);
+          isolated_gate_half.select(1, 0).copy_(isolated_gates);
+          check_scaled_gated_quantize(isolated_values,
+                                      isolated_row_scales,
+                                      isolated_columns,
+                                      dtype,
+                                      infinity::Fp8GatedActivation::RoundedGelu,
+                                      gate_first,
+                                      "Isolated scaled GELU pattern differs");
+        }
+    }
+    // Practical near-zero curvature values with independent up operands.
+    for (int64_t width : {17, 128, 2048}) {
+      auto gate = at::rand({5, width}, options) * 16 - 8;
+      auto up = at::rand({5, width}, options) * 8 - 4;
+      gate.select(0, 0).zero_();
+      gate.select(0, 1).narrow(0, 0, 8).fill_(std::ldexp(1.f, -10));
+      gate.select(0, 2).narrow(0, 0, 8).fill_(.5f);
+      up.select(0, 3).narrow(0, 0, 8).fill_(-2.f);
+      for (auto kind : gated_kinds)
+        for (bool gate_first : {false, true}) {
+          auto gate_up = gate_first ? at::cat({gate, up}, 1) : at::cat({up, gate}, 1);
+          check_gated_quantize(gate_up, kind, gate_first, "Near-zero gated curvature differs");
+        }
+    }
+    // NaN/Inf gates and up operands retain the composed FP8 classification and zero rows.
+    for (auto kind : gated_kinds)
+      for (bool gate_first : {false, true}) {
+        const int64_t rows = 6, width = 128;
+        const float nan = std::numeric_limits<float>::quiet_NaN();
+        const float inf = std::numeric_limits<float>::infinity();
+        auto gate = at::randn({rows, width}, options) * 2;
+        auto up = at::rand({rows, width}, options) * 4 - 2;
+        gate.select(0, 0).fill_(nan);
+        gate.select(0, 1).fill_(inf);
+        gate.select(0, 2).fill_(-inf);
+        gate.select(0, 3).fill_(gated_subnormal);
+        gate.select(0, 3).narrow(0, 0, 8).fill_(nan);
+        gate.select(0, 3).narrow(0, 8, 8).fill_(inf);
+        up.select(0, 4).narrow(0, 0, 8).fill_(nan);
+        up.select(0, 4).narrow(0, 8, 8).fill_(inf);
+        up.select(0, 4).narrow(0, 16, 8).fill_(-inf);
+        up.select(0, 5).zero_();
+        auto gate_up = gate_first ? at::cat({gate, up}, 1) : at::cat({up, gate}, 1);
+        check_gated_quantize(gate_up, kind, gate_first, "Nonfinite gated activation differs");
+      }
+    {
+      auto gate_up = at::randn({17, 2 * 2048}, options) * 3;
+      gate_up.select(0, 0).zero_();
+      auto legacy = infinity::fp8_swiglu_quantize(gate_up);
+      auto gated =
+          infinity::fp8_gated_quantize(gate_up, infinity::Fp8GatedActivation::RoundedSilu, true);
+      check_same_or_nan(gated.first, legacy.first, "Legacy SwiGLU changed FP8 bytes");
+      check_same_or_nan(gated.second, legacy.second, "Legacy SwiGLU changed FP8 scales");
+    }
+    // Portable row/column scaling must round once to model dtype before the same gated activation.
+    for (int64_t width : {17, 128, 2048, 2056, 8192, 12288, 16384, 20480, 20481, 20488, 32768})
+      for (int64_t rows : {1, 5})
+        for (bool aligned : {false, true}) {
+          auto raw_storage = at::randn({rows * 2 * width + 1}, f32) * 8;
+          auto column_storage = at::rand({2 * width + 1}, f32) + .5;
+          auto values =
+              raw_storage.narrow(0, aligned ? 0 : 1, rows * 2 * width).view({rows, 2 * width});
+          auto columns = column_storage.narrow(0, aligned ? 0 : 1, 2 * width).view({2 * width, 1});
+          auto row_scales = at::rand({rows, 1}, f32) + .5;
+          values.select(0, 0).zero_();
+          row_scales.select(0, 0).fill_(.25f);
+          if (rows > 1) {
+            values.select(0, 1).fill_(std::ldexp(1.f, -149));
+            row_scales.select(0, 1).fill_(2.f);
+          }
+          if (rows > 2)
+            row_scales.select(0, 2).fill_(1e-40f);
+          if (rows > 3)
+            row_scales.select(0, 3).fill_(1e6f);
+          if (rows > 4)
+            row_scales.select(0, 4).fill_(0.f);
+          columns.select(0, 0).fill_(2.f);
+          columns.select(0, 1).fill_(.25f);
+          for (auto kind : gated_kinds)
+            for (bool gate_first : {false, true})
+              check_scaled_gated_quantize(values,
+                                          row_scales,
+                                          columns,
+                                          dtype,
+                                          kind,
+                                          gate_first,
+                                          "Scaled fused gated activation differs");
+        }
+    for (auto kind : gated_kinds)
+      for (bool gate_first : {false, true}) {
+        auto empty_values = at::empty({0, 2 * 6144}, f32);
+        auto empty_rows = at::empty({0, 1}, f32);
+        auto empty_columns = at::empty({2 * 6144, 1}, f32);
+        auto empty = infinity::fp8_scaled_gated_quantize(
+            empty_values, empty_rows, empty_columns, dtype, kind, gate_first);
+        TORCH_CHECK(empty.first.sizes() == at::IntArrayRef({0, 6144}) &&
+                        empty.first.scalar_type() == at::kFloat8_e4m3fn &&
+                        empty.second.sizes() == at::IntArrayRef({0, 1}) &&
+                        empty.second.scalar_type() == at::kFloat,
+                    "Scaled fused gated activation changed zero-row geometry");
+      }
+    for (auto kind : gated_kinds)
+      for (bool gate_first : {false, true})
+        for (bool aligned : {false, true}) {
+          const int64_t width = 2056, rows = 5;
+          const float nan = std::numeric_limits<float>::quiet_NaN();
+          const float inf = std::numeric_limits<float>::infinity();
+          auto raw_storage = at::randn({rows * 2 * width + 1}, f32) * 3;
+          auto column_storage = at::rand({2 * width + 1}, f32) + .5;
+          auto values =
+              raw_storage.narrow(0, aligned ? 0 : 1, rows * 2 * width).view({rows, 2 * width});
+          auto columns = column_storage.narrow(0, aligned ? 0 : 1, 2 * width).view({2 * width, 1});
+          auto row_scales = at::rand({rows, 1}, f32) + .5;
+          values.select(0, 0).fill_(nan);
+          values.select(0, 1).fill_(inf);
+          values.select(0, 2).fill_(-inf);
+          values.select(0, 3).narrow(0, 0, 8).fill_(nan);
+          values.select(0, 3).narrow(0, 8, 8).fill_(inf);
+          values.select(0, 3).narrow(0, 16, 8).fill_(-inf);
+          values.select(0, 4).narrow(0, 0, 8).fill_(std::ldexp(1.f, -149));
+          row_scales.select(0, 0).fill_(nan);
+          row_scales.select(0, 1).fill_(inf);
+          row_scales.select(0, 2).fill_(-inf);
+          row_scales.select(0, 3).fill_(0.f);
+          columns.select(0, 0).fill_(nan);
+          columns.select(0, 1).fill_(inf);
+          columns.select(0, 2).fill_(-inf);
+          columns.select(0, 3).fill_(0.f);
+          check_scaled_gated_quantize(values,
+                                      row_scales,
+                                      columns,
+                                      dtype,
+                                      kind,
+                                      gate_first,
+                                      "Nonfinite scaled gated activation differs");
+        }
+    {
+      auto values = at::randn({17, 2 * 2056}, f32) * 8;
+      auto columns = at::rand({2 * 2056, 1}, f32) + .5;
+      auto row_scales = at::rand({17, 1}, f32) + .5;
+      auto legacy = infinity::fp8_scaled_swiglu_quantize(values, row_scales, columns, dtype);
+      auto gated = infinity::fp8_scaled_gated_quantize(
+          values, row_scales, columns, dtype, infinity::Fp8GatedActivation::RoundedSilu, true);
+      check_same_or_nan(gated.first, legacy.first, "Legacy scaled SwiGLU changed FP8 bytes");
+      check_same_or_nan(gated.second, legacy.second, "Legacy scaled SwiGLU changed FP8 scales");
+    }
+    // The projection boundary must use the same GEMM, model-dtype rounding and gated quantization.
+    for (auto kind : gated_kinds)
+      for (bool gate_first : {false, true})
+        for (int64_t rows : {1, 3, 17}) {
+          auto input = at::randn({rows, 256}, options) * .5;
+          input.select(0, 0).zero_();
+          if (rows > 1) {
+            auto row = input.select(0, 1);
+            row.narrow(0, 0, 8).fill_(gated_subnormal);
+          }
+          check_linear_gated_quantize(
+              input, linear, kind, gate_first, "Fused linear gated activation differs");
+        }
+    for (auto kind : gated_kinds)
+      for (bool gate_first : {false, true}) {
+        auto empty_input = at::empty({0, 256}, options);
+        auto quantized_empty = infinity::fp8_quantize_rows(empty_input);
+        auto empty_gated = linear.forward_gated_quantized(empty_input, {}, kind, gate_first);
+        auto empty_prequantized = linear.forward_gated_quantized(
+            quantized_empty.first, quantized_empty.second, kind, gate_first);
+        for (const auto& result : {empty_gated, empty_prequantized})
+          TORCH_CHECK(result.first.sizes() == at::IntArrayRef({0, 256}) &&
+                          result.first.scalar_type() == at::kFloat8_e4m3fn &&
+                          result.second.sizes() == at::IntArrayRef({0, 1}) &&
+                          result.second.scalar_type() == at::kFloat,
+                      "Fused linear gated activation changed zero-row geometry");
+      }
+    for (int64_t rows : {1, 17}) {
+      auto input = at::randn({rows, 256}, options) * .5;
+      auto quantized = infinity::fp8_quantize_rows(input);
+      auto expected = linear.forward_gated_quantized(
+          input, {}, infinity::Fp8GatedActivation::RoundedSilu, true);
+      auto legacy = linear.forward_swiglu_quantized(input);
+      check_same_or_nan(expected.first, legacy.first, "Legacy linear SwiGLU changed FP8 bytes");
+      check_same_or_nan(expected.second, legacy.second, "Legacy linear SwiGLU changed FP8 scales");
+      auto expected_prequantized = linear.forward_gated_quantized(
+          quantized.first, quantized.second, infinity::Fp8GatedActivation::RoundedSilu, true);
+      auto legacy_prequantized = linear.forward_swiglu_quantized(quantized.first, quantized.second);
+      check_same_or_nan(expected_prequantized.first,
+                        legacy_prequantized.first,
+                        "Legacy prequantized linear SwiGLU changed FP8 bytes");
+      check_same_or_nan(expected_prequantized.second,
+                        legacy_prequantized.second,
+                        "Legacy prequantized linear SwiGLU changed FP8 scales");
     }
     if (at::cuda::getCurrentDeviceProperties()->major != 9) {
       // Portable output scaling: ragged rows and varied scales must match the

@@ -56,8 +56,28 @@ __device__ float row_scale(float value) {
   return warps[0];
 }
 
-template <class T, int Columns>
-__global__ void swiglu_quant_kernel(const T* input, __nv_fp8_e4m3* out, float* scales, int width) {
+template <Fp8GatedActivation Kind, class T>
+__device__ __forceinline__ T gated_rounded(T gate, T up) {
+  T activated;
+  if constexpr (Kind == Fp8GatedActivation::RoundedSilu) {
+    T exponential = hexp(T(-gate));
+    T denominator = T(T(1) + exponential);
+    activated = T(gate / denominator);
+  } else {
+    // Match fast_kernels gated_value activation 4: each GELU intermediate is a separate
+    // model-dtype operation, including the tanh input/value.
+    T x = gate, square = T(x * x), cube = T(square * x);
+    T alpha = T(x + T(.044715) * cube);
+    T argument = T(T(.7978845608028654) * alpha);
+    T tangent = T(tanhf(float(argument)));
+    activated = T(T(T(.5) * x) * T(T(1) + tangent));
+  }
+  return T(float(activated) * float(up));
+}
+
+template <Fp8GatedActivation Kind, class T, int Columns>
+__global__ void
+gated_quant_kernel(const T* input, __nv_fp8_e4m3* out, float* scales, int width, bool gate_first) {
   wait_for_producer();
   const int64_t row = blockIdx.x;
   float values[Columns], amax = 0;
@@ -66,11 +86,8 @@ __global__ void swiglu_quant_kernel(const T* input, __nv_fp8_e4m3* out, float* s
     int col = threadIdx.x + j * 256;
     float value = 0;
     if (col < width) {
-      T gate = input[row * 2 * width + col], up = input[row * 2 * width + width + col];
-      T exponential = hexp(T(-gate));
-      T denominator = T(T(1) + exponential);
-      T activated = T(gate / denominator);
-      value = float(T(float(activated) * float(up)));
+      const T first = input[row * 2 * width + col], second = input[row * 2 * width + width + col];
+      value = float(gated_rounded<Kind>(gate_first ? first : second, gate_first ? second : first));
     }
     values[j] = value;
     amax = fmaxf(amax, fabsf(value));
@@ -92,6 +109,74 @@ template <class T, int N> struct alignas(sizeof(T) * N) Packed {
   T value[N];
 };
 
+template <class T> struct GatedPair;
+
+template <> struct GatedPair<__half> {
+  using Type = __half2;
+
+  __device__ static Type model(float value) {
+    return __float2half2_rn(value);
+  }
+
+  __device__ static Type tanh(Type value) {
+    return __floats2half2_rn(tanhf(__low2float(value)), tanhf(__high2float(value)));
+  }
+};
+
+template <> struct GatedPair<__nv_bfloat16> {
+  using Type = __nv_bfloat162;
+
+  __device__ static Type model(float value) {
+    return __float2bfloat162_rn(value);
+  }
+
+  __device__ static Type tanh(Type value) {
+    return __floats2bfloat162_rn(tanhf(__low2float(value)), tanhf(__high2float(value)));
+  }
+};
+
+/// Match the native aligned-pair GELU and BF16 gate-first SwiGLU staging used by fast_kernels.
+/// These explicit pair helpers are selected only for the layouts where the original wrapper does.
+template <Fp8GatedActivation Kind, class T>
+__device__ __forceinline__ typename GatedPair<T>::Type
+gated_pair_rounded(typename GatedPair<T>::Type gate, typename GatedPair<T>::Type up) {
+  using Pair = typename GatedPair<T>::Type;
+  if constexpr (Kind == Fp8GatedActivation::RoundedGelu) {
+    const auto square = __hmul2(gate, gate);
+    const auto cube = __hmul2(square, gate);
+    const auto alpha = __hfma2(GatedPair<T>::model(.044715f), cube, gate);
+    const auto tangent =
+        GatedPair<T>::tanh(__hmul2(GatedPair<T>::model(.7978845608028654f), alpha));
+    const auto activated = __hmul2(__hmul2(GatedPair<T>::model(.5f), gate),
+                                   __hadd2(GatedPair<T>::model(1.f), tangent));
+    return __hmul2(activated, up);
+  } else {
+    const auto exponential = h2exp(__hneg2(gate));
+    const auto denominator = __hadd2(GatedPair<T>::model(1.f), exponential);
+    return __hmul2(__h2div(gate, denominator), up);
+  }
+}
+
+template <Fp8GatedActivation Kind, bool PairMath, class T>
+__device__ __forceinline__ Packed<T, 8> gated_pack(const Packed<T, 8>& gate,
+                                                   const Packed<T, 8>& up) {
+  Packed<T, 8> rounded;
+  if constexpr (PairMath) {
+    using Pair = typename GatedPair<T>::Type;
+    const auto* gate_pairs = reinterpret_cast<const Pair*>(gate.value);
+    const auto* up_pairs = reinterpret_cast<const Pair*>(up.value);
+    auto* rounded_pairs = reinterpret_cast<Pair*>(rounded.value);
+#pragma unroll
+    for (int pair = 0; pair < 4; ++pair)
+      rounded_pairs[pair] = gated_pair_rounded<Kind, T>(gate_pairs[pair], up_pairs[pair]);
+  } else {
+#pragma unroll
+    for (int lane = 0; lane < 8; ++lane)
+      rounded.value[lane] = gated_rounded<Kind>(gate.value[lane], up.value[lane]);
+  }
+  return rounded;
+}
+
 __device__ __forceinline__ float scale_output_value(float value, float row, float column) {
   return __fmul_rn(__fmul_rn(value, row), column);
 }
@@ -101,13 +186,6 @@ template <typename T> __device__ __forceinline__ T convert_scaled_output(float v
     return __float2half_rn(value);
   else
     return __float2bfloat16_rn(value);
-}
-
-template <class T> __device__ __forceinline__ T swiglu_rounded(T gate, T up) {
-  T exponential = hexp(T(-gate));
-  T denominator = T(T(1) + exponential);
-  T activated = T(gate / denominator);
-  return T(float(activated) * float(up));
 }
 
 template <class T> __device__ __forceinline__ T activation_rounded(T value, int kind) {
@@ -126,23 +204,26 @@ template <class T> __device__ __forceinline__ T activation_bias(T value, T bias)
 }
 
 template <class T, bool Scaled>
-__device__ __forceinline__ void load_swiglu_pair(const T* input,
-                                                 const float* scaled_input,
-                                                 const float* row_scales,
-                                                 const float* column_scales,
-                                                 int64_t row,
-                                                 int stride,
-                                                 int col,
-                                                 Packed<T, 8>& gate,
-                                                 Packed<T, 8>& up) {
+__device__ __forceinline__ void load_gated_pair(const T* input,
+                                                const float* scaled_input,
+                                                const float* row_scales,
+                                                const float* column_scales,
+                                                int64_t row,
+                                                int stride,
+                                                int col,
+                                                bool gate_first,
+                                                Packed<T, 8>& gate,
+                                                Packed<T, 8>& up) {
+  const int gate_col = gate_first ? col : stride + col;
+  const int up_col = gate_first ? stride + col : col;
   if constexpr (Scaled) {
     const float row_scale_value = row_scales[row];
     const auto gate_raw =
-        reinterpret_cast<const Packed<float, 8>*>(scaled_input)[row * 2 * stride + col];
+        reinterpret_cast<const Packed<float, 8>*>(scaled_input)[row * 2 * stride + gate_col];
     const auto up_raw =
-        reinterpret_cast<const Packed<float, 8>*>(scaled_input)[row * 2 * stride + stride + col];
-    const auto gate_column = reinterpret_cast<const Packed<float, 8>*>(column_scales)[col];
-    const auto up_column = reinterpret_cast<const Packed<float, 8>*>(column_scales)[stride + col];
+        reinterpret_cast<const Packed<float, 8>*>(scaled_input)[row * 2 * stride + up_col];
+    const auto gate_column = reinterpret_cast<const Packed<float, 8>*>(column_scales)[gate_col];
+    const auto up_column = reinterpret_cast<const Packed<float, 8>*>(column_scales)[up_col];
 #pragma unroll
     for (int lane = 0; lane < 8; ++lane) {
       gate.value[lane] = convert_scaled_output<T>(
@@ -151,23 +232,28 @@ __device__ __forceinline__ void load_swiglu_pair(const T* input,
           scale_output_value(up_raw.value[lane], row_scale_value, up_column.value[lane]));
     }
   } else {
-    gate = reinterpret_cast<const Packed<T, 8>*>(input)[row * 2 * stride + col];
-    up = reinterpret_cast<const Packed<T, 8>*>(input)[row * 2 * stride + stride + col];
+    gate = reinterpret_cast<const Packed<T, 8>*>(input)[row * 2 * stride + gate_col];
+    up = reinterpret_cast<const Packed<T, 8>*>(input)[row * 2 * stride + up_col];
   }
 }
 
-template <class T, int Groups, bool Scaled = false>
-__global__ __launch_bounds__(512) void swiglu_quant_vector_kernel(const T* input,
-                                                                  const float* scaled_input,
-                                                                  const float* row_scales,
-                                                                  const float* column_scales,
-                                                                  __nv_fp8_e4m3* out,
-                                                                  float* scales,
-                                                                  int width) {
+template <class T,
+          int Groups,
+          bool Scaled = false,
+          Fp8GatedActivation Kind = Fp8GatedActivation::RoundedSilu,
+          bool PairMath = false>
+__global__ __launch_bounds__(512) void gated_quant_vector_kernel(const T* input,
+                                                                 const float* scaled_input,
+                                                                 const float* row_scales,
+                                                                 const float* column_scales,
+                                                                 __nv_fp8_e4m3* out,
+                                                                 float* scales,
+                                                                 int width,
+                                                                 bool gate_first) {
   wait_for_producer();
   const int64_t row = blockIdx.x;
-  // Scaled rows fit the common 48 KiB block limit (at most five groups). Ordinary SwiGLU keeps
-  // its original register storage; wider scaled rows use the composed fallback.
+  // Scaled rows fit the common 48 KiB block limit (at most five groups). Ordinary gated rows keep
+  // their original register storage; wider scaled rows use the composed fallback.
   __shared__ Packed<T, 8> staged[Scaled ? Groups * 512 : 1];
   float values[Scaled ? 1 : Groups][8];
   float amax = 0;
@@ -178,17 +264,14 @@ __global__ __launch_bounds__(512) void swiglu_quant_vector_kernel(const T* input
     if (col >= stride)
       continue;
     Packed<T, 8> gate, up;
-    load_swiglu_pair<T, Scaled>(
-        input, scaled_input, row_scales, column_scales, row, stride, col, gate, up);
-    Packed<T, 8> rounded;
+    load_gated_pair<T, Scaled>(
+        input, scaled_input, row_scales, column_scales, row, stride, col, gate_first, gate, up);
+    const auto rounded = gated_pack<Kind, PairMath>(gate, up);
 #pragma unroll
     for (int lane = 0; lane < 8; ++lane) {
-      T value = swiglu_rounded(gate.value[lane], up.value[lane]);
-      if constexpr (Scaled)
-        rounded.value[lane] = value;
-      else
-        values[j][lane] = float(value);
-      amax = fmaxf(amax, fabsf(float(value)));
+      if constexpr (!Scaled)
+        values[j][lane] = float(rounded.value[lane]);
+      amax = fmaxf(amax, fabsf(float(rounded.value[lane])));
     }
     if constexpr (Scaled)
       staged[col] = rounded;
@@ -533,28 +616,30 @@ void validate_matrix(const at::Tensor& x) {
               "Expected contiguous CUDA matrix with bounded positive width");
 }
 
-template <class T, bool Scaled>
-void launch_swiglu_vector(const T* input,
-                          const float* scaled_input,
-                          const float* row_scales,
-                          const float* column_scales,
-                          __nv_fp8_e4m3* output,
-                          float* scales,
-                          int64_t rows,
-                          int width,
-                          cudaStream_t stream) {
+template <class T, bool Scaled, Fp8GatedActivation Kind, bool PairMath>
+void launch_gated_vector(const T* input,
+                         const float* scaled_input,
+                         const float* row_scales,
+                         const float* column_scales,
+                         __nv_fp8_e4m3* output,
+                         float* scales,
+                         int64_t rows,
+                         int width,
+                         cudaStream_t stream,
+                         bool gate_first) {
   const int threads = width <= 4096 ? 256 : 512;
 #define VECTOR(C)                                                                                  \
-  launch_dependent<swiglu_quant_vector_kernel<T, C, Scaled>>(rows,                                 \
-                                                             threads,                              \
-                                                             stream,                               \
-                                                             input,                                \
-                                                             scaled_input,                         \
-                                                             row_scales,                           \
-                                                             column_scales,                        \
-                                                             output,                               \
-                                                             scales,                               \
-                                                             width)
+  launch_dependent<gated_quant_vector_kernel<T, C, Scaled, Kind, PairMath>>(rows,                  \
+                                                                            threads,               \
+                                                                            stream,                \
+                                                                            input,                 \
+                                                                            scaled_input,          \
+                                                                            row_scales,            \
+                                                                            column_scales,         \
+                                                                            output,                \
+                                                                            scales,                \
+                                                                            width,                 \
+                                                                            gate_first)
   if (width <= 2048) {
     VECTOR(1);
   } else if (width <= 8192) {
@@ -577,20 +662,69 @@ void launch_swiglu_vector(const T* input,
 #undef VECTOR
 }
 
-template <class T>
-void launch_swiglu(const at::Tensor& input, at::Tensor& output, at::Tensor& scales) {
+template <class T, bool Scaled, Fp8GatedActivation Kind>
+void launch_gated_vector_math(const T* input,
+                              const float* scaled_input,
+                              const float* row_scales,
+                              const float* column_scales,
+                              __nv_fp8_e4m3* output,
+                              float* scales,
+                              int64_t rows,
+                              int width,
+                              cudaStream_t stream,
+                              bool pair_math,
+                              bool gate_first) {
+  if (pair_math)
+    launch_gated_vector<T, Scaled, Kind, true>(input,
+                                               scaled_input,
+                                               row_scales,
+                                               column_scales,
+                                               output,
+                                               scales,
+                                               rows,
+                                               width,
+                                               stream,
+                                               gate_first);
+  else
+    launch_gated_vector<T, Scaled, Kind, false>(input,
+                                                scaled_input,
+                                                row_scales,
+                                                column_scales,
+                                                output,
+                                                scales,
+                                                rows,
+                                                width,
+                                                stream,
+                                                gate_first);
+}
+
+template <class T, Fp8GatedActivation Kind>
+void launch_gated(const at::Tensor& input,
+                  at::Tensor& output,
+                  at::Tensor& scales,
+                  bool pair_math,
+                  bool gate_first) {
   int width = input.size(1) / 2;
   auto stream = at::cuda::getCurrentCUDAStream(input.get_device());
   auto x = reinterpret_cast<const T*>(input.const_data_ptr());
   auto y = reinterpret_cast<__nv_fp8_e4m3*>(output.mutable_data_ptr());
   if (width % 8 == 0 && reinterpret_cast<uintptr_t>(x) % alignof(Packed<T, 8>) == 0) {
-    launch_swiglu_vector<T, false>(
-        x, nullptr, nullptr, nullptr, y, scales.data_ptr<float>(), input.size(0), width, stream);
+    launch_gated_vector_math<T, false, Kind>(x,
+                                             nullptr,
+                                             nullptr,
+                                             nullptr,
+                                             y,
+                                             scales.data_ptr<float>(),
+                                             input.size(0),
+                                             width,
+                                             stream,
+                                             pair_math,
+                                             gate_first);
     return;
   }
 #define RUN(C)                                                                                     \
-  launch_dependent<swiglu_quant_kernel<T, C>>(                                                     \
-      input.size(0), 256, stream, x, y, scales.data_ptr<float>(), width)
+  launch_dependent<gated_quant_kernel<Kind, T, C>>(                                                \
+      input.size(0), 256, stream, x, y, scales.data_ptr<float>(), width, gate_first)
   if (width <= 256) {
     RUN(1);
   } else if (width <= 1024) {
@@ -605,6 +739,66 @@ void launch_swiglu(const at::Tensor& input, at::Tensor& output, at::Tensor& scal
     RUN(128);
   }
 #undef RUN
+}
+
+template <class T>
+void dispatch_gated(const at::Tensor& input,
+                    at::Tensor& output,
+                    at::Tensor& scales,
+                    Fp8GatedActivation kind,
+                    bool pair_math,
+                    bool gate_first) {
+  if (kind == Fp8GatedActivation::RoundedSilu)
+    launch_gated<T, Fp8GatedActivation::RoundedSilu>(input, output, scales, pair_math, gate_first);
+  else
+    launch_gated<T, Fp8GatedActivation::RoundedGelu>(input, output, scales, pair_math, gate_first);
+}
+
+template <class T>
+void dispatch_scaled_gated(const float* input,
+                           const float* row_scales,
+                           const float* columns,
+                           __nv_fp8_e4m3* output,
+                           float* scales,
+                           int64_t rows,
+                           int width,
+                           cudaStream_t stream,
+                           Fp8GatedActivation kind,
+                           bool pair_math,
+                           bool gate_first) {
+  if (kind == Fp8GatedActivation::RoundedSilu)
+    launch_gated_vector_math<T, true, Fp8GatedActivation::RoundedSilu>(nullptr,
+                                                                       input,
+                                                                       row_scales,
+                                                                       columns,
+                                                                       output,
+                                                                       scales,
+                                                                       rows,
+                                                                       width,
+                                                                       stream,
+                                                                       pair_math,
+                                                                       gate_first);
+  else
+    launch_gated_vector_math<T, true, Fp8GatedActivation::RoundedGelu>(nullptr,
+                                                                       input,
+                                                                       row_scales,
+                                                                       columns,
+                                                                       output,
+                                                                       scales,
+                                                                       rows,
+                                                                       width,
+                                                                       stream,
+                                                                       pair_math,
+                                                                       gate_first);
+}
+
+void validate_gated_activation(Fp8GatedActivation kind) {
+  switch (kind) {
+  case Fp8GatedActivation::RoundedSilu:
+  case Fp8GatedActivation::RoundedGelu:
+    return;
+  }
+  TORCH_CHECK(false, "Unsupported FP8 gated activation");
 }
 
 void validate_activation(Fp8Activation kind) {
@@ -737,82 +931,137 @@ at::Tensor fp8_scale_output(const at::Tensor& values,
   return output;
 }
 
-/// Produce FP8 gated-activation rows and F32 row scales without
-/// materializing a separate activation tensor.
-std::pair<at::Tensor, at::Tensor> fp8_swiglu_quantize(const at::Tensor& input) {
+namespace detail {
+std::pair<at::Tensor, at::Tensor> fp8_gated_quantize_impl(const at::Tensor& input,
+                                                          Fp8GatedActivation kind,
+                                                          bool gate_first,
+                                                          bool preserve_legacy_scalar) {
   validate_matrix(input);
+  validate_gated_activation(kind);
   TORCH_CHECK(input.size(1) % 2 == 0 &&
                   (input.scalar_type() == at::kHalf || input.scalar_type() == at::kBFloat16),
-              "SwiGLU requires even gate/up width and FP16/BF16 input");
+              "Gated FP8 quantization requires even gate/up width and FP16/BF16 input");
   c10::cuda::CUDAGuard guard(input.device());
   auto output =
       at::empty({input.size(0), input.size(1) / 2}, input.options().dtype(at::kFloat8_e4m3fn));
   auto scales = at::empty({input.size(0), 1}, input.options().dtype(at::kFloat));
   if (input.size(0)) {
-    if (input.scalar_type() == at::kHalf)
-      launch_swiglu<__half>(input, output, scales);
+    const auto dtype = input.scalar_type();
+    const auto width = input.size(1) / 2;
+    // The original wrapper selects the native aligned pair recipe only for a 16-byte aligned
+    // input pointer and an activation width divisible by eight. Scalar and unaligned rows retain
+    // the separate scalar staging. Legacy SwiGLU callers explicitly keep their frozen scalar path.
+    const bool pair_math =
+        !preserve_legacy_scalar && width % 8 == 0 &&
+        reinterpret_cast<uintptr_t>(input.const_data_ptr()) % alignof(Packed<__half, 8>) == 0 &&
+        (kind == Fp8GatedActivation::RoundedGelu || (dtype == at::kBFloat16 && gate_first));
+    if (dtype == at::kHalf)
+      dispatch_gated<__half>(input, output, scales, kind, pair_math, gate_first);
     else
-      launch_swiglu<__nv_bfloat16>(input, output, scales);
+      dispatch_gated<__nv_bfloat16>(input, output, scales, kind, pair_math, gate_first);
     C10_CUDA_KERNEL_LAUNCH_CHECK();
   }
   return {output, scales};
 }
 
-std::pair<at::Tensor, at::Tensor> fp8_scaled_swiglu_quantize(const at::Tensor& values,
-                                                             const at::Tensor& row_scales,
-                                                             const at::Tensor& column_scales,
-                                                             at::ScalarType dtype) {
+std::pair<at::Tensor, at::Tensor> fp8_scaled_gated_quantize_impl(const at::Tensor& values,
+                                                                 const at::Tensor& row_scales,
+                                                                 const at::Tensor& column_scales,
+                                                                 at::ScalarType dtype,
+                                                                 Fp8GatedActivation kind,
+                                                                 bool gate_first,
+                                                                 bool preserve_legacy_scalar) {
   validate_matrix(values);
+  validate_gated_activation(kind);
   TORCH_CHECK(values.scalar_type() == at::kFloat && values.size(1) % 2 == 0,
-              "Scaled SwiGLU requires contiguous FP32 gate/up rows");
+              "Scaled gated FP8 quantization requires contiguous FP32 gate/up rows");
   const auto rows = values.size(0), width = values.size(1) / 2;
   TORCH_CHECK(row_scales.is_cuda() && row_scales.dim() == 2 && row_scales.size(0) == rows &&
                   row_scales.size(1) == 1 && row_scales.is_contiguous() &&
                   row_scales.scalar_type() == at::kFloat && row_scales.device() == values.device(),
-              "Invalid Scaled SwiGLU row scales");
+              "Invalid scaled gated FP8 row scales");
   TORCH_CHECK(column_scales.is_cuda() && column_scales.dim() == 2 &&
                   column_scales.size(0) == values.size(1) && column_scales.size(1) == 1 &&
                   column_scales.is_contiguous() && column_scales.scalar_type() == at::kFloat &&
                   column_scales.device() == values.device(),
-              "Invalid Scaled SwiGLU column scales");
+              "Invalid scaled gated FP8 column scales");
   TORCH_CHECK(dtype == at::kHalf || dtype == at::kBFloat16,
-              "Scaled SwiGLU requires FP16 or BF16 output");
+              "Scaled gated FP8 quantization requires FP16 or BF16 output");
   c10::cuda::CUDAGuard guard(values.device());
   const auto* input = values.const_data_ptr<float>();
   const auto* columns = column_scales.const_data_ptr<float>();
   const bool vectorized = width <= fp8_scaled_swiglu_max_width && width % 8 == 0 &&
                           reinterpret_cast<uintptr_t>(input) % alignof(Packed<float, 8>) == 0 &&
                           reinterpret_cast<uintptr_t>(columns) % alignof(Packed<float, 8>) == 0;
+  // fp8_scale_output always allocates an aligned model-dtype destination, so the composed fallback
+  // selects the native pair recipe from width alone even when the FP32 sources are unaligned.
   if (rows && !vectorized)
-    return fp8_swiglu_quantize(fp8_scale_output(values, row_scales, column_scales, dtype));
+    return fp8_gated_quantize_impl(fp8_scale_output(values, row_scales, column_scales, dtype),
+                                   kind,
+                                   gate_first,
+                                   preserve_legacy_scalar);
   auto output = at::empty({rows, width}, values.options().dtype(at::kFloat8_e4m3fn));
   auto scales = at::empty({rows, 1}, values.options().dtype(at::kFloat));
   if (!rows)
     return {output, scales};
   auto stream = at::cuda::getCurrentCUDAStream(values.get_device());
   auto* quantized = reinterpret_cast<__nv_fp8_e4m3*>(output.mutable_data_ptr());
+  const bool pair_math = !preserve_legacy_scalar && (kind == Fp8GatedActivation::RoundedGelu ||
+                                                     (dtype == at::kBFloat16 && gate_first));
   if (dtype == at::kHalf)
-    launch_swiglu_vector<__half, true>(nullptr,
-                                       input,
-                                       row_scales.const_data_ptr<float>(),
-                                       columns,
-                                       quantized,
-                                       scales.data_ptr<float>(),
-                                       rows,
-                                       width,
-                                       stream);
+    dispatch_scaled_gated<__half>(input,
+                                  row_scales.const_data_ptr<float>(),
+                                  columns,
+                                  quantized,
+                                  scales.data_ptr<float>(),
+                                  rows,
+                                  width,
+                                  stream,
+                                  kind,
+                                  pair_math,
+                                  gate_first);
   else
-    launch_swiglu_vector<__nv_bfloat16, true>(nullptr,
-                                              input,
-                                              row_scales.const_data_ptr<float>(),
-                                              columns,
-                                              quantized,
-                                              scales.data_ptr<float>(),
-                                              rows,
-                                              width,
-                                              stream);
+    dispatch_scaled_gated<__nv_bfloat16>(input,
+                                         row_scales.const_data_ptr<float>(),
+                                         columns,
+                                         quantized,
+                                         scales.data_ptr<float>(),
+                                         rows,
+                                         width,
+                                         stream,
+                                         kind,
+                                         pair_math,
+                                         gate_first);
   C10_CUDA_KERNEL_LAUNCH_CHECK();
   return {output, scales};
+}
+}
+
+std::pair<at::Tensor, at::Tensor>
+fp8_gated_quantize(const at::Tensor& input, Fp8GatedActivation kind, bool gate_first) {
+  return detail::fp8_gated_quantize_impl(input, kind, gate_first, false);
+}
+
+std::pair<at::Tensor, at::Tensor> fp8_scaled_gated_quantize(const at::Tensor& values,
+                                                            const at::Tensor& row_scales,
+                                                            const at::Tensor& column_scales,
+                                                            at::ScalarType dtype,
+                                                            Fp8GatedActivation kind,
+                                                            bool gate_first) {
+  return detail::fp8_scaled_gated_quantize_impl(
+      values, row_scales, column_scales, dtype, kind, gate_first, false);
+}
+
+std::pair<at::Tensor, at::Tensor> fp8_swiglu_quantize(const at::Tensor& gate_up) {
+  return detail::fp8_gated_quantize_impl(gate_up, Fp8GatedActivation::RoundedSilu, true, true);
+}
+
+std::pair<at::Tensor, at::Tensor> fp8_scaled_swiglu_quantize(const at::Tensor& values,
+                                                             const at::Tensor& row_scales,
+                                                             const at::Tensor& column_scales,
+                                                             at::ScalarType dtype) {
+  return detail::fp8_scaled_gated_quantize_impl(
+      values, row_scales, column_scales, dtype, Fp8GatedActivation::RoundedSilu, true, true);
 }
 
 std::pair<at::Tensor, at::Tensor>

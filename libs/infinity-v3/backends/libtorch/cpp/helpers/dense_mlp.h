@@ -66,6 +66,18 @@ public:
     return {};
   }
 
+  /// Optional fused projection scaling + explicit rounded gated activation + row FP8
+  /// quantization. An undefined result retains the ordinary projection/activation path;
+  /// implementations must preserve the same GEMM operands, scales and rounding order.
+  virtual std::pair<at::Tensor, at::Tensor> apply_gated_quantized(const MlpProjection&,
+                                                                  const at::Tensor&,
+                                                                  const at::Tensor&,
+                                                                  const MlpContext&,
+                                                                  Fp8GatedActivation,
+                                                                  bool) const {
+    return {};
+  }
+
   /// Optional fused unary activation + row FP8 quantization. An undefined result retains the
   /// ordinary projection/activation path; implementations must apply any projection bias exactly
   /// once after the same model-dtype GEMM rounding.
@@ -155,6 +167,9 @@ struct MlpActivationRecipe {
   MlpFusion fusion = MlpFusion::None;
   // Explicit opt-in for custom rounded recipes whose FP8 form is one of the bounded unary kernels.
   std::optional<Fp8Activation> fp8_activation;
+  // Explicit opt-in for packed gated recipes whose FP8 form is one of the bounded gated kernels.
+  // gate_first above selects the original packed orientation.
+  std::optional<Fp8GatedActivation> fp8_gated_activation;
   MlpActivationRecipe() = default;
 
   MlpActivationRecipe(MlpActivation activation) : kind(activation) {}

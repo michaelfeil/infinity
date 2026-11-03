@@ -566,6 +566,21 @@ struct Encoder final : Model {
                               : act(rows);
             },
             is_gated);
+        // Mark only the native gated dispatches: rounded GELU spellings that reach code 4, and
+        // Nomic dense SwiGLU that reaches code 5. Other CUDA forms, custom callbacks, clips, up
+        // projections and biases retain the composed path.
+        const bool rounded_gated_gelu =
+            is_gated &&
+            (activation == "gelu" || activation == "gelu_new" || activation == "gelu_fast" ||
+             activation == "gelu_pytorch_tanh" || activation == "gelu_approx");
+        const bool nomic_rounded_swiglu =
+            family == Family::Nomic && !exact_moe && is_gated && activation == "swiglu";
+        if (rounded_gated_gelu)
+          recipe.fp8_gated_activation = Fp8GatedActivation::RoundedGelu;
+        else if (nomic_rounded_swiglu)
+          recipe.fp8_gated_activation = Fp8GatedActivation::RoundedSilu;
+        if (recipe.fp8_gated_activation)
+          recipe.gate_first = family != Family::Gte && family != Family::JinaCode;
         if (!is_gated && (activation == "gelu" || activation == "relu"))
           recipe.epilogue = activation == "gelu" ? MlpEpilogue::Gelu : MlpEpilogue::Relu;
         const bool fused_gate = family == Family::Nomic && is_gated;

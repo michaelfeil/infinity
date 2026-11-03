@@ -13,15 +13,51 @@ at::Tensor fp8_scale_output(const at::Tensor& values,
                             const at::Tensor& row_scales,
                             const at::Tensor& column_scales,
                             at::ScalarType dtype);
-// Native Candle SiLU rounding followed by dynamic per-row E4M3 quantization.
+// Apply one rounded gated activation followed by dynamic per-row E4M3 quantization.
+// RoundedSilu matches the original Candle SiLU staging, including BF16 gate-first aligned pairs.
+// RoundedGelu matches the original native gated GELU staging: aligned vector rows use the native
+// half-pair HFMA alpha, while ragged or unaligned rows retain the scalar separate staging.
+// gate_first selects whether the first half is the activated gate; false activates the second half.
+std::pair<at::Tensor, at::Tensor>
+fp8_gated_quantize(const at::Tensor& gate_up, Fp8GatedActivation kind, bool gate_first = true);
+// Apply FP32 row and column scales, round once to dtype, then run the same rounded gated
+// activation and dynamic per-row E4M3 quantization. Aligned rows up to 20480 activation columns
+// avoid the scaled gate/up tensor; wider or unaligned rows retain the same composed arithmetic.
+std::pair<at::Tensor, at::Tensor> fp8_scaled_gated_quantize(const at::Tensor& values,
+                                                            const at::Tensor& row_scales,
+                                                            const at::Tensor& column_scales,
+                                                            at::ScalarType dtype,
+                                                            Fp8GatedActivation kind,
+                                                            bool gate_first = true);
+
+// Native Candle SiLU rounding followed by dynamic per-row E4M3 quantization. This legacy wrapper
+// retains the original gate-first layout and bytes.
 std::pair<at::Tensor, at::Tensor> fp8_swiglu_quantize(const at::Tensor& gate_up);
 // Apply FP32 row and column scales, round once to dtype, then run the same rounded SwiGLU and
 // dynamic per-row E4M3 quantization. Aligned rows up to 20480 activation columns avoid the scaled
-// gate/up tensor; wider or unaligned rows retain the same composed arithmetic.
+// gate/up tensor; wider or unaligned rows retain the same composed arithmetic. This legacy wrapper
+// retains the original gate-first layout and bytes.
 std::pair<at::Tensor, at::Tensor> fp8_scaled_swiglu_quantize(const at::Tensor& values,
                                                              const at::Tensor& row_scales,
                                                              const at::Tensor& column_scales,
                                                              at::ScalarType dtype);
+
+namespace detail {
+// Internal byte-preservation entry points. `preserve_legacy_scalar` keeps the pre-existing SwiGLU
+// path on its frozen scalar staging instead of selecting the original aligned-pair recipe.
+std::pair<at::Tensor, at::Tensor> fp8_gated_quantize_impl(const at::Tensor& gate_up,
+                                                          Fp8GatedActivation kind,
+                                                          bool gate_first,
+                                                          bool preserve_legacy_scalar);
+std::pair<at::Tensor, at::Tensor> fp8_scaled_gated_quantize_impl(const at::Tensor& values,
+                                                                 const at::Tensor& row_scales,
+                                                                 const at::Tensor& column_scales,
+                                                                 at::ScalarType dtype,
+                                                                 Fp8GatedActivation kind,
+                                                                 bool gate_first,
+                                                                 bool preserve_legacy_scalar);
+}
+
 // Add an optional model-dtype bias, apply one rounded unary activation, then dynamically quantize
 // every row to E4M3 with an F32 scale. Ragged and wide rows retain the same scalar arithmetic.
 std::pair<at::Tensor, at::Tensor>

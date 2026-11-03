@@ -687,26 +687,30 @@ at::Tensor Fp8Linear::forward_quantized(const at::Tensor& input,
   return bias.defined() ? output + bias : output;
 }
 
-/// Fuse portable output scaling, rounded SwiGLU and row FP8 quantization. The GEMM, activation
-/// input and weight scales are identical to forward_quantized; Hopper keeps its exact rowwise
-/// scaled GEMM followed by the existing SwiGLU quantizer.
+/// Fuse portable output scaling, one rounded gated activation and row FP8 quantization. The GEMM,
+/// activation input and weight scales are identical to forward_quantized; Hopper keeps its exact
+/// rowwise scaled GEMM followed by the existing gated quantizer.
 std::pair<at::Tensor, at::Tensor>
-Fp8Linear::forward_swiglu_quantized(const at::Tensor& input, const at::Tensor& row_scales) const {
+Fp8Linear::forward_gated_quantized_impl(const at::Tensor& input,
+                                        const at::Tensor& row_scales,
+                                        Fp8GatedActivation kind,
+                                        bool gate_first,
+                                        bool preserve_legacy_scalar) const {
   const bool prequantized = input.scalar_type() == at::kFloat8_e4m3fn;
   TORCH_CHECK(input.dim() == 2 && input.device() == matrix_.device() &&
                   (prequantized || input.scalar_type() == dtype_) && input.size(1) == input_width(),
-              "Invalid dynamic FP8 SwiGLU activations");
+              "Invalid dynamic FP8 gated activations");
   TORCH_CHECK(output_width() % 2 == 0 && output_width() / 2 <= 32768,
-              "Dynamic FP8 SwiGLU requires an even gate/up width up to 65536");
+              "Dynamic FP8 gated activation requires an even gate/up width up to 65536");
   if (prequantized) {
     TORCH_CHECK(input.is_contiguous() && row_scales.dim() == 2 &&
                     row_scales.size(0) == input.size(0) && row_scales.size(1) == 1 &&
                     row_scales.device() == input.device() &&
                     row_scales.scalar_type() == at::kFloat && row_scales.is_contiguous(),
-                "Invalid prequantized FP8 SwiGLU row scales");
+                "Invalid prequantized FP8 gated row scales");
   } else {
     TORCH_CHECK(!row_scales.defined(),
-                "Model-dtype SwiGLU rows are quantized once and take no precomputed scales");
+                "Model-dtype gated rows are quantized once and take no precomputed scales");
   }
   if (input.size(0) == 0)
     return {at::empty({0, output_width() / 2}, input.options().dtype(at::kFloat8_e4m3fn)),
@@ -721,14 +725,29 @@ Fp8Linear::forward_swiglu_quantized(const at::Tensor& input, const at::Tensor& r
     scales = std::move(quantized.second);
   }
   if (rowwise_ || output_width() / 2 > fp8_scaled_swiglu_max_width)
-    return fp8_swiglu_quantize(forward_quantized(rows, scales));
+    return detail::fp8_gated_quantize_impl(
+        forward_quantized(rows, scales), kind, gate_first, preserve_legacy_scalar);
   // Preserve the portable recipe: full FP32 accumulation, then the two separate FP32 scale
-  // products and one model-dtype rounding inside the fused scaling/SwiGLU kernel.
-  return fp8_scaled_swiglu_quantize(unscaled_product(rows), scales, scales_, dtype_);
+  // products and one model-dtype rounding inside the fused scaling/gated kernel.
+  return detail::fp8_scaled_gated_quantize_impl(
+      unscaled_product(rows), scales, scales_, dtype_, kind, gate_first, preserve_legacy_scalar);
 #else
   TORCH_CHECK(false, "Dynamic FP8 requires a CUDA LibTorch build");
   return {};
 #endif
+}
+
+std::pair<at::Tensor, at::Tensor> Fp8Linear::forward_gated_quantized(const at::Tensor& input,
+                                                                     const at::Tensor& row_scales,
+                                                                     Fp8GatedActivation kind,
+                                                                     bool gate_first) const {
+  return forward_gated_quantized_impl(input, row_scales, kind, gate_first, false);
+}
+
+std::pair<at::Tensor, at::Tensor>
+Fp8Linear::forward_swiglu_quantized(const at::Tensor& input, const at::Tensor& row_scales) const {
+  return forward_gated_quantized_impl(
+      input, row_scales, Fp8GatedActivation::RoundedSilu, true, true);
 }
 
 /// Fuse the projection with an optional separate bias, one rounded unary activation and row FP8

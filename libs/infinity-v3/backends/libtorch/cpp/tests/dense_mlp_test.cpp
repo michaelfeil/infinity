@@ -339,6 +339,144 @@ void check(const c10::Device& device, at::ScalarType dtype) {
       check_equal(guarded.forward(x),
                   infinity::Fp8Linear(wo).forward(infinity::fused_gated_activation(middle, 5), bo));
     }
+    auto packed_bias = at::cat({bi, bu});
+    auto gated_code = [](infinity::Fp8GatedActivation kind) {
+      return kind == infinity::Fp8GatedActivation::RoundedSilu ? 5 : 4;
+    };
+    auto make_gated_recipe = [&](infinity::Fp8GatedActivation kind, bool gate_first) {
+      const int code = gated_code(kind);
+      auto recipe = infinity::MlpActivationRecipe::numerical(
+          [code, gate_first](const at::Tensor& rows) {
+            return infinity::fused_gated_activation(rows, code, gate_first);
+          },
+          true);
+      recipe.gate_first = gate_first;
+      recipe.fp8_gated_activation = kind;
+      return recipe;
+    };
+    // Explicit gated markers must use the same fused projection boundary as the composed
+    // model-dtype projection + native gated activation + FP8 output.
+    for (auto kind :
+         {infinity::Fp8GatedActivation::RoundedSilu, infinity::Fp8GatedActivation::RoundedGelu})
+      for (bool gate_first : {false, true}) {
+        const int code = gated_code(kind);
+        infinity::DenseMlp gated_mlp({packed}, {wo, bo}, make_gated_recipe(kind, gate_first));
+        gated_mlp.prepare(infinity::MlpPrecision::Fp8);
+        auto composed = [&](const at::Tensor& values) {
+          auto projected = infinity::Fp8Linear(packed).forward(values);
+          auto activated = infinity::fused_gated_activation(projected, code, gate_first);
+          return infinity::Fp8Linear(wo).forward(activated, bo);
+        };
+        auto quantized = infinity::fp8_quantize_rows(x);
+        check_equal(gated_mlp.forward(x), composed(x));
+        check_equal(gated_mlp.forward(quantized.first, {}, quantized.second), composed(x));
+        auto empty_x = at::empty({0, 32}, opts);
+        check_equal(gated_mlp.forward(empty_x), composed(empty_x));
+        // Output bias and clipping remain outside the fused boundary but must be preserved.
+        infinity::ProjectionRecipe output_recipe;
+        output_recipe.output_clip = std::array<double, 2>{-.1, .2};
+        infinity::DenseMlp clipped_mlp(
+            {packed}, {wo, bo, output_recipe}, make_gated_recipe(kind, gate_first));
+        clipped_mlp.prepare(infinity::MlpPrecision::Fp8);
+        auto composed_clipped = [&](const at::Tensor& values) {
+          auto projected = infinity::Fp8Linear(packed).forward(values);
+          auto activated = infinity::fused_gated_activation(projected, code, gate_first);
+          return infinity::Fp8Linear(wo).forward(activated, bo).clamp(-.1, .2);
+        };
+        check_equal(clipped_mlp.forward(x), composed_clipped(x));
+        check_equal(clipped_mlp.forward(quantized.first, {}, quantized.second),
+                    composed_clipped(x));
+        if (kind == infinity::Fp8GatedActivation::RoundedSilu && gate_first)
+          check_equal(gated_mlp.forward(x), mlp.forward(x));
+      }
+    // Projection transforms and separate up projections decline fusion but keep their arithmetic.
+    auto check_gated_guarded = [&](infinity::Fp8GatedActivation kind,
+                                   bool gate_first,
+                                   const at::Tensor& values,
+                                   infinity::ProjectionRecipe input_recipe,
+                                   infinity::ProjectionRecipe output_recipe,
+                                   bool with_input_bias) {
+      const int code = gated_code(kind);
+      auto bias = with_input_bias ? packed_bias : at::Tensor();
+      infinity::DenseMlp gated_mlp({packed, bias, input_recipe},
+                                   {wo, bo, output_recipe},
+                                   make_gated_recipe(kind, gate_first));
+      gated_mlp.prepare(infinity::MlpPrecision::Fp8);
+      auto projected = project(values, packed, bias, input_recipe);
+      auto activated = infinity::fused_gated_activation(projected, code, gate_first);
+      check_equal(gated_mlp.forward(values), project(activated, wo, bo, output_recipe));
+    };
+    {
+      check_gated_guarded(infinity::Fp8GatedActivation::RoundedGelu, false, x, {}, {}, true);
+      infinity::ProjectionRecipe input_recipe;
+      input_recipe.input_clip = std::array<double, 2>{-.1, .2};
+      check_gated_guarded(
+          infinity::Fp8GatedActivation::RoundedGelu, false, x, input_recipe, {}, false);
+      input_recipe = {};
+      input_recipe.cast_input = true;
+      check_gated_guarded(infinity::Fp8GatedActivation::RoundedGelu,
+                          false,
+                          x.to(at::kFloat),
+                          input_recipe,
+                          {},
+                          false);
+      input_recipe = {};
+      input_recipe.output_clip = std::array<double, 2>{-.01, .02};
+      check_gated_guarded(
+          infinity::Fp8GatedActivation::RoundedGelu, false, x, input_recipe, {}, false);
+      infinity::ProjectionRecipe output_recipe;
+      output_recipe.input_clip = std::array<double, 2>{-.2, .3};
+      check_gated_guarded(
+          infinity::Fp8GatedActivation::RoundedGelu, false, x, {}, output_recipe, false);
+      output_recipe = {};
+      output_recipe.cast_input = true;
+      check_gated_guarded(
+          infinity::Fp8GatedActivation::RoundedGelu, false, x, {}, output_recipe, false);
+    }
+    {
+      auto activation = infinity::MlpActivationRecipe::numerical([](const at::Tensor& rows) {
+        return infinity::mlp_activation(rows, infinity::MlpActivation::RoundedSilu);
+      });
+      activation.fp8_gated_activation = infinity::Fp8GatedActivation::RoundedSilu;
+      infinity::DenseMlp separate_mlp({wi, bi}, {up, bu}, {wo, bo}, activation);
+      separate_mlp.prepare(infinity::MlpPrecision::Fp8);
+      auto expected = infinity::Fp8Linear(wo).forward(
+          infinity::mlp_activation(infinity::Fp8Linear(wi).forward(x, bi),
+                                   infinity::MlpActivation::RoundedSilu) *
+              infinity::Fp8Linear(up).forward(x, bu),
+          bo);
+      check_equal(separate_mlp.forward(x), expected);
+    }
+    {
+      int calls = 0;
+      auto activation = infinity::MlpActivationRecipe::numerical(
+          [&calls](const at::Tensor& rows) {
+            ++calls;
+            return infinity::fused_gated_activation(rows, 4, false);
+          },
+          true);
+      activation.gate_first = false;
+      infinity::DenseMlp custom_mlp({packed}, {wo, bo}, activation);
+      custom_mlp.prepare(infinity::MlpPrecision::Fp8);
+      auto expected = infinity::Fp8Linear(wo).forward(
+          infinity::fused_gated_activation(infinity::Fp8Linear(packed).forward(x), 4, false), bo);
+      check_equal(custom_mlp.forward(x), expected);
+      TORCH_CHECK(calls == 1, "Unknown custom gated activation was bypassed");
+    }
+    {
+      int calls = 0;
+      auto activation = make_gated_recipe(infinity::Fp8GatedActivation::RoundedGelu, true);
+      activation.custom = [&calls](const at::Tensor& rows) {
+        ++calls;
+        return at::relu(rows);
+      };
+      infinity::DenseMlp marked_mlp({packed}, {wo, bo}, activation);
+      marked_mlp.prepare(infinity::MlpPrecision::Fp8);
+      auto expected = infinity::Fp8Linear(wo).forward(
+          infinity::fused_gated_activation(infinity::Fp8Linear(packed).forward(x), 4, true), bo);
+      check_equal(marked_mlp.forward(x), expected);
+      TORCH_CHECK(calls == 0, "Explicit gated marker did not bypass the fallback callback");
+    }
     infinity::DenseMlp invalid({wi}, {at::zeros({17, 64}, opts)}, {infinity::MlpActivation::Relu});
     bool rejected = false;
     try {
