@@ -1,15 +1,26 @@
 // Packed batch invariants for native encoders. This fixture needs no Python or
 // downloaded checkpoint. Run with --cuda to exercise Torch varlen FlashAttention.
 #include "models/encoder_models.h"
+#include "models/model.h"
 #include "helpers/modern_cpu_math.h"
 #include "helpers/fp8_linear.h"
 #include "batching/cuda_graph.h"
+#include "bridge.h"
 #ifdef TEI_TORCH_CUDA_KERNELS
 #include <ATen/cuda/CUDAContext.h>
 #endif
 #include <ATen/Parallel.h>
 #include <c10/core/InferenceMode.h>
+#include <algorithm>
+#include <array>
+#include <cstddef>
+#include <cstdint>
+#include <cstring>
 #include <iostream>
+#include <memory>
+#include <string>
+#include <type_traits>
+#include <vector>
 
 namespace {
 constexpr int64_t H = 32, I = 48;
@@ -268,6 +279,438 @@ void nomic_expert_shape_validation(c10::Device device, at::ScalarType dtype) {
                     .item<bool>(),
                 "Unused Nomic expert tensors affected dense inference");
   }
+}
+
+struct AbiRequest {
+  std::vector<int64_t> ids, types, positions;
+  std::vector<int32_t> cumulative;
+  int64_t batch = 0, max_sequence = 0;
+  std::vector<int64_t> pooled, raw;
+};
+
+int32_t abi_scalar_type(at::ScalarType type) {
+  if (type == at::kFloat)
+    return 0;
+  if (type == at::kHalf)
+    return 1;
+  if (type == at::kBFloat16)
+    return 2;
+  TORCH_CHECK(false, "Unsupported ABI fixture dtype");
+  return 0;
+}
+
+AbiRequest make_abi_request(const std::vector<int64_t>& lengths, int64_t first_id) {
+  AbiRequest request;
+  request.batch = static_cast<int64_t>(lengths.size());
+  request.cumulative.push_back(0);
+  int64_t next = first_id;
+  for (size_t row = 0; row < lengths.size(); ++row) {
+    request.max_sequence = std::max(request.max_sequence, lengths[row]);
+    for (int64_t index = 0; index < lengths[row]; ++index) {
+      request.ids.push_back((next + index) % 64);
+      request.types.push_back(static_cast<int64_t>(row % 2));
+      request.positions.push_back(index);
+    }
+    next += lengths[row] + 7;
+    request.cumulative.push_back(static_cast<int32_t>(request.ids.size()));
+  }
+  return request;
+}
+
+void* create_abi_encoder(const infinity::Options& options,
+                         const infinity::Weights& checkpoint,
+                         c10::Device device,
+                         at::ScalarType dtype,
+                         bool graphs) {
+  TeiConfig shape{H, 4, 2, I, 64, 32, 2, 1e-12, 0};
+  std::unique_ptr<void, decltype(&tei_destroy)> engine(
+      tei_create(&shape, device.str().c_str(), abi_scalar_type(dtype)), tei_destroy);
+  TORCH_CHECK(engine, tei_error());
+  for (const auto& [key, value] : options.values)
+    TORCH_CHECK(tei_option(engine.get(), key.c_str(), value.c_str()) == 0, tei_error());
+  if (graphs) {
+    TORCH_CHECK(tei_option(engine.get(), "_cuda_graphs", "true") == 0, tei_error());
+    TORCH_CHECK(tei_option(engine.get(), "_cuda_graph_reuse", "1") == 0, tei_error());
+    TORCH_CHECK(tei_option(engine.get(), "_cuda_graph_entries", "4") == 0, tei_error());
+  }
+  for (const auto& [name, value] : checkpoint) {
+    auto host = value.to(at::kCPU, dtype).contiguous();
+    TORCH_CHECK(tei_weight(engine.get(),
+                           name.c_str(),
+                           reinterpret_cast<const uint8_t*>(host.const_data_ptr()),
+                           host.sizes().data(),
+                           host.dim(),
+                           abi_scalar_type(dtype)) == 0,
+                tei_error());
+  }
+  TORCH_CHECK(tei_ready(engine.get()) == 0, tei_error());
+  return engine.release();
+}
+
+size_t abi_output_count(void* engine, const AbiRequest& request) {
+  const auto pooled_width = tei_pooled_width(engine), raw_width = tei_output_width(engine);
+  TORCH_CHECK(pooled_width > 0 && raw_width > 0, "Invalid ABI output width");
+  size_t count = request.pooled.size() * static_cast<size_t>(pooled_width);
+  for (const auto index : request.raw) {
+    TORCH_CHECK(index >= 0 && index < request.batch, "Invalid ABI raw index");
+    count += static_cast<size_t>(request.cumulative[index + 1] - request.cumulative[index]) *
+             static_cast<size_t>(raw_width);
+  }
+  return count;
+}
+
+std::vector<float> run_abi_sync(void* engine, const AbiRequest& request) {
+  const auto capacity = abi_output_count(engine, request);
+  std::vector<float> output(capacity);
+  TORCH_CHECK(tei_forward(engine,
+                          request.ids.data(),
+                          request.types.data(),
+                          request.positions.data(),
+                          request.cumulative.data(),
+                          request.batch,
+                          request.max_sequence,
+                          1,
+                          request.pooled.data(),
+                          request.pooled.size(),
+                          request.raw.data(),
+                          request.raw.size(),
+                          output.data(),
+                          capacity,
+                          nullptr,
+                          nullptr,
+                          0,
+                          nullptr,
+                          0) == 0,
+              tei_error());
+  return output;
+}
+
+struct PendingAbiOutput {
+  void* value = nullptr;
+  size_t capacity = 0;
+};
+
+PendingAbiOutput submit_abi_async(void* engine, const AbiRequest& request) {
+  auto ids = request.ids, types = request.types, positions = request.positions,
+       pooled = request.pooled, raw = request.raw;
+  auto cumulative = request.cumulative;
+  const auto capacity = abi_output_count(engine, request);
+  auto* output = tei_forward_submit(engine,
+                                    ids.data(),
+                                    types.data(),
+                                    positions.data(),
+                                    cumulative.data(),
+                                    request.batch,
+                                    request.max_sequence,
+                                    1,
+                                    pooled.data(),
+                                    pooled.size(),
+                                    raw.data(),
+                                    raw.size(),
+                                    capacity,
+                                    nullptr,
+                                    nullptr,
+                                    0,
+                                    nullptr,
+                                    0,
+                                    nullptr);
+  TORCH_CHECK(output, tei_error());
+  auto poison_and_release = [](auto& values) {
+    using Value = typename std::decay_t<decltype(values)>::value_type;
+    std::fill(values.begin(), values.end(), static_cast<Value>(-1));
+    std::vector<Value>().swap(values);
+  };
+  poison_and_release(ids);
+  poison_and_release(types);
+  poison_and_release(positions);
+  poison_and_release(cumulative);
+  poison_and_release(pooled);
+  poison_and_release(raw);
+  return {output, capacity};
+}
+
+std::vector<float> read_abi_async(void* output, size_t capacity) {
+  const float* values = tei_output_wait(output);
+  TORCH_CHECK(values, tei_error());
+  return std::vector<float>(values, values + capacity);
+}
+
+std::array<uint64_t, 7> abi_graph_stats(void* engine) {
+  std::array<uint64_t, 7> counters{};
+  TORCH_CHECK(tei_graph_stats(engine, counters.data(), counters.size()) == 0, tei_error());
+  return counters;
+}
+
+bool same_float_bits(const std::vector<float>& left, const std::vector<float>& right) {
+  return left.size() == right.size() &&
+         (left.empty() || std::memcmp(left.data(), right.data(), left.size() * sizeof(float)) == 0);
+}
+
+void append_float_rows(std::vector<float>& output, const at::Tensor& rows) {
+  auto flat = rows.to(at::kFloat).to(at::kCPU).contiguous().view({-1});
+  const auto* values = flat.const_data_ptr<float>();
+  output.insert(output.end(), values, values + flat.numel());
+}
+
+struct NativeEncoder {
+  infinity::Options options;
+  infinity::Weights weights;
+  c10::Device device;
+  std::unique_ptr<infinity::Model> model;
+
+  NativeEncoder(const infinity::Options& config,
+                const infinity::Weights& checkpoint,
+                c10::Device value,
+                at::ScalarType dtype)
+      : options(config), weights(checkpoint), device(value) {
+    for (auto& item : weights)
+      item.second = item.second.to(device, dtype);
+    model = infinity::create_encoder(options, weights, device, dtype);
+    TORCH_CHECK(model, "Missing native encoder fixture for ", options.string("model_type"));
+    model->ready();
+  }
+};
+
+at::Tensor native_hidden(const NativeEncoder& native, const AbiRequest& request) {
+  auto options = at::TensorOptions().device(native.device).dtype(at::kLong);
+  auto ids = at::tensor(request.ids, options), types = at::tensor(request.types, options),
+       positions = at::tensor(request.positions, options);
+  auto cumulative = at::tensor(request.cumulative, options.dtype(at::kInt));
+  return native.model->forward({ids,
+                                types,
+                                positions,
+                                cumulative,
+                                request.cumulative.data(),
+                                request.batch,
+                                request.max_sequence});
+}
+
+std::vector<float> native_raw(const AbiRequest& request, const at::Tensor& hidden) {
+  std::vector<float> output;
+  for (const auto index : request.raw) {
+    const auto start = request.cumulative[index], length = request.cumulative[index + 1] - start;
+    append_float_rows(output, hidden.narrow(0, start, length));
+  }
+  return output;
+}
+
+std::vector<float>
+native_mean(const NativeEncoder& native, const AbiRequest& request, const at::Tensor& hidden) {
+  std::vector<float> output;
+  for (const auto index : request.pooled) {
+    const auto start = request.cumulative[index], length = request.cumulative[index + 1] - start;
+    append_float_rows(output, native.model->mean_pool(hidden.narrow(0, start, length)));
+  }
+  return output;
+}
+
+void check_abi_reference(const AbiRequest& request,
+                         const std::vector<float>& actual,
+                         const at::Tensor& hidden,
+                         const NativeEncoder& native,
+                         bool check_native_mean) {
+  const auto width = hidden.size(1);
+  size_t raw_elements = 0;
+  for (const auto index : request.raw)
+    raw_elements += static_cast<size_t>(request.cumulative[index + 1] - request.cumulative[index]) *
+                    static_cast<size_t>(width);
+  const auto pooled_elements = request.pooled.size() * static_cast<size_t>(width);
+  TORCH_CHECK(actual.size() == pooled_elements + raw_elements,
+              "C ABI output size mismatch for ",
+              request.batch);
+  const auto mean_end = actual.begin() + static_cast<std::ptrdiff_t>(pooled_elements);
+  TORCH_CHECK(
+      same_float_bits(std::vector<float>(mean_end, actual.end()), native_raw(request, hidden)),
+      "C ABI raw output changed from native packed rows");
+  if (check_native_mean)
+    TORCH_CHECK(same_float_bits(std::vector<float>(actual.begin(), mean_end),
+                                native_mean(native, request, hidden)),
+                "C ABI mean output changed from native mean pooling");
+}
+
+void check_mean_selection(const std::vector<float>& full,
+                          const std::vector<int64_t>& full_order,
+                          const std::vector<float>& selected,
+                          const std::vector<int64_t>& selected_order,
+                          int64_t width,
+                          const std::string& label) {
+  TORCH_CHECK(full.size() >= full_order.size() * static_cast<size_t>(width) &&
+                  selected.size() >= selected_order.size() * static_cast<size_t>(width),
+              "Invalid mean-selection fixture ",
+              label);
+  for (size_t row = 0; row < selected_order.size(); ++row) {
+    const auto found = std::find(full_order.begin(), full_order.end(), selected_order[row]);
+    TORCH_CHECK(found != full_order.end(), "Missing pooled row in ", label);
+    const auto source = static_cast<size_t>(found - full_order.begin()) * width;
+    const auto target = row * static_cast<size_t>(width);
+    TORCH_CHECK(std::memcmp(full.data() + source,
+                            selected.data() + target,
+                            static_cast<size_t>(width) * sizeof(float)) == 0,
+                "Mean pooled selection order changed for ",
+                label);
+  }
+}
+
+std::vector<float> mean_rows(const std::vector<float>& output, size_t rows, int64_t width) {
+  const auto end = output.begin() + static_cast<std::ptrdiff_t>(rows * static_cast<size_t>(width));
+  return std::vector<float>(output.begin(), end);
+}
+
+void abi_encoder_case(const std::string& type, c10::Device device, at::ScalarType dtype) {
+  auto options = config(type);
+  auto checkpoint = weights(type, c10::Device(at::kCPU), dtype);
+  NativeEncoder native(options, checkpoint, device, dtype);
+  const auto width = native.model->output_width();
+  TORCH_CHECK(width == H, "Unexpected native fixture width for ", type);
+
+  std::unique_ptr<void, decltype(&tei_destroy)> reference(
+      create_abi_encoder(options, checkpoint, device, dtype, false), tei_destroy);
+  TORCH_CHECK(tei_output_width(reference.get()) == width &&
+                  tei_pooled_width(reference.get()) == width,
+              "C ABI width mismatch for ",
+              type);
+
+  const auto a = make_abi_request({2, 4, 3}, 2), b = make_abi_request({2, 4, 3}, 31),
+             c = make_abi_request({1, 5}, 51);
+  auto a_full = a, a_partial = a, a_sparse = a, b_full = b, c_full = c, c_partial = c;
+  a_full.pooled = {0, 1, 2};
+  a_full.raw = {2, 0, 2};
+  a_partial.pooled = {2, 0, 2};
+  a_partial.raw = {1, 0};
+  a_sparse.pooled = {1};
+  a_sparse.raw = {2};
+  b_full.pooled = a_full.pooled;
+  b_full.raw = a_full.raw;
+  c_full.pooled = {0, 1};
+  c_full.raw = {1, 0};
+  c_partial.pooled = {1, 0, 1};
+  c_partial.raw = {1, 0};
+
+  const auto hidden_a = native_hidden(native, a), hidden_b = native_hidden(native, b),
+             hidden_c = native_hidden(native, c);
+  const auto expected_a_full = run_abi_sync(reference.get(), a_full),
+             expected_a_partial = run_abi_sync(reference.get(), a_partial),
+             expected_a_sparse = run_abi_sync(reference.get(), a_sparse),
+             expected_b_full = run_abi_sync(reference.get(), b_full),
+             expected_c_full = run_abi_sync(reference.get(), c_full),
+             expected_c_partial = run_abi_sync(reference.get(), c_partial);
+  const bool native_mean_available = !device.is_cuda();
+  check_abi_reference(a_full, expected_a_full, hidden_a, native, native_mean_available);
+  check_abi_reference(a_partial, expected_a_partial, hidden_a, native, native_mean_available);
+  check_abi_reference(a_sparse, expected_a_sparse, hidden_a, native, native_mean_available);
+  check_abi_reference(b_full, expected_b_full, hidden_b, native, native_mean_available);
+  check_abi_reference(c_full, expected_c_full, hidden_c, native, native_mean_available);
+  check_abi_reference(c_partial, expected_c_partial, hidden_c, native, native_mean_available);
+  check_mean_selection(mean_rows(expected_a_full, a_full.pooled.size(), width),
+                       a_full.pooled,
+                       mean_rows(expected_a_partial, a_partial.pooled.size(), width),
+                       a_partial.pooled,
+                       width,
+                       type + " A");
+  check_mean_selection(mean_rows(expected_a_full, a_full.pooled.size(), width),
+                       a_full.pooled,
+                       mean_rows(expected_a_sparse, a_sparse.pooled.size(), width),
+                       a_sparse.pooled,
+                       width,
+                       type + " A sparse");
+  check_mean_selection(mean_rows(expected_c_full, c_full.pooled.size(), width),
+                       c_full.pooled,
+                       mean_rows(expected_c_partial, c_partial.pooled.size(), width),
+                       c_partial.pooled,
+                       width,
+                       type + " C");
+  TORCH_CHECK(!same_float_bits(expected_a_full, expected_b_full),
+              "Changed token payload is indistinguishable for ",
+              type);
+  TORCH_CHECK(!same_float_bits(mean_rows(expected_a_full, a_full.pooled.size(), width),
+                               mean_rows(expected_a_partial, a_partial.pooled.size(), width)),
+              "Pooled selection is indistinguishable for ",
+              type);
+
+  if (!device.is_cuda()) {
+    std::cout << type << " C ABI synchronous raw/mean selection passed\n";
+    return;
+  }
+
+  const bool graph_supported = type != "new";
+  std::unique_ptr<void, decltype(&tei_destroy)> subject(
+      create_abi_encoder(options, checkpoint, device, dtype, graph_supported), tei_destroy);
+  std::array<uint64_t, 7> replayed{};
+  if (graph_supported) {
+    TORCH_CHECK(same_float_bits(run_abi_sync(subject.get(), a_full), expected_a_full),
+                "CUDA graph sync changed raw/mean output for ",
+                type);
+    const auto captured = abi_graph_stats(subject.get());
+    TORCH_CHECK(tei_graph_count(subject.get()) == 1 && captured[2] >= 1 && captured[3] >= 1,
+                "CUDA graph was not captured for ",
+                type);
+    TORCH_CHECK(same_float_bits(run_abi_sync(subject.get(), a_partial), expected_a_partial),
+                "CUDA graph sync changed pooled selection for ",
+                type);
+    replayed = abi_graph_stats(subject.get());
+    TORCH_CHECK(replayed[0] >= 1 && replayed[2] == captured[2] &&
+                    tei_graph_count(subject.get()) == 1,
+                "CUDA graph did not replay for same-geometry pooled selection ",
+                type);
+  } else {
+    TORCH_CHECK(same_float_bits(run_abi_sync(subject.get(), a_full), expected_a_full),
+                "CUDA sync changed raw/mean output for ",
+                type);
+    TORCH_CHECK(same_float_bits(run_abi_sync(subject.get(), a_partial), expected_a_partial),
+                "CUDA sync changed pooled selection for ",
+                type);
+  }
+
+  auto pending_b = submit_abi_async(subject.get(), b_full);
+  auto pending_c = submit_abi_async(subject.get(), c_partial);
+  std::unique_ptr<void, decltype(&tei_output_destroy)> lease_b(pending_b.value, tei_output_destroy);
+  std::unique_ptr<void, decltype(&tei_output_destroy)> lease_c(pending_c.value, tei_output_destroy);
+  const auto async_c = read_abi_async(lease_c.get(), pending_c.capacity);
+  const auto async_b = read_abi_async(lease_b.get(), pending_b.capacity);
+  lease_c.reset();
+  lease_b.reset();
+  TORCH_CHECK(same_float_bits(async_b, expected_b_full),
+              "Deferred changed-payload replay changed output for ",
+              type);
+  TORCH_CHECK(same_float_bits(async_c, expected_c_partial),
+              "Deferred geometry change changed output for ",
+              type);
+  const auto changed = abi_graph_stats(subject.get());
+  if (graph_supported) {
+    TORCH_CHECK(tei_graph_count(subject.get()) == 2,
+                "Alternating geometry did not create a second graph for ",
+                type);
+    TORCH_CHECK(changed[0] >= replayed[0] + 1 && changed[2] == replayed[2] + 1,
+                "Changed-payload graph replay counters are wrong for ",
+                type);
+  }
+
+  auto pending_a = submit_abi_async(subject.get(), a_full);
+  std::unique_ptr<void, decltype(&tei_output_destroy)> lease_a(pending_a.value, tei_output_destroy);
+  const auto async_a = read_abi_async(lease_a.get(), pending_a.capacity);
+  lease_a.reset();
+  const auto reused = abi_graph_stats(subject.get());
+  TORCH_CHECK(same_float_bits(async_a, expected_a_full),
+              "Reused output slot changed deferred result for ",
+              type);
+  if (graph_supported)
+    TORCH_CHECK(tei_graph_count(subject.get()) == 2 && reused[0] >= changed[0] + 1 &&
+                    reused[2] == changed[2],
+                "Alternating output slot did not reuse the graph for ",
+                type);
+  std::cout << type
+            << (graph_supported ? " C ABI sync/deferred raw/mean graph replay passed\n"
+                                : " C ABI sync/deferred raw/mean selection passed\n");
+}
+
+void abi_encoder_regression(c10::Device device) {
+  const std::vector<std::string> families = {"modernbert", "nomic_bert", "new", "distilbert"};
+  const std::vector<at::ScalarType> dtypes =
+      device.is_cuda() ? std::vector<at::ScalarType>{at::kHalf, at::kBFloat16}
+                       : std::vector<at::ScalarType>{at::kFloat};
+  for (const auto dtype : dtypes)
+    for (const auto& family : families)
+      abi_encoder_case(family, device, dtype);
 }
 }
 
@@ -538,4 +981,5 @@ int main(int argc, char** argv) {
                 error);
     std::cout << type << " packed-vs-independent max error " << error << "\n";
   }
+  abi_encoder_regression(device);
 }

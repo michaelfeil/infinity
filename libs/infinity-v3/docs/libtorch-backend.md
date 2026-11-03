@@ -71,6 +71,15 @@ rejected during configuration.
 Send requests to `/v1/systemone`. See [decision inputs](cli.md#structured-decision-inputs)
 for the request schema, image content parts and input limits.
 
+## Packed input transfers
+
+CUDA inference transfers token IDs, type IDs, positions and sequence boundaries
+together. Deferred requests fill a completion-owned pinned buffer that stays
+alive through completion. Full-batch mean pooling reuses the device sequence
+boundaries; selecting or repeating specific sequences preserves the requested
+output order. This shared path serves native embeddings, reranking, token
+classification and decisions under the configured input and staging memory limits.
+
 ## Checkpoint loading
 
 Local and Hugging Face checkpoints are supported. Keep the model cache on a
