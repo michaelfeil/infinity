@@ -106,8 +106,13 @@ impl Onejev {
                 || path.join("preprocessor_config.json").exists())
         {
             self.images = Some(
-                Qwen3VlProcessor::load(path, self.tokenizer.clone(), self.max_input_length, config)
-                    .map_err(|e| anyhow::anyhow!(e.to_string()))?,
+                Qwen3VlProcessor::load_images_only(
+                    path,
+                    self.tokenizer.clone(),
+                    self.max_input_length,
+                    config,
+                )
+                .map_err(|e| anyhow::anyhow!(e.to_string()))?,
             );
         }
         Ok(self)
@@ -779,6 +784,62 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    #[ignore = "manual CPU startup benchmark; set INFINITY_FRONTEND_PROFILE_MODEL to a local model root"]
+    fn profile_frontend_startup() -> anyhow::Result<()> {
+        use infinity_v3_core::multimodal::MultimodalConfig;
+        let root = std::path::PathBuf::from(std::env::var("INFINITY_FRONTEND_PROFILE_MODEL")?);
+        anyhow::ensure!(
+            root.is_absolute() && root.is_dir(),
+            "profile model root must be an absolute directory"
+        );
+        let legacy = std::env::var("INFINITY_FRONTEND_PROFILE_LEGACY").as_deref() == Ok("1");
+        let variant = if legacy {
+            "background_text_acceleration"
+        } else {
+            "images_only"
+        };
+        let total_started = std::time::Instant::now();
+
+        let started = std::time::Instant::now();
+        let tokenizer = Tokenizer::from_file(root.join("tokenizer.json"))
+            .map_err(|error| anyhow::anyhow!(error.to_string()))?;
+        let tokenizer_ms = started.elapsed().as_secs_f64() * 1000.0;
+
+        let started = std::time::Instant::now();
+        let mut model = Onejev::load(&root, tokenizer, 32768)?;
+        let onejev_ms = started.elapsed().as_secs_f64() * 1000.0;
+
+        let started = std::time::Instant::now();
+        if legacy {
+            let config: Value = serde_json::from_slice(&std::fs::read(root.join("config.json"))?)?;
+            anyhow::ensure!(
+                config["vision_config"].is_object()
+                    && (root.join("processor_config.json").exists()
+                        || root.join("preprocessor_config.json").exists()),
+                "legacy image processor was not constructed for this checkpoint"
+            );
+            model.images = Some(
+                Qwen3VlProcessor::load(
+                    &root,
+                    model.tokenizer.clone(),
+                    model.max_input_length,
+                    MultimodalConfig::default(),
+                )
+                .map_err(|error| anyhow::anyhow!(error.to_string()))?,
+            );
+        } else {
+            model = model.with_images(&root, MultimodalConfig::default())?;
+        }
+        let images_ms = started.elapsed().as_secs_f64() * 1000.0;
+        std::hint::black_box(&model);
+        eprintln!(
+            "onejev_frontend_startup variant={variant} hf_tokenizer_ms={tokenizer_ms:.3} onejev_load_ms={onejev_ms:.3} images_ms={images_ms:.3} total_ms={:.3}",
+            total_started.elapsed().as_secs_f64() * 1000.0
+        );
+        Ok(())
     }
 
     #[test]

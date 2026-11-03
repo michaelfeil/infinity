@@ -47,6 +47,30 @@ impl Default for MultimodalConfig {
     }
 }
 
+impl MultimodalConfig {
+    /// Validate limits and host patterns without loading model assets or images.
+    pub fn validate(&self) -> Result<()> {
+        if self.max_images == 0
+            || self.max_images > 32
+            || self.max_decoded_pixels == 0
+            || self.max_decoded_pixels > 16_777_216
+            || self.workers == 0
+            || self.workers > 32
+        {
+            return Err(invalid("Invalid multimodal processing limits"));
+        }
+        let budget = MediaBudget::new(self.memory_budget_bytes)?;
+        MediaResolver::new(
+            self.allowed_image_hosts.clone(),
+            budget,
+            self.max_image_bytes,
+            self.download_concurrency,
+            self.timeout,
+        )?;
+        Ok(())
+    }
+}
+
 pub struct PreparedQwenImages {
     pub images: Vec<Arc<ImagePatches>>,
     pub memory: Arc<tokio::sync::OwnedSemaphorePermit>,
@@ -72,8 +96,8 @@ impl std::fmt::Debug for Qwen3VlProcessor {
 
 struct ProcessorState {
     chat: ChatProcessor,
-    tokenizer: Tokenizer,
-    fast_tokenizer: Option<crate::fast_tokenization::FastTokenizer>,
+    tokenizer: Arc<Tokenizer>,
+    fast_tokenizer: crate::fast_tokenization::BackgroundFastTokenizer,
     images: QwenImageProcessor,
     budget: MediaBudget,
     config: MultimodalConfig,
@@ -88,9 +112,32 @@ struct ProcessorState {
 impl Qwen3VlProcessor {
     pub fn load(
         root: &Path,
+        tokenizer: Tokenizer,
+        max_tokens: usize,
+        config: MultimodalConfig,
+    ) -> Result<Self> {
+        Self::load_with_pooled_text_acceleration(root, tokenizer, max_tokens, config, true)
+    }
+
+    /// Load an image-only processor for callers that never encode text through
+    /// this processor, such as OneJev. Validation and image preparation are
+    /// identical to [`Self::load`], but the pooled-text Basetenkenizer is not
+    /// constructed.
+    pub fn load_images_only(
+        root: &Path,
+        tokenizer: Tokenizer,
+        max_tokens: usize,
+        config: MultimodalConfig,
+    ) -> Result<Self> {
+        Self::load_with_pooled_text_acceleration(root, tokenizer, max_tokens, config, false)
+    }
+
+    fn load_with_pooled_text_acceleration(
+        root: &Path,
         mut tokenizer: Tokenizer,
         max_tokens: usize,
         config: MultimodalConfig,
+        accelerate_pooled_text: bool,
     ) -> Result<Self> {
         if config.max_images == 0
             || config.max_images > 32
@@ -152,7 +199,12 @@ impl Qwen3VlProcessor {
             config.timeout,
         )?;
         let workers = Arc::new(Semaphore::new(config.workers));
-        let fast_tokenizer = crate::fast_tokenization::load(&tokenizer);
+        let tokenizer = Arc::new(tokenizer);
+        let fast_tokenizer = if accelerate_pooled_text {
+            crate::fast_tokenization::BackgroundFastTokenizer::new(tokenizer.clone())
+        } else {
+            crate::fast_tokenization::BackgroundFastTokenizer::disabled()
+        };
         Ok(Self {
             state: Arc::new(ProcessorState {
                 chat,
@@ -435,16 +487,18 @@ impl ProcessorState {
         if prompt.chars().count() > self.max_tokens.saturating_mul(250) {
             return Err(invalid("Rendered conversation exceeds the character limit"));
         }
-        let mut encoding = match &self.fast_tokenizer {
-            Some(fast) => crate::fast_tokenization::encode(fast, &self.tokenizer, &prompt, true)
-                .or_else(|_| self.tokenizer.encode(prompt.as_str(), true)),
+        let mut encoding = match self.fast_tokenizer.get() {
+            Some(fast) => {
+                crate::fast_tokenization::encode(fast, self.tokenizer.as_ref(), &prompt, true)
+                    .or_else(|_| self.tokenizer.encode(prompt.as_str(), true))
+            }
             None => self.tokenizer.encode(prompt.as_str(), true),
         }
         .map_err(|_| invalid("Native conversation tokenization failed"))?;
         if plans.is_empty() && truncate && encoding.len() > self.max_tokens {
             // Let the tokenizer truncate before its post-processor adds the pooled
             // terminal token. Slicing finalized IDs would discard that token.
-            let mut tokenizer = self.tokenizer.clone();
+            let mut tokenizer = self.tokenizer.as_ref().clone();
             tokenizer
                 .with_truncation(Some(tokenizers::TruncationParams {
                     max_length: self.max_tokens,
@@ -527,7 +581,308 @@ impl ProcessorState {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use base64::{engine::general_purpose::STANDARD, Engine};
     use serde_json::json;
+    use std::io::Cursor;
+    use tokenizers::AddedToken;
+
+    struct ImageFixture {
+        _directory: tempfile::TempDir,
+        root: std::path::PathBuf,
+        tokenizer: Tokenizer,
+    }
+
+    fn image_fixture(image_id_offset: i64) -> ImageFixture {
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path().to_path_buf();
+        let mut tokenizer = crate::fast_tokenization::test_tokenizer();
+        tokenizer.add_special_tokens(&[
+            AddedToken::from("<|image_pad|>", true),
+            AddedToken::from("<|vision_start|>", true),
+            AddedToken::from("<|vision_end|>", true),
+        ]);
+        let image_id = i64::from(tokenizer.token_to_id("<|image_pad|>").unwrap());
+        let vision_start = tokenizer.token_to_id("<|vision_start|>").unwrap();
+        let vision_end = tokenizer.token_to_id("<|vision_end|>").unwrap();
+        std::fs::write(
+            root.join("tokenizer.json"),
+            serde_json::to_vec(&tokenizer).unwrap(),
+        )
+        .unwrap();
+        std::fs::write(
+            root.join("chat_template.jinja"),
+            "{{ messages[0].content }}",
+        )
+        .unwrap();
+        std::fs::write(
+            root.join("config.json"),
+            serde_json::to_vec(&json!({
+                "model_type": "qwen3_5",
+                "image_token_id": u64::try_from(image_id + image_id_offset).unwrap(),
+                "vision_start_token_id": vision_start,
+                "vision_end_token_id": vision_end,
+                "vision_config": {},
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+        std::fs::write(
+            root.join("preprocessor_config.json"),
+            r#"{"patch_size":16,"temporal_patch_size":2,"merge_size":2,"min_pixels":4096,"max_pixels":1310720,"image_mean":[0.5,0.5,0.5],"image_std":[0.5,0.5,0.5],"rescale_factor":0.00392156862745098,"resample":3,"do_resize":true,"do_rescale":true,"do_normalize":true,"do_convert_rgb":true}"#,
+        )
+        .unwrap();
+        ImageFixture {
+            _directory: directory,
+            root,
+            tokenizer,
+        }
+    }
+
+    fn png_data_url(width: u32, height: u32) -> String {
+        let image = image::RgbImage::from_fn(width, height, |x, y| {
+            image::Rgb([
+                ((x * 17 + y * 3) % 256) as u8,
+                ((x * 5 + y * 29) % 256) as u8,
+                (((x ^ y) * 23) % 256) as u8,
+            ])
+        });
+        let mut bytes = Cursor::new(Vec::new());
+        image.write_to(&mut bytes, image::ImageFormat::Png).unwrap();
+        format!(
+            "data:image/png;base64,{}",
+            STANDARD.encode(bytes.into_inner())
+        )
+    }
+
+    fn text_messages() -> Vec<Message> {
+        serde_json::from_value(json!([
+            {"role":"user","content":"Compare the weather in Tokyo and Paris."},
+            {"role":"assistant","content":"It is raining in Tokyo."},
+            {"role":"user","content":"Summarize."}
+        ]))
+        .unwrap()
+    }
+
+    fn assert_same_images(regular: &PreparedQwenImages, images_only: &PreparedQwenImages) {
+        assert_eq!(regular.images.len(), images_only.images.len());
+        for (regular, images_only) in regular.images.iter().zip(&images_only.images) {
+            assert_eq!(regular.token_count(), images_only.token_count());
+            assert_eq!(regular.grid_thw, images_only.grid_thw);
+            assert_eq!(regular.patch_dim, images_only.patch_dim);
+            assert_eq!(regular.merge_size, images_only.merge_size);
+            assert_eq!(regular.pixels, images_only.pixels);
+        }
+    }
+
+    #[tokio::test]
+    async fn images_only_matches_regular_preparation_and_validation() {
+        let fixture = image_fixture(0);
+        let config = MultimodalConfig::default();
+        let regular = Qwen3VlProcessor::load(
+            &fixture.root,
+            fixture.tokenizer.clone(),
+            8192,
+            config.clone(),
+        )
+        .unwrap();
+        let images_only = Qwen3VlProcessor::load_images_only(
+            &fixture.root,
+            fixture.tokenizer.clone(),
+            8192,
+            config.clone(),
+        )
+        .unwrap();
+        assert!(images_only.state.fast_tokenizer.get().is_none());
+
+        let source = png_data_url(64, 96);
+        let regular_images = regular
+            .prepare_images(vec![source.clone()], 4096)
+            .await
+            .unwrap();
+        let only_images = images_only
+            .prepare_images(vec![source.clone()], 4096)
+            .await
+            .unwrap();
+        assert_same_images(&regular_images, &only_images);
+        let token_count = regular_images.images[0].token_count();
+        assert!(token_count > 0);
+
+        let regular_limit = regular
+            .prepare_images(vec![source.clone()], token_count - 1)
+            .await
+            .err()
+            .expect("regular processor accepted an over-budget image")
+            .to_string();
+        let images_only_limit = images_only
+            .prepare_images(vec![source.clone()], token_count - 1)
+            .await
+            .err()
+            .expect("image-only processor accepted an over-budget image")
+            .to_string();
+        assert_eq!(regular_limit, images_only_limit);
+        assert!(regular_limit.contains("vision token limit"));
+
+        let mut tight = config.clone();
+        tight.memory_budget_bytes = 4096;
+        let regular_tight = Qwen3VlProcessor::load(
+            &fixture.root,
+            fixture.tokenizer.clone(),
+            8192,
+            tight.clone(),
+        )
+        .unwrap();
+        let images_only_tight =
+            Qwen3VlProcessor::load_images_only(&fixture.root, fixture.tokenizer, 8192, tight)
+                .unwrap();
+        let regular_budget = regular_tight
+            .prepare_images(vec![source.clone()], 4096)
+            .await
+            .err()
+            .expect("regular processor exceeded its memory budget")
+            .to_string();
+        let images_only_budget = images_only_tight
+            .prepare_images(vec![source], 4096)
+            .await
+            .err()
+            .expect("image-only processor exceeded its memory budget")
+            .to_string();
+        assert_eq!(regular_budget, images_only_budget);
+
+        let invalid = image_fixture(1);
+        let regular_error = Qwen3VlProcessor::load(
+            &invalid.root,
+            invalid.tokenizer.clone(),
+            8192,
+            config.clone(),
+        )
+        .unwrap_err()
+        .to_string();
+        let images_only_error =
+            Qwen3VlProcessor::load_images_only(&invalid.root, invalid.tokenizer, 8192, config)
+                .unwrap_err()
+                .to_string();
+        assert_eq!(regular_error, images_only_error);
+        assert!(regular_error.contains("vision IDs"));
+    }
+
+    #[tokio::test]
+    async fn fallback_and_accelerated_processing_match_images_only() {
+        let fixture = image_fixture(0);
+        let config = MultimodalConfig::default();
+        let regular = Qwen3VlProcessor::load(
+            &fixture.root,
+            fixture.tokenizer.clone(),
+            8192,
+            config.clone(),
+        )
+        .unwrap();
+        let images_only = Qwen3VlProcessor::load_images_only(
+            &fixture.root,
+            fixture.tokenizer.clone(),
+            8192,
+            config,
+        )
+        .unwrap();
+        assert!(images_only.state.fast_tokenizer.get().is_none());
+
+        let regular_text = regular
+            .prepare(
+                EncodingInput::Messages(text_messages()),
+                true,
+                TruncationDirection::Right,
+                None,
+            )
+            .await
+            .unwrap();
+        let fallback_text = images_only
+            .prepare(
+                EncodingInput::Messages(text_messages()),
+                true,
+                TruncationDirection::Right,
+                None,
+            )
+            .await
+            .unwrap();
+        assert_eq!(regular_text.input_ids, fallback_text.input_ids);
+        assert!(regular_text.media.images.is_empty());
+        assert!(fallback_text.media.images.is_empty());
+
+        let source = png_data_url(64, 96);
+        let regular_images = regular
+            .prepare_images(vec![source.clone()], 4096)
+            .await
+            .unwrap();
+        let fallback_images = images_only
+            .prepare_images(vec![source], 4096)
+            .await
+            .unwrap();
+        assert_same_images(&regular_images, &fallback_images);
+    }
+
+    #[tokio::test]
+    async fn pending_accelerator_matches_hf_text_and_visual_processing() {
+        let fixture = image_fixture(0);
+        let config = MultimodalConfig::default();
+        let fallback = Qwen3VlProcessor::load_images_only(
+            &fixture.root,
+            fixture.tokenizer.clone(),
+            8192,
+            config.clone(),
+        )
+        .unwrap();
+        let mut pending = Qwen3VlProcessor::load_images_only(
+            &fixture.root,
+            fixture.tokenizer.clone(),
+            8192,
+            config,
+        )
+        .unwrap();
+        let (started_tx, started_rx) = std::sync::mpsc::sync_channel(0);
+        let (release_tx, release_rx) = std::sync::mpsc::sync_channel(0);
+        let state = Arc::get_mut(&mut pending.state).expect("fresh processor state");
+        state.fast_tokenizer = crate::fast_tokenization::BackgroundFastTokenizer::new_gated(
+            state.tokenizer.clone(),
+            started_tx,
+            release_rx,
+        );
+        started_rx
+            .recv_timeout(Duration::from_secs(5))
+            .expect("background tokenizer builder did not start");
+        assert!(pending.state.fast_tokenizer.get().is_none());
+
+        let pending_text = pending
+            .prepare(
+                EncodingInput::Messages(text_messages()),
+                true,
+                TruncationDirection::Right,
+                None,
+            )
+            .await
+            .unwrap();
+        let fallback_text = fallback
+            .prepare(
+                EncodingInput::Messages(text_messages()),
+                true,
+                TruncationDirection::Right,
+                None,
+            )
+            .await
+            .unwrap();
+        assert_eq!(pending_text.input_ids, fallback_text.input_ids);
+        assert!(pending_text.media.images.is_empty());
+        assert!(fallback_text.media.images.is_empty());
+
+        let source = png_data_url(64, 96);
+        let pending_images = pending
+            .prepare_images(vec![source.clone()], 4096)
+            .await
+            .unwrap();
+        let fallback_images = fallback.prepare_images(vec![source], 4096).await.unwrap();
+        assert_same_images(&pending_images, &fallback_images);
+
+        release_tx.send(()).expect("release tokenizer builder");
+        drop(pending);
+    }
 
     #[test]
     fn validates_all_parts_before_media_resolution() {

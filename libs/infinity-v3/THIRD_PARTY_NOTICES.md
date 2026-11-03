@@ -24,11 +24,14 @@ derives from the bundled Candle layer-norm extension's
 `kernels/ln_fwd_kernels.cuh`. It retains the BSD-3-Clause copyright and license
 header; the extension's BSD license text is also installed with the native library.
 
-Basetenkenizer is a Cargo dependency rather than vendored source. Its published
-package carries Apache-2.0 licensing and additional component notices; consult
-its [license audit](https://github.com/basetenlabs/basetenkenizer/blob/main/THIRD_PARTY_LICENSES.md)
-for the version used by the release. Other dependencies must likewise be audited
-from their actual pinned versions when assembling distributed artifacts.
+Basetenkenizer 0.2.9 is vendored from its published crates.io source under
+[vendor/basetenkenizer](vendor/basetenkenizer). The original Apache-2.0
+[LICENSE](vendor/basetenkenizer/LICENSE), bundled [component licenses](vendor/basetenkenizer/LICENSES),
+[third-party notices](vendor/basetenkenizer/THIRD_PARTY_LICENSES.md), and source
+headers are retained. Startup-only local modifications and the upstream source
+checksum are recorded in [PATCHES.md](vendor/basetenkenizer/PATCHES.md). Other
+dependencies must likewise be audited from their actual pinned versions when
+assembling distributed artifacts.
 
 The native Nomic eight-expert router in `backends/libtorch/cpp/kernels/fast_kernels.cu`
 derives its strict bitonic ordering from Candle `sort.cu` at revision
