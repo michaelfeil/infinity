@@ -357,8 +357,7 @@ checksum = "72b3254f16251a8381aa12e40e3c4d2f0199f8c6508fbecb9d91f575e0fbb8c6"
 [[package]]
 name = "basetenkenizer"
 version = "0.2.9"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "370b74a776779a158eb432006cd4935fbe25627bf830656c6260d4455b6cd6e5"
+source = "git+https://github.com/basetenlabs/basetenkenizer.git?rev=148c2d89f18ca087452b50aa333dfb29355ff594#148c2d89f18ca087452b50aa333dfb29355ff594"
 dependencies = [
  "chrono",
  "daachorse",

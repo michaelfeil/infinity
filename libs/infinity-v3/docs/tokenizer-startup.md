@@ -1,9 +1,11 @@
 # Tokenizer and frontend startup
 
-Infinity retains the published `basetenkenizer = "=0.2.9"` dependency with
-`default-features = false`. Constructor optimizations are submitted separately
-in [Basetenkenizer #16](https://github.com/basetenlabs/basetenkenizer/pull/16).
-The Infinity changes can be reviewed and merged independently of that release.
+Infinity temporarily pins Basetenkenizer through Cargo's git dependency to
+commit `148c2d89f18ca087452b50aa333dfb29355ff594`, with default features disabled.
+That commit contains the constructor improvements in
+[Basetenkenizer #16](https://github.com/basetenlabs/basetenkenizer/pull/16).
+Cargo fetches the source; no copy is checked into Infinity. Replace the git pin
+with a published crate version once a release contains these changes.
 
 ## Optional tokenizer initialization
 
@@ -78,7 +80,7 @@ tokenizer found median idle resident memory of 981 MiB for the eager pool and
 request paid the deferred cost: 41.6 ms versus 0.127 ms. These measurements do
 not depend on the upstream constructor candidate.
 
-Offline release smoke runs after restoring the published crate passed single
+Earlier offline release smoke runs against published version 0.2.9 passed single
 and paired HF token-ID parity and joined shutdown for embedding and
 classification. The example's first request took 27.9 ms and 28.8 ms respectively;
 these are individual CPU-only samples after pool construction, excluding HF JSON

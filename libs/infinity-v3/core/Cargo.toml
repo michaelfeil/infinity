@@ -25,7 +25,8 @@ serde_json = { workspace = true }
 infinity_v3-backend = { path = "../backends", default-features = false }
 thiserror = { workspace = true }
 tokenizers = { workspace = true }
-basetenkenizer = { version = "=0.2.9", default-features = false }
+# Use the startup fixes from basetenlabs/basetenkenizer#16 until they are released.
+basetenkenizer = { git = "https://github.com/basetenlabs/basetenkenizer.git", rev = "148c2d89f18ca087452b50aa333dfb29355ff594", default-features = false }
 tracing = { workspace = true }
 tokio = { workspace = true, features = ["net", "time", "process", "io-util"] }
 radix_mlp = {workspace = true}
