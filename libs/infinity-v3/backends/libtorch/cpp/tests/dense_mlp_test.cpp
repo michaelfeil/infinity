@@ -43,6 +43,55 @@ public:
   }
 };
 
+// Synthetic FP8 projection contract: the optional unary hook rejects activation rows wider than
+// the native fused kernels, while the ordinary projection remains valid.
+class TestFusedFp8LinearMethod final : public infinity::MlpLinearMethod {
+  at::Tensor weight_;
+  std::shared_ptr<int> fused_, ordinary_;
+
+public:
+  TestFusedFp8LinearMethod(at::Tensor weight,
+                           std::shared_ptr<int> fused,
+                           std::shared_ptr<int> ordinary)
+      : weight_(std::move(weight)), fused_(std::move(fused)), ordinary_(std::move(ordinary)) {}
+
+  infinity::MlpPrecision precision() const override {
+    return infinity::MlpPrecision::Fp8;
+  }
+
+  const at::Tensor& weight() const override {
+    return weight_;
+  }
+
+  bool accepts_fp8_rows() const override {
+    return true;
+  }
+
+  at::Tensor apply(const infinity::MlpProjection&,
+                   const at::Tensor& x,
+                   const at::Tensor& bias,
+                   const infinity::MlpContext&,
+                   infinity::MlpEpilogue epilogue,
+                   const at::Tensor&) const override {
+    TORCH_CHECK(epilogue == infinity::MlpEpilogue::None, "Synthetic FP8 method has no epilogue");
+    ++*ordinary_;
+    return at::linear(x, weight_, bias);
+  }
+
+  std::pair<at::Tensor, at::Tensor>
+  apply_activation_quantized(const infinity::MlpProjection& projection,
+                             const at::Tensor& x,
+                             const at::Tensor&,
+                             const infinity::MlpContext&,
+                             infinity::Fp8Activation) const override {
+    ++*fused_;
+    TORCH_CHECK(projection.output_width() <= 65536,
+                "Synthetic Hopper projection cannot fuse activation rows wider than 65536");
+    auto rows = at::linear(x, weight_, projection.bias());
+    return {at::relu(rows), at::ones({rows.size(0), 1}, rows.options().dtype(at::kFloat))};
+  }
+};
+
 void check(const c10::Device& device, at::ScalarType dtype) {
   const auto opts = at::TensorOptions().device(device).dtype(dtype);
   auto wi = at::randn({64, 32}, opts) * .03, wo = at::randn({16, 64}, opts) * .03;
@@ -303,6 +352,22 @@ void check(const c10::Device& device, at::ScalarType dtype) {
       output_recipe.output_clip = std::array<double, 2>{-.05, .1};
       check_guarded(x, {}, output_recipe);
     }
+    // Wide intermediate rows must retain the composed path because the unary fused kernels only
+    // accept 65536 activation columns; synthetic methods avoid depending on an oversized GEMM.
+    for (int64_t width : {65536, 65544})
+      for (int64_t rows : {1, 8}) {
+        auto fused = std::make_shared<int>(0), ordinary = std::make_shared<int>(0);
+        auto wi_wide = at::randn({width, 8}, opts), wo_wide = at::randn({8, width}, opts);
+        infinity::DenseMlp wide({wi_wide}, {wo_wide}, {infinity::MlpActivation::Relu});
+        wide.prepare([&](const infinity::MlpProjection& projection) {
+          return std::make_shared<TestFusedFp8LinearMethod>(projection.weight(), fused, ordinary);
+        });
+        auto input = at::randn({rows, 8}, opts);
+        check_equal(wide.forward(input), at::linear(at::relu(at::linear(input, wi_wide)), wo_wide));
+        const bool boundary = width == 65536;
+        TORCH_CHECK(*fused == (boundary ? 1 : 0) && *ordinary == (boundary ? 1 : 2),
+                    "Wide MLP fusion ignored the 65536-column activation bound");
+      }
     auto packed = at::cat({wi, up}, 0);
     auto recipe = infinity::MlpActivationRecipe::numerical(
         [](const at::Tensor& rows) { return infinity::fused_gated_activation(rows, 5); }, true);

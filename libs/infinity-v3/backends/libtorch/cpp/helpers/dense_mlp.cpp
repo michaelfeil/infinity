@@ -301,10 +301,11 @@ at::Tensor DenseMlp::forward(const at::Tensor& x,
   if (!fp8_activation && !activation_.custom && !activation_.quantized_custom &&
       activation_.kind == MlpActivation::Relu)
     fp8_activation = Fp8Activation::Relu;
-  if (fp8_activation && input_.fp8() && output_.method().accepts_fp8_rows() &&
-      !activation_.packed && !up_ && !input_.recipe_.input_clip && !input_.recipe_.cast_input &&
-      !input_.recipe_.output_clip && !output_.recipe_.input_clip && !output_.recipe_.cast_input &&
-      x.is_cuda() && x.dim() == 2 && x.size(1) == input_.input_width()) {
+  if (fp8_activation && input_.fp8() && input_.output_width() <= 65536 &&
+      output_.method().accepts_fp8_rows() && !activation_.packed && !up_ &&
+      !input_.recipe_.input_clip && !input_.recipe_.cast_input && !input_.recipe_.output_clip &&
+      !output_.recipe_.input_clip && !output_.recipe_.cast_input && x.is_cuda() && x.dim() == 2 &&
+      x.size(1) == input_.input_width()) {
     auto fused = input_.method().apply_activation_quantized(
         input_, x, input_scales, context, *fp8_activation);
     if (fused.first.defined() && fused.second.defined())
