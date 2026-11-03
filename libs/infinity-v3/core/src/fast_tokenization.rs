@@ -1,16 +1,108 @@
 //! BPE ID encoding for pooled inference. HF remains responsible for request-specific
 //! truncation and post-processing, and for endpoints requiring source alignment.
+use std::sync::{Arc, OnceLock};
 use tokenizers::{Encoding, Tokenizer};
 
 pub(crate) struct FastTokenizer {
     tokenizer: basetenkenizer::Tokenizer,
 }
 
-pub(crate) fn load(tokenizer: &Tokenizer) -> Option<FastTokenizer> {
-    if !matches!(
+/// Optional Basetenkenizer that is built once on a named background thread.
+///
+/// Clones share one initialization. `get` never waits; until the builder
+/// publishes a result, callers use the Hugging Face tokenizer.
+#[derive(Clone)]
+pub(crate) struct BackgroundFastTokenizer {
+    inner: Option<Arc<BackgroundFastTokenizerInner>>,
+}
+
+struct BackgroundFastTokenizerInner {
+    ready: Arc<OnceLock<Option<FastTokenizer>>>,
+    builder: Option<std::thread::JoinHandle<()>>,
+}
+
+impl BackgroundFastTokenizer {
+    pub(crate) fn new(tokenizer: Arc<Tokenizer>) -> Self {
+        if !is_bpe(&tokenizer) {
+            return Self::disabled();
+        }
+        Self::spawn(tokenizer, load)
+    }
+
+    pub(crate) fn disabled() -> Self {
+        Self { inner: None }
+    }
+
+    pub(crate) fn get(&self) -> Option<&FastTokenizer> {
+        self.inner.as_ref()?.ready.get().and_then(Option::as_ref)
+    }
+
+    fn spawn(
+        tokenizer: Arc<Tokenizer>,
+        build: impl FnOnce(&Tokenizer) -> Option<FastTokenizer> + Send + 'static,
+    ) -> Self {
+        let ready = Arc::new(OnceLock::new());
+        let builder_ready = Arc::clone(&ready);
+        let handle = std::thread::Builder::new()
+            .name("fast-tokenizer-builder".into())
+            .spawn(move || {
+                let built = build(tokenizer.as_ref());
+                let _ = builder_ready.set(built);
+            });
+        match handle {
+            Ok(handle) => Self {
+                inner: Some(Arc::new(BackgroundFastTokenizerInner {
+                    ready,
+                    builder: Some(handle),
+                })),
+            },
+            Err(error) => {
+                tracing::error!(
+                    %error,
+                    "Failed to start Basetenkenizer builder; using Hugging Face tokenizer"
+                );
+                Self::disabled()
+            }
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn new_gated(
+        tokenizer: Arc<Tokenizer>,
+        started: std::sync::mpsc::SyncSender<()>,
+        release: std::sync::mpsc::Receiver<()>,
+    ) -> Self {
+        if !is_bpe(&tokenizer) {
+            return Self::disabled();
+        }
+        Self::spawn(tokenizer, move |tokenizer| {
+            let _ = started.send(());
+            let _ = release.recv();
+            load(tokenizer)
+        })
+    }
+}
+
+impl Drop for BackgroundFastTokenizerInner {
+    fn drop(&mut self) {
+        if let Some(handle) = self.builder.take() {
+            if handle.join().is_err() {
+                tracing::error!("Basetenkenizer builder panicked");
+            }
+        }
+    }
+}
+
+pub(crate) fn is_bpe(tokenizer: &Tokenizer) -> bool {
+    matches!(
         tokenizer.get_model(),
         tokenizers::models::ModelWrapper::BPE(_)
-    ) {
+    )
+}
+
+pub(crate) fn load(tokenizer: &Tokenizer) -> Option<FastTokenizer> {
+    let started = std::time::Instant::now();
+    if !is_bpe(tokenizer) {
         return None;
     }
     // Serialize the configured tokenizer, including any server-added processors.
@@ -42,11 +134,17 @@ pub(crate) fn load(tokenizer: &Tokenizer) -> Option<FastTokenizer> {
         });
     match result {
         Ok(tokenizer) => {
-            tracing::info!("Using Basetenkenizer BPE encoding for pooled text inputs");
+            tracing::info!(
+                elapsed_ms = started.elapsed().as_secs_f64() * 1000.0,
+                "Using Basetenkenizer BPE encoding for pooled text inputs"
+            );
             Some(tokenizer)
         }
         Err(err) => {
-            tracing::debug!("Using Hugging Face tokenizer: {err}");
+            tracing::debug!(
+                elapsed_ms = started.elapsed().as_secs_f64() * 1000.0,
+                "Using Hugging Face tokenizer: {err}"
+            );
             None
         }
     }
@@ -202,6 +300,53 @@ mod tests {
             hf.encode(input, false).unwrap();
             assert!(load(&hf).is_none(), "{kind}");
         }
+    }
+
+    #[test]
+    fn background_builder_publishes_without_blocking() {
+        let background = BackgroundFastTokenizer::new(Arc::new(test_tokenizer()));
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while background.get().is_none() {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "background Basetenkenizer did not publish"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(1));
+        }
+        assert!(background.get().is_some());
+        let wordpiece = Tokenizer::new(tokenizers::models::wordpiece::WordPiece::default());
+        assert!(BackgroundFastTokenizer::new(Arc::new(wordpiece))
+            .get()
+            .is_none());
+        assert!(BackgroundFastTokenizer::disabled().get().is_none());
+    }
+
+    #[test]
+    fn background_builder_joins_on_final_drop() {
+        let (started_tx, started_rx) = std::sync::mpsc::sync_channel(0);
+        let (release_tx, release_rx) = std::sync::mpsc::channel();
+        let background =
+            BackgroundFastTokenizer::new_gated(Arc::new(test_tokenizer()), started_tx, release_rx);
+        let probe = background.clone();
+        started_rx
+            .recv_timeout(std::time::Duration::from_secs(5))
+            .unwrap();
+        assert!(probe.get().is_none());
+        drop(probe);
+
+        let (done_tx, done_rx) = std::sync::mpsc::channel();
+        let drop_thread = std::thread::spawn(move || {
+            drop(background);
+            let _ = done_tx.send(());
+        });
+        assert!(done_rx
+            .recv_timeout(std::time::Duration::from_millis(100))
+            .is_err());
+        release_tx.send(()).unwrap();
+        done_rx
+            .recv_timeout(std::time::Duration::from_secs(5))
+            .unwrap();
+        drop_thread.join().unwrap();
     }
 
     #[test]

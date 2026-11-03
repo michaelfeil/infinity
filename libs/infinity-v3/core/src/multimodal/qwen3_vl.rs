@@ -72,8 +72,8 @@ impl std::fmt::Debug for Qwen3VlProcessor {
 
 struct ProcessorState {
     chat: ChatProcessor,
-    tokenizer: Tokenizer,
-    fast_tokenizer: Option<crate::fast_tokenization::FastTokenizer>,
+    tokenizer: Arc<Tokenizer>,
+    fast_tokenizer: crate::fast_tokenization::BackgroundFastTokenizer,
     images: QwenImageProcessor,
     budget: MediaBudget,
     config: MultimodalConfig,
@@ -88,9 +88,32 @@ struct ProcessorState {
 impl Qwen3VlProcessor {
     pub fn load(
         root: &Path,
+        tokenizer: Tokenizer,
+        max_tokens: usize,
+        config: MultimodalConfig,
+    ) -> Result<Self> {
+        Self::load_with_pooled_text_acceleration(root, tokenizer, max_tokens, config, true)
+    }
+
+    /// Load an image-only processor for callers that never encode text through
+    /// this processor, such as OneJev. Validation and image preparation are
+    /// identical to [`Self::load`], but the pooled-text Basetenkenizer is not
+    /// constructed.
+    pub fn load_images_only(
+        root: &Path,
+        tokenizer: Tokenizer,
+        max_tokens: usize,
+        config: MultimodalConfig,
+    ) -> Result<Self> {
+        Self::load_with_pooled_text_acceleration(root, tokenizer, max_tokens, config, false)
+    }
+
+    fn load_with_pooled_text_acceleration(
+        root: &Path,
         mut tokenizer: Tokenizer,
         max_tokens: usize,
         config: MultimodalConfig,
+        accelerate_pooled_text: bool,
     ) -> Result<Self> {
         if config.max_images == 0
             || config.max_images > 32
@@ -152,7 +175,12 @@ impl Qwen3VlProcessor {
             config.timeout,
         )?;
         let workers = Arc::new(Semaphore::new(config.workers));
-        let fast_tokenizer = crate::fast_tokenization::load(&tokenizer);
+        let tokenizer = Arc::new(tokenizer);
+        let fast_tokenizer = if accelerate_pooled_text {
+            crate::fast_tokenization::BackgroundFastTokenizer::new(tokenizer.clone())
+        } else {
+            crate::fast_tokenization::BackgroundFastTokenizer::disabled()
+        };
         Ok(Self {
             state: Arc::new(ProcessorState {
                 chat,
@@ -435,16 +463,18 @@ impl ProcessorState {
         if prompt.chars().count() > self.max_tokens.saturating_mul(250) {
             return Err(invalid("Rendered conversation exceeds the character limit"));
         }
-        let mut encoding = match &self.fast_tokenizer {
-            Some(fast) => crate::fast_tokenization::encode(fast, &self.tokenizer, &prompt, true)
-                .or_else(|_| self.tokenizer.encode(prompt.as_str(), true)),
+        let mut encoding = match self.fast_tokenizer.get() {
+            Some(fast) => {
+                crate::fast_tokenization::encode(fast, self.tokenizer.as_ref(), &prompt, true)
+                    .or_else(|_| self.tokenizer.encode(prompt.as_str(), true))
+            }
             None => self.tokenizer.encode(prompt.as_str(), true),
         }
         .map_err(|_| invalid("Native conversation tokenization failed"))?;
         if plans.is_empty() && truncate && encoding.len() > self.max_tokens {
             // Let the tokenizer truncate before its post-processor adds the pooled
             // terminal token. Slicing finalized IDs would discard that token.
-            let mut tokenizer = self.tokenizer.clone();
+            let mut tokenizer = self.tokenizer.as_ref().clone();
             tokenizer
                 .with_truncation(Some(tokenizers::TruncationParams {
                     max_length: self.max_tokens,
@@ -528,6 +558,103 @@ impl ProcessorState {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[tokio::test]
+    async fn image_only_and_pending_tokenizers_preserve_text_and_images() {
+        use base64::{engine::general_purpose::STANDARD, Engine};
+        use tokenizers::AddedToken;
+        let root = tempfile::tempdir().unwrap();
+        let mut tokenizer = crate::fast_tokenization::test_tokenizer();
+        tokenizer.add_special_tokens(&[
+            AddedToken::from("<|image_pad|>", true),
+            AddedToken::from("<|vision_start|>", true),
+            AddedToken::from("<|vision_end|>", true),
+        ]);
+        std::fs::write(
+            root.path().join("config.json"),
+            serde_json::to_vec(&json!({
+                "model_type": "qwen3_5",
+                "image_token_id": tokenizer.token_to_id("<|image_pad|>").unwrap(),
+                "vision_start_token_id": tokenizer.token_to_id("<|vision_start|>").unwrap(),
+                "vision_end_token_id": tokenizer.token_to_id("<|vision_end|>").unwrap(),
+                "vision_config": {},
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+        std::fs::write(
+            root.path().join("chat_template.jinja"),
+            "{{ messages[0].content }}",
+        )
+        .unwrap();
+        std::fs::write(root.path().join("preprocessor_config.json"),
+            r#"{"patch_size":16,"temporal_patch_size":2,"merge_size":2,"min_pixels":4096,"max_pixels":1310720,"image_mean":[0.5,0.5,0.5],"image_std":[0.5,0.5,0.5],"rescale_factor":0.00392156862745098,"resample":3,"do_resize":true,"do_rescale":true,"do_normalize":true,"do_convert_rgb":true}"#
+        ).unwrap();
+        let load = || {
+            Qwen3VlProcessor::load_images_only(
+                root.path(),
+                tokenizer.clone(),
+                8192,
+                MultimodalConfig::default(),
+            )
+            .unwrap()
+        };
+        let fallback = load();
+        let mut pending = load();
+        assert!(fallback.state.fast_tokenizer.get().is_none());
+        let (started_tx, started_rx) = std::sync::mpsc::sync_channel(0);
+        let (release_tx, release_rx) = std::sync::mpsc::channel();
+        let state = Arc::get_mut(&mut pending.state).unwrap();
+        state.fast_tokenizer = crate::fast_tokenization::BackgroundFastTokenizer::new_gated(
+            state.tokenizer.clone(),
+            started_tx,
+            release_rx,
+        );
+        started_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+        let encode = |processor: Qwen3VlProcessor| async move {
+            processor
+                .prepare(
+                    EncodingInput::Single("abcd".into()),
+                    true,
+                    TruncationDirection::Right,
+                    None,
+                )
+                .await
+                .unwrap()
+                .input_ids
+        };
+        let expected = encode(fallback.clone()).await;
+        assert_eq!(encode(pending.clone()).await, expected);
+        assert!(pending.state.fast_tokenizer.get().is_none());
+
+        let image = image::RgbImage::from_pixel(64, 96, image::Rgb([12, 34, 56]));
+        let mut bytes = std::io::Cursor::new(Vec::new());
+        image.write_to(&mut bytes, image::ImageFormat::Png).unwrap();
+        let source = format!(
+            "data:image/png;base64,{}",
+            STANDARD.encode(bytes.into_inner())
+        );
+        let left = fallback
+            .prepare_images(vec![source.clone()], 4096)
+            .await
+            .unwrap();
+        let right = pending.prepare_images(vec![source], 4096).await.unwrap();
+        assert_eq!(left.images.len(), right.images.len());
+        for (left, right) in left.images.iter().zip(&right.images) {
+            assert_eq!(left.grid_thw, right.grid_thw);
+            assert_eq!(left.pixels, right.pixels);
+            assert_eq!(left.token_count(), right.token_count());
+        }
+        release_tx.send(()).unwrap();
+        tokio::time::timeout(Duration::from_secs(5), async {
+            while pending.state.fast_tokenizer.get().is_none() {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+        assert_eq!(encode(pending).await, expected);
+    }
 
     #[test]
     fn validates_all_parts_before_media_resolution() {
