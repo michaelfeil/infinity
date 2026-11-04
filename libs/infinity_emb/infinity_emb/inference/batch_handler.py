@@ -24,6 +24,8 @@ from infinity_emb.primitives import (
     EmbeddingReturnType,
     EmbeddingSingle,
     ImageClassType,
+    ImageCorruption,
+    ImageSingle,
     ModelCapabilites,
     ModelNotDeployedError,
     MatryoshkaDimError,
@@ -110,13 +112,14 @@ class BatchHandler:
         self._queue_prio = CustomFIFOQueue()
         self._publish_to_model_queue: Queue = Queue(8)
         self._result_queue: Queue = Queue(8)
+        self._image_load_lock = threading.Lock()
 
         self.max_batch_size = max_batch_size
         self._verbose = verbose
         self.batch_delay = batch_delay
 
         # cache
-        cache = (
+        self._cache = (
             Cache(
                 cache_name=str(vector_disk_cache_path),
                 shutdown=self._shutdown,
@@ -124,7 +127,7 @@ class BatchHandler:
             if vector_disk_cache_path
             else None
         )
-        self._result_store = ResultKVStoreFuture(cache)
+        self._result_store = ResultKVStoreFuture(self._cache)
 
         # model
         self.model_worker = [
@@ -277,8 +280,20 @@ class BatchHandler:
             )
 
         items = await resolve_images(images)
+        if self._cache is not None:
+            # Both workers read the same image; finish lazy decoding before dispatch.
+            await to_thread(self._load_images, self._threadpool, items)
         embeddings, usage = await self._schedule(items)
         return matryososka_slice(embeddings, matryoshka_dim), usage
+
+    def _load_images(self, items: Sequence[ImageSingle]) -> None:
+        # Protect shared images even if an awaiting request is cancelled mid-decode.
+        with self._image_load_lock:
+            for item in items:
+                try:
+                    item.image.load()
+                except Exception as e:
+                    raise ImageCorruption(f"error decoding image pixels: {e}") from e
 
     async def audio_embed(
         self, *, audios: list[Union[str, bytes]], matryoshka_dim: Optional[int] = None

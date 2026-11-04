@@ -38,6 +38,21 @@ asyncio.run(
 )
 ```
 
+## Optional vector disk cache
+
+Enable the vector disk cache with `vector_disk_cache_path=True` in `EngineArgs`,
+or `--vector-disk-cache` in the CLI. Cache keys distinguish input types and include
+the full input content, including image and audio metadata. Keep mutable image
+and audio inputs unchanged until their embedding request finishes.
+
+With caching enabled, lazy image pixels are decoded in a background thread before
+cache lookup and model preprocessing read the image concurrently. Invalid pixel
+data raises `ImageCorruption` before the image is queued for inference.
+
+After upgrading from scheduling-string cache keys, existing entries are left in
+place but are not reused. The cache warms again using content-based keys; old
+entries expire or are evicted normally. No cache deletion is needed.
+
 ## Reranker
 
 Reranking gives you a score for similarity between a query and multiple documents. 
