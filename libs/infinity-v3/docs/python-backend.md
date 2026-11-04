@@ -87,12 +87,12 @@ The factory receives:
 - `pooling`: `cls`, `mean`, `last_token`, or `splade`
 - `device_id`: replica/device ordinal
 - `config_json`: the `--python-config` JSON string
-- `serving_limits`: optional resolved router limits. This keyword is passed
-  only when the factory declares an explicit named `serving_limits` parameter
-  (a `**kwargs` catch-all does not opt in, so legacy factories keep their old
-  arguments). The value is a mapping with `max_input_length`, `max_batch_tokens`
-  and `max_batch_requests` (`None` when request count is uncapped). It is
-  resolved metadata, not duplicated user configuration.
+- `serving_limits`: resolved `max_input_length` (effective sequence length),
+  `max_batch_tokens`, and `max_batch_requests` (`None` when uncapped)
+
+`serving_limits` is supplied by default before warmup. Factories must accept
+that keyword or `**config`. The same shared limits are available to native
+backends; they describe existing frontend bounds.
 
 The returned executor must implement:
 
@@ -127,12 +127,10 @@ that error with `set_exception`.
 
 `response.set_exception(error)` completes the request with an error. Both
 completion methods release the in-flight permit even if the plugin retains the
-response object. By default Core wraps the plugin in `ThreadedExecutor`, so
-`submit` runs on its persistent Python pool thread; plugins may execute
-synchronously there or retain the envelope for deferred completion. A plugin
-that advertises `synchronous_submit` is not wrapped and must complete the
-envelope inside `submit`. Plugins that manage their own asynchronous work must
-drain it in `close` and release model resources.
+response object. Core wraps the plugin in `ThreadedExecutor`, so `submit`
+runs on its persistent Python pool thread; plugins may execute synchronously
+there or retain the envelope for deferred completion. Plugins that manage their
+own asynchronous work must drain it in `close` and release model resources.
 
 ### Optional replica capability discovery
 
@@ -155,78 +153,17 @@ then applies per replica: `auto` expands only when replication is supported,
 explicit ordinals must be visible, and each replica receives its own
 `device_id`. `BackendPool` schedules batches across replicas.
 
-## Optional capabilities
-
-An executor may also implement `capabilities()` after initialization. Executors
-without the method keep the legacy behavior. The method returns a mapping:
-
-```python
-class MyExecutor:
-    def capabilities(self):
-        return {
-            "protocol_version": 1,
-            "synchronous_submit": True,
-            "packed_limits": {
-                "max_total_tokens": 32768,
-                "max_sequences": 64,
-                "max_seq_len": 32768,
-            },
-        }
-```
-
-`protocol_version` is optional; when present it must be `1`.
-`synchronous_submit` is optional and defaults to `false`. When it is `true`,
-Core reads it from the raw plugin once at startup and does not wrap the plugin
-in `ThreadedExecutor`; `submit` then runs directly on the serialized Rust
-backend worker and must complete the response before returning. This opt-in
-adds no Python request queue, worker thread, or deferred buffering. The Rust
-`BackendThread` still serializes submissions, and `BackendPool` keeps the
-queued replica lease busy until completion. Plugins that omit the field, or set
-it to `false`, keep the legacy threaded wrapper. The value must be a plain
-boolean; any other value, including `null`, is a startup error.
-`packed_limits` is optional, but when present all three keys are required and
-each value must be a plain positive integer (not a boolean). The values describe
-the real capacity of one dispatched call:
-
-- `max_total_tokens`: maximum total tokens across the batch.
-- `max_sequences`: maximum sequences per call. Rust uses this through the
-  existing `max_batch_size` cap, including when `--max-batch-requests` is unset.
-- `max_seq_len`: maximum tokens in any one sequence.
-
-At startup Rust computes the largest batch it can actually form:
-
-```text
-effective_requests = min(max_batch_requests or max_sequences, max_sequences)
-reachable_total_tokens = min(max_batch_tokens, effective_requests * max_input_length)
-```
-
-It rejects the plugin when `reachable_total_tokens > max_total_tokens` or
-`max_input_length > max_seq_len`; either is an actionable startup error, never a
-silent truncation. The CLI flag for the resolved `max_input_length` is
-`--max-sequence-length`; `max_input_length` is the internal field name.
-`max_total_tokens` is the logical valid token capacity, not a physical rounded
-execution bucket: if the physical bucket is larger than the
-valid cap, advertise the logical cap and use a separate field for the physical
-size. Advertise the full context the plugin can actually execute. Malformed
-capabilities are startup errors. Omitting capabilities leaves batching and
-limits unchanged.
-
 ## Lifecycle and threading
 
 - Backend startup and capability discovery are synchronous. The plugin factory
   loads the model before the backend returns; startup errors surface directly.
-- By default `infinity_v3_python.threaded.ThreadedExecutor` wraps the plugin
-  with one persistent `ThreadPoolExecutor(max_workers=1)` per backend replica.
-  It owns the plugin's single execution thread.
-- Default `submit` schedules plugin work on that pool and returns immediately,
-  so the Rust backend worker does not block on a forward pass. Plugin exceptions
-  are caught on the pool thread and complete the Rust response envelope through
+- `infinity_v3_python.threaded.ThreadedExecutor` wraps the plugin with one
+  persistent `ThreadPoolExecutor(max_workers=1)` per backend replica. It owns
+  the plugin's single execution thread.
+- `submit` schedules plugin work on that pool and returns immediately, so the
+  Rust backend worker does not block on a forward pass. Plugin exceptions are
+  caught on the pool thread and complete the Rust response envelope through
   `set_exception`. Legacy plugins that internally defer completion remain valid.
-- An explicitly synchronous plugin (`capabilities()['synchronous_submit'] is
-  True`) is not wrapped. Its `submit` executes inline on the serialized Rust
-  backend worker, completes the envelope before returning, and never creates a
-  Python request queue or background thread. Missing or false keeps the default
-  threaded behavior.
 - `ThreadedExecutor` uses one state lock and a busy flag to enforce single-flight:
   a second submission raises a clear busy/overload error instead of waiting.
   The busy flag spans the whole response envelope, including legacy plugins that
