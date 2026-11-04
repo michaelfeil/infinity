@@ -136,3 +136,12 @@ Example models:
 - [ProsusAI/finbert](https://huggingface.co/ProsusAI/finbert)
 - [SamLowe/roberta-base-go_emotions](https://huggingface.co/SamLowe/roberta-base-go_emotions)
 
+## Embedding dimensions
+
+Pass `matryoshka_dim` to an embedding method (or `dimensions` in an embeddings
+API request) to keep the leading coordinates of each embedding. The value must
+be between 1 and the embedding width; omitting it or passing 0 keeps the full width.
+For late-interaction embeddings such as ColBERT, this changes each input's shape
+from `(tokens, embedding_width)` to `(tokens, matryoshka_dim)`, preserving every token.
+Truncation does not add normalization or train a model for reduced dimensions;
+choose dimensions appropriate for the model.
