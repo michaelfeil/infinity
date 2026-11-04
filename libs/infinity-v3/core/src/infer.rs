@@ -955,6 +955,7 @@ async fn backend_task(
     let cutoff = Duration::from_secs_f64(0.005 / backend.len().max(1) as f64);
     let mut previous = cutoff;
     let mut pending = VecDeque::<(Instant, tokio::task::JoinHandle<Duration>)>::new();
+    let mut reserved = None;
     loop {
         if backend.is_closed() {
             break;
@@ -975,9 +976,11 @@ async fn backend_task(
         if !pending.is_empty() && ahead.is_none() {
             if let Some((_, task)) = pending.pop_front() {
                 previous = task.await.unwrap_or(cutoff);
+                // The extra batch is now the current batch; another replica
+                // may use the shared allowance.
+                drop(reserved.take());
             }
             continue;
-
         }
         // Exclusive Python envelopes retain their lease through completion.
         if backend.wait_available(replica, &mut changed).await.is_err() {
@@ -992,9 +995,13 @@ async fn backend_task(
             Ok(execution) => execution,
             Err(_) => break,
         };
-        let Some(batch) = prune_canceled_batch(dispatched.0.take().unwrap()) else {
+        let Some(batch) = dispatched.0.take().and_then(prune_canceled_batch) else {
             continue;
         };
+        if pending.front().is_some_and(|(_, task)| !task.is_finished()) {
+            metrics::counter!("infinity_replica_prefetched_batches", "model" => backend.model_label(), "replica" => replica.to_string())
+                .increment(1);
+        }
         let started = Instant::now();
         if previous < cutoff {
             let model_type = backend.model_type.clone();
@@ -1002,11 +1009,10 @@ async fn backend_task(
                 started,
                 tokio::spawn(async move {
                     complete_batch(execution, model_type, batch).await;
-                    // Keep the pool-wide extra slot until this batch is complete.
-                    drop(ahead);
                     started.elapsed()
                 }),
             ));
+            reserved = ahead;
         } else {
             complete_batch(execution, backend.model_type.clone(), batch).await;
             previous = started.elapsed();
