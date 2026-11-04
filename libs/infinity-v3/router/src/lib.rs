@@ -190,6 +190,44 @@ async fn finish_startup_validation(
     Ok(())
 }
 
+fn resolve_runtime_limits(
+    base_input_length: usize,
+    max_sequence_length: Option<std::num::NonZeroUsize>,
+    max_batch_tokens: usize,
+    auto_truncate: bool,
+) -> Result<infinity_v3_backend::RuntimeLimits> {
+    let base_input_length = max_sequence_length.map_or(base_input_length, |limit| {
+        base_input_length.min(limit.get())
+    });
+
+    // Keep the resolved per-request limit within the batch token budget so the
+    // queue cannot loop forever on a request that can never be admitted.
+    let max_input_length = if base_input_length > max_batch_tokens {
+        if !auto_truncate {
+            anyhow::bail!(
+                "`--max-batch-tokens` cannot be lower than the model `max_input_length` ({} < {}) when `--auto-truncate` is disabled, add the `--auto-truncate` flag to truncate the input sequences to match the `--max-batch-tokens`.",
+                base_input_length,
+                max_batch_tokens
+            );
+        }
+        tracing::warn!(
+            "The input sequences will be truncated to {} tokens even if the model `max_input_length` is greater than the provided `--max-batch-tokens` ({} > {}), as `--auto-truncate` is enabled.",
+            max_batch_tokens,
+            base_input_length,
+            max_batch_tokens
+        );
+        max_batch_tokens
+    } else {
+        base_input_length
+    };
+
+    tracing::info!("Maximum number of tokens per request: {max_input_length}");
+    Ok(infinity_v3_backend::RuntimeLimits::new(
+        max_batch_tokens,
+        max_input_length,
+    )?)
+}
+
 async fn initialize_model(
     config: ModelSettings,
     hf_token: Option<String>,
@@ -564,31 +602,13 @@ async fn initialize_model(
         }
     };
 
-    let base_input_length = max_sequence_length.map_or(base_input_length, |limit| {
-        base_input_length.min(limit.get())
-    });
-
-    // Raise an error when max_input_length is bigger than max_batch tokens to prevent an infinite loop in the queue
-    let max_input_length = if base_input_length > max_batch_tokens {
-        if !auto_truncate {
-            anyhow::bail!(
-                "`--max-batch-tokens` cannot be lower than the model `max_input_length` ({} < {}) when `--auto-truncate` is disabled, add the `--auto-truncate` flag to truncate the input sequences to match the `--max-batch-tokens`.",
-                base_input_length,
-                max_batch_tokens
-            );
-        }
-        tracing::warn!(
-            "The input sequences will be truncated to {} tokens even if the model `max_input_length` is greater than the provided `--max-batch-tokens` ({} > {}), as `--auto-truncate` is enabled.",
-            max_batch_tokens,
-            base_input_length,
-            max_batch_tokens
-        );
-        max_batch_tokens
-    } else {
-        base_input_length
-    };
-
-    tracing::info!("Maximum number of tokens per request: {max_input_length}");
+    let runtime_limits = resolve_runtime_limits(
+        base_input_length,
+        max_sequence_length,
+        max_batch_tokens,
+        auto_truncate,
+    )?;
+    let max_input_length = runtime_limits.max_sequence_length.get();
 
     // Reserve one CPU for the backend and cap both defaults and explicit settings.
     let tokenization_workers = tokenization_workers
@@ -806,6 +826,7 @@ async fn initialize_model(
                 backend_kind,
                 torch_device,
                 python_backend_config,
+                runtime_limits,
             )
             .await
             .inspect_err(|error| {
@@ -1665,6 +1686,40 @@ impl From<ResponseMetadata> for HeaderMap {
                 .unwrap(),
         );
         headers
+    }
+}
+
+#[cfg(test)]
+mod runtime_limit_tests {
+    use super::*;
+    use std::num::NonZeroUsize;
+
+    #[test]
+    fn sequence_limit_uses_the_lower_of_cli_and_checkpoint() {
+        let limits = resolve_runtime_limits(8192, NonZeroUsize::new(2301), 10003, false).unwrap();
+        assert_eq!(limits.max_batch_tokens.get(), 10003);
+        assert_eq!(limits.max_sequence_length.get(), 2301);
+
+        let checkpoint =
+            resolve_runtime_limits(2048, NonZeroUsize::new(4096), 10003, false).unwrap();
+        assert_eq!(checkpoint.max_sequence_length.get(), 2048);
+    }
+
+    #[test]
+    fn batch_resolution_truncates_the_effective_sequence_limit() {
+        let explicit = resolve_runtime_limits(8192, NonZeroUsize::new(4096), 256, true).unwrap();
+        assert_eq!(explicit.max_batch_tokens.get(), 256);
+        assert_eq!(explicit.max_sequence_length.get(), 256);
+
+        let implicit = resolve_runtime_limits(2048, None, 512, true).unwrap();
+        assert_eq!(implicit.max_batch_tokens.get(), 512);
+        assert_eq!(implicit.max_sequence_length.get(), 512);
+    }
+
+    #[test]
+    fn oversized_sequence_without_truncation_is_an_error() {
+        let error = resolve_runtime_limits(2048, None, 512, false).unwrap_err();
+        assert!(error.to_string().contains("--auto-truncate"), "{error}");
     }
 }
 

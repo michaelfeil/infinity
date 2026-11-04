@@ -99,6 +99,8 @@ int32_t tei_load_safetensors(void*,
                              int32_t direct_io);
 #endif
 int32_t tei_option(void*, const char* key, const char* value);
+/// Write max batch tokens then max sequence length into caller storage; absent limits are zero.
+int32_t tei_runtime_limits(void*, int64_t* limits, size_t count);
 int64_t tei_output_width(void*);
 int64_t tei_pooled_width(void*);
 int64_t tei_classification_width(void*);
