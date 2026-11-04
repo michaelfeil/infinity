@@ -10,6 +10,10 @@ fn config() -> PythonBackendConfig {
     }
 }
 
+fn serving_limits() -> infinity_v3_backend_core::ServingLimits {
+    infinity_v3_backend_core::ServingLimits::new(16_384, 512, None).unwrap()
+}
+
 fn batch() -> Batch {
     Batch {
         multimodal: vec![],
@@ -41,6 +45,7 @@ fn configured_backend_returns_embeddings() {
         ModelType::Embedding(Pool::Mean),
         0,
         config(),
+        serving_limits(),
     )
     .unwrap();
     backend.health().unwrap();
@@ -68,6 +73,7 @@ fn configured_backend_returns_classifier_rows() {
         ModelType::Classifier,
         0,
         config(),
+        serving_limits(),
     )
     .unwrap();
     let predictions = backend.predict(batch()).unwrap();

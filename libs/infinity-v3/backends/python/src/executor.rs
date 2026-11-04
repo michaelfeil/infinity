@@ -14,7 +14,7 @@ pub(crate) struct ExecutorConfig {
     pub pooling: String,
     pub device_id: usize,
     pub config_json: String,
-    pub serving_limits: Option<ServingLimits>,
+    pub serving_limits: ServingLimits,
 }
 
 pub(crate) struct Executor {
@@ -50,16 +50,16 @@ impl Executor {
             kwargs
                 .set_item("config_json", config.config_json)
                 .map_err(start_error)?;
-            let limits = config
-                .serving_limits
-                .map(|value| {
-                    let limits = PyDict::new(py);
-                    limits.set_item("max_input_length", value.max_input_length)?;
-                    limits.set_item("max_batch_tokens", value.max_batch_tokens)?;
-                    limits.set_item("max_batch_requests", value.max_batch_requests)?;
-                    Ok::<_, PyErr>(limits)
-                })
-                .transpose()
+            let value = config.serving_limits;
+            let limits = PyDict::new(py);
+            limits
+                .set_item("max_input_length", value.max_input_length)
+                .map_err(start_error)?;
+            limits
+                .set_item("max_batch_tokens", value.max_batch_tokens)
+                .map_err(start_error)?;
+            limits
+                .set_item("max_batch_requests", value.max_batch_requests)
                 .map_err(start_error)?;
             kwargs
                 .set_item("serving_limits", limits)

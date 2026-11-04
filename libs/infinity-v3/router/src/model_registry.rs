@@ -75,7 +75,6 @@ pub(crate) fn validate_configs(configs: &[ModelSettings]) -> Result<()> {
                 torch,
                 &infinity_v3_backend::PythonBackendConfig {
                     config: config.python_config.clone(),
-                    serving_limits: None,
                 },
             )
             .with_context(|| format!("Model {name}"))?;

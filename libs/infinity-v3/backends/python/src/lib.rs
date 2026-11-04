@@ -29,7 +29,6 @@ pub struct PythonBackendConfig {
     /// JSON object. The `backend` key selects the plugin; other keys are
     /// passed to the plugin.
     pub config: Option<String>,
-    pub serving_limits: Option<ServingLimits>,
 }
 
 struct ParsedConfig {
@@ -72,6 +71,7 @@ impl PythonBackend {
         model_type: ModelType,
         device_id: usize,
         config: PythonBackendConfig,
+        serving_limits: ServingLimits,
     ) -> Result<Self, BackendError> {
         let (pool, classifier, model_type) = match model_type {
             ModelType::Embedding(pool) => (pool, false, "embedding"),
@@ -91,7 +91,7 @@ impl PythonBackend {
             pooling: pool.to_string(),
             device_id,
             config_json: parsed.config_json,
-            serving_limits: config.serving_limits,
+            serving_limits,
         })?;
         Ok(Self {
             executor,
@@ -272,8 +272,11 @@ mod tests {
             config: Some(
                 r#"{"backend":"infinity_v3_python.testing:create_executor","device":"cpu"}"#.into(),
             ),
-            ..Default::default()
         }
+    }
+
+    fn serving_limits() -> infinity_v3_backend_core::ServingLimits {
+        infinity_v3_backend_core::ServingLimits::new(16_384, 512, None).unwrap()
     }
 
     fn batch() -> Batch {
@@ -303,6 +306,7 @@ mod tests {
             ModelType::Embedding(Pool::Mean),
             0,
             config(),
+            serving_limits(),
         )
         .unwrap();
         backend.health().unwrap();
@@ -321,6 +325,7 @@ mod tests {
             ModelType::Embedding(Pool::Mean),
             0,
             config(),
+            serving_limits(),
         )
         .unwrap();
         for _ in 0..5 {
@@ -338,6 +343,7 @@ mod tests {
             ModelType::Classifier,
             0,
             config(),
+            serving_limits(),
         )
         .unwrap();
         let predictions = backend.predict(batch()).unwrap();
@@ -385,8 +391,8 @@ def create_executor(**kwargs):
                 0,
                 PythonBackendConfig {
                     config: Some(config.to_string()),
-                    ..Default::default()
                 },
+                serving_limits(),
             )
             .unwrap();
             for _ in 0..2 {
@@ -425,14 +431,12 @@ def capabilities(config_json):
                 r#"{"backend":"_infinity_capability_test:create_executor","devices":3,"replicate":true}"#
                     .into(),
             ),
-            ..Default::default()
         })
         .unwrap();
         assert_eq!(discovered, (3, true));
         for invalid in ["0", "-1", "true"] {
             assert!(PythonBackend::discover_capabilities(&PythonBackendConfig {
                 config: Some(format!(r#"{{"backend":"_infinity_capability_test:create_executor","devices":{invalid}}}"#)),
-                ..Default::default()
             }).is_err());
         }
         assert!(PythonBackend::discover_capabilities(&PythonBackendConfig {
@@ -440,7 +444,6 @@ def capabilities(config_json):
                 r#"{"backend":"_infinity_capability_test:create_executor","replicate":"yes"}"#
                     .into()
             ),
-            ..Default::default()
         })
         .is_err());
     }

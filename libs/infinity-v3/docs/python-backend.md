@@ -90,7 +90,7 @@ The factory receives:
 - `serving_limits`: resolved `max_input_length` (effective sequence length),
   `max_batch_tokens`, and `max_batch_requests` (`None` when uncapped)
 
-`serving_limits` is supplied by default before warmup. Factories must accept
+`serving_limits` is always supplied as a mapping before warmup. Factories must accept
 that keyword or `**config`. The same shared limits are available to native
 backends; they describe existing frontend bounds.
 

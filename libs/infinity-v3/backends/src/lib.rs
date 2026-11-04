@@ -29,7 +29,6 @@ pub use infinity_v3_backend_python::PythonBackendConfig;
 #[derive(Clone, Debug, Default)]
 pub struct PythonBackendConfig {
     pub config: Option<String>,
-    pub serving_limits: Option<ServingLimits>,
 }
 
 /// Backend-neutral replica placement capabilities.
@@ -586,8 +585,6 @@ async fn init_backend(
     if kind == BackendKind::PythonBackend {
         #[cfg(feature = "python-backend")]
         {
-            let mut python = python;
-            python.serving_limits = Some(runtime_limits);
             if let Some(repo) = api_repo.as_ref() {
                 if download_safetensors(repo.clone()).await.is_err() {
                     tracing::warn!(
@@ -605,7 +602,12 @@ async fn init_backend(
             let dtype = dtype.to_string();
             let backend = tokio::task::spawn_blocking(move || {
                 infinity_v3_backend_python::PythonBackend::new(
-                    &path, &dtype, model_type, device_id, python,
+                    &path,
+                    &dtype,
+                    model_type,
+                    device_id,
+                    python,
+                    runtime_limits,
                 )
             })
             .await
@@ -1473,7 +1475,6 @@ mod backend_selection_tests {
             TorchDevice::Cpu,
             PythonBackendConfig {
                 config: Some(config.to_string()),
-                serving_limits: None,
             },
             limits,
         )
