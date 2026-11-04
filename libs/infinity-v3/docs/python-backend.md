@@ -151,7 +151,9 @@ def create_executor(**config):
 `visible_device_count` must be a positive integer and `supports_replication`
 must be a boolean. Invalid, malformed, or zero capabilities fail startup with a
 clear error. The hook runs before replica placement and before model weights are
-loaded, may run more than once, and must be cheap and side-effect free.
+loaded, may run more than once, and must be cheap and side-effect free. Core
+awaits discovery on a blocking worker so a synchronous hook does not occupy the
+async router thread; plugins do not need to implement a Python coroutine.
 
 Protocol-1 plugins that omit the hook keep the single-device defaults
 (`visible_device_count=1`, `supports_replication=False`), so existing plugins

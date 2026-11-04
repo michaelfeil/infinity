@@ -771,7 +771,14 @@ async fn initialize_model(
     );
 
     // Resolve optional Python replica capabilities before placing replicas.
-    let python_capabilities = backend_kind.python_capabilities(&python_backend_config)?;
+    let python_capabilities = if backend_kind == infinity_v3_backend::BackendKind::PythonBackend {
+        let discovery_config = python_backend_config.clone();
+        tokio::task::spawn_blocking(move || backend_kind.python_capabilities(&discovery_config))
+            .await
+            .context("Python backend capability discovery worker failed")??
+    } else {
+        None
+    };
     let devices = replicas::resolve_devices(
         backend_device_ids.as_deref(),
         device_id,
