@@ -10,6 +10,12 @@ router's resolved limits (``max_input_length``, ``max_batch_tokens``,
 ``max_batch_requests``). An executor may optionally implement ``capabilities()``
 returning ``{"protocol_version": 1, "packed_limits": {...}}`` to advertise its
 real per-call capacity; omission keeps the legacy behavior.
+
+An executor may additionally return ``"synchronous_submit": True`` from
+``capabilities()``. Core then skips the default ``ThreadedExecutor`` wrapper and
+calls ``submit`` directly on the serialized Rust backend worker; ``submit`` must
+complete the response before returning. The field defaults to false, must be a
+plain boolean, and does not add a Python queue or background thread.
 """
 
 from __future__ import annotations

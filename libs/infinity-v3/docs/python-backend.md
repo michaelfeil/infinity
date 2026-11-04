@@ -129,10 +129,12 @@ that error with `set_exception`.
 
 `response.set_exception(error)` completes the request with an error. Both
 completion methods release the in-flight permit even if the plugin retains the
-response object. Core wraps the plugin in `ThreadedExecutor`, so `submit`
-runs on its persistent Python pool thread; plugins may execute synchronously
-there or retain the envelope for deferred completion. Plugins that manage their
-own asynchronous work must drain it in `close` and release model resources.
+response object. By default Core wraps the plugin in `ThreadedExecutor`, so
+`submit` runs on its persistent Python pool thread; plugins may execute
+synchronously there or retain the envelope for deferred completion. A plugin
+that advertises `synchronous_submit` is not wrapped and must complete the
+envelope inside `submit`. Plugins that manage their own asynchronous work must
+drain it in `close` and release model resources.
 
 ### Optional replica capability discovery
 
@@ -165,6 +167,7 @@ class MyExecutor:
     def capabilities(self):
         return {
             "protocol_version": 1,
+            "synchronous_submit": True,
             "packed_limits": {
                 "max_total_tokens": 32768,
                 "max_sequences": 64,
@@ -173,10 +176,19 @@ class MyExecutor:
         }
 ```
 
-`protocol_version` is optional; when present it must be `1`. `packed_limits` is
-optional, but when present all three keys are required and each value must be a
-plain positive integer (not a boolean). The values describe the real capacity of
-one dispatched call:
+`protocol_version` is optional; when present it must be `1`.
+`synchronous_submit` is optional and defaults to `false`. When it is `true`,
+Core reads it from the raw plugin once at startup and does not wrap the plugin
+in `ThreadedExecutor`; `submit` then runs directly on the serialized Rust
+backend worker and must complete the response before returning. This opt-in
+adds no Python request queue, worker thread, or deferred buffering. The Rust
+`BackendThread` still serializes submissions, and `BackendPool` keeps the
+queued replica lease busy until completion. Plugins that omit the field, or set
+it to `false`, keep the legacy threaded wrapper. The value must be a plain
+boolean; any other value, including `null`, is a startup error.
+`packed_limits` is optional, but when present all three keys are required and
+each value must be a plain positive integer (not a boolean). The values describe
+the real capacity of one dispatched call:
 
 - `max_total_tokens`: maximum total tokens across the batch.
 - `max_sequences`: maximum sequences per call. Rust uses this through the
@@ -205,13 +217,18 @@ limits unchanged.
 
 - Backend startup and capability discovery are synchronous. The plugin factory
   loads the model before the backend returns; startup errors surface directly.
-- `infinity_v3_python.threaded.ThreadedExecutor` wraps the plugin with one
-  persistent `ThreadPoolExecutor(max_workers=1)` per backend replica. It owns
-  the plugin's single execution thread.
-- `submit` schedules plugin work on that pool and returns immediately, so the
-  Rust backend worker does not block on a forward pass. Plugin exceptions are
-  caught on the pool thread and complete the Rust response envelope through
+- By default `infinity_v3_python.threaded.ThreadedExecutor` wraps the plugin
+  with one persistent `ThreadPoolExecutor(max_workers=1)` per backend replica.
+  It owns the plugin's single execution thread.
+- Default `submit` schedules plugin work on that pool and returns immediately,
+  so the Rust backend worker does not block on a forward pass. Plugin exceptions
+  are caught on the pool thread and complete the Rust response envelope through
   `set_exception`. Legacy plugins that internally defer completion remain valid.
+- An explicitly synchronous plugin (`capabilities()['synchronous_submit'] is
+  True`) is not wrapped. Its `submit` executes inline on the serialized Rust
+  backend worker, completes the envelope before returning, and never creates a
+  Python request queue or background thread. Missing or false keeps the default
+  threaded behavior.
 - Queued work is bounded by the existing Rust `queue_depth` admission permits.
   `healthy` is serialized through the same pool. `close` is the final pool task,
   after queued work, so cleanup uses the execution thread. Cleanup failures are

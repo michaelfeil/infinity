@@ -1,9 +1,12 @@
 //! Bring-your-own-Python inference backend.
 //!
-//! Rust owns scheduling, batching geometry and response envelopes. One Python
-//! thread per backend replica executes plugin submissions; the native backend
-//! worker never blocks on a forward pass. The executor is selected at runtime
-//! through an installed entry point or a `module:attribute` factory.
+//! Rust owns scheduling, batching geometry and response envelopes. By default
+//! one Python thread per backend replica executes plugin submissions, so the
+//! native backend worker never blocks on a forward pass. A plugin may opt into
+//! synchronous single-flight execution; it then runs on the serialized Rust
+//! backend worker and must complete the envelope before returning. The executor
+//! is selected at runtime through an installed entry point or a
+//! `module:attribute` factory.
 
 mod batch;
 mod envelope;
@@ -327,6 +330,7 @@ impl Backend for PythonBackend {
 mod tests {
     use super::*;
     use infinity_v3_backend_core::Embedding;
+    use serial_test::serial;
     use std::ffi::CString;
 
     fn install_module(name: &str, source: &str) {
@@ -498,6 +502,125 @@ class Executor:
 def create_executor(**kwargs):
     return Executor()
 "#;
+
+    const SYNC_MODULE: &str = r#"
+PROTOCOL_VERSION = 1
+import threading
+import numpy as np
+
+CAPABILITY_CALLS = 0
+FACTORY_THREAD = None
+SUBMIT_THREAD = None
+INLINE_COMPLETION = False
+SUBMIT_CALLS = 0
+CLOSE_COUNT = 0
+RECEIVED = None
+
+class Executor:
+    SENTINEL = True
+    def capabilities(self):
+        global CAPABILITY_CALLS
+        CAPABILITY_CALLS += 1
+        return {
+            "protocol_version": 1,
+            SYNC_FIELD
+            "packed_limits": {
+                "max_total_tokens": 10003,
+                "max_sequences": 32,
+                "max_seq_len": 2301,
+            },
+        }
+    def submit(self, route, response, payload):
+        global SUBMIT_THREAD, INLINE_COMPLETION, SUBMIT_CALLS
+        SUBMIT_CALLS += 1
+        SUBMIT_THREAD = threading.get_ident()
+        result = np.zeros((2, 8), dtype=np.float32)
+        response.set_result(result)
+        try:
+            response.set_result(result)
+        except RuntimeError as error:
+            INLINE_COMPLETION = "already completed" in str(error)
+    def healthy(self):
+        return True
+    def close(self):
+        global CLOSE_COUNT
+        CLOSE_COUNT += 1
+
+def create_executor(*, serving_limits=None, **kwargs):
+    global FACTORY_THREAD, RECEIVED
+    FACTORY_THREAD = threading.get_ident()
+    RECEIVED = None if serving_limits is None else dict(serving_limits)
+    return Executor()
+"#;
+
+    fn module_usize(name: &str, attribute: &str) -> usize {
+        Python::attach(|py| {
+            pyo3::types::PyModule::import(py, name)
+                .unwrap()
+                .getattr(attribute)
+                .unwrap()
+                .extract::<usize>()
+                .unwrap()
+        })
+    }
+
+    fn module_u64(name: &str, attribute: &str) -> u64 {
+        Python::attach(|py| {
+            pyo3::types::PyModule::import(py, name)
+                .unwrap()
+                .getattr(attribute)
+                .unwrap()
+                .extract::<u64>()
+                .unwrap()
+        })
+    }
+
+    fn module_bool(name: &str, attribute: &str) -> bool {
+        Python::attach(|py| {
+            pyo3::types::PyModule::import(py, name)
+                .unwrap()
+                .getattr(attribute)
+                .unwrap()
+                .extract::<bool>()
+                .unwrap()
+        })
+    }
+
+    fn with_threaded_executor_sentinel<F: FnOnce()>(body: F) -> usize {
+        Python::attach(|py| {
+            let module = pyo3::types::PyModule::import(py, "infinity_v3_python.threaded").unwrap();
+            let original = module.getattr("ThreadedExecutor").unwrap();
+            let source = CString::new(
+                "CALLS = 0\nORIGINAL = None\ndef ThreadedExecutor(executor):\n    global CALLS\n    if getattr(executor, 'SENTINEL', False):\n        CALLS += 1\n        raise RuntimeError('threaded sentinel reached')\n    return ORIGINAL(executor)\n",
+            )
+            .unwrap();
+            let sentinel = pyo3::types::PyModule::from_code(
+                py,
+                source.as_c_str(),
+                c"_infinity_threaded_sentinel.py",
+                c"_infinity_threaded_sentinel",
+            )
+            .unwrap();
+            sentinel.setattr("ORIGINAL", original.clone()).unwrap();
+            module
+                .setattr(
+                    "ThreadedExecutor",
+                    sentinel.getattr("ThreadedExecutor").unwrap(),
+                )
+                .unwrap();
+            let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(body));
+            let calls = sentinel
+                .getattr("CALLS")
+                .unwrap()
+                .extract::<usize>()
+                .unwrap();
+            module.setattr("ThreadedExecutor", original).unwrap();
+            if let Err(payload) = outcome {
+                std::panic::resume_unwind(payload);
+            }
+            calls
+        })
+    }
 
     fn received_serving_limits(name: &str) -> std::collections::BTreeMap<String, Option<i64>> {
         Python::attach(|py| {
@@ -849,6 +972,154 @@ def create_executor(**kwargs):
                     .unwrap()
             });
             assert_eq!(close_count, 1, "{name}");
+        }
+    }
+
+    #[test]
+    fn synchronous_submit_runs_inline_on_caller_thread() {
+        let name = "_infinity_sync_inline";
+        install_module(
+            name,
+            &SYNC_MODULE.replace("SYNC_FIELD", "\"synchronous_submit\": True,"),
+        );
+        let backend = PythonBackend::new(
+            Path::new("."),
+            "float32",
+            ModelType::Embedding(Pool::Mean),
+            0,
+            python_config(
+                name,
+                Some(ServingLimits {
+                    max_input_length: 2301,
+                    max_batch_tokens: 10003,
+                    max_batch_requests: Some(37),
+                }),
+            ),
+        )
+        .unwrap();
+        assert_eq!(backend.max_batch_size(), Some(32));
+        let embeddings = backend.embed(batch()).unwrap();
+        assert_eq!(embeddings.len(), 2);
+        assert_eq!(
+            module_u64(name, "SUBMIT_THREAD"),
+            module_u64(name, "FACTORY_THREAD"),
+            "synchronous submit must run on the caller/Rust worker thread"
+        );
+        assert!(
+            module_bool(name, "INLINE_COMPLETION"),
+            "the response envelope must be complete before submit returns"
+        );
+        assert_eq!(module_usize(name, "SUBMIT_CALLS"), 1);
+        assert_eq!(module_usize(name, "CAPABILITY_CALLS"), 1);
+        let received = received_serving_limits(name);
+        assert_eq!(received.get("max_input_length"), Some(&Some(2301)));
+        assert_eq!(received.get("max_batch_tokens"), Some(&Some(10003)));
+        assert_eq!(received.get("max_batch_requests"), Some(&Some(37)));
+        backend.shutdown();
+        backend.shutdown();
+        assert_eq!(module_usize(name, "CLOSE_COUNT"), 1);
+    }
+
+    #[test]
+    #[serial]
+    fn synchronous_opt_in_never_constructs_threaded_executor() {
+        let name = "_infinity_sync_sentinel";
+        install_module(
+            name,
+            &SYNC_MODULE.replace("SYNC_FIELD", "\"synchronous_submit\": True,"),
+        );
+        let calls = with_threaded_executor_sentinel(|| {
+            let backend = PythonBackend::new(
+                Path::new("."),
+                "float32",
+                ModelType::Embedding(Pool::Mean),
+                0,
+                python_config(name, None),
+            )
+            .unwrap();
+            backend.embed(batch()).unwrap();
+            backend.shutdown();
+        });
+        assert_eq!(calls, 0, "ThreadedExecutor must not be constructed");
+    }
+
+    #[test]
+    #[serial]
+    fn legacy_plugin_still_constructs_threaded_executor() {
+        let name = "_infinity_legacy_sentinel";
+        install_module(name, &SYNC_MODULE.replace("SYNC_FIELD", ""));
+        let calls = with_threaded_executor_sentinel(|| {
+            match PythonBackend::new(
+                Path::new("."),
+                "float32",
+                ModelType::Embedding(Pool::Mean),
+                0,
+                python_config(name, None),
+            ) {
+                Err(BackendError::Start(message)) => {
+                    assert!(message.contains("threaded sentinel reached"), "{message}");
+                }
+                Err(error) => panic!("expected a startup error, got {error}"),
+                Ok(_) => panic!("the legacy wrapper sentinel must be reached"),
+            }
+        });
+        assert_eq!(calls, 1, "legacy plugins must still use ThreadedExecutor");
+    }
+
+    #[test]
+    fn legacy_plugin_without_sync_flag_uses_threaded_worker_thread() {
+        let name = "_infinity_legacy_thread";
+        install_module(name, &SYNC_MODULE.replace("SYNC_FIELD", ""));
+        let backend = PythonBackend::new(
+            Path::new("."),
+            "float32",
+            ModelType::Embedding(Pool::Mean),
+            0,
+            python_config(name, None),
+        )
+        .unwrap();
+        let embeddings = backend.embed(batch()).unwrap();
+        assert_eq!(embeddings.len(), 2);
+        assert_ne!(
+            module_u64(name, "SUBMIT_THREAD"),
+            module_u64(name, "FACTORY_THREAD"),
+            "legacy submit must run on the ThreadedExecutor worker thread"
+        );
+        backend.shutdown();
+        backend.shutdown();
+        assert_eq!(module_usize(name, "CLOSE_COUNT"), 1);
+    }
+
+    #[test]
+    fn malformed_synchronous_submit_fails_startup_and_closes_once() {
+        for (name, capabilities) in [
+            ("_infinity_sync_bad_int", "{'synchronous_submit': 1}"),
+            (
+                "_infinity_sync_bad_string",
+                "{'synchronous_submit': 'true'}",
+            ),
+            ("_infinity_sync_bad_none", "{'synchronous_submit': None}"),
+        ] {
+            install_module(
+                name,
+                &LIFECYCLE_MODULE.replace("CAPABILITIES", capabilities),
+            );
+            let result = PythonBackend::new(
+                Path::new("."),
+                "float32",
+                ModelType::Embedding(Pool::Mean),
+                0,
+                python_config(name, None),
+            );
+            match result {
+                Err(BackendError::Start(message)) => assert!(
+                    message.contains("synchronous_submit must be a boolean"),
+                    "{name}: {message}"
+                ),
+                Err(error) => panic!("{name}: expected a startup error, got {error}"),
+                Ok(_) => panic!("{name}: malformed synchronous_submit must be rejected"),
+            }
+            assert_eq!(module_usize(name, "CLOSE_COUNT"), 1, "{name}");
         }
     }
 

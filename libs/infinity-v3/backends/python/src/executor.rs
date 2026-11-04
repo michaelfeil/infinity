@@ -34,6 +34,7 @@ pub(crate) struct PackedLimits {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct BackendCapabilities {
     pub packed_limits: Option<PackedLimits>,
+    pub synchronous_submit: bool,
 }
 
 impl Executor {
@@ -100,15 +101,22 @@ impl Executor {
                     return Err(error);
                 }
             };
-            let inner = PyModule::import(py, "infinity_v3_python.threaded")
-                .and_then(|module| module.getattr("ThreadedExecutor"))
-                .and_then(|executor| executor.call1((plugin,)))
-                .map_err(|error| {
-                    BackendError::Start(format!(
-                        "Could not start Python backend dispatch worker: {error}"
-                    ))
-                })?
-                .unbind();
+            let inner = if capabilities.is_some_and(|capabilities| capabilities.synchronous_submit)
+            {
+                // Explicitly synchronous plugins execute on the serialized Rust
+                // backend worker and complete the envelope before returning.
+                plugin.unbind()
+            } else {
+                PyModule::import(py, "infinity_v3_python.threaded")
+                    .and_then(|module| module.getattr("ThreadedExecutor"))
+                    .and_then(|executor| executor.call1((plugin,)))
+                    .map_err(|error| {
+                        BackendError::Start(format!(
+                            "Could not start Python backend dispatch worker: {error}"
+                        ))
+                    })?
+                    .unbind()
+            };
             Ok(Self {
                 inner,
                 closed: AtomicBool::new(false),
@@ -230,6 +238,7 @@ fn read_capabilities(
     }
     Ok(Some(BackendCapabilities {
         packed_limits: packed_limits(&capabilities)?,
+        synchronous_submit: synchronous_submit(&capabilities)?,
     }))
 }
 
@@ -291,6 +300,21 @@ fn factory_accepts_serving_limits(py: Python<'_>, factory: &Bound<'_, PyAny>) ->
         .ok()
         .and_then(|accepted| accepted.extract::<bool>().ok())
         .unwrap_or(false)
+}
+
+fn synchronous_submit(capabilities: &Bound<'_, PyDict>) -> Result<bool, BackendError> {
+    let Some(value) = capabilities
+        .get_item("synchronous_submit")
+        .map_err(capability_error)?
+    else {
+        return Ok(false);
+    };
+    if !value.is_instance_of::<PyBool>() {
+        return Err(BackendError::Start(
+            "Python backend capabilities.synchronous_submit must be a boolean".into(),
+        ));
+    }
+    value.extract::<bool>().map_err(capability_error)
 }
 
 fn packed_limits(capabilities: &Bound<'_, PyDict>) -> Result<Option<PackedLimits>, BackendError> {
