@@ -5,10 +5,29 @@ import unittest
 from importlib.metadata import EntryPoint
 from unittest.mock import patch
 
-from infinity_v3_python.discovery import load_capabilities, load_factory
+from infinity_v3_python.discovery import (
+    factory_accepts_serving_limits,
+    load_capabilities,
+    load_factory,
+)
 
 
 class DiscoveryTests(unittest.TestCase):
+    def test_serving_limits_opt_in_requires_an_explicit_parameter(self):
+        def keyword_only(*, serving_limits=None, **kwargs):
+            pass
+
+        def positional_or_keyword(serving_limits=None, **kwargs):
+            pass
+
+        def legacy(**kwargs):
+            pass
+
+        self.assertTrue(factory_accepts_serving_limits(keyword_only))
+        self.assertTrue(factory_accepts_serving_limits(positional_or_keyword))
+        self.assertFalse(factory_accepts_serving_limits(legacy))
+        self.assertFalse(factory_accepts_serving_limits(lambda: None))
+
     def test_reexported_factory_uses_selected_plugin_hooks(self):
         implementation = types.ModuleType("_discovery_implementation")
         exec(

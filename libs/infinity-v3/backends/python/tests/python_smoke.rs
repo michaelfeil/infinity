@@ -6,6 +6,7 @@ use std::path::Path;
 fn config() -> PythonBackendConfig {
     PythonBackendConfig {
         config: std::env::var("INFINITY_PYTHON_CONFIG").ok(),
+        serving_limits: None,
     }
 }
 
