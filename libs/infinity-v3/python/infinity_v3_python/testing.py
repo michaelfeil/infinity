@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from typing import Any
 
 import numpy as np
@@ -68,7 +69,10 @@ class FakeExecutor:
         return np.ascontiguousarray(logits, dtype=np.float32)
 
 
-def create_executor(**_config: Any) -> FakeExecutor:
+def create_executor(*, serving_limits: Any = None, **_config: Any) -> FakeExecutor:
+    expected = json.loads(_config.get("config_json", "{}")).get("expected_serving_limits")
+    if expected is not None and serving_limits != expected:
+        raise ValueError(f"Expected serving limits {expected!r}, received {serving_limits!r}")
     return FakeExecutor()
 
 

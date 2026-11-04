@@ -24,13 +24,7 @@ use std::path::Path;
 use std::sync::Arc;
 use tokio::sync::Semaphore;
 
-/// Resolved limits the shared frontend uses for one model.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct ServingLimits {
-    pub max_input_length: usize,
-    pub max_batch_tokens: usize,
-    pub max_batch_requests: Option<usize>,
-}
+pub use infinity_v3_backend_core::ServingLimits;
 
 /// Runtime configuration supplied by the shared frontend.
 #[derive(Clone, Debug, Default)]

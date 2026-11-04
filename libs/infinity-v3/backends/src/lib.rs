@@ -17,21 +17,12 @@ pub use crate::dtype::DType;
 pub use infinity_v3_backend_core::{block_attention_config, result_memory};
 pub use infinity_v3_backend_core::{
     AudioFeatures, BackendError, Batch, ClefField, DecisionInput, DecisionOutput, Embedding,
-    Embeddings, ImagePatches, ModelType, MultimodalEncoding, Pool, Predictions, RuntimeLimits,
+    Embeddings, ImagePatches, ModelType, MultimodalEncoding, Pool, Predictions, ServingLimits,
     SharedF32, TokenPredictions,
 };
 
 #[cfg(feature = "python-backend")]
-pub use infinity_v3_backend_python::{PythonBackendConfig, ServingLimits};
-
-/// Resolved limits the shared frontend uses for one model.
-#[cfg(not(feature = "python-backend"))]
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct ServingLimits {
-    pub max_input_length: usize,
-    pub max_batch_tokens: usize,
-    pub max_batch_requests: Option<usize>,
-}
+pub use infinity_v3_backend_python::PythonBackendConfig;
 
 /// Parameters for a bring-your-own-Python backend.
 #[cfg(not(feature = "python-backend"))]
@@ -251,7 +242,7 @@ impl Backend {
         model_type: ModelType,
         dense_path: Option<String>,
         device_id: usize,
-        runtime_limits: RuntimeLimits,
+        runtime_limits: ServingLimits,
     ) -> Result<Self, BackendError> {
         Self::new_shared(
             model_path,
@@ -273,7 +264,7 @@ impl Backend {
         model_type: ModelType,
         dense_path: Option<String>,
         device_id: usize,
-        runtime_limits: RuntimeLimits,
+        runtime_limits: ServingLimits,
     ) -> Result<Self, BackendError> {
         Self::new_shared_with_fp8(
             model_path,
@@ -297,7 +288,7 @@ impl Backend {
         dense_path: Option<String>,
         device_id: usize,
         enable_fp8_dynamic: bool,
-        runtime_limits: RuntimeLimits,
+        runtime_limits: ServingLimits,
     ) -> Result<Self, BackendError> {
         Self::new_selected(
             model_path,
@@ -327,7 +318,7 @@ impl Backend {
         kind: BackendKind,
         torch_device: TorchDevice,
         python: PythonBackendConfig,
-        runtime_limits: RuntimeLimits,
+        runtime_limits: ServingLimits,
     ) -> Result<Self, BackendError> {
         kind.ensure_compiled()?;
         let (backend_sender, backend_receiver) = mpsc::channel(8);
@@ -583,7 +574,7 @@ async fn init_backend(
     kind: BackendKind,
     torch_device: TorchDevice,
     python: PythonBackendConfig,
-    runtime_limits: RuntimeLimits,
+    runtime_limits: ServingLimits,
 ) -> Result<Box<dyn CoreBackend + Send>, BackendError> {
     if model_type == ModelType::Decision {
         if let Some(repo) = api_repo.as_ref() {
@@ -595,6 +586,8 @@ async fn init_backend(
     if kind == BackendKind::PythonBackend {
         #[cfg(feature = "python-backend")]
         {
+            let mut python = python;
+            python.serving_limits = Some(runtime_limits);
             if let Some(repo) = api_repo.as_ref() {
                 if download_safetensors(repo.clone()).await.is_err() {
                     tracing::warn!(
@@ -1452,6 +1445,41 @@ mod backend_selection_tests {
         } else {
             assert!(default.ensure_compiled().is_err());
         }
+    }
+
+    #[cfg(feature = "python-backend")]
+    #[tokio::test]
+    async fn shared_startup_forwards_limits_to_python_before_warmup() {
+        let limits = ServingLimits::new(10_003, 2_301, Some(37)).unwrap();
+        let config = serde_json::json!({
+            "backend": "infinity_v3_python.testing:create_executor",
+            "expected_serving_limits": {
+                "max_input_length": 2_301,
+                "max_batch_tokens": 10_003,
+                "max_batch_requests": 37,
+            },
+        });
+        // The factory rejects missing/wrong limits during startup. No inference
+        // or warmup can supply them later, and no checkpoint is required.
+        let backend = Backend::new_selected(
+            PathBuf::from("."),
+            None,
+            DType::Float32,
+            ModelType::Embedding(Pool::Mean),
+            None,
+            0,
+            false,
+            BackendKind::PythonBackend,
+            TorchDevice::Cpu,
+            PythonBackendConfig {
+                config: Some(config.to_string()),
+                serving_limits: None,
+            },
+            limits,
+        )
+        .await
+        .unwrap();
+        backend.shutdown().await;
     }
 
     #[test]

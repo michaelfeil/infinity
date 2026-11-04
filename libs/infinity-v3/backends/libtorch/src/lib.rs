@@ -559,7 +559,7 @@ impl LibtorchBackend {
         device: &str,
         dense_paths: Option<Vec<String>>,
         enable_fp8_dynamic: bool,
-        runtime_limits: Option<text_embeddings_backend_core::RuntimeLimits>,
+        runtime_limits: Option<text_embeddings_backend_core::ServingLimits>,
     ) -> Result<Self, BackendError> {
         if device != "cpu" && device != "auto" && !device.starts_with("cuda:") {
             return Err(start("LibTorch 2.14.1 varlen attention requires CUDA; only CPU reference and CUDA are supported"));
@@ -583,13 +583,17 @@ impl LibtorchBackend {
             "config.json"
         })?;
         if let Some(limits) = runtime_limits {
-            if limits.max_sequence_length > limits.max_batch_tokens {
-                return Err(start("max_sequence_length cannot exceed max_batch_tokens"));
+            if limits.max_input_length > limits.max_batch_tokens {
+                return Err(start("max_input_length cannot exceed max_batch_tokens"));
             }
             options["_max_batch_tokens"] =
-                serde_json::json!(i64::try_from(limits.max_batch_tokens.get()).map_err(start)?);
+                serde_json::json!(i64::try_from(limits.max_batch_tokens).map_err(start)?);
             options["_max_sequence_length"] =
-                serde_json::json!(i64::try_from(limits.max_sequence_length.get()).map_err(start)?);
+                serde_json::json!(i64::try_from(limits.max_input_length).map_err(start)?);
+            if let Some(requests) = limits.max_batch_requests {
+                options["_max_batch_requests"] =
+                    serde_json::json!(i64::try_from(requests).map_err(start)?);
+            }
         }
         // Head tensors can also be present when the requested operation is embedding.
         options["_classifier"] = serde_json::json!(model_type == ModelType::Classifier);
@@ -2019,7 +2023,8 @@ mod tests {
     #[test]
     fn native_runtime_receives_the_resolved_limits() {
         let fixture = fixture("", false);
-        let limits = text_embeddings_backend_core::RuntimeLimits::new(10_003, 2_301).unwrap();
+        let limits =
+            text_embeddings_backend_core::ServingLimits::new(10_003, 2_301, Some(37)).unwrap();
         let model = LibtorchBackend::new_with_dense_paths_and_fp8_and_limits(
             &fixture.0,
             "float32",
@@ -2030,13 +2035,13 @@ mod tests {
             Some(limits),
         )
         .unwrap();
-        let mut received = [0i64; 2];
-        // SAFETY: the initialized handle is live and the output has exactly two slots.
+        let mut received = [0i64; 3];
+        // SAFETY: the initialized handle is live and the output has exactly three slots.
         let status = unsafe {
             tei_runtime_limits(model.handle.as_ptr(), received.as_mut_ptr(), received.len())
         };
         assert_eq!(status, 0, "{}", native_error());
-        assert_eq!(received, [10_003, 2_301]);
+        assert_eq!(received, [10_003, 2_301, 37]);
     }
 
     #[test]

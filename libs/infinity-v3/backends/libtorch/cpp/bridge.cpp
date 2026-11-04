@@ -966,10 +966,11 @@ int32_t tei_option(void* handle, const char* key, const char* value) {
 int32_t tei_runtime_limits(void* handle, int64_t* limits, size_t count) {
   return checked([&] {
     EngineCall access(handle);
-    TORCH_CHECK(limits && count >= 2, "Runtime limits require two values");
+    TORCH_CHECK(limits && count >= 3, "Runtime limits require three values");
     const auto& options = static_cast<Engine*>(handle)->options;
     limits[0] = options.integer("_max_batch_tokens", 0);
     limits[1] = options.integer("_max_sequence_length", 0);
+    limits[2] = options.integer("_max_batch_requests", 0);
   });
 }
 
