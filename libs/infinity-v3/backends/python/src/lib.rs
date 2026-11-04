@@ -107,7 +107,7 @@ impl PythonBackend {
         Ok(Self {
             executor,
             classifier,
-            admission: Arc::new(Semaphore::new(parsed.queue_size)),
+            admission: Arc::new(Semaphore::new(1)),
         })
     }
 

@@ -951,6 +951,11 @@ async fn backend_task(
         if backend.is_closed() {
             break;
         }
+        // A busy replica must not pull another prepared batch. Wait without
+        // taking a lease, then acquire only after a batch is available.
+        if backend.wait_available(replica, &mut changed).await.is_err() {
+            break;
+        }
         let next = async { receiver.lock().await.recv().await };
         let mut dispatched = tokio::select! {
             batch = next => match batch { Some(b) => b, None => break },
@@ -964,7 +969,7 @@ async fn backend_task(
             continue;
         };
         // Keep request metadata alive until completion, even after an early
-        // model-lease release. Other backends keep their lease until results are ready.
+        // model-lease release. Exclusive Python completions retain the lease.
         completions.spawn(complete_batch(execution, backend.model_type.clone(), batch));
         while completions.try_join_next().is_some() {}
     }
