@@ -123,10 +123,10 @@ that error with `set_exception`.
 
 `response.set_exception(error)` completes the request with an error. Both
 completion methods release the in-flight permit even if the plugin retains the
-response object. Core invokes `submit` on a persistent worker, so plugins may
-execute synchronously there or retain the envelope for deferred completion.
-Plugins that manage their own asynchronous work must drain it in `close` and
-release model resources.
+response object. Core wraps the plugin in `ThreadedExecutor`, so `submit`
+runs on its persistent Python pool thread; plugins may execute synchronously
+there or retain the envelope for deferred completion. Plugins that manage their
+own asynchronous work must drain it in `close` and release model resources.
 
 ### Optional replica capability discovery
 
@@ -151,25 +151,23 @@ explicit ordinals must be visible, and each replica receives its own
 
 ## Lifecycle and threading
 
-- Plugin factory initialization is synchronous: backend construction returns
-  after the factory loads the model or reports a startup error. The executor is
-  then owned by one persistent worker for that replica.
+- Backend startup and capability discovery are synchronous. The plugin factory
+  loads the model before the backend returns; startup errors surface directly.
+- `infinity_v3_python.threaded.ThreadedExecutor` wraps the plugin with one
+  persistent `ThreadPoolExecutor(max_workers=1)` per backend replica. It owns
+  the plugin's single execution thread.
+- `submit` schedules plugin work on that pool and returns immediately, so the
+  Rust backend worker does not block on a forward pass. Plugin exceptions are
+  caught on the pool thread and complete the Rust response envelope through
+  `set_exception`. Legacy plugins that internally defer completion remain valid.
+- Queued work is bounded by the existing Rust `queue_depth` admission permits.
+  `healthy` is serialized through the same pool. `close` waits for queued work,
+  then closes the wrapped plugin; it is safe to call more than once.
 - One shared frontend queue and scheduler per model hands batches to exclusive
   `BackendPool` replica leases; there is no separate frontend per device.
-- Submission enqueues the Rust payload and completion slot without taking the
-  GIL, then returns the normal deferred receiver immediately, even when the
-  plugin's `submit` is synchronous. Each replica has one persistent Python
-  worker that serializes `submit`, takes the GIL only around interpreter calls,
-  and waits on the Rust queue without it. Result packing stays on the separate
-  Rust completion path.
-- Admission permits equivalent to `queue_depth` bound pending calls, and the
-  command channel uses lazy allocation. Distinct replicas can overlap when
-  Python waits or native operations release the GIL; Python bytecode still
-  serializes under one interpreter GIL.
-- `healthy` is routed through the same worker. Shutdown drains queued work,
-  settles abandoned callers, closes the executor, and joins the worker without
-  holding the GIL. The interpreter stays initialized for the process lifetime;
-  do not fork after initializing device runtimes.
+  Distinct replicas have distinct Python pool threads. Python bytecode still
+  serializes under one interpreter GIL, while waits and native operations may
+  release it.
 
 ## Buffer ownership
 

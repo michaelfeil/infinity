@@ -18,8 +18,6 @@ pub(crate) struct OutputSnapshot {
 pub(crate) type ForwardResult = Result<OutputSnapshot, PyErr>;
 
 /// Bridge used by the Python executor to complete a deferred Rust submission.
-/// Constructing the slot does not require the GIL, so submission can enqueue
-/// before a worker runs Python.
 #[pyclass]
 pub(crate) struct ResponseEnvelope {
     sender: Option<oneshot::Sender<ForwardResult>>,
@@ -27,26 +25,19 @@ pub(crate) struct ResponseEnvelope {
 }
 
 impl ResponseEnvelope {
-    pub(crate) fn new(
-        lease: Option<OwnedSemaphorePermit>,
-    ) -> (Self, oneshot::Receiver<ForwardResult>) {
-        let (sender, receiver) = oneshot::channel();
-        (
-            Self {
-                sender: Some(sender),
-                lease,
-            },
-            receiver,
-        )
-    }
-
-    #[cfg(test)]
     pub(crate) fn channel(
         py: Python<'_>,
         lease: Option<OwnedSemaphorePermit>,
     ) -> PyResult<(Py<Self>, oneshot::Receiver<ForwardResult>)> {
-        let (envelope, receiver) = Self::new(lease);
-        Ok((Py::new(py, envelope)?, receiver))
+        let (sender, receiver) = oneshot::channel();
+        let envelope = Py::new(
+            py,
+            Self {
+                sender: Some(sender),
+                lease,
+            },
+        )?;
+        Ok((envelope, receiver))
     }
 
     fn complete(&mut self, result: ForwardResult) -> PyResult<()> {
@@ -59,10 +50,6 @@ impl ResponseEnvelope {
         self.lease = None;
         let _ = sender.send(result);
         Ok(())
-    }
-
-    pub(crate) fn fail(&mut self, error: PyErr) -> PyResult<()> {
-        self.complete(Err(error))
     }
 }
 

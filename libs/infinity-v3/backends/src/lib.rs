@@ -22,7 +22,7 @@ pub use infinity_v3_backend_core::{
 };
 
 #[cfg(feature = "python-backend")]
-pub use infinity_v3_backend_python::{PythonBackendConfig, PythonCapabilities};
+pub use infinity_v3_backend_python::PythonBackendConfig;
 
 /// Parameters for a bring-your-own-Python backend.
 #[cfg(not(feature = "python-backend"))]
@@ -31,16 +31,14 @@ pub struct PythonBackendConfig {
     pub config: Option<String>,
 }
 
-/// Optional Python replica capabilities when the backend is not compiled.
-#[cfg(not(feature = "python-backend"))]
+/// Backend-neutral replica placement capabilities.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct PythonCapabilities {
+pub struct DeviceCapabilities {
     pub visible_device_count: usize,
     pub supports_replication: bool,
 }
 
-#[cfg(not(feature = "python-backend"))]
-impl Default for PythonCapabilities {
+impl Default for DeviceCapabilities {
     fn default() -> Self {
         Self {
             visible_device_count: 1,
@@ -129,55 +127,43 @@ impl BackendKind {
         }
     }
 
-    /// Discover optional Python replica capabilities before device placement.
-    /// LibTorch keeps its static accelerator-aware behavior. Protocol-1 plugins
-    /// without a discovery hook resolve to single-device defaults.
-    pub fn python_capabilities(
+    /// Resolve replica placement for the selected runtime and device.
+    pub fn device_capabilities(
         self,
-        config: &PythonBackendConfig,
-    ) -> Result<Option<PythonCapabilities>, BackendError> {
+        device: TorchDevice,
+        python: &PythonBackendConfig,
+    ) -> Result<DeviceCapabilities, BackendError> {
         match self {
-            Self::Libtorch => Ok(None),
+            Self::Libtorch => {
+                let device = device.resolved()?;
+                if device == TorchDevice::Cuda {
+                    Ok(DeviceCapabilities {
+                        visible_device_count: device.count()?,
+                        supports_replication: true,
+                    })
+                } else {
+                    Ok(DeviceCapabilities::default())
+                }
+            }
             Self::PythonBackend => {
                 #[cfg(feature = "python-backend")]
                 {
-                    infinity_v3_backend_python::PythonBackend::discover_capabilities(config)
-                        .map(Some)
+                    let (visible_device_count, supports_replication) =
+                        infinity_v3_backend_python::PythonBackend::discover_capabilities(python)?;
+                    Ok(DeviceCapabilities {
+                        visible_device_count,
+                        supports_replication,
+                    })
                 }
                 #[cfg(not(feature = "python-backend"))]
                 {
-                    let _ = config;
+                    let _ = python;
                     Err(BackendError::Start(
                         "Python backend was not compiled; build with --features python-backend"
                             .into(),
                     ))
                 }
             }
-        }
-    }
-
-    /// Whether the selected runtime and accelerator can host replicas. Python
-    /// uses discovered capabilities, falling back to protocol-1 defaults.
-    pub fn supports_replication(
-        self,
-        torch: TorchDevice,
-        python: Option<PythonCapabilities>,
-    ) -> bool {
-        match self {
-            Self::Libtorch => torch == TorchDevice::Cuda,
-            Self::PythonBackend => python.unwrap_or_default().supports_replication,
-        }
-    }
-
-    /// Query the selected runtime rather than another backend's CUDA installation.
-    pub fn visible_device_count(
-        self,
-        torch: TorchDevice,
-        python: Option<PythonCapabilities>,
-    ) -> Result<usize, BackendError> {
-        match self {
-            Self::Libtorch => torch.count(),
-            Self::PythonBackend => Ok(python.unwrap_or_default().visible_device_count),
         }
     }
 }

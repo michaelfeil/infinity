@@ -1,7 +1,5 @@
 use crate::envelope::ResponseEnvelope;
-use crate::PythonCapabilities;
 use infinity_v3_backend_core::BackendError;
-use pyo3::exceptions::PyRuntimeError;
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyModule};
 use std::path::{Path, PathBuf};
@@ -54,10 +52,16 @@ impl Executor {
             kwargs
                 .set_item("queue_size", config.queue_size)
                 .map_err(start_error)?;
-            let inner = factory
-                .call((), Some(&kwargs))
+            let inner = factory.call((), Some(&kwargs)).map_err(|error| {
+                BackendError::Start(format!("Could not start Python backend executor: {error}"))
+            })?;
+            let inner = PyModule::import(py, "infinity_v3_python.threaded")
+                .and_then(|module| module.getattr("ThreadedExecutor"))
+                .and_then(|executor| executor.call1((inner,)))
                 .map_err(|error| {
-                    BackendError::Start(format!("Could not start Python backend executor: {error}"))
+                    BackendError::Start(format!(
+                        "Could not start Python backend dispatch worker: {error}"
+                    ))
                 })?
                 .unbind();
             Ok(Self {
@@ -73,14 +77,15 @@ impl Executor {
         route: &str,
         envelope: Py<ResponseEnvelope>,
         payload: Bound<'_, PyDict>,
-    ) -> PyResult<()> {
+    ) -> Result<(), BackendError> {
         if self.closed.load(Ordering::Acquire) {
-            return Err(PyRuntimeError::new_err("executor is closed"));
+            return Err(BackendError::Unhealthy);
         }
         self.inner
             .bind(py)
             .call_method1("submit", (route, envelope, payload))
             .map(|_| ())
+            .map_err(submit_error)
     }
 
     pub(crate) fn health(&self) -> Result<(), BackendError> {
@@ -105,14 +110,12 @@ impl Executor {
     }
 
     pub(crate) fn close(&self) {
-        let _ = Python::try_attach(|py| self.close_with_py(py));
-    }
-
-    pub(crate) fn close_with_py(&self, py: Python<'_>) {
         if self.closed.swap(true, Ordering::AcqRel) {
             return;
         }
-        let _ = self.inner.bind(py).call_method0("close");
+        let _ = Python::try_attach(|py| {
+            let _ = self.inner.bind(py).call_method0("close");
+        });
     }
 }
 
@@ -125,7 +128,7 @@ impl Drop for Executor {
 pub(crate) fn discover_capabilities(
     selector: Option<String>,
     config_json: &str,
-) -> Result<PythonCapabilities, BackendError> {
+) -> Result<(usize, bool), BackendError> {
     Python::initialize();
     Python::attach(|py| {
         add_python_paths(py);
@@ -135,8 +138,7 @@ pub(crate) fn discover_capabilities(
             ))
         })?;
         let Ok(load_capabilities) = discovery.getattr("load_capabilities") else {
-            // Older protocol-1 helper packages have no discovery function.
-            return Ok(PythonCapabilities::default());
+            return Ok((1, false));
         };
         let capabilities = load_capabilities
             .call1((selector, config_json))
@@ -146,15 +148,10 @@ pub(crate) fn discover_capabilities(
                 ))
             })?;
         if capabilities.is_none() {
-            return Ok(PythonCapabilities::default());
+            return Ok((1, false));
         }
-        let (visible_device_count, supports_replication) =
-            capabilities.extract::<(usize, bool)>().map_err(|error| {
-                BackendError::Start(format!("Python backend capabilities are invalid: {error}"))
-            })?;
-        Ok(PythonCapabilities {
-            visible_device_count,
-            supports_replication,
+        capabilities.extract::<(usize, bool)>().map_err(|error| {
+            BackendError::Start(format!("Python backend capabilities are invalid: {error}"))
         })
     })
 }
@@ -203,4 +200,17 @@ fn start_error(error: PyErr) -> BackendError {
     BackendError::Start(format!(
         "Could not configure Python backend executor: {error}"
     ))
+}
+
+fn submit_error(error: PyErr) -> BackendError {
+    let message = error.to_string();
+    if Python::attach(|py| error.is_instance_of::<pyo3::exceptions::PyMemoryError>(py))
+        || message.contains("queue is full")
+    {
+        BackendError::Overloaded(message)
+    } else if message.contains("executor is closed") {
+        BackendError::Unhealthy
+    } else {
+        BackendError::Inference(format!("Python backend submit failed: {message}"))
+    }
 }

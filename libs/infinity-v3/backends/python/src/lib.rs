@@ -1,15 +1,13 @@
 //! Bring-your-own-Python inference backend.
 //!
-//! Rust owns scheduling, batching geometry and response envelopes. Each backend
-//! replica owns one persistent Python worker and an admission-bounded Rust
-//! command queue; the native backend worker never blocks on a forward pass. The
-//! executor is selected at runtime through an installed entry point or a
-//! `module:attribute` factory.
+//! Rust owns scheduling, batching geometry and response envelopes. One Python
+//! thread per backend replica executes plugin submissions; the native backend
+//! worker never blocks on a forward pass. The executor is selected at runtime
+//! through an installed entry point or a `module:attribute` factory.
 
 mod batch;
 mod envelope;
 mod executor;
-mod worker;
 
 use batch::{pack_embeddings, pack_predictions, pad_batch, PaddedInputs};
 use envelope::{OutputSnapshot, ResponseEnvelope};
@@ -22,7 +20,6 @@ use pyo3::prelude::*;
 use std::path::Path;
 use std::sync::Arc;
 use tokio::sync::Semaphore;
-use worker::Worker;
 
 /// Runtime configuration supplied by the shared frontend.
 #[derive(Clone, Debug, Default)]
@@ -30,24 +27,6 @@ pub struct PythonBackendConfig {
     /// JSON object. Reserved keys: `backend`, `queue_depth`; other keys are
     /// passed to the plugin.
     pub config: Option<String>,
-}
-
-/// Optional replica capabilities reported by a Python plugin before startup.
-/// Protocol-1 plugins without a discovery hook keep these single-device
-/// defaults.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct PythonCapabilities {
-    pub visible_device_count: usize,
-    pub supports_replication: bool,
-}
-
-impl Default for PythonCapabilities {
-    fn default() -> Self {
-        Self {
-            visible_device_count: 1,
-            supports_replication: false,
-        }
-    }
 }
 
 struct ParsedConfig {
@@ -92,7 +71,7 @@ fn parse_config(config: &PythonBackendConfig) -> Result<ParsedConfig, BackendErr
 }
 
 pub struct PythonBackend {
-    worker: Worker,
+    executor: Executor,
     classifier: bool,
     admission: Arc<Semaphore>,
 }
@@ -125,26 +104,24 @@ impl PythonBackend {
             config_json: parsed.config_json,
             queue_size: parsed.queue_size,
         })?;
-        let worker = Worker::start(executor)?;
         Ok(Self {
-            worker,
+            executor,
             classifier,
             admission: Arc::new(Semaphore::new(parsed.queue_size)),
         })
     }
 
-    /// Resolve optional replica capabilities using the same selector and
-    /// config JSON as backend construction. The hook runs before placement.
+    /// Discover optional replica capabilities before backend placement.
     pub fn discover_capabilities(
         config: &PythonBackendConfig,
-    ) -> Result<PythonCapabilities, BackendError> {
+    ) -> Result<(usize, bool), BackendError> {
         let parsed = parse_config(config)?;
         executor::discover_capabilities(parsed.selector, &parsed.config_json)
     }
 
     fn submit(
         &self,
-        route: &'static str,
+        route: &str,
         inputs: Arc<PaddedInputs>,
         complete: impl FnOnce(OutputSnapshot, &PaddedInputs) -> Result<InferenceResult, BackendError>
             + Send
@@ -154,9 +131,16 @@ impl PythonBackend {
             self.admission.clone().try_acquire_owned().map_err(|_| {
                 BackendError::Overloaded("Python backend pending queue is full".into())
             })?;
-        let (envelope, receiver) = ResponseEnvelope::new(Some(permit));
-        self.worker.submit(route, inputs.clone(), envelope)?;
-        let owned = inputs;
+        let receiver = Python::attach(|py| {
+            let (envelope, receiver) = ResponseEnvelope::channel(py, Some(permit))
+                .map_err(|error| BackendError::Inference(error.to_string()))?;
+            let payload = PaddedInputs::to_python(inputs.clone(), py)
+                .map_err(|error| BackendError::Inference(error.to_string()))?;
+            self.executor
+                .submit(py, route, envelope, payload)
+                .map(|_| receiver)
+        })?;
+        let owned = inputs.clone();
         Ok(Inference::Deferred(Box::new(move || {
             let result = receiver
                 .blocking_recv()
@@ -247,11 +231,11 @@ impl Backend for PythonBackend {
     }
 
     fn health(&self) -> Result<(), BackendError> {
-        self.worker.health()
+        self.executor.health()
     }
 
     fn shutdown(&self) {
-        self.worker.close();
+        self.executor.close();
     }
 
     fn embed(&self, batch: Batch) -> Result<Embeddings, BackendError> {
@@ -272,30 +256,8 @@ mod tests {
     use super::*;
     use infinity_v3_backend_core::Embedding;
     use std::ffi::CString;
-    use std::time::Duration;
 
-    fn install_executor(name: &str, extra: &str, submit: &str) {
-        let source = format!(
-            r#"PROTOCOL_VERSION = 1
-import numpy as np
-INIT = 0
-{extra}
-
-class Executor:
-    def __init__(self):
-        global INIT
-        INIT += 1
-    def submit(self, route, response, payload):
-{submit}
-    def healthy(self):
-        return True
-    def close(self):
-        pass
-
-def create_executor(**kwargs):
-    return Executor()
-"#
-        );
+    fn install_module(name: &str, source: &str) {
         Python::attach(|py| {
             let source = CString::new(source).unwrap();
             let filename = CString::new(format!("{name}.py")).unwrap();
@@ -316,31 +278,12 @@ def create_executor(**kwargs):
         });
     }
 
-    fn config_with(json: &str) -> PythonBackendConfig {
-        PythonBackendConfig {
-            config: Some(json.into()),
-        }
-    }
-
     fn config() -> PythonBackendConfig {
-        config_with(r#"{"backend":"infinity_v3_python.testing:create_executor","device":"cpu"}"#)
-    }
-
-    fn backend_on(name: &str, device_id: usize, queue_depth: usize) -> PythonBackend {
-        PythonBackend::new(
-            Path::new("."),
-            "float32",
-            ModelType::Embedding(Pool::Mean),
-            device_id,
-            config_with(&format!(
-                r#"{{"backend":"{name}:create_executor","queue_depth":{queue_depth}}}"#
-            )),
-        )
-        .unwrap()
-    }
-
-    fn backend(name: &str, queue_depth: usize) -> PythonBackend {
-        backend_on(name, 0, queue_depth)
+        PythonBackendConfig {
+            config: Some(
+                r#"{"backend":"infinity_v3_python.testing:create_executor","device":"cpu"}"#.into(),
+            ),
+        }
     }
 
     fn batch() -> Batch {
@@ -382,9 +325,21 @@ def create_executor(**kwargs):
 
     #[test]
     fn completed_requests_release_admission_permits() {
-        let backend = backend("infinity_v3_python.testing", 1);
+        let mut config = config();
+        config.config = Some(
+            r#"{"backend":"infinity_v3_python.testing:create_executor","queue_depth":1}"#.into(),
+        );
+        let backend = PythonBackend::new(
+            Path::new("."),
+            "float32",
+            ModelType::Embedding(Pool::Mean),
+            0,
+            config,
+        )
+        .unwrap();
         for _ in 0..5 {
-            assert_eq!(backend.embed(batch()).unwrap().len(), 2);
+            let embeddings = backend.embed(batch()).unwrap();
+            assert_eq!(embeddings.len(), 2);
         }
         backend.shutdown();
     }
@@ -413,242 +368,108 @@ def create_executor(**kwargs):
             "float32",
             ModelType::Embedding(Pool::Mean),
             0,
-            config_with(&format!(
-                r#"{{"queue_depth":{}}}"#,
-                Semaphore::MAX_PERMITS + 1
-            )),
+            PythonBackendConfig {
+                config: Some(format!(
+                    r#"{{"queue_depth":{}}}"#,
+                    Semaphore::MAX_PERMITS + 1
+                )),
+            },
         );
         assert!(matches!(result, Err(BackendError::Start(_))));
     }
 
     #[test]
-    fn submit_errors_complete_and_release_admission() {
-        for (name, submit, overload, message) in [
-            (
-                "_infinity_memory_error_test",
-                "response.set_exception(MemoryError('result budget exhausted'))",
-                true,
-                "result budget exhausted",
-            ),
-            (
-                "_infinity_submit_failure_test",
-                "raise RuntimeError('submit exploded')",
-                false,
-                "submit exploded",
-            ),
-            (
-                "_infinity_plugin_queue_full_test",
-                "raise RuntimeError('queue is full')",
-                true,
-                "queue is full",
-            ),
-        ] {
-            install_executor(name, "", &format!("        {submit}"));
-            let backend = backend(name, 1);
+    fn plugin_submit_error_completes_and_releases_admission() {
+        install_module(
+            "_infinity_submit_error_test",
+            r#"
+PROTOCOL_VERSION = 1
+import json
+
+class Executor:
+    def __init__(self, memory):
+        self.memory = memory
+    def submit(self, route, response, payload):
+        self.last_response = response
+        if self.memory:
+            response.set_exception(MemoryError("result budget exhausted"))
+        else:
+            raise RuntimeError("queue is full")
+    def healthy(self):
+        return True
+    def close(self):
+        pass
+
+def create_executor(**kwargs):
+    return Executor(json.loads(kwargs["config_json"])["memory"])
+"#,
+        );
+        for (memory, expected) in [(false, "queue is full"), (true, "result budget exhausted")] {
+            let config = serde_json::json!({
+                "backend": "_infinity_submit_error_test:create_executor",
+                "queue_depth": 1,
+                "memory": memory,
+            });
+            let backend = PythonBackend::new(
+                Path::new("."),
+                "float32",
+                ModelType::Embedding(Pool::Mean),
+                0,
+                PythonBackendConfig {
+                    config: Some(config.to_string()),
+                },
+            )
+            .unwrap();
             for _ in 0..2 {
                 let result = backend.submit_embed(batch()).unwrap().complete();
-                let matched = match overload {
-                    true => matches!(&result, Err(BackendError::Overloaded(actual))
-                        if actual.contains(message)),
-                    false => matches!(&result, Err(BackendError::Inference(actual))
-                        if actual.contains(message)),
-                };
-                assert!(matched, "{name} error did not match {message}");
+                assert!(matches!(result, Err(BackendError::Overloaded(message))
+                if message.contains(expected)));
                 assert_eq!(backend.admission.available_permits(), 1);
-                backend.health().unwrap();
             }
             backend.shutdown();
         }
     }
 
     #[test]
-    fn capability_discovery_defaults_validation_and_config() {
-        install_executor(
+    fn capability_discovery_uses_defaults_and_plugin_hook() {
+        let default = PythonBackend::discover_capabilities(&config()).unwrap();
+        assert_eq!(default, (1, false));
+        install_module(
             "_infinity_capability_test",
-            r#"import json
+            r#"
+PROTOCOL_VERSION = 1
+import json
+
+def create_executor(**kwargs):
+    pass
 
 def capabilities(config_json):
     config = json.loads(config_json)
-    mode = config.get("mode")
-    if mode == "zero":
-        return {"visible_device_count": 0, "supports_replication": False}
-    if mode == "type":
-        return {"visible_device_count": True, "supports_replication": False}
-    if mode == "unknown":
-        return {"devices": 4}
     return {
-        "visible_device_count": int(config.get("devices", 1)),
-        "supports_replication": bool(config.get("replicate", False)),
-    }"#,
-            "        pass",
+        "visible_device_count": config.get("devices", 1),
+        "supports_replication": config.get("replicate", False),
+    }
+"#,
         );
-        let defaults = PythonBackend::discover_capabilities(&config()).unwrap();
-        assert_eq!(defaults, PythonCapabilities::default());
-        for (mode, expected) in [
-            ("zero", "visible_device_count"),
-            ("type", "positive integer"),
-            ("unknown", "dict with visible_device_count"),
-        ] {
-            let error = PythonBackend::discover_capabilities(&config_with(&format!(
-                r#"{{"backend":"_infinity_capability_test:create_executor","mode":"{mode}"}}"#
-            )))
-            .unwrap_err();
-            assert!(
-                matches!(&error, BackendError::Start(message) if message.contains(expected)),
-                "unexpected error: {error}"
-            );
-        }
-        let capabilities = PythonBackend::discover_capabilities(&config_with(
-            r#"{"backend":"_infinity_capability_test:create_executor","devices":3,"replicate":true}"#,
-        ))
+        let discovered = PythonBackend::discover_capabilities(&PythonBackendConfig {
+            config: Some(
+                r#"{"backend":"_infinity_capability_test:create_executor","devices":3,"replicate":true}"#
+                    .into(),
+            ),
+        })
         .unwrap();
-        assert_eq!(
-            capabilities,
-            PythonCapabilities {
-                visible_device_count: 3,
-                supports_replication: true,
-            }
-        );
-    }
-
-    #[test]
-    fn blocked_synchronous_plugin_submit_returns_deferred_immediately() {
-        install_executor(
-            "_infinity_blocked_submit_test",
-            r#"import threading
-_started = threading.Event()
-_release = threading.Event()
-
-def wait_started(timeout):
-    return _started.wait(timeout=timeout)
-
-def release():
-    _release.set()"#,
-            r#"        _started.set()
-        if not _release.wait(timeout=2.0):
-            raise TimeoutError("release gate timed out")
-        rows = int(payload["batch_size"])
-        response.set_result(np.full((rows, 8), 3.0, dtype=np.float32))"#,
-        );
-        let backend = backend("_infinity_blocked_submit_test", 2);
-        let deferred = backend.submit_embed(batch()).unwrap();
-        let started = Python::attach(|py| {
-            let module =
-                pyo3::types::PyModule::import(py, "_infinity_blocked_submit_test").unwrap();
-            module
-                .getattr("wait_started")
-                .unwrap()
-                .call1((1.0,))
-                .unwrap()
-                .extract::<bool>()
-                .unwrap()
-        });
-        Python::attach(|py| {
-            let module =
-                pyo3::types::PyModule::import(py, "_infinity_blocked_submit_test").unwrap();
-            module.getattr("release").unwrap().call0().unwrap();
-        });
-        assert!(
-            started,
-            "plugin submit did not start while the submission was deferred"
-        );
-        assert_eq!(deferred.complete().unwrap().len(), 2);
-        backend.shutdown();
-    }
-
-    #[test]
-    fn replica_workers_overlap_python_waits_that_release_the_gil() {
-        install_executor(
-            "_infinity_overlap_test",
-            "import threading\nbarrier = threading.Barrier(2)",
-            r#"        barrier.wait(timeout=2)
-        rows = int(payload["batch_size"])
-        response.set_result(np.full((rows, 8), 4.0, dtype=np.float32))"#,
-        );
-        let first = backend_on("_infinity_overlap_test", 0, 1);
-        let second = backend_on("_infinity_overlap_test", 1, 1);
-        let first_deferred = first.submit_embed(batch()).unwrap();
-        let second_deferred = second.submit_embed(batch()).unwrap();
-        assert_eq!(first_deferred.complete().unwrap().len(), 2);
-        assert_eq!(second_deferred.complete().unwrap().len(), 2);
-        first.shutdown();
-        second.shutdown();
-    }
-
-    #[test]
-    fn persistent_worker_reuses_one_executor_thread() {
-        install_executor(
-            "_infinity_worker_reuse_test",
-            r#"import threading
-SUBMITS = 0
-THREADS = set()
-
-def stats():
-    return INIT, SUBMITS, len(THREADS)"#,
-            r#"        global SUBMITS
-        SUBMITS += 1
-        THREADS.add(threading.get_ident())
-        rows = int(payload["batch_size"])
-        response.set_result(np.full((rows, 8), 5.0, dtype=np.float32))"#,
-        );
-        let backend = backend("_infinity_worker_reuse_test", 2);
-        for _ in 0..3 {
-            assert_eq!(backend.embed(batch()).unwrap().len(), 2);
+        assert_eq!(discovered, (3, true));
+        for invalid in ["0", "-1", "true"] {
+            assert!(PythonBackend::discover_capabilities(&PythonBackendConfig {
+                config: Some(format!(r#"{{"backend":"_infinity_capability_test:create_executor","devices":{invalid}}}"#)),
+            }).is_err());
         }
-        let (initializations, submits, threads) = Python::attach(|py| {
-            let module = pyo3::types::PyModule::import(py, "_infinity_worker_reuse_test").unwrap();
-            module
-                .getattr("stats")
-                .unwrap()
-                .call0()
-                .unwrap()
-                .extract::<(usize, usize, usize)>()
-                .unwrap()
-        });
-        assert_eq!((initializations, submits, threads), (1, 3, 1));
-        backend.shutdown();
-    }
-
-    #[test]
-    fn attached_thread_can_start_health_and_shutdown_backend() {
-        let (finished, receiver) = std::sync::mpsc::channel();
-        let handle = std::thread::spawn(move || {
-            let result = Python::attach(|_py| {
-                let backend = PythonBackend::new(
-                    Path::new("."),
-                    "float32",
-                    ModelType::Embedding(Pool::Mean),
-                    0,
-                    config(),
-                )?;
-                backend.health()?;
-                backend.shutdown();
-                Ok::<(), BackendError>(())
-            });
-            let _ = finished.send(result);
-        });
-        match receiver.recv_timeout(Duration::from_secs(5)) {
-            Ok(result) => result.unwrap(),
-            Err(error) => panic!("attached-thread backend lifecycle did not finish: {error}"),
-        }
-        handle.join().unwrap();
-    }
-
-    #[test]
-    fn shutdown_drains_canceled_and_pending_requests_and_releases_admission() {
-        install_executor(
-            "_infinity_shutdown_drain_test",
-            "import time",
-            r#"        time.sleep(0.05)
-        rows = int(payload["batch_size"])
-        response.set_result(np.full((rows, 8), 6.0, dtype=np.float32))"#,
-        );
-        let backend = backend("_infinity_shutdown_drain_test", 2);
-        let canceled = backend.submit_embed(batch()).unwrap();
-        drop(canceled);
-        let pending = backend.submit_embed(batch()).unwrap();
-        backend.shutdown();
-        assert_eq!(pending.complete().unwrap().len(), 2);
-        assert_eq!(backend.admission.available_permits(), 2);
+        assert!(PythonBackend::discover_capabilities(&PythonBackendConfig {
+            config: Some(
+                r#"{"backend":"_infinity_capability_test:create_executor","replicate":"yes"}"#
+                    .into()
+            ),
+        })
+        .is_err());
     }
 }
