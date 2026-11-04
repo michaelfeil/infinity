@@ -155,6 +155,7 @@ jobs:
         run: cargo build --locked -p infinity_v3-router --no-default-features --features python-backend,http
       - name: Run Python backend and shared frontend tests
         run: |
+          python -m unittest discover -s python/tests -v
           cargo test --locked -p infinity-v3-backend-python -p infinity_v3-backend-core \
             -p infinity_v3-backend -p infinity_v3-core -p infinity_v3-router \
             --no-default-features --features python-backend,http --lib --bins

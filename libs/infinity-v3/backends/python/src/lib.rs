@@ -1,9 +1,9 @@
 //! Bring-your-own-Python inference backend.
 //!
 //! Rust owns scheduling, batching geometry and response envelopes. One Python
-//! executor thread owns the model; the native backend worker never blocks on a
-//! forward pass. The executor is selected at runtime through an installed entry
-//! point or a `module:attribute` factory.
+//! thread per backend replica executes plugin submissions; the native backend
+//! worker never blocks on a forward pass. The executor is selected at runtime
+//! through an installed entry point or a `module:attribute` factory.
 
 mod batch;
 mod envelope;
@@ -29,6 +29,47 @@ pub struct PythonBackendConfig {
     pub config: Option<String>,
 }
 
+struct ParsedConfig {
+    selector: Option<String>,
+    queue_size: usize,
+    config_json: String,
+}
+
+fn parse_config(config: &PythonBackendConfig) -> Result<ParsedConfig, BackendError> {
+    let config_json = config.config.clone().unwrap_or_else(|| "{}".into());
+    let value: serde_json::Value = serde_json::from_str(&config_json)
+        .map_err(|error| BackendError::Start(format!("Invalid --python-config JSON: {error}")))?;
+    let object = value
+        .as_object()
+        .ok_or_else(|| BackendError::Start("--python-config must be a JSON object".into()))?;
+    let selector = match object.get("backend") {
+        Some(serde_json::Value::String(value)) => Some(value.clone()),
+        Some(_) => {
+            return Err(BackendError::Start(
+                "--python-config backend must be a string".into(),
+            ))
+        }
+        None => None,
+    };
+    let queue_size = match object.get("queue_depth") {
+        Some(value) => value
+            .as_u64()
+            .filter(|&value| value > 0 && value <= Semaphore::MAX_PERMITS as u64)
+            .and_then(|value| usize::try_from(value).ok())
+            .ok_or_else(|| {
+                BackendError::Start(
+                    "--python-config queue_depth must be a positive integer within the semaphore limit".into(),
+                )
+            })?,
+        None => 32,
+    };
+    Ok(ParsedConfig {
+        selector,
+        queue_size,
+        config_json,
+    })
+}
+
 pub struct PythonBackend {
     executor: Executor,
     classifier: bool,
@@ -52,49 +93,30 @@ impl PythonBackend {
                 ))
             }
         };
-        let config_json = config.config.unwrap_or_else(|| "{}".into());
-        let value: serde_json::Value = serde_json::from_str(&config_json).map_err(|error| {
-            BackendError::Start(format!("Invalid --python-config JSON: {error}"))
-        })?;
-        let object = value
-            .as_object()
-            .ok_or_else(|| BackendError::Start("--python-config must be a JSON object".into()))?;
-        let selector = match object.get("backend") {
-            Some(serde_json::Value::String(value)) => Some(value.clone()),
-            Some(_) => {
-                return Err(BackendError::Start(
-                    "--python-config backend must be a string".into(),
-                ))
-            }
-            None => None,
-        };
-        let queue_size = match object.get("queue_depth") {
-            Some(value) => value
-                .as_u64()
-                .filter(|&value| value > 0 && value <= Semaphore::MAX_PERMITS as u64)
-                .and_then(|value| usize::try_from(value).ok())
-                .ok_or_else(|| {
-                    BackendError::Start(
-                        "--python-config queue_depth must be a positive integer within the semaphore limit".into(),
-                    )
-                })?,
-            None => 32,
-        };
+        let parsed = parse_config(&config)?;
         let executor = Executor::new(ExecutorConfig {
-            selector,
+            selector: parsed.selector,
             model_path: model_path.to_owned(),
             dtype: dtype.to_owned(),
             model_type: model_type.to_owned(),
             pooling: pool.to_string(),
             device_id,
-            config_json,
-            queue_size,
+            config_json: parsed.config_json,
+            queue_size: parsed.queue_size,
         })?;
         Ok(Self {
             executor,
             classifier,
-            admission: Arc::new(Semaphore::new(queue_size)),
+            admission: Arc::new(Semaphore::new(parsed.queue_size)),
         })
+    }
+
+    /// Discover optional replica capabilities before backend placement.
+    pub fn discover_capabilities(
+        config: &PythonBackendConfig,
+    ) -> Result<(usize, bool), BackendError> {
+        let parsed = parse_config(config)?;
+        executor::discover_capabilities(parsed.selector, &parsed.config_json)
     }
 
     fn submit(
@@ -119,7 +141,7 @@ impl PythonBackend {
                 .map(|_| receiver)
         })?;
         let owned = inputs.clone();
-        Ok(Inference::Deferred(Box::new(move || {
+        Ok(Inference::Queued(Box::new(move || {
             let result = receiver
                 .blocking_recv()
                 .map_err(|_| {
@@ -127,11 +149,16 @@ impl PythonBackend {
                 })?
                 .map_err(|error| {
                     Python::try_attach(|py| {
-                        if error.is_instance_of::<pyo3::exceptions::PyMemoryError>(py) {
-                            BackendError::Overloaded(error.to_string())
+                        let message = error.to_string();
+                        if error.is_instance_of::<pyo3::exceptions::PyMemoryError>(py)
+                            || message.contains("queue is full")
+                        {
+                            BackendError::Overloaded(message)
+                        } else if message.contains("executor is closed") {
+                            BackendError::Unhealthy
                         } else {
                             BackendError::Inference(format!(
-                                "Python backend forward failed: {error}"
+                                "Python backend forward failed: {message}"
                             ))
                         }
                     })
@@ -228,6 +255,28 @@ impl Backend for PythonBackend {
 mod tests {
     use super::*;
     use infinity_v3_backend_core::Embedding;
+    use std::ffi::CString;
+
+    fn install_module(name: &str, source: &str) {
+        Python::attach(|py| {
+            let source = CString::new(source).unwrap();
+            let filename = CString::new(format!("{name}.py")).unwrap();
+            let module_name = CString::new(name).unwrap();
+            let module = pyo3::types::PyModule::from_code(
+                py,
+                source.as_c_str(),
+                filename.as_c_str(),
+                module_name.as_c_str(),
+            )
+            .unwrap();
+            pyo3::types::PyModule::import(py, "sys")
+                .unwrap()
+                .getattr("modules")
+                .unwrap()
+                .set_item(name, module)
+                .unwrap();
+        });
+    }
 
     fn config() -> PythonBackendConfig {
         PythonBackendConfig {
@@ -311,6 +360,7 @@ mod tests {
         assert_eq!(predictions[&1], vec![0.0, 1.0]);
         backend.shutdown();
     }
+
     #[test]
     fn excessive_queue_depth_is_a_startup_error() {
         let result = PythonBackend::new(
@@ -327,53 +377,99 @@ mod tests {
         );
         assert!(matches!(result, Err(BackendError::Start(_))));
     }
+
     #[test]
-    fn python_memory_error_completes_as_overload_and_releases_admission() {
-        Python::attach(|py| {
-            let module = pyo3::types::PyModule::from_code(
-                py,
-                c"
+    fn plugin_submit_error_completes_and_releases_admission() {
+        install_module(
+            "_infinity_submit_error_test",
+            r#"
 PROTOCOL_VERSION = 1
+import json
+
 class Executor:
+    def __init__(self, memory):
+        self.memory = memory
     def submit(self, route, response, payload):
         self.last_response = response
-        response.set_exception(MemoryError('result budget exhausted'))
+        if self.memory:
+            response.set_exception(MemoryError("result budget exhausted"))
+        else:
+            raise RuntimeError("queue is full")
     def healthy(self):
         return True
     def close(self):
         pass
+
 def create_executor(**kwargs):
-    return Executor()
-",
-                c"_infinity_memory_error_test.py",
-                c"_infinity_memory_error_test",
+    return Executor(json.loads(kwargs["config_json"])["memory"])
+"#,
+        );
+        for (memory, expected) in [(false, "queue is full"), (true, "result budget exhausted")] {
+            let config = serde_json::json!({
+                "backend": "_infinity_submit_error_test:create_executor",
+                "queue_depth": 1,
+                "memory": memory,
+            });
+            let backend = PythonBackend::new(
+                Path::new("."),
+                "float32",
+                ModelType::Embedding(Pool::Mean),
+                0,
+                PythonBackendConfig {
+                    config: Some(config.to_string()),
+                },
             )
             .unwrap();
-            pyo3::types::PyModule::import(py, "sys")
-                .unwrap()
-                .getattr("modules")
-                .unwrap()
-                .set_item("_infinity_memory_error_test", module)
-                .unwrap();
-        });
-        let backend = PythonBackend::new(
-            Path::new("."),
-            "float32",
-            ModelType::Embedding(Pool::Mean),
-            0,
-            PythonBackendConfig {
-                config: Some(
-                    r#"{"backend":"_infinity_memory_error_test:create_executor","queue_depth":1}"#
-                        .into(),
-                ),
-            },
-        )
-        .unwrap();
-        for _ in 0..2 {
-            let result = backend.submit_embed(batch()).unwrap().complete();
-            assert!(matches!(result, Err(BackendError::Overloaded(message))
-                if message.contains("result budget exhausted")));
+            for _ in 0..2 {
+                let result = backend.submit_embed(batch()).unwrap().complete();
+                assert!(matches!(result, Err(BackendError::Overloaded(message))
+                if message.contains(expected)));
+                assert_eq!(backend.admission.available_permits(), 1);
+            }
+            backend.shutdown();
         }
-        backend.shutdown();
+    }
+
+    #[test]
+    fn capability_discovery_uses_defaults_and_plugin_hook() {
+        let default = PythonBackend::discover_capabilities(&config()).unwrap();
+        assert_eq!(default, (1, false));
+        install_module(
+            "_infinity_capability_test",
+            r#"
+PROTOCOL_VERSION = 1
+import json
+
+def create_executor(**kwargs):
+    pass
+
+def capabilities(config_json):
+    config = json.loads(config_json)
+    return {
+        "visible_device_count": config.get("devices", 1),
+        "supports_replication": config.get("replicate", False),
+    }
+"#,
+        );
+        let discovered = PythonBackend::discover_capabilities(&PythonBackendConfig {
+            config: Some(
+                r#"{"backend":"_infinity_capability_test:create_executor","devices":3,"replicate":true}"#
+                    .into(),
+            ),
+        })
+        .unwrap();
+        assert_eq!(discovered, (3, true));
+        for invalid in ["0", "-1", "true"] {
+            assert!(PythonBackend::discover_capabilities(&PythonBackendConfig {
+                config: Some(format!(r#"{{"backend":"_infinity_capability_test:create_executor","devices":{invalid}}}"#)),
+            }).is_err());
+        }
+        assert!(PythonBackend::discover_capabilities(&PythonBackendConfig {
+            config: Some(
+                r#"{"backend":"_infinity_capability_test:create_executor","replicate":"yes"}"#
+                    .into()
+            ),
+        })
+        .is_err());
     }
 }

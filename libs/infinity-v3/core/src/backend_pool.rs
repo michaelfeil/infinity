@@ -231,6 +231,16 @@ impl BackendPool {
 }
 
 impl Execution {
+    async fn complete_submission<T>(
+        &mut self,
+        submission: Submission<T>,
+    ) -> Result<(T, Duration), BackendError> {
+        if matches!(submission, Submission::Deferred(_)) {
+            self.release();
+        }
+        submission.complete().await
+    }
+
     async fn run<T, F, Fut>(
         self,
         tokens: usize,
@@ -253,12 +263,7 @@ impl Execution {
             let backend = execution.pool.inner.backends[execution.id].clone();
             execution.started();
             let result = match call(backend).await {
-                Ok(submission) => {
-                    if matches!(submission, Submission::Deferred(_)) {
-                        execution.release();
-                    }
-                    submission.complete().await
-                }
+                Ok(submission) => execution.complete_submission(submission).await,
                 Err(error) => Err(error),
             };
             execution.finish(tokens, sequences, &result);
@@ -493,6 +498,32 @@ mod completion_tests {
         assert!(!state.replicas[0].busy);
         assert_eq!(state.idle.len(), 1);
     }
+    #[tokio::test]
+    async fn queued_work_keeps_replica_busy_until_response_completion() {
+        let mut execution = execution();
+        let pool = execution.pool.clone();
+        let (sender, receiver) = tokio::sync::oneshot::channel();
+        let completion = tokio::spawn(async move {
+            let result = execution
+                .complete_submission(Submission::Queued(receiver))
+                .await;
+            execution.finish(1, 1, &result);
+        });
+        tokio::task::yield_now().await;
+        {
+            let state = pool.inner.state.lock().unwrap();
+            assert!(state.replicas[0].busy);
+            assert!(state.idle.is_empty());
+        }
+        sender.send(Ok(((), Duration::from_millis(1)))).unwrap();
+        completion.await.unwrap();
+        let next = tokio::time::timeout(Duration::from_secs(1), pool.acquire_replica(0))
+            .await
+            .unwrap()
+            .unwrap();
+        next.finish(1, 1, &Ok(((), Duration::ZERO)));
+    }
+
     #[test]
     fn old_completion_does_not_release_the_next_model_lease() {
         let mut previous = execution();

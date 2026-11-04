@@ -52,10 +52,16 @@ impl Executor {
             kwargs
                 .set_item("queue_size", config.queue_size)
                 .map_err(start_error)?;
-            let inner = factory
-                .call((), Some(&kwargs))
+            let inner = factory.call((), Some(&kwargs)).map_err(|error| {
+                BackendError::Start(format!("Could not start Python backend executor: {error}"))
+            })?;
+            let inner = PyModule::import(py, "infinity_v3_python.threaded")
+                .and_then(|module| module.getattr("ThreadedExecutor"))
+                .and_then(|executor| executor.call1((inner,)))
                 .map_err(|error| {
-                    BackendError::Start(format!("Could not start Python backend executor: {error}"))
+                    BackendError::Start(format!(
+                        "Could not start Python backend dispatch worker: {error}"
+                    ))
                 })?
                 .unbind();
             Ok(Self {
@@ -108,7 +114,9 @@ impl Executor {
             return;
         }
         let _ = Python::try_attach(|py| {
-            let _ = self.inner.bind(py).call_method0("close");
+            if let Err(error) = self.inner.bind(py).call_method0("close") {
+                tracing::error!(%error, "Python backend cleanup failed");
+            }
         });
     }
 }
@@ -117,6 +125,37 @@ impl Drop for Executor {
     fn drop(&mut self) {
         self.close();
     }
+}
+
+pub(crate) fn discover_capabilities(
+    selector: Option<String>,
+    config_json: &str,
+) -> Result<(usize, bool), BackendError> {
+    Python::initialize();
+    Python::attach(|py| {
+        add_python_paths(py);
+        let discovery = PyModule::import(py, "infinity_v3_python.discovery").map_err(|error| {
+            BackendError::Start(format!(
+                "Could not import infinity_v3_python for capability discovery: {error}"
+            ))
+        })?;
+        let Ok(load_capabilities) = discovery.getattr("load_capabilities") else {
+            return Ok((1, false));
+        };
+        let capabilities = load_capabilities
+            .call1((selector, config_json))
+            .map_err(|error| {
+                BackendError::Start(format!(
+                    "Could not discover Python backend capabilities: {error}"
+                ))
+            })?;
+        if capabilities.is_none() {
+            return Ok((1, false));
+        }
+        capabilities.extract::<(usize, bool)>().map_err(|error| {
+            BackendError::Start(format!("Python backend capabilities are invalid: {error}"))
+        })
+    })
 }
 
 fn load_factory<'py>(

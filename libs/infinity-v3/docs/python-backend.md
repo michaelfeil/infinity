@@ -123,20 +123,52 @@ that error with `set_exception`.
 
 `response.set_exception(error)` completes the request with an error. Both
 completion methods release the in-flight permit even if the plugin retains the
-response object. The executor must not block the calling Rust worker; a common implementation uses one
-dedicated Python thread and a bounded queue. `close` must join that thread and
-release model resources.
+response object. Core wraps the plugin in `ThreadedExecutor`, so `submit`
+runs on its persistent Python pool thread; plugins may execute synchronously
+there or retain the envelope for deferred completion. Plugins that manage their
+own asynchronous work must drain it in `close` and release model resources.
+
+### Optional replica capability discovery
+
+The selected plugin module may export a `capabilities(config_json)` hook returning
+exactly `visible_device_count` and `supports_replication`:
+
+```python
+def capabilities(config_json):
+    return {"visible_device_count": 4, "supports_replication": True}
+```
+
+The hook receives the same `config_json` as the factory and runs synchronously
+before replica placement and model startup. It may run more than once, so keep
+it cheap and side-effect free. The count must be a positive integer and the
+flag must be a boolean; invalid values fail startup clearly.
+
+Protocol-1 plugins without the hook keep the single-device defaults
+(`1`, `False`). Existing `--device-id` and `--backend-device-ids` selection
+then applies per replica: `auto` expands only when replication is supported,
+explicit ordinals must be visible, and each replica receives its own
+`device_id`. `BackendPool` schedules batches across replicas.
 
 ## Lifecycle and threading
 
-- One executor thread per process is recommended. The Rust backend already
-  serializes a single model worker and completion worker.
-- The Rust backend bounds outstanding forwards with `queue_depth`.
-- `healthy` is called by the shared health endpoint.
-- The Python interpreter stays initialized for the process lifetime. The plugin
-  must be importable before the first model is created.
-- Do not fork after initializing device runtimes. Use a fresh process per
-  device.
+- Backend startup and capability discovery are synchronous. The plugin factory
+  loads the model before the backend returns; startup errors surface directly.
+- `infinity_v3_python.threaded.ThreadedExecutor` wraps the plugin with one
+  persistent `ThreadPoolExecutor(max_workers=1)` per backend replica. It owns
+  the plugin's single execution thread.
+- `submit` schedules plugin work on that pool and returns immediately, so the
+  Rust backend worker does not block on a forward pass. Plugin exceptions are
+  caught on the pool thread and complete the Rust response envelope through
+  `set_exception`. Legacy plugins that internally defer completion remain valid.
+- Queued work is bounded by the existing Rust `queue_depth` admission permits.
+  `healthy` is serialized through the same pool. `close` is the final pool task,
+  after queued work, so cleanup uses the execution thread. Cleanup failures are
+  reported; repeated calls to `close` are safe.
+- One shared frontend queue and scheduler per model hands batches to exclusive
+  `BackendPool` replica leases; there is no separate frontend per device.
+  Distinct replicas have distinct Python pool threads. Python bytecode still
+  serializes under one interpreter GIL, while waits and native operations may
+  release it.
 
 ## Buffer ownership
 

@@ -770,13 +770,10 @@ async fn initialize_model(
         "D3 requires --dtype bfloat16 for its backbone (the readout remains FP32)"
     );
 
-    // Create backend
-    let devices = replicas::resolve_devices(
-        backend_device_ids.as_deref(),
-        device_id,
-        backend_kind,
-        torch_device,
-    )?;
+    // Resolve backend-neutral placement before starting replicas.
+    let capabilities = backend_kind.device_capabilities(torch_device, &python_backend_config)?;
+    let devices =
+        replicas::resolve_devices(backend_device_ids.as_deref(), device_id, capabilities)?;
     tracing::info!("Starting model backend");
     let api_repo = api_repo.map(std::sync::Arc::new);
     let initializers = devices.iter().enumerate().map(|(replica, &device)| {
