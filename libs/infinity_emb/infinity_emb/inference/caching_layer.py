@@ -58,11 +58,19 @@ class Cache:
                 item = self._add_q.get(timeout=0.5)
             except queue.Empty:
                 continue
-            if item is not None:
-                k, v = item
-                self._cache.add(key=self._pre_hash(k), value=v, expire=86400)
-            self._add_q.task_done()
-        self._threadpool.shutdown(wait=True)
+            try:
+                if item is not None:
+                    k, v = item
+                    self._cache.add(key=self._pre_hash(k), value=v, expire=86400)
+            except Exception as ex:
+                # a best-effort cache must never take down its own writer thread.
+                logger.warning(f"failed to write to the vector disk cache: {ex}")
+            finally:
+                self._add_q.task_done()
+        # this runs *on* a worker of self._threadpool, so wait=True would join the
+        # current thread and raise `RuntimeError: cannot join current thread` into a
+        # Future that is never retrieved.
+        self._threadpool.shutdown(wait=False)
 
     def _get(self, sentence: str) -> Union[None, EmbeddingReturnType, list[float]]:
         """sets the item.complete() and sets embedding, if in cache."""
