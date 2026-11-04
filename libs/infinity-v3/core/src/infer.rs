@@ -4,7 +4,6 @@ use crate::tokenization::{EncodingInput, RawEncoding, Tokenization};
 use crate::TextEmbeddingsError;
 use infinity_v3_backend::result_memory::{retain_for_request, HasResultMemory, ResultLease};
 use infinity_v3_backend::{Backend, BackendError, Embedding, ModelType, SharedF32};
-use std::collections::VecDeque;
 use std::sync::{
     atomic::{AtomicUsize, Ordering},
     Arc,
@@ -212,23 +211,21 @@ impl Infer {
         let notify_batching_task = Arc::new(Notify::new());
         let (sender, receiver) = mpsc::channel(1);
         let receiver = Arc::new(Mutex::new(receiver));
+        let ready = Arc::new(Semaphore::new(0));
         let mut tasks = vec![tokio::spawn(batching_task(
             backend.clone(),
             queue.clone(),
             notify_batching_task.clone(),
             sender,
+            ready.clone(),
         ))];
-        // Small pools still need overlap on each device. Larger pools already
-        // provide parallelism, so share just one extra batch between replicas.
-        let ahead = if backend.len() <= 2 { backend.len() } else { 1 };
-        let prefetch = Arc::new(Semaphore::new(ahead));
         for replica in 0..backend.len() {
             tasks.push(tokio::spawn(backend_task(
                 backend.clone(),
                 queue.clone(),
                 receiver.clone(),
                 replica,
-                prefetch.clone(),
+                ready.clone(),
             )));
         }
         let lifetime = Arc::new(PipelineLifetime {
@@ -916,6 +913,7 @@ async fn batching_task(
     queue: Queue,
     notify: Arc<Notify>,
     sender: mpsc::Sender<DispatchedBatch>,
+    ready: Arc<Semaphore>,
 ) {
     let mut changed = pool.changes();
     loop {
@@ -927,14 +925,22 @@ async fn batching_task(
             permit = sender.reserve() => match permit { Ok(p) => p, Err(_) => break },
             _ = changed.changed() => { if pool.is_closed() { break; } continue; }
         };
+        // Form a batch only for an available consumer. A spare channel slot
+        // alone must not freeze a partial batch while every GPU is busy.
+        let demand = tokio::select! {
+            demand = ready.acquire() => match demand { Ok(p) => p, Err(_) => break },
+            _ = changed.changed() => { if pool.is_closed() { break; } continue; }
+        };
         if pool.is_closed() {
             break;
         }
         let started = Instant::now();
         if let Some(batch) = queue.next_batch().await {
             pool.observe_preparation(started.elapsed());
+            demand.forget();
             permit.send(DispatchedBatch(Some(batch)));
         } else {
+            drop(demand);
             drop(permit);
             tokio::select! { _ = arrival => {}, _ = changed.changed() => {} }
             // Let already-ready tokenization futures enqueue together before selecting a batch.
@@ -950,49 +956,28 @@ async fn backend_task(
     queue: Queue,
     receiver: Arc<Mutex<mpsc::Receiver<DispatchedBatch>>>,
     replica: usize,
-    prefetch: Arc<Semaphore>,
+    ready: Arc<Semaphore>,
 ) {
     let mut changed = backend.changes();
-    // Eight replicas may overlap only sub-0.625 ms batches, sharing one extra
-    // batch across the entire pool rather than hiding one per replica.
-    let cutoff = Duration::from_secs_f64(0.005 / backend.len().max(1) as f64);
-    let mut previous = cutoff;
-    let mut pending = VecDeque::<(Instant, tokio::task::JoinHandle<Duration>)>::new();
-    let mut reserved = None;
     loop {
-        if backend.is_closed() {
+        if backend.is_closed() || backend.wait_available(replica, &mut changed).await.is_err() {
             break;
         }
-        let ahead = if let Some((started, task)) = pending.front() {
-            if pending.len() == 1
-                && previous < cutoff
-                && started.elapsed() < cutoff
-                && !task.is_finished()
-            {
-                prefetch.clone().try_acquire_owned().ok()
-            } else {
-                None
-            }
-        } else {
-            None
+        let next = async {
+            ready.add_permits(1);
+            receiver.lock().await.recv().await
         };
-        if !pending.is_empty() && ahead.is_none() {
-            if let Some((_, task)) = pending.pop_front() {
-                previous = task.await.unwrap_or(cutoff);
-                // The extra batch is now the current batch; another replica
-                // may use the shared allowance.
-                drop(reserved.take());
+        // Keep this one demand alive across unrelated pool changes.
+        let stopped = async {
+            loop {
+                if changed.changed().await.is_err() || backend.is_closed() {
+                    break;
+                }
             }
-            continue;
-        }
-        // Exclusive Python envelopes retain their lease through completion.
-        if backend.wait_available(replica, &mut changed).await.is_err() {
-            break;
-        }
-        let next = async { receiver.lock().await.recv().await };
+        };
         let mut dispatched = tokio::select! {
             batch = next => match batch { Some(b) => b, None => break },
-            _ = changed.changed() => { if backend.is_closed() { break; } continue; }
+            _ = stopped => break,
         };
         let execution = match backend.acquire_replica(replica).await {
             Ok(execution) => execution,
@@ -1001,26 +986,9 @@ async fn backend_task(
         let Some(batch) = dispatched.0.take().and_then(prune_canceled_batch) else {
             continue;
         };
-        if pending.front().is_some_and(|(_, task)| !task.is_finished()) {
-            metrics::counter!("infinity_replica_prefetched_batches", "model" => backend.model_label(), "replica" => replica.to_string())
-                .increment(1);
-        }
-        let started = Instant::now();
-        let model_type = backend.model_type.clone();
-        // Keep malformed-result decoding isolated from the persistent worker,
-        // including when overlap is disabled and we immediately await this task.
-        pending.push_back((
-            started,
-            tokio::spawn(async move {
-                complete_batch(execution, model_type, batch).await;
-                started.elapsed()
-            }),
-        ));
-        reserved = ahead;
-    }
-    // Submitted work survives client cancellation and drains during shutdown.
-    for (_, task) in pending {
-        let _ = task.await;
+        // Isolate malformed-result decoding while keeping this replica from
+        // requesting another batch until its current response is complete.
+        let _ = tokio::spawn(complete_batch(execution, backend.model_type.clone(), batch)).await;
     }
     queue.close();
 }
@@ -1367,7 +1335,9 @@ mod completion_tests {
                     }
                     let mut predictions = infinity_v3_backend::Predictions::default();
                     if batch.input_ids[0] != 99 {
-                        predictions.insert(0, vec![1.0]);
+                        for index in 0..batch.len() {
+                            predictions.insert(index, vec![1.0]);
+                        }
                     }
                     Ok(predictions)
                 },
@@ -1512,66 +1482,82 @@ mod completion_tests {
     }
 
     #[tokio::test]
-    async fn fast_replica_prefetch_is_bounded_by_the_shared_allowance() {
-        for occupied in [false, true] {
-            let (started, mut starts) = mpsc::unbounded_channel();
-            let (release, gate) = std::sync::mpsc::channel();
-            let pool = BackendPool::new(vec![Backend::for_test(
-                Box::new(GatedReplica {
-                    id: 0,
-                    started,
-                    gate: Some(Arc::new(std::sync::Mutex::new(gate))),
-                }),
-                ModelType::Classifier,
-            )])
-            .unwrap();
-            let queue = Queue::new(16, Some(1), 0.0, 1);
-            let (sender, receiver) = mpsc::channel(1);
-            let receiver = Arc::new(Mutex::new(receiver));
-            let allowance = Arc::new(Semaphore::new(1));
-            // Model another replica already using the one pool-wide extra slot.
-            let held = occupied.then(|| allowance.clone().try_acquire_owned().unwrap());
-            let worker = tokio::spawn(backend_task(
-                pool.clone(),
-                queue.clone(),
-                receiver.clone(),
-                0,
-                allowance,
-            ));
-            let (warm, warm_response) = dispatched(0);
-            sender.send(warm).await.unwrap();
-            assert_eq!(starts.recv().await, Some((0, 0)));
-            assert!(warm_response.await.unwrap().is_ok());
-            let (active, active_response) = dispatched(1);
-            sender.send(active).await.unwrap();
-            assert_eq!(starts.recv().await, Some((0, 1)));
-            let (extra, extra_response) = dispatched(2);
-            sender.send(extra).await.unwrap();
-            let (assigned, waiting) = if occupied {
-                tokio::task::yield_now().await;
-                (None, receiver.try_lock().map(|r| r.len()))
+    async fn busy_replica_does_not_freeze_partial_batches() {
+        let (started, mut starts) = mpsc::unbounded_channel();
+        let (release, gate) = std::sync::mpsc::channel();
+        let pool = BackendPool::new(vec![Backend::for_test(
+            Box::new(GatedReplica {
+                id: 0,
+                started,
+                gate: Some(Arc::new(std::sync::Mutex::new(gate))),
+            }),
+            ModelType::Classifier,
+        )])
+        .unwrap();
+        let queue = Queue::new(16, Some(8), 0.0, 16);
+        let notify = Arc::new(Notify::new());
+        let ready = Arc::new(Semaphore::new(0));
+        let (sender, receiver) = mpsc::channel(1);
+        let batcher = tokio::spawn(batching_task(
+            pool.clone(),
+            queue.clone(),
+            notify.clone(),
+            sender,
+            ready.clone(),
+        ));
+        let worker = tokio::spawn(backend_task(
+            pool.clone(),
+            queue.clone(),
+            Arc::new(Mutex::new(receiver)),
+            0,
+            ready,
+        ));
+        let mut responses = Vec::new();
+        let mut leases = Vec::new();
+        for token in 1..=3 {
+            let (mut input, response) = dispatched(token);
+            let (mut entries, batch) = input.0.take().unwrap();
+            leases.push(
+                queue
+                    .append(Entry {
+                        metadata: entries.pop().unwrap(),
+                        encoding: crate::tokenization::ValidEncoding {
+                            multimodal: None,
+                            input_ids: batch.input_ids,
+                            token_type_ids: batch.token_type_ids,
+                            position_ids: batch.position_ids,
+                            tokens: vec![],
+                            offsets: vec![],
+                        },
+                    })
+                    .await
+                    .unwrap(),
+            );
+            responses.push(response);
+            notify.notify_one();
+            if token == 1 {
+                assert_eq!(starts.recv().await, Some((0, 1)));
             } else {
-                let assigned = tokio::time::timeout(Duration::from_secs(2), starts.recv()).await;
-                let (third, response) = dispatched(3);
-                // A third batch remains shared even if the second finishes first.
-                sender.send(third).await.unwrap();
-                tokio::task::yield_now().await;
-                drop(response);
-                (Some(assigned), receiver.try_lock().map(|r| r.len()))
-            };
-            release.send(()).unwrap(); // Always unblock native collection before assertions.
-            assert_eq!(waiting.unwrap(), 1);
-            if let Some(assigned) = assigned {
-                assert_eq!(assigned.unwrap(), Some((0, 2)));
+                // A late arrival should join the earlier waiter instead of
+                // being split by preparation while the first output is gated.
+                tokio::time::sleep(Duration::from_millis(10)).await;
             }
-            assert!(active_response.await.unwrap().is_ok());
-            assert!(extra_response.await.unwrap().is_ok());
-            drop(held);
-            drop(sender);
-            worker.await.unwrap();
-            pool.shutdown().await;
-            queue.shutdown().await;
         }
+        release.send(()).unwrap();
+        for response in responses {
+            assert!(response.await.unwrap().is_ok());
+        }
+        assert_eq!(starts.recv().await, Some((0, 2)));
+        assert!(
+            starts.try_recv().is_err(),
+            "late arrival was fragmented into a third batch"
+        );
+        pool.close();
+        batcher.await.unwrap();
+        worker.await.unwrap();
+        drop(leases);
+        pool.shutdown().await;
+        queue.shutdown().await;
     }
 
     #[tokio::test]
