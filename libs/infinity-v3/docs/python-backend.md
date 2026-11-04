@@ -89,6 +89,16 @@ The factory receives:
 - `device_id`: replica/device ordinal
 - `config_json`: the `--python-config` JSON string
 - `queue_size`: the resolved `queue_depth`
+- `max_batch_tokens`: the resolved per-model batch token budget
+- `max_sequence_length`: the effective maximum tokens per sequence after
+  checkpoint/config, `--max-sequence-length`, auto-truncation, and
+  `--max-batch-tokens` resolution
+
+Factories receive these two additional keywords. Plugins with explicit factory
+signatures must add `max_batch_tokens` and `max_sequence_length` or accept
+`**config`; factories already accepting arbitrary keywords need no signature change.
+They describe limits already enforced by the frontend and do not change
+scheduling, batching, or device selection.
 
 The returned executor must implement:
 

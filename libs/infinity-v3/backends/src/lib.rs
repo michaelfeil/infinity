@@ -17,8 +17,8 @@ pub use crate::dtype::DType;
 pub use infinity_v3_backend_core::{block_attention_config, result_memory};
 pub use infinity_v3_backend_core::{
     AudioFeatures, BackendError, Batch, ClefField, DecisionInput, DecisionOutput, Embedding,
-    Embeddings, ImagePatches, ModelType, MultimodalEncoding, Pool, Predictions, SharedF32,
-    TokenPredictions,
+    Embeddings, ImagePatches, ModelType, MultimodalEncoding, Pool, Predictions, RuntimeLimits,
+    SharedF32, TokenPredictions,
 };
 
 #[cfg(feature = "python-backend")]
@@ -241,6 +241,7 @@ impl Backend {
         model_type: ModelType,
         dense_path: Option<String>,
         device_id: usize,
+        runtime_limits: RuntimeLimits,
     ) -> Result<Self, BackendError> {
         Self::new_shared(
             model_path,
@@ -249,6 +250,7 @@ impl Backend {
             model_type,
             dense_path,
             device_id,
+            runtime_limits,
         )
         .await
     }
@@ -261,9 +263,17 @@ impl Backend {
         model_type: ModelType,
         dense_path: Option<String>,
         device_id: usize,
+        runtime_limits: RuntimeLimits,
     ) -> Result<Self, BackendError> {
         Self::new_shared_with_fp8(
-            model_path, api_repo, dtype, model_type, dense_path, device_id, false,
+            model_path,
+            api_repo,
+            dtype,
+            model_type,
+            dense_path,
+            device_id,
+            false,
+            runtime_limits,
         )
         .await
     }
@@ -277,6 +287,7 @@ impl Backend {
         dense_path: Option<String>,
         device_id: usize,
         enable_fp8_dynamic: bool,
+        runtime_limits: RuntimeLimits,
     ) -> Result<Self, BackendError> {
         Self::new_selected(
             model_path,
@@ -289,6 +300,7 @@ impl Backend {
             BackendKind::default(),
             TorchDevice::Auto,
             PythonBackendConfig::default(),
+            runtime_limits,
         )
         .await
     }
@@ -305,6 +317,7 @@ impl Backend {
         kind: BackendKind,
         torch_device: TorchDevice,
         python: PythonBackendConfig,
+        runtime_limits: RuntimeLimits,
     ) -> Result<Self, BackendError> {
         kind.ensure_compiled()?;
         let (backend_sender, backend_receiver) = mpsc::channel(8);
@@ -320,6 +333,7 @@ impl Backend {
             kind,
             torch_device,
             python,
+            runtime_limits,
         )
         .await?;
         let radix_mlp_supported = backend.supports_radix_mlp();
@@ -559,6 +573,7 @@ async fn init_backend(
     kind: BackendKind,
     torch_device: TorchDevice,
     python: PythonBackendConfig,
+    runtime_limits: RuntimeLimits,
 ) -> Result<Box<dyn CoreBackend + Send>, BackendError> {
     if model_type == ModelType::Decision {
         if let Some(repo) = api_repo.as_ref() {
@@ -587,7 +602,12 @@ async fn init_backend(
             let dtype = dtype.to_string();
             let backend = tokio::task::spawn_blocking(move || {
                 infinity_v3_backend_python::PythonBackend::new(
-                    &path, &dtype, model_type, device_id, python,
+                    &path,
+                    &dtype,
+                    model_type,
+                    device_id,
+                    python,
+                    runtime_limits,
                 )
             })
             .await
@@ -651,13 +671,14 @@ async fn init_backend(
         let startup_span = Span::current();
         let model = tokio::task::spawn_blocking(move || {
             startup_span.in_scope(|| {
-                infinity_backend_libtorch::LibtorchBackend::new_with_dense_paths_and_fp8(
+                infinity_backend_libtorch::LibtorchBackend::new_with_dense_paths_and_fp8_and_limits(
                     &model_path,
                     &dtype.to_string(),
                     model_type,
                     &device,
                     dense_paths,
                     enable_fp8_dynamic,
+                    Some(runtime_limits),
                 )
             })
         })

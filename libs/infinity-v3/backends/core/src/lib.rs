@@ -354,6 +354,35 @@ pub enum BackendError {
     WeightsNotFound(String),
 }
 
+/// Effective per-model limits resolved by the shared frontend.
+///
+/// `max_sequence_length` includes checkpoint/config, CLI, auto-truncation and
+/// batch-token resolution; it is not the original CLI override or an observed
+/// batch shape.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct RuntimeLimits {
+    pub max_batch_tokens: std::num::NonZeroUsize,
+    pub max_sequence_length: std::num::NonZeroUsize,
+}
+
+impl RuntimeLimits {
+    pub fn new(max_batch_tokens: usize, max_sequence_length: usize) -> Result<Self, BackendError> {
+        let max_batch_tokens = std::num::NonZeroUsize::new(max_batch_tokens)
+            .ok_or_else(|| BackendError::Start("max_batch_tokens must be positive".into()))?;
+        let max_sequence_length = std::num::NonZeroUsize::new(max_sequence_length)
+            .ok_or_else(|| BackendError::Start("max_sequence_length must be positive".into()))?;
+        if max_sequence_length > max_batch_tokens {
+            return Err(BackendError::Start(
+                "max_sequence_length cannot exceed max_batch_tokens".into(),
+            ));
+        }
+        Ok(Self {
+            max_batch_tokens,
+            max_sequence_length,
+        })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::SharedF32;

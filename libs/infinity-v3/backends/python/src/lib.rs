@@ -14,7 +14,7 @@ use envelope::{OutputSnapshot, ResponseEnvelope};
 use executor::{Executor, ExecutorConfig};
 use infinity_v3_backend_core::{
     Backend, BackendError, Batch, Embeddings, Inference, ModelType, Pool, Predictions,
-    TokenPredictions,
+    RuntimeLimits, TokenPredictions,
 };
 use pyo3::prelude::*;
 use std::path::Path;
@@ -83,6 +83,7 @@ impl PythonBackend {
         model_type: ModelType,
         device_id: usize,
         config: PythonBackendConfig,
+        runtime_limits: RuntimeLimits,
     ) -> Result<Self, BackendError> {
         let (pool, classifier, model_type) = match model_type {
             ModelType::Embedding(pool) => (pool, false, "embedding"),
@@ -103,6 +104,7 @@ impl PythonBackend {
             device_id,
             config_json: parsed.config_json,
             queue_size: parsed.queue_size,
+            runtime_limits,
         })?;
         Ok(Self {
             executor,
@@ -286,6 +288,10 @@ mod tests {
         }
     }
 
+    fn limits() -> RuntimeLimits {
+        RuntimeLimits::new(16_384, 512).unwrap()
+    }
+
     fn batch() -> Batch {
         Batch {
             multimodal: vec![],
@@ -306,6 +312,54 @@ mod tests {
     }
 
     #[test]
+    fn plugin_factory_receives_resolved_runtime_limits() {
+        install_module(
+            "_infinity_runtime_limits_test",
+            r#"
+PROTOCOL_VERSION = 1
+RECEIVED = None
+
+class Executor:
+    def submit(self, route, response, payload):
+        response.set_exception(ValueError("not used"))
+    def healthy(self):
+        return True
+    def close(self):
+        pass
+
+def create_executor(**kwargs):
+    global RECEIVED
+    RECEIVED = (kwargs["max_batch_tokens"], kwargs["max_sequence_length"])
+    return Executor()
+"#,
+        );
+        let limits = RuntimeLimits::new(10_003, 2_301).unwrap();
+        let backend = PythonBackend::new(
+            Path::new("."),
+            "float32",
+            ModelType::Embedding(Pool::Mean),
+            0,
+            PythonBackendConfig {
+                config: Some(
+                    r#"{"backend":"_infinity_runtime_limits_test:create_executor"}"#.into(),
+                ),
+            },
+            limits,
+        )
+        .unwrap();
+        let received = Python::attach(|py| {
+            pyo3::types::PyModule::import(py, "_infinity_runtime_limits_test")
+                .unwrap()
+                .getattr("RECEIVED")
+                .unwrap()
+                .extract::<(usize, usize)>()
+                .unwrap()
+        });
+        assert_eq!(received, (10_003, 2_301));
+        backend.shutdown();
+    }
+
+    #[test]
     fn fake_backend_completes_embeddings_through_the_python_executor() {
         let backend = PythonBackend::new(
             Path::new("."),
@@ -313,6 +367,7 @@ mod tests {
             ModelType::Embedding(Pool::Mean),
             0,
             config(),
+            limits(),
         )
         .unwrap();
         backend.health().unwrap();
@@ -335,6 +390,7 @@ mod tests {
             ModelType::Embedding(Pool::Mean),
             0,
             config,
+            limits(),
         )
         .unwrap();
         for _ in 0..5 {
@@ -352,6 +408,7 @@ mod tests {
             ModelType::Classifier,
             0,
             config(),
+            limits(),
         )
         .unwrap();
         let predictions = backend.predict(batch()).unwrap();
@@ -374,6 +431,7 @@ mod tests {
                     Semaphore::MAX_PERMITS + 1
                 )),
             },
+            limits(),
         );
         assert!(matches!(result, Err(BackendError::Start(_))));
     }
@@ -418,6 +476,7 @@ def create_executor(**kwargs):
                 PythonBackendConfig {
                     config: Some(config.to_string()),
                 },
+                limits(),
             )
             .unwrap();
             for _ in 0..2 {

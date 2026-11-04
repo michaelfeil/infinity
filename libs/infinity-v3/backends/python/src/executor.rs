@@ -1,5 +1,5 @@
 use crate::envelope::ResponseEnvelope;
-use infinity_v3_backend_core::BackendError;
+use infinity_v3_backend_core::{BackendError, RuntimeLimits};
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyModule};
 use std::path::{Path, PathBuf};
@@ -14,6 +14,7 @@ pub(crate) struct ExecutorConfig {
     pub device_id: usize,
     pub config_json: String,
     pub queue_size: usize,
+    pub runtime_limits: RuntimeLimits,
 }
 
 pub(crate) struct Executor {
@@ -51,6 +52,18 @@ impl Executor {
                 .map_err(start_error)?;
             kwargs
                 .set_item("queue_size", config.queue_size)
+                .map_err(start_error)?;
+            kwargs
+                .set_item(
+                    "max_batch_tokens",
+                    config.runtime_limits.max_batch_tokens.get(),
+                )
+                .map_err(start_error)?;
+            kwargs
+                .set_item(
+                    "max_sequence_length",
+                    config.runtime_limits.max_sequence_length.get(),
+                )
                 .map_err(start_error)?;
             let inner = factory.call((), Some(&kwargs)).map_err(|error| {
                 BackendError::Start(format!("Could not start Python backend executor: {error}"))

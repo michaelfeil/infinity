@@ -1,4 +1,4 @@
-use infinity_v3_backend_core::{Backend, Batch, Embedding, ModelType, Pool};
+use infinity_v3_backend_core::{Backend, Batch, Embedding, ModelType, Pool, RuntimeLimits};
 use infinity_v3_backend_python::{PythonBackend, PythonBackendConfig};
 use serial_test::serial;
 use std::path::Path;
@@ -7,6 +7,10 @@ fn config() -> PythonBackendConfig {
     PythonBackendConfig {
         config: std::env::var("INFINITY_PYTHON_CONFIG").ok(),
     }
+}
+
+fn limits() -> RuntimeLimits {
+    RuntimeLimits::new(16_384, 512).unwrap()
 }
 
 fn batch() -> Batch {
@@ -40,6 +44,7 @@ fn configured_backend_returns_embeddings() {
         ModelType::Embedding(Pool::Mean),
         0,
         config(),
+        limits(),
     )
     .unwrap();
     backend.health().unwrap();
@@ -67,6 +72,7 @@ fn configured_backend_returns_classifier_rows() {
         ModelType::Classifier,
         0,
         config(),
+        limits(),
     )
     .unwrap();
     let predictions = backend.predict(batch()).unwrap();

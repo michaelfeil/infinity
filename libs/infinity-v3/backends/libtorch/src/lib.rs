@@ -204,6 +204,8 @@ extern "C" {
         dtype: i32,
     ) -> i32;
     fn tei_option(handle: *mut c_void, key: *const c_char, value: *const c_char) -> i32;
+    #[cfg(test)]
+    fn tei_runtime_limits(handle: *mut c_void, limits: *mut i64, count: usize) -> i32;
     fn tei_output_width(handle: *mut c_void) -> i64;
     fn tei_pooled_width(handle: *mut c_void) -> i64;
     fn tei_classification_width(handle: *mut c_void) -> i64;
@@ -536,6 +538,29 @@ impl LibtorchBackend {
         dense_paths: Option<Vec<String>>,
         enable_fp8_dynamic: bool,
     ) -> Result<Self, BackendError> {
+        Self::new_with_dense_paths_and_fp8_and_limits(
+            path,
+            dtype,
+            model_type,
+            device,
+            dense_paths,
+            enable_fp8_dynamic,
+            None,
+        )
+    }
+    #[tracing::instrument(
+        name = "model_load", skip_all,
+        fields(path = %path.display(), device = device, pid = std::process::id())
+    )]
+    pub fn new_with_dense_paths_and_fp8_and_limits(
+        path: &Path,
+        dtype: &str,
+        model_type: ModelType,
+        device: &str,
+        dense_paths: Option<Vec<String>>,
+        enable_fp8_dynamic: bool,
+        runtime_limits: Option<text_embeddings_backend_core::RuntimeLimits>,
+    ) -> Result<Self, BackendError> {
         if device != "cpu" && device != "auto" && !device.starts_with("cuda:") {
             return Err(start("LibTorch 2.14.1 varlen attention requires CUDA; only CPU reference and CUDA are supported"));
         }
@@ -557,6 +582,15 @@ impl LibtorchBackend {
         } else {
             "config.json"
         })?;
+        if let Some(limits) = runtime_limits {
+            if limits.max_sequence_length > limits.max_batch_tokens {
+                return Err(start("max_sequence_length cannot exceed max_batch_tokens"));
+            }
+            options["_max_batch_tokens"] =
+                serde_json::json!(i64::try_from(limits.max_batch_tokens.get()).map_err(start)?);
+            options["_max_sequence_length"] =
+                serde_json::json!(i64::try_from(limits.max_sequence_length.get()).map_err(start)?);
+        }
         // Head tensors can also be present when the requested operation is embedding.
         options["_classifier"] = serde_json::json!(model_type == ModelType::Classifier);
         let colbert = options["architectures"]
@@ -1981,6 +2015,29 @@ mod pytorch_checkpoint;
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn native_runtime_receives_the_resolved_limits() {
+        let fixture = fixture("", false);
+        let limits = text_embeddings_backend_core::RuntimeLimits::new(10_003, 2_301).unwrap();
+        let model = LibtorchBackend::new_with_dense_paths_and_fp8_and_limits(
+            &fixture.0,
+            "float32",
+            ModelType::Embedding(Pool::Mean),
+            "cpu",
+            None,
+            false,
+            Some(limits),
+        )
+        .unwrap();
+        let mut received = [0i64; 2];
+        // SAFETY: the initialized handle is live and the output has exactly two slots.
+        let status = unsafe {
+            tei_runtime_limits(model.handle.as_ptr(), received.as_mut_ptr(), received.len())
+        };
+        assert_eq!(status, 0, "{}", native_error());
+        assert_eq!(received, [10_003, 2_301]);
+    }
 
     #[test]
     fn invalid_device_fails_before_weight_access() {
