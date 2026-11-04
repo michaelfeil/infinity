@@ -10,6 +10,7 @@
 #include "batching/radix.h"
 #include "batching/block_prefix.h"
 #include "batching/output.h"
+#include "batching/token_upload.h"
 #include "helpers/workspace_admission.h"
 #include "models/model.h"
 #include "helpers/options.h"
@@ -622,10 +623,25 @@ infinity::PackedInput packed_input(Engine& model,
     TORCH_CHECK(data, "Missing native token buffer");
     return upload(at::from_blob(const_cast<int64_t*>(data), {tokens}, options));
   };
-  auto cu =
-      upload(at::from_blob(const_cast<int32_t*>(cumulative), {batch + 1}, options.dtype(at::kInt)));
-  infinity::PackedInput packed{
-      input(ids), input(types), input(positions), cu, cumulative, batch, max_sequence};
+  infinity::PackedInput packed;
+  if (model.device.is_cuda()) {
+    auto uploaded =
+        completion
+            ? infinity::upload_tokens(ids, types, positions, cumulative, tokens, batch, *completion)
+            : infinity::upload_tokens(
+                  ids, types, positions, cumulative, tokens, batch, model.device);
+    packed = {uploaded.ids,
+              uploaded.types,
+              uploaded.positions,
+              uploaded.cumulative,
+              cumulative,
+              batch,
+              max_sequence};
+  } else {
+    auto cu = upload(
+        at::from_blob(const_cast<int32_t*>(cumulative), {batch + 1}, options.dtype(at::kInt)));
+    packed = {input(ids), input(types), input(positions), cu, cumulative, batch, max_sequence};
+  }
   packed.host_ids = at::from_blob(const_cast<int64_t*>(ids), {tokens}, options);
   packed.host_types = at::from_blob(const_cast<int64_t*>(types), {tokens}, options);
   packed.host_positions = at::from_blob(const_cast<int64_t*>(positions), {tokens}, options);
@@ -1482,15 +1498,22 @@ static int32_t forward_radix(void* handle,
     if (pool == 1 && pooled_count && !model.model->model_dtype_mean_pool() && h.is_cuda() &&
         h.is_contiguous() && (h.scalar_type() == at::kHalf || h.scalar_type() == at::kBFloat16) &&
         pooled_count <= 65535) {
-      std::vector<int32_t> spans;
-      spans.reserve(pooled_count * 2);
-      for (size_t i = 0; i < pooled_count; ++i) {
-        spans.push_back(cumulative[pooled[i]]);
-        spans.push_back(cumulative[pooled[i] + 1] - cumulative[pooled[i]]);
+      bool all_sequences = pooled_count == static_cast<size_t>(batch);
+      for (size_t i = 0; all_sequences && i < pooled_count; ++i)
+        all_sequences = pooled[i] == static_cast<int64_t>(i);
+      if (all_sequences) {
+        outputs.push_back(infinity::packed_mean_pool_cumulative(h, packed.cumulative));
+      } else {
+        std::vector<int32_t> spans;
+        spans.reserve(pooled_count * 2);
+        for (size_t i = 0; i < pooled_count; ++i) {
+          spans.push_back(cumulative[pooled[i]]);
+          spans.push_back(cumulative[pooled[i] + 1] - cumulative[pooled[i]]);
+        }
+        auto host = at::from_blob(
+            spans.data(), {int64_t(pooled_count), 2}, at::TensorOptions().dtype(at::kInt));
+        outputs.push_back(infinity::packed_mean_pool(h, upload(host)));
       }
-      auto host = at::from_blob(
-          spans.data(), {int64_t(pooled_count), 2}, at::TensorOptions().dtype(at::kInt));
-      outputs.push_back(infinity::packed_mean_pool(h, upload(host)));
       mean_pooled = true;
     }
 #endif

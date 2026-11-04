@@ -11,6 +11,7 @@
 #include <array>
 #include <atomic>
 #include <condition_variable>
+#include <cstdint>
 #include <cstring>
 #include <memory>
 #include <limits>
@@ -23,6 +24,12 @@
 #endif
 
 namespace infinity {
+/// Borrowed contiguous host bytes copied into one lease-owned pinned staging buffer.
+struct HostBuffer {
+  const void* data = nullptr;
+  size_t bytes = 0;
+};
+
 // Two reusable slots bound pinned memory and pending GPU outputs per replica.
 // A lease stays alive through CPU result construction, including cancellation.
 struct OutputSlot {
@@ -109,6 +116,26 @@ class OutputLease {
                              "Native output staging memory budget is occupied by pending results");
   }
 
+  /// Reserve one active input pin for bytes of type, growing it under the pool budget.
+  at::Tensor staging(size_t bytes, at::ScalarType type) {
+    const auto element_size = static_cast<size_t>(c10::elementSize(type));
+    TORCH_CHECK(element_size > 0 &&
+                    bytes <= static_cast<size_t>(std::numeric_limits<int64_t>::max()) &&
+                    bytes % element_size == 0,
+                "Invalid staged input byte count");
+    const auto elements = static_cast<int64_t>(bytes / element_size);
+    std::unique_lock lock(pool->mutex);
+    if (input_cursor == slot->inputs.size())
+      slot->inputs.emplace_back();
+    auto& pin = slot->inputs[input_cursor++];
+    if (!pin.defined() || pin.scalar_type() != type || pin.numel() < elements) {
+      make_room(bytes, pin.defined() ? pin.storage().nbytes() : 0, true);
+      pin = at::Tensor();
+      pin = allocate_pinned_staging(elements, at::TensorOptions().dtype(type));
+    }
+    return pin.narrow(0, 0, elements);
+  }
+
 #ifdef TEI_TORCH_CUDA_KERNELS
   c10::cuda::CUDAStream stream;
   at::cuda::CUDAEvent ready;
@@ -193,22 +220,36 @@ public:
           at::empty({capacity}, at::TensorOptions().dtype(at::kFloat).device(device));
   }
 
+  /// Fill one lease-owned pinned byte buffer directly from borrowed host spans, then enqueue one
+  /// non-blocking device upload. The lease retains both the pin and the uploaded device storage.
+  at::Tensor upload_bytes(c10::ArrayRef<HostBuffer> sources) {
+    size_t total = 0;
+    for (const auto& source : sources) {
+      TORCH_CHECK(source.data || !source.bytes, "Invalid staged input buffer");
+      TORCH_CHECK(source.bytes <= std::numeric_limits<size_t>::max() - total,
+                  "Native staged input size overflow");
+      total += source.bytes;
+    }
+    auto pin = staging(total, at::kByte);
+    auto* destination = pin.mutable_data_ptr<uint8_t>();
+    size_t offset = 0;
+    for (const auto& source : sources) {
+      if (source.bytes)
+        std::memcpy(destination + offset, source.data, source.bytes);
+      offset += source.bytes;
+    }
+    auto result = pin.to(device, /*non_blocking=*/true);
+    slot->gpu.push_back(result);
+    return result;
+  }
+
   /// Copy contiguous CPU input into lease-owned pinned storage, then enqueue its device upload. The
   /// original host tensor may be released after this call; the lease retains transfer buffers.
   at::Tensor upload(const at::Tensor& host) {
     TORCH_CHECK(host.device().is_cpu() && host.is_contiguous(), "Invalid staged input");
-    std::unique_lock lock(pool->mutex);
-    if (input_cursor == slot->inputs.size())
-      slot->inputs.emplace_back();
-    auto& pin = slot->inputs[input_cursor++];
-    if (!pin.defined() || pin.scalar_type() != host.scalar_type() || pin.numel() < host.numel()) {
-      make_room(host.nbytes(), pin.defined() ? pin.storage().nbytes() : 0, true);
-      pin = at::Tensor();
-      pin = allocate_pinned_staging(host.numel(), host.options());
-    }
-    lock.unlock();
-    auto view = pin.narrow(0, 0, host.numel()).view(host.sizes());
-    std::memcpy(view.data_ptr(), host.data_ptr(), host.nbytes());
+    auto pin = staging(static_cast<size_t>(host.nbytes()), host.scalar_type());
+    auto view = pin.view(host.sizes());
+    std::memcpy(view.data_ptr(), host.const_data_ptr(), static_cast<size_t>(host.nbytes()));
     auto result = view.to(device, /*non_blocking=*/true);
     slot->gpu.push_back(result);
     return result;
