@@ -141,7 +141,7 @@ impl PythonBackend {
                 .map(|_| receiver)
         })?;
         let owned = inputs.clone();
-        Ok(Inference::Deferred(Box::new(move || {
+        Ok(Inference::Queued(Box::new(move || {
             let result = receiver
                 .blocking_recv()
                 .map_err(|_| {

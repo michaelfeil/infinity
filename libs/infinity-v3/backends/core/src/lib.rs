@@ -217,16 +217,19 @@ impl DecisionOutput {
 
 /// An owned result, or CPU completion work after an ordered native submission.
 /// Deferred work must retain all native buffers until `complete` or drop, and
-/// bound pending work before returning. The next model call may run immediately.
+/// bound pending work before returning. Only Deferred permits the next model
+/// call immediately; Queued retains exclusive execution until completion.
 pub enum Inference<T> {
     Ready(T),
     Deferred(Box<dyn FnOnce() -> Result<T, BackendError> + Send>),
+    /// Work is queued; retain the replica lease until completion.
+    Queued(Box<dyn FnOnce() -> Result<T, BackendError> + Send>),
 }
 impl<T: Send + 'static> Inference<T> {
     pub fn complete(self) -> Result<T, BackendError> {
         match self {
             Self::Ready(value) => Ok(value),
-            Self::Deferred(complete) => complete(),
+            Self::Deferred(complete) | Self::Queued(complete) => complete(),
         }
     }
     pub fn try_map<U: Send + 'static>(
@@ -236,12 +239,14 @@ impl<T: Send + 'static> Inference<T> {
         match self {
             Self::Ready(value) => map(value).map(Inference::Ready),
             Self::Deferred(complete) => Ok(Inference::Deferred(Box::new(move || map(complete()?)))),
+            Self::Queued(complete) => Ok(Inference::Queued(Box::new(move || map(complete()?)))),
         }
     }
     pub fn map<U: Send + 'static>(self, map: impl FnOnce(T) -> U + Send + 'static) -> Inference<U> {
         match self {
             Self::Ready(value) => Inference::Ready(map(value)),
             Self::Deferred(complete) => Inference::Deferred(Box::new(move || complete().map(map))),
+            Self::Queued(complete) => Inference::Queued(Box::new(move || complete().map(map))),
         }
     }
 }
