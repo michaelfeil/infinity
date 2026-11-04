@@ -4,6 +4,7 @@ use crate::tokenization::{EncodingInput, RawEncoding, Tokenization};
 use crate::TextEmbeddingsError;
 use infinity_v3_backend::result_memory::{retain_for_request, HasResultMemory, ResultLease};
 use infinity_v3_backend::{Backend, BackendError, Embedding, ModelType, SharedF32};
+use std::collections::VecDeque;
 use std::sync::{
     atomic::{AtomicUsize, Ordering},
     Arc,
@@ -217,12 +218,14 @@ impl Infer {
             notify_batching_task.clone(),
             sender,
         ))];
+        let prefetch = Arc::new(Semaphore::new(1));
         for replica in 0..backend.len() {
             tasks.push(tokio::spawn(backend_task(
                 backend.clone(),
                 queue.clone(),
                 receiver.clone(),
                 replica,
+                prefetch.clone(),
             )));
         }
         let lifetime = Arc::new(PipelineLifetime {
@@ -944,14 +947,39 @@ async fn backend_task(
     queue: Queue,
     receiver: Arc<Mutex<mpsc::Receiver<DispatchedBatch>>>,
     replica: usize,
+    prefetch: Arc<Semaphore>,
 ) {
     let mut changed = backend.changes();
+    // Eight replicas may overlap only sub-0.625 ms batches, sharing one extra
+    // batch across the entire pool rather than hiding one per replica.
+    let cutoff = Duration::from_secs_f64(0.005 / backend.len().max(1) as f64);
+    let mut previous = cutoff;
+    let mut pending = VecDeque::<(Instant, tokio::task::JoinHandle<Duration>)>::new();
     loop {
         if backend.is_closed() {
             break;
         }
-        // A busy replica must not pull another prepared batch. Wait without
-        // taking a lease, then acquire only after a batch is available.
+        let ahead = if let Some((started, task)) = pending.front() {
+            if pending.len() == 1
+                && previous < cutoff
+                && started.elapsed() < cutoff
+                && !task.is_finished()
+            {
+                prefetch.clone().try_acquire_owned().ok()
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+        if !pending.is_empty() && ahead.is_none() {
+            if let Some((_, task)) = pending.pop_front() {
+                previous = task.await.unwrap_or(cutoff);
+            }
+            continue;
+
+        }
+        // Exclusive Python envelopes retain their lease through completion.
         if backend.wait_available(replica, &mut changed).await.is_err() {
             break;
         }
@@ -967,9 +995,26 @@ async fn backend_task(
         let Some(batch) = prune_canceled_batch(dispatched.0.take().unwrap()) else {
             continue;
         };
-        // Finish this replica's response before taking another shared batch.
-        // A slow replica must never park work that an idle replica could run.
-        complete_batch(execution, backend.model_type.clone(), batch).await;
+        let started = Instant::now();
+        if previous < cutoff {
+            let model_type = backend.model_type.clone();
+            pending.push_back((
+                started,
+                tokio::spawn(async move {
+                    complete_batch(execution, model_type, batch).await;
+                    // Keep the pool-wide extra slot until this batch is complete.
+                    drop(ahead);
+                    started.elapsed()
+                }),
+            ));
+        } else {
+            complete_batch(execution, backend.model_type.clone(), batch).await;
+            previous = started.elapsed();
+        }
+    }
+    // Submitted work survives client cancellation and drains during shutdown.
+    for (_, task) in pending {
+        let _ = task.await;
     }
     queue.close();
 }
@@ -1392,6 +1437,7 @@ mod completion_tests {
             queue.clone(),
             receiver.clone(),
             0,
+            Arc::new(Semaphore::new(1)),
         ));
         let (first, first_response) = dispatched(1);
         sender.send(first).await.unwrap();
@@ -1406,6 +1452,7 @@ mod completion_tests {
             queue.clone(),
             receiver.clone(),
             1,
+            Arc::new(Semaphore::new(1)),
         ));
         let assigned = tokio::time::timeout(Duration::from_secs(2), starts.recv()).await;
         // Always unblock native completion, even when this regression fails.
@@ -1419,6 +1466,69 @@ mod completion_tests {
         fast.await.unwrap();
         pool.shutdown().await;
         queue.shutdown().await;
+    }
+
+    #[tokio::test]
+    async fn fast_replica_prefetch_is_bounded_by_the_shared_allowance() {
+        for occupied in [false, true] {
+            let (started, mut starts) = mpsc::unbounded_channel();
+            let (release, gate) = std::sync::mpsc::channel();
+            let pool = BackendPool::new(vec![Backend::for_test(
+                Box::new(GatedReplica {
+                    id: 0,
+                    started,
+                    gate: Some(Arc::new(std::sync::Mutex::new(gate))),
+                }),
+                ModelType::Classifier,
+            )])
+            .unwrap();
+            let queue = Queue::new(16, Some(1), 0.0, 1);
+            let (sender, receiver) = mpsc::channel(1);
+            let receiver = Arc::new(Mutex::new(receiver));
+            let allowance = Arc::new(Semaphore::new(1));
+            // Model another replica already using the one pool-wide extra slot.
+            let held = occupied.then(|| allowance.clone().try_acquire_owned().unwrap());
+            let worker = tokio::spawn(backend_task(
+                pool.clone(),
+                queue.clone(),
+                receiver.clone(),
+                0,
+                allowance,
+            ));
+            let (warm, warm_response) = dispatched(0);
+            sender.send(warm).await.unwrap();
+            assert_eq!(starts.recv().await, Some((0, 0)));
+            assert!(warm_response.await.unwrap().is_ok());
+            let (active, active_response) = dispatched(1);
+            sender.send(active).await.unwrap();
+            assert_eq!(starts.recv().await, Some((0, 1)));
+            let (extra, extra_response) = dispatched(2);
+            sender.send(extra).await.unwrap();
+            let (assigned, waiting) = if occupied {
+                tokio::task::yield_now().await;
+                (None, receiver.try_lock().map(|r| r.len()))
+            } else {
+                let assigned = tokio::time::timeout(Duration::from_secs(2), starts.recv()).await;
+                let (third, response) = dispatched(3);
+                // A third batch remains shared even if the second finishes first.
+                sender.send(third).await.unwrap();
+                tokio::task::yield_now().await;
+                drop(response);
+                (Some(assigned), receiver.try_lock().map(|r| r.len()))
+            };
+            release.send(()).unwrap(); // Always unblock native collection before assertions.
+            assert_eq!(waiting.unwrap(), 1);
+            if let Some(assigned) = assigned {
+                assert_eq!(assigned.unwrap(), Some((0, 2)));
+            }
+            assert!(active_response.await.unwrap().is_ok());
+            assert!(extra_response.await.unwrap().is_ok());
+            drop(held);
+            drop(sender);
+            worker.await.unwrap();
+            pool.shutdown().await;
+            queue.shutdown().await;
+        }
     }
 
     #[tokio::test]
@@ -1442,6 +1552,7 @@ mod completion_tests {
             queue.clone(),
             receiver.clone(),
             0,
+            Arc::new(Semaphore::new(1)),
         ));
         let (first, response) = dispatched(1);
         sender.send(first).await.unwrap();
@@ -1483,6 +1594,7 @@ mod completion_tests {
             queue.clone(),
             receiver.clone(),
             0,
+            Arc::new(Semaphore::new(1)),
         ));
         drop(receiver); // The worker owns the shared queue's remaining receiver.
         let (active, active_response) = dispatched(1);
@@ -1529,6 +1641,7 @@ mod completion_tests {
             queue.clone(),
             receiver.clone(),
             0,
+            Arc::new(Semaphore::new(1)),
         ));
         tokio::task::yield_now().await;
         pool.close();
