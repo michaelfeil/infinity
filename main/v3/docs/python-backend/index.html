@@ -1135,6 +1135,23 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="Plugin contract">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#optional-replica-capability-discovery" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Optional replica capability discovery
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
         <li class="md-nav__item">
@@ -1287,19 +1304,45 @@ raise an exception without completing the response; the executor must deliver
 that error with <code>set_exception</code>.</p>
 <p><code>response.set_exception(error)</code> completes the request with an error. Both
 completion methods release the in-flight permit even if the plugin retains the
-response object. The executor must not block the calling Rust worker; a common implementation uses one
-dedicated Python thread and a bounded queue. <code>close</code> must join that thread and
-release model resources.</p>
+response object. Core wraps the plugin in <code>ThreadedExecutor</code>, so <code>submit</code>
+runs on its persistent Python pool thread; plugins may execute synchronously
+there or retain the envelope for deferred completion. Plugins that manage their
+own asynchronous work must drain it in <code>close</code> and release model resources.</p>
+<h3 id="optional-replica-capability-discovery">Optional replica capability discovery</h3>
+<p>The selected plugin module may export a <code>capabilities(config_json)</code> hook returning
+exactly <code>visible_device_count</code> and <code>supports_replication</code>:</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-8-1"><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a><span class="k">def</span><span class="w"> </span><span class="nf">capabilities</span><span class="p">(</span><span class="n">config_json</span><span class="p">):</span>
+</span><span id="__span-8-2"><a id="__codelineno-8-2" name="__codelineno-8-2" href="#__codelineno-8-2"></a>    <span class="k">return</span> <span class="p">{</span><span class="s2">"visible_device_count"</span><span class="p">:</span> <span class="mi">4</span><span class="p">,</span> <span class="s2">"supports_replication"</span><span class="p">:</span> <span class="kc">True</span><span class="p">}</span>
+</span></code></pre></div>
+<p>The hook receives the same <code>config_json</code> as the factory and runs synchronously
+before replica placement and model startup. It may run more than once, so keep
+it cheap and side-effect free. The count must be a positive integer and the
+flag must be a boolean; invalid values fail startup clearly.</p>
+<p>Protocol-1 plugins without the hook keep the single-device defaults
+(<code>1</code>, <code>False</code>). Existing <code>--device-id</code> and <code>--backend-device-ids</code> selection
+then applies per replica: <code>auto</code> expands only when replication is supported,
+explicit ordinals must be visible, and each replica receives its own
+<code>device_id</code>. <code>BackendPool</code> schedules batches across replicas.</p>
 <h2 id="lifecycle-and-threading">Lifecycle and threading</h2>
 <ul>
-<li>One executor thread per process is recommended. The Rust backend already
-  serializes a single model worker and completion worker.</li>
-<li>The Rust backend bounds outstanding forwards with <code>queue_depth</code>.</li>
-<li><code>healthy</code> is called by the shared health endpoint.</li>
-<li>The Python interpreter stays initialized for the process lifetime. The plugin
-  must be importable before the first model is created.</li>
-<li>Do not fork after initializing device runtimes. Use a fresh process per
-  device.</li>
+<li>Backend startup and capability discovery are synchronous. The plugin factory
+  loads the model before the backend returns; startup errors surface directly.</li>
+<li><code>infinity_v3_python.threaded.ThreadedExecutor</code> wraps the plugin with one
+  persistent <code>ThreadPoolExecutor(max_workers=1)</code> per backend replica. It owns
+  the plugin's single execution thread.</li>
+<li><code>submit</code> schedules plugin work on that pool and returns immediately, so the
+  Rust backend worker does not block on a forward pass. Plugin exceptions are
+  caught on the pool thread and complete the Rust response envelope through
+  <code>set_exception</code>. Legacy plugins that internally defer completion remain valid.</li>
+<li>Queued work is bounded by the existing Rust <code>queue_depth</code> admission permits.
+  <code>healthy</code> is serialized through the same pool. <code>close</code> is the final pool task,
+  after queued work, so cleanup uses the execution thread. Cleanup failures are
+  reported; repeated calls to <code>close</code> are safe.</li>
+<li>One shared frontend queue and scheduler per model hands batches to exclusive
+  <code>BackendPool</code> replica leases; there is no separate frontend per device.
+  Distinct replicas have distinct Python pool threads. Python bytecode still
+  serializes under one interpreter GIL, while waits and native operations may
+  release it.</li>
 </ul>
 <h2 id="buffer-ownership">Buffer ownership</h2>
 <ul>
@@ -1322,8 +1365,8 @@ release model resources.</p>
 </ul>
 <h2 id="testing">Testing</h2>
 <p>The OSS package includes a deterministic CPU executor:</p>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-8-1"><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a>--backend<span class="w"> </span>python-backend<span class="w"> </span><span class="se">\</span>
-</span><span id="__span-8-2"><a id="__codelineno-8-2" name="__codelineno-8-2" href="#__codelineno-8-2"></a>--python-config<span class="w"> </span><span class="s1">'{"backend":"infinity_v3_python.testing:create_executor"}'</span>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-9-1"><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a>--backend<span class="w"> </span>python-backend<span class="w"> </span><span class="se">\</span>
+</span><span id="__span-9-2"><a id="__codelineno-9-2" name="__codelineno-9-2" href="#__codelineno-9-2"></a>--python-config<span class="w"> </span><span class="s1">'{"backend":"infinity_v3_python.testing:create_executor"}'</span>
 </span></code></pre></div>
 <p>Use it for HTTP, batching, envelope, and lifecycle tests. Set
 <code>INFINITY_PYTHONPATH</code> when running from a source checkout; installed packages
