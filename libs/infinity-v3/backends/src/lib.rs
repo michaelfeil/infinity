@@ -41,19 +41,39 @@ pub struct PythonBackendConfig {
     pub serving_limits: Option<ServingLimits>,
 }
 
-/// A completed result or an owned completion handle after native submission.
+/// Backend-neutral replica placement capabilities.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct DeviceCapabilities {
+    pub visible_device_count: usize,
+    pub supports_replication: bool,
+}
+
+impl Default for DeviceCapabilities {
+    fn default() -> Self {
+        Self {
+            visible_device_count: 1,
+            supports_replication: false,
+        }
+    }
+}
+
+/// A completed result or an owned completion handle after dispatch.
 /// Deferred results have already been handed to the bounded completion worker,
 /// so the model lease can be released before awaiting the result.
 pub enum Submission<T> {
     Ready(T, Duration),
     Deferred(oneshot::Receiver<Result<(T, Duration), BackendError>>),
+    /// Queued execution retains its replica lease until completion.
+    Queued(oneshot::Receiver<Result<(T, Duration), BackendError>>),
 }
 
 impl<T> Submission<T> {
     pub async fn complete(self) -> Result<(T, Duration), BackendError> {
         match self {
             Self::Ready(value, duration) => Ok((value, duration)),
-            Self::Deferred(receiver) => receiver.await.map_err(|_| BackendError::Unhealthy)?,
+            Self::Deferred(receiver) | Self::Queued(receiver) => {
+                receiver.await.map_err(|_| BackendError::Unhealthy)?
+            }
         }
     }
 }
@@ -121,19 +141,43 @@ impl BackendKind {
         }
     }
 
-    /// Whether the selected runtime and accelerator can host GPU replicas.
-    pub fn supports_replication(self, torch: TorchDevice) -> bool {
+    /// Resolve replica placement for the selected runtime and device.
+    pub fn device_capabilities(
+        self,
+        device: TorchDevice,
+        python: &PythonBackendConfig,
+    ) -> Result<DeviceCapabilities, BackendError> {
         match self {
-            Self::Libtorch => torch == TorchDevice::Cuda,
-            Self::PythonBackend => false,
-        }
-    }
-
-    /// Query the selected runtime rather than another backend's CUDA installation.
-    pub fn visible_device_count(self, torch: TorchDevice) -> Result<usize, BackendError> {
-        match self {
-            Self::Libtorch => torch.count(),
-            Self::PythonBackend => Ok(1),
+            Self::Libtorch => {
+                let device = device.resolved()?;
+                if device == TorchDevice::Cuda {
+                    Ok(DeviceCapabilities {
+                        visible_device_count: device.count()?,
+                        supports_replication: true,
+                    })
+                } else {
+                    Ok(DeviceCapabilities::default())
+                }
+            }
+            Self::PythonBackend => {
+                #[cfg(feature = "python-backend")]
+                {
+                    let (visible_device_count, supports_replication) =
+                        infinity_v3_backend_python::PythonBackend::discover_capabilities(python)?;
+                    Ok(DeviceCapabilities {
+                        visible_device_count,
+                        supports_replication,
+                    })
+                }
+                #[cfg(not(feature = "python-backend"))]
+                {
+                    let _ = python;
+                    Err(BackendError::Start(
+                        "Python backend was not compiled; build with --features python-backend"
+                            .into(),
+                    ))
+                }
+            }
         }
     }
 }
@@ -678,8 +722,9 @@ fn deliver<T: Send + 'static>(
     health: &watch::Sender<bool>,
     completion: &mut Option<CompletionThread>,
 ) {
+    let queued = matches!(&result, Ok(Inference::Queued(_)));
     match result {
-        Ok(Inference::Deferred(complete)) => {
+        Ok(Inference::Deferred(complete) | Inference::Queued(complete)) => {
             let health = health.clone();
             let (response, receiver) = oneshot::channel();
             let job = Box::new(move || {
@@ -702,9 +747,14 @@ fn deliver<T: Send + 'static>(
                 .unwrap()
                 .send(job)
                 .expect("Completion worker exited");
-            // Return the completion handle only after native submission and
-            // bounded handoff. Dropping it still leaves the worker owning the job.
-            let _ = sender.send(Ok(Submission::Deferred(receiver)));
+            // Return the completion handle after bounded handoff. Only native
+            // deferred work permits early replica reuse. The worker owns the job.
+            let submission = if queued {
+                Submission::Queued(receiver)
+            } else {
+                Submission::Deferred(receiver)
+            };
+            let _ = sender.send(Ok(submission));
         }
         result => {
             let result = result
@@ -1093,6 +1143,36 @@ mod completion_tests {
         Mutex,
     };
 
+    #[test]
+    fn queued_submission_retains_its_scheduling_semantics() {
+        let (gate, wait) = std::sync::mpsc::channel();
+        let (sender, receiver) = oneshot::channel();
+        let (health, _) = watch::channel(true);
+        let mut completion = None;
+        let inference = Inference::Queued(Box::new(move || {
+            wait.recv().unwrap();
+            Ok(7_u32)
+        }));
+        // Mapping backend output must preserve the queued lease contract.
+        let inference = inference.map(|value| value + 1).try_map(Ok).unwrap();
+        deliver(
+            Ok(inference),
+            sender,
+            Instant::now(),
+            Span::none(),
+            &health,
+            &mut completion,
+        );
+        let submission = receiver.blocking_recv().unwrap().unwrap();
+        assert!(matches!(submission, Submission::Queued(_)));
+        gate.send(()).unwrap();
+        let result = match submission {
+            Submission::Queued(receiver) => receiver.blocking_recv().unwrap().unwrap(),
+            _ => panic!("expected queued completion"),
+        };
+        assert_eq!(result.0, 8);
+    }
+
     struct DeferredBackend {
         gate: Arc<Mutex<std::sync::mpsc::Receiver<Result<(), BackendError>>>>,
         started: std::sync::mpsc::Sender<()>,
@@ -1308,7 +1388,7 @@ mod completion_tests {
             .unwrap();
         let result = match result.blocking_recv().unwrap().unwrap() {
             Submission::Deferred(result) => result,
-            Submission::Ready(..) => panic!("expected deferred completion"),
+            Submission::Ready(..) | Submission::Queued(_) => panic!("expected deferred completion"),
         };
         // Cancellation before the submission response must also leave the job
         // owned by the worker, alongside the two existing completions.

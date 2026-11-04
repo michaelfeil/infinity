@@ -22,6 +22,10 @@ def load_factory(selector: str | None = None) -> Callable[..., Any]:
     available names when the choice is ambiguous.
     """
 
+    return _load_plugin(selector)[0]
+
+
+def _load_plugin(selector: str | None) -> tuple[Callable[..., Any], ModuleType]:
     if selector is None:
         return _load_default()
     selector = selector.strip()
@@ -36,7 +40,7 @@ def load_factory(selector: str | None = None) -> Callable[..., Any]:
                 f"Python backend selector {selector!r} does not resolve to a callable"
             )
         _check_module(module, selector)
-        return factory
+        return factory, module
     if selector.startswith("infinity_v3_python."):
         module = _import(selector, selector)
         factory = getattr(module, "create_executor", None)
@@ -45,7 +49,7 @@ def load_factory(selector: str | None = None) -> Callable[..., Any]:
                 f"Python backend module {selector!r} has no create_executor"
             )
         _check_module(module, selector)
-        return factory
+        return factory, module
     matches = [
         entry_point
         for entry_point in entry_points(group=ENTRY_POINT_GROUP)
@@ -75,7 +79,56 @@ def load_factory(selector: str | None = None) -> Callable[..., Any]:
     if module_name:
         module = _import(module_name, selector)
         _check_module(module, selector)
-    return factory
+    # Entry points can re-export factories defined in another module. Hooks
+    # belong to the advertised module; retain the protocol validation above.
+    return factory, _import(matches[0].module, selector)
+
+
+def load_capabilities(
+    selector: str | None = None,
+    config_json: str = "{}",
+) -> tuple[int, bool] | None:
+    """Return optional ``(visible_device_count, supports_replication)``.
+
+    A plugin reports this by exporting a module-level ``capabilities`` hook
+    that accepts the factory's ``config_json`` and returns a dict with exactly
+    ``visible_device_count`` and ``supports_replication``. Plugins without the
+    hook keep the protocol-1 single-device defaults.
+    """
+
+    _, module = _load_plugin(selector)
+    module_name = module.__name__
+    hook = getattr(module, "capabilities", None)
+    if hook is None:
+        return None
+    try:
+        value = hook(config_json)
+    except Exception as error:
+        raise PluginError(
+            f"Python backend {selector or module_name!r} capabilities hook "
+            f"failed: {error}"
+        ) from error
+    if not isinstance(value, dict) or set(value) != {
+        "visible_device_count",
+        "supports_replication",
+    }:
+        raise PluginError(
+            f"Python backend {selector or module_name!r} capabilities must be "
+            "a dict with visible_device_count and supports_replication"
+        )
+    count = value["visible_device_count"]
+    replication = value["supports_replication"]
+    if isinstance(count, bool) or not isinstance(count, int) or count < 1:
+        raise PluginError(
+            f"Python backend {selector or module_name!r} capabilities "
+            f"visible_device_count must be a positive integer, got {count!r}"
+        )
+    if not isinstance(replication, bool):
+        raise PluginError(
+            f"Python backend {selector or module_name!r} capabilities "
+            f"supports_replication must be a boolean, got {replication!r}"
+        )
+    return count, replication
 
 
 def factory_accepts_serving_limits(factory: Callable[..., Any]) -> bool:
@@ -108,10 +161,10 @@ def list_plugins() -> list[str]:
     )
 
 
-def _load_default() -> Callable[..., Any]:
+def _load_default() -> tuple[Callable[..., Any], ModuleType]:
     names = list_plugins()
     if len(names) == 1:
-        return load_factory(names[0])
+        return _load_plugin(names[0])
     if not names:
         raise PluginError(
             "no Python backend entry point is installed; install a backend "

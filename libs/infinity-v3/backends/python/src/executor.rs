@@ -21,6 +21,7 @@ pub(crate) struct ExecutorConfig {
 pub(crate) struct Executor {
     inner: Py<PyAny>,
     closed: AtomicBool,
+    capabilities: Option<BackendCapabilities>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -85,15 +86,33 @@ impl Executor {
                         .map_err(start_error)?;
                 }
             }
-            let inner = factory
-                .call((), Some(&kwargs))
+            let plugin = factory.call((), Some(&kwargs)).map_err(|error| {
+                BackendError::Start(format!("Could not start Python backend executor: {error}"))
+            })?;
+            // Capability negotiation belongs to the synchronous plugin startup,
+            // before the plugin is hidden behind the dispatch wrapper.
+            let capabilities = match read_capabilities(py, &plugin) {
+                Ok(capabilities) => capabilities,
+                Err(error) => {
+                    if let Err(close_error) = plugin.call_method0("close") {
+                        tracing::error!(%close_error, "Python backend cleanup failed");
+                    }
+                    return Err(error);
+                }
+            };
+            let inner = PyModule::import(py, "infinity_v3_python.threaded")
+                .and_then(|module| module.getattr("ThreadedExecutor"))
+                .and_then(|executor| executor.call1((plugin,)))
                 .map_err(|error| {
-                    BackendError::Start(format!("Could not start Python backend executor: {error}"))
+                    BackendError::Start(format!(
+                        "Could not start Python backend dispatch worker: {error}"
+                    ))
                 })?
                 .unbind();
             Ok(Self {
                 inner,
                 closed: AtomicBool::new(false),
+                capabilities,
             })
         })
     }
@@ -115,61 +134,12 @@ impl Executor {
             .map_err(submit_error)
     }
 
-    /// Optional capability negotiation. `None` means the executor has no
-    /// `capabilities` method and keeps the legacy behavior.
+    /// Capabilities captured from the synchronous plugin during startup.
     pub(crate) fn capabilities(&self) -> Result<Option<BackendCapabilities>, BackendError> {
         if self.closed.load(Ordering::Acquire) {
             return Err(BackendError::Unhealthy);
         }
-        Python::attach(|py| {
-            let inner = self.inner.bind(py);
-            let capabilities = match inner.getattr("capabilities") {
-                Ok(value) => value,
-                Err(error) if error.is_instance_of::<pyo3::exceptions::PyAttributeError>(py) => {
-                    return Ok(None);
-                }
-                Err(error) => {
-                    return Err(BackendError::Start(format!(
-                        "Python backend capabilities could not be read: {error}"
-                    )));
-                }
-            };
-            if !capabilities.is_callable() {
-                return Err(BackendError::Start(
-                    "Python backend capabilities must be callable".into(),
-                ));
-            }
-            let capabilities = capabilities.call0().map_err(|error| {
-                BackendError::Start(format!("Python backend capabilities failed: {error}"))
-            })?;
-            let capabilities = capabilities
-                .extract::<Bound<'_, PyDict>>()
-                .map_err(|error| {
-                    BackendError::Start(format!(
-                        "Python backend capabilities must return a mapping: {error}"
-                    ))
-                })?;
-            if let Some(version) = capabilities
-                .get_item("protocol_version")
-                .map_err(capability_error)?
-            {
-                if version.is_instance_of::<PyBool>() {
-                    return Err(BackendError::Start(
-                        "Python backend protocol_version must be an integer".into(),
-                    ));
-                }
-                let version = version.extract::<i64>().map_err(capability_error)?;
-                if version != 1 {
-                    return Err(BackendError::Start(format!(
-                        "Python backend uses protocol {version}; this transport supports \
-                         protocol 1"
-                    )));
-                }
-            }
-            Ok(Some(BackendCapabilities {
-                packed_limits: packed_limits(&capabilities)?,
-            }))
-        })
+        Ok(self.capabilities)
     }
 
     pub(crate) fn health(&self) -> Result<(), BackendError> {
@@ -198,7 +168,9 @@ impl Executor {
             return;
         }
         let _ = Python::try_attach(|py| {
-            let _ = self.inner.bind(py).call_method0("close");
+            if let Err(error) = self.inner.bind(py).call_method0("close") {
+                tracing::error!(%error, "Python backend cleanup failed");
+            }
         });
     }
 }
@@ -207,6 +179,89 @@ impl Drop for Executor {
     fn drop(&mut self) {
         self.close();
     }
+}
+
+fn read_capabilities(
+    py: Python<'_>,
+    inner: &Bound<'_, PyAny>,
+) -> Result<Option<BackendCapabilities>, BackendError> {
+    let capabilities = match inner.getattr("capabilities") {
+        Ok(value) => value,
+        Err(error) if error.is_instance_of::<pyo3::exceptions::PyAttributeError>(py) => {
+            return Ok(None);
+        }
+        Err(error) => {
+            return Err(BackendError::Start(format!(
+                "Python backend capabilities could not be read: {error}"
+            )));
+        }
+    };
+    if !capabilities.is_callable() {
+        return Err(BackendError::Start(
+            "Python backend capabilities must be callable".into(),
+        ));
+    }
+    let capabilities = capabilities.call0().map_err(|error| {
+        BackendError::Start(format!("Python backend capabilities failed: {error}"))
+    })?;
+    let capabilities = capabilities
+        .extract::<Bound<'_, PyDict>>()
+        .map_err(|error| {
+            BackendError::Start(format!(
+                "Python backend capabilities must return a mapping: {error}"
+            ))
+        })?;
+    if let Some(version) = capabilities
+        .get_item("protocol_version")
+        .map_err(capability_error)?
+    {
+        if version.is_instance_of::<PyBool>() {
+            return Err(BackendError::Start(
+                "Python backend protocol_version must be an integer".into(),
+            ));
+        }
+        let version = version.extract::<i64>().map_err(capability_error)?;
+        if version != 1 {
+            return Err(BackendError::Start(format!(
+                "Python backend uses protocol {version}; this transport supports \
+                 protocol 1"
+            )));
+        }
+    }
+    Ok(Some(BackendCapabilities {
+        packed_limits: packed_limits(&capabilities)?,
+    }))
+}
+
+pub(crate) fn discover_capabilities(
+    selector: Option<String>,
+    config_json: &str,
+) -> Result<(usize, bool), BackendError> {
+    Python::initialize();
+    Python::attach(|py| {
+        add_python_paths(py);
+        let discovery = PyModule::import(py, "infinity_v3_python.discovery").map_err(|error| {
+            BackendError::Start(format!(
+                "Could not import infinity_v3_python for capability discovery: {error}"
+            ))
+        })?;
+        let Ok(load_capabilities) = discovery.getattr("load_capabilities") else {
+            return Ok((1, false));
+        };
+        let capabilities = load_capabilities
+            .call1((selector, config_json))
+            .map_err(|error| {
+                BackendError::Start(format!(
+                    "Could not discover Python backend capabilities: {error}"
+                ))
+            })?;
+        if capabilities.is_none() {
+            return Ok((1, false));
+        }
+        capabilities.extract::<(usize, bool)>().map_err(|error| {
+            BackendError::Start(format!("Python backend capabilities are invalid: {error}"))
+        })
+    })
 }
 
 fn load_factory<'py>(

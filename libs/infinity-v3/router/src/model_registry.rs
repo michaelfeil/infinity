@@ -69,14 +69,23 @@ pub(crate) fn validate_configs(configs: &[ModelSettings]) -> Result<()> {
             .ensure_compiled()
             .with_context(|| format!("Model {name}"))?;
         let torch = config.backend_kind.resolve_device(config.torch_device)?;
-        if configs.len() > 1 && config.backend_kind.supports_replication(torch) {
-            ensure!(config.device_id.is_some() || config.backend_device_ids.is_some(), "Model {name}: multi-model CUDA deployments require explicit device-id or backend-device-ids");
+        let capabilities = config
+            .backend_kind
+            .device_capabilities(
+                torch,
+                &infinity_v3_backend::PythonBackendConfig {
+                    config: config.python_config.clone(),
+                    serving_limits: None,
+                },
+            )
+            .with_context(|| format!("Model {name}"))?;
+        if configs.len() > 1 && capabilities.supports_replication {
+            ensure!(config.device_id.is_some() || config.backend_device_ids.is_some(), "Model {name}: multi-model replicated deployments require explicit device-id or backend-device-ids");
         }
         crate::replicas::resolve_devices(
             config.backend_device_ids.as_deref(),
             config.device_id,
-            config.backend_kind,
-            torch,
+            capabilities,
         )?;
         if config.backend_kind == BackendKind::Libtorch && torch == TorchDevice::Cpu {
             ensure!(
