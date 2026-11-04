@@ -114,7 +114,9 @@ impl Executor {
             return;
         }
         let _ = Python::try_attach(|py| {
-            let _ = self.inner.bind(py).call_method0("close");
+            if let Err(error) = self.inner.bind(py).call_method0("close") {
+                tracing::error!(%error, "Python backend cleanup failed");
+            }
         });
     }
 }

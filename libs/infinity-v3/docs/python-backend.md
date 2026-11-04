@@ -130,7 +130,7 @@ own asynchronous work must drain it in `close` and release model resources.
 
 ### Optional replica capability discovery
 
-A plugin may export a module-level `capabilities(config_json)` hook returning
+The selected plugin module may export a `capabilities(config_json)` hook returning
 exactly `visible_device_count` and `supports_replication`:
 
 ```python
@@ -161,8 +161,9 @@ explicit ordinals must be visible, and each replica receives its own
   caught on the pool thread and complete the Rust response envelope through
   `set_exception`. Legacy plugins that internally defer completion remain valid.
 - Queued work is bounded by the existing Rust `queue_depth` admission permits.
-  `healthy` is serialized through the same pool. `close` waits for queued work,
-  then closes the wrapped plugin; it is safe to call more than once.
+  `healthy` is serialized through the same pool. `close` is the final pool task,
+  after queued work, so cleanup uses the execution thread. Cleanup failures are
+  reported; repeated calls to `close` are safe.
 - One shared frontend queue and scheduler per model hands batches to exclusive
   `BackendPool` replica leases; there is no separate frontend per device.
   Distinct replicas have distinct Python pool threads. Python bytecode still

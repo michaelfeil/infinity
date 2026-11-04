@@ -21,6 +21,10 @@ def load_factory(selector: str | None = None) -> Callable[..., Any]:
     available names when the choice is ambiguous.
     """
 
+    return _load_plugin(selector)[0]
+
+
+def _load_plugin(selector: str | None) -> tuple[Callable[..., Any], ModuleType]:
     if selector is None:
         return _load_default()
     selector = selector.strip()
@@ -35,7 +39,7 @@ def load_factory(selector: str | None = None) -> Callable[..., Any]:
                 f"Python backend selector {selector!r} does not resolve to a callable"
             )
         _check_module(module, selector)
-        return factory
+        return factory, module
     if selector.startswith("infinity_v3_python."):
         module = _import(selector, selector)
         factory = getattr(module, "create_executor", None)
@@ -44,7 +48,7 @@ def load_factory(selector: str | None = None) -> Callable[..., Any]:
                 f"Python backend module {selector!r} has no create_executor"
             )
         _check_module(module, selector)
-        return factory
+        return factory, module
     matches = [
         entry_point
         for entry_point in entry_points(group=ENTRY_POINT_GROUP)
@@ -74,7 +78,9 @@ def load_factory(selector: str | None = None) -> Callable[..., Any]:
     if module_name:
         module = _import(module_name, selector)
         _check_module(module, selector)
-    return factory
+    # Entry points can re-export factories defined in another module. Hooks
+    # belong to the advertised module; retain the protocol validation above.
+    return factory, _import(matches[0].module, selector)
 
 
 def load_capabilities(
@@ -89,11 +95,8 @@ def load_capabilities(
     hook keep the protocol-1 single-device defaults.
     """
 
-    factory = load_factory(selector)
-    module_name = getattr(factory, "__module__", None)
-    if not module_name:
-        return None
-    module = _import(module_name, selector or repr(factory))
+    _, module = _load_plugin(selector)
+    module_name = module.__name__
     hook = getattr(module, "capabilities", None)
     if hook is None:
         return None
@@ -136,10 +139,10 @@ def list_plugins() -> list[str]:
     )
 
 
-def _load_default() -> Callable[..., Any]:
+def _load_default() -> tuple[Callable[..., Any], ModuleType]:
     names = list_plugins()
     if len(names) == 1:
-        return load_factory(names[0])
+        return _load_plugin(names[0])
     if not names:
         raise PluginError(
             "no Python backend entry point is installed; install a backend "

@@ -51,7 +51,10 @@ class ThreadedExecutor:
             if self._closed:
                 return
             self._closed = True
-        # ThreadPoolExecutor.shutdown waits without holding the GIL. Queued
-        # submissions still drain before the wrapped executor is closed.
-        self._pool.shutdown(wait=True, cancel_futures=False)
-        self._executor.close()
+            close = self._pool.submit(self._executor.close)
+        # Close is the final task, after accepted submissions and on their
+        # execution thread. Python's waits release the GIL.
+        try:
+            close.result()
+        finally:
+            self._pool.shutdown(wait=True, cancel_futures=False)

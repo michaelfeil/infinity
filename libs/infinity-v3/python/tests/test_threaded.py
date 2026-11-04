@@ -52,6 +52,7 @@ class ThreadedExecutorTests(unittest.TestCase):
         response = Response()
         executor.submit("embed", response, {})
         self.assertTrue(started.wait(1), "plugin submit did not start")
+        self.assertFalse(response.done.is_set(), "envelope completed before plugin work")
         release.set()
         self.assertEqual(wait(response).result, "done")
         executor.close()
@@ -107,6 +108,34 @@ class ThreadedExecutorTests(unittest.TestCase):
         executor.submit("embed", response, {"row": 7})
         self.assertEqual(wait(response).result, 7)
         executor.close()
+
+    def test_close_uses_execution_thread_and_runs_once(self):
+        state = threading.local()
+        closed = []
+
+        def submit(route, response, payload):
+            state.thread = threading.get_ident()
+            response.set_result(state.thread)
+
+        inner = Executor(submit)
+        inner.close = lambda: closed.append(state.thread)
+        executor = ThreadedExecutor(inner)
+        response = wait_after_submit(executor)
+        executor.close()
+        executor.close()
+        self.assertEqual(closed, [response.result])
+
+    def test_close_reports_failure_and_stops_accepting_work(self):
+        def close():
+            raise RuntimeError("cleanup failed")
+
+        inner = Executor(lambda *args: None)
+        inner.close = close
+        executor = ThreadedExecutor(inner)
+        with self.assertRaisesRegex(RuntimeError, "cleanup failed"):
+            executor.close()
+        self.assertFalse(executor.healthy())
+        self.assertIn("closed", str(wait_after_submit(executor).error))
 
     def test_close_drains_queue_and_rejects_late_submit(self):
         started = threading.Event()
