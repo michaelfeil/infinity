@@ -1006,20 +1006,17 @@ async fn backend_task(
                 .increment(1);
         }
         let started = Instant::now();
-        if previous < cutoff {
-            let model_type = backend.model_type.clone();
-            pending.push_back((
-                started,
-                tokio::spawn(async move {
-                    complete_batch(execution, model_type, batch).await;
-                    started.elapsed()
-                }),
-            ));
-            reserved = ahead;
-        } else {
-            complete_batch(execution, backend.model_type.clone(), batch).await;
-            previous = started.elapsed();
-        }
+        let model_type = backend.model_type.clone();
+        // Keep malformed-result decoding isolated from the persistent worker,
+        // including when overlap is disabled and we immediately await this task.
+        pending.push_back((
+            started,
+            tokio::spawn(async move {
+                complete_batch(execution, model_type, batch).await;
+                started.elapsed()
+            }),
+        ));
+        reserved = ahead;
     }
     // Submitted work survives client cancellation and drains during shutdown.
     for (_, task) in pending {
@@ -1369,7 +1366,9 @@ mod completion_tests {
                         gate.lock().unwrap().recv().unwrap();
                     }
                     let mut predictions = infinity_v3_backend::Predictions::default();
-                    predictions.insert(0, vec![1.0]);
+                    if batch.input_ids[0] != 99 {
+                        predictions.insert(0, vec![1.0]);
+                    }
                     Ok(predictions)
                 },
             )))
@@ -1473,6 +1472,41 @@ mod completion_tests {
         drop(sender);
         slow.await.unwrap();
         fast.await.unwrap();
+        pool.shutdown().await;
+        queue.shutdown().await;
+    }
+
+    #[tokio::test]
+    async fn malformed_result_does_not_stop_replica_worker() {
+        let (started, mut starts) = mpsc::unbounded_channel();
+        let pool = BackendPool::new(vec![Backend::for_test(
+            Box::new(GatedReplica {
+                id: 0,
+                started,
+                gate: None,
+            }),
+            ModelType::Classifier,
+        )])
+        .unwrap();
+        let queue = Queue::new(16, Some(1), 0.0, 1);
+        let (sender, receiver) = mpsc::channel(1);
+        let worker = tokio::spawn(backend_task(
+            pool.clone(),
+            queue.clone(),
+            Arc::new(Mutex::new(receiver)),
+            0,
+            Arc::new(Semaphore::new(1)),
+        ));
+        let (malformed, failed_response) = dispatched(99);
+        sender.send(malformed).await.unwrap();
+        assert_eq!(starts.recv().await, Some((0, 99)));
+        assert!(failed_response.await.is_err());
+        let (valid, response) = dispatched(0);
+        sender.send(valid).await.unwrap();
+        let recovered = tokio::time::timeout(Duration::from_secs(2), response).await;
+        assert!(recovered.unwrap().unwrap().is_ok());
+        drop(sender);
+        worker.await.unwrap();
         pool.shutdown().await;
         queue.shutdown().await;
     }
