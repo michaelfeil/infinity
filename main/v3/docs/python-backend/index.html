@@ -1275,7 +1275,12 @@ while developing the plugin.</p>
 <li><code>pooling</code>: <code>cls</code>, <code>mean</code>, <code>last_token</code>, or <code>splade</code></li>
 <li><code>device_id</code>: replica/device ordinal</li>
 <li><code>config_json</code>: the <code>--python-config</code> JSON string</li>
+<li><code>serving_limits</code>: resolved <code>max_input_length</code> (effective sequence length),
+  <code>max_batch_tokens</code>, and <code>max_batch_requests</code> (<code>None</code> when uncapped)</li>
 </ul>
+<p><code>serving_limits</code> is always supplied as a mapping before warmup. Factories must accept
+that keyword or <code>**config</code>. The same shared limits are available to native
+backends; they describe existing frontend bounds.</p>
 <p>The returned executor must implement:</p>
 <div class="language-python highlight"><pre><span></span><code><span id="__span-6-1"><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="k">class</span><span class="w"> </span><span class="nc">MyExecutor</span><span class="p">:</span>
 </span><span id="__span-6-2"><a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a>    <span class="k">def</span><span class="w"> </span><span class="nf">submit</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">route</span><span class="p">,</span> <span class="n">response</span><span class="p">,</span> <span class="n">payload</span><span class="p">):</span> <span class="o">...</span>
