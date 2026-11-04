@@ -946,7 +946,6 @@ async fn backend_task(
     replica: usize,
 ) {
     let mut changed = backend.changes();
-    let mut completions = tokio::task::JoinSet::new();
     loop {
         if backend.is_closed() {
             break;
@@ -968,12 +967,10 @@ async fn backend_task(
         let Some(batch) = prune_canceled_batch(dispatched.0.take().unwrap()) else {
             continue;
         };
-        // Keep request metadata alive until completion, even after an early
-        // model-lease release. Exclusive Python completions retain the lease.
-        completions.spawn(complete_batch(execution, backend.model_type.clone(), batch));
-        while completions.try_join_next().is_some() {}
+        // Finish this replica's response before taking another shared batch.
+        // A slow replica must never park work that an idle replica could run.
+        complete_batch(execution, backend.model_type.clone(), batch).await;
     }
-    while completions.join_next().await.is_some() {}
     queue.close();
 }
 
@@ -1272,6 +1269,276 @@ fn log_request_error(error: &TextEmbeddingsError) {
 #[cfg(test)]
 mod completion_tests {
     use super::*;
+
+    struct GatedReplica {
+        id: usize,
+        started: mpsc::UnboundedSender<(usize, u32)>,
+        gate: Option<Arc<std::sync::Mutex<std::sync::mpsc::Receiver<()>>>>,
+    }
+
+    impl infinity_v3_backend::TestBackend for GatedReplica {
+        fn health(&self) -> Result<(), BackendError> {
+            Ok(())
+        }
+        fn embed(
+            &self,
+            _: infinity_v3_backend::Batch,
+        ) -> Result<infinity_v3_backend::Embeddings, BackendError> {
+            unreachable!()
+        }
+        fn predict_tokens(
+            &self,
+            _: infinity_v3_backend::Batch,
+        ) -> Result<infinity_v3_backend::TokenPredictions, BackendError> {
+            unreachable!()
+        }
+        fn predict(
+            &self,
+            _: infinity_v3_backend::Batch,
+        ) -> Result<infinity_v3_backend::Predictions, BackendError> {
+            unreachable!()
+        }
+        fn submit_predict(
+            &self,
+            batch: infinity_v3_backend::Batch,
+        ) -> Result<
+            infinity_v3_backend::TestInference<infinity_v3_backend::Predictions>,
+            BackendError,
+        > {
+            self.started.send((self.id, batch.input_ids[0])).unwrap();
+            let gate = self.gate.clone().filter(|_| batch.input_ids[0] == 1);
+            // Model native submission: the lease can be released while output
+            // collection is still pending. This replica still must not prefetch.
+            Ok(infinity_v3_backend::TestInference::Deferred(Box::new(
+                move || {
+                    if let Some(gate) = gate {
+                        gate.lock().unwrap().recv().unwrap();
+                    }
+                    let mut predictions = infinity_v3_backend::Predictions::default();
+                    predictions.insert(0, vec![1.0]);
+                    Ok(predictions)
+                },
+            )))
+        }
+    }
+
+    fn dispatched(
+        token: u32,
+    ) -> (
+        DispatchedBatch,
+        oneshot::Receiver<Result<InferResult, BackendError>>,
+    ) {
+        let (response_tx, response) = oneshot::channel();
+        let metadata = Metadata {
+            service_tier: ServiceTier::Default,
+            input_memory: None,
+            queue_reservation: None,
+            decision: None,
+            client_batch: None,
+            response_tx,
+            tokenization: Duration::ZERO,
+            queue_time: Instant::now(),
+            prompt_tokens: 1,
+            pooling: true,
+            token_classification: false,
+        };
+        let batch = infinity_v3_backend::Batch {
+            multimodal: vec![],
+            input_ids: vec![token],
+            token_type_ids: vec![0],
+            position_ids: vec![0],
+            cumulative_seq_lengths: vec![0, 1],
+            max_length: 1,
+            pooled_indices: vec![0],
+            raw_indices: vec![],
+            compact_input_ids: None,
+            compact_position_ids: None,
+            scatter_unfold: None,
+            fold_gather: None,
+            tokens: vec![],
+            offsets: vec![],
+        };
+        (DispatchedBatch(Some((vec![metadata], batch))), response)
+    }
+
+    #[tokio::test]
+    async fn slow_replica_leaves_waiting_work_for_fast_replica() {
+        let (started, mut starts) = mpsc::unbounded_channel();
+        let (release, gate) = std::sync::mpsc::channel();
+        let pool = BackendPool::new(vec![
+            Backend::for_test(
+                Box::new(GatedReplica {
+                    id: 0,
+                    started: started.clone(),
+                    gate: Some(Arc::new(std::sync::Mutex::new(gate))),
+                }),
+                ModelType::Classifier,
+            ),
+            Backend::for_test(
+                Box::new(GatedReplica {
+                    id: 1,
+                    started,
+                    gate: None,
+                }),
+                ModelType::Classifier,
+            ),
+        ])
+        .unwrap();
+        let queue = Queue::new(16, Some(1), 0.0, 1);
+        let (sender, receiver) = mpsc::channel(1);
+        let receiver = Arc::new(Mutex::new(receiver));
+        let slow = tokio::spawn(backend_task(
+            pool.clone(),
+            queue.clone(),
+            receiver.clone(),
+            0,
+        ));
+        let (first, first_response) = dispatched(1);
+        sender.send(first).await.unwrap();
+        assert_eq!(starts.recv().await, Some((0, 1)));
+        let (second, second_response) = dispatched(2);
+        sender.send(second).await.unwrap();
+        // Let the slow worker poll again before starting the fast worker. Its
+        // completion stays gated until the fast replica has served this batch.
+        tokio::task::yield_now().await;
+        let fast = tokio::spawn(backend_task(
+            pool.clone(),
+            queue.clone(),
+            receiver.clone(),
+            1,
+        ));
+        let assigned = tokio::time::timeout(Duration::from_secs(2), starts.recv()).await;
+        // Always unblock native completion, even when this regression fails.
+        release.send(()).unwrap();
+        assert_eq!(assigned.unwrap(), Some((1, 2)));
+        assert!(first_response.await.unwrap().is_ok());
+        assert!(second_response.await.unwrap().is_ok());
+        pool.close();
+        drop(sender);
+        slow.await.unwrap();
+        fast.await.unwrap();
+        pool.shutdown().await;
+        queue.shutdown().await;
+    }
+
+    #[tokio::test]
+    async fn cancellation_does_not_release_active_replica_or_execute_canceled_waiter() {
+        let (started, mut starts) = mpsc::unbounded_channel();
+        let (release, gate) = std::sync::mpsc::channel();
+        let pool = BackendPool::new(vec![Backend::for_test(
+            Box::new(GatedReplica {
+                id: 0,
+                started,
+                gate: Some(Arc::new(std::sync::Mutex::new(gate))),
+            }),
+            ModelType::Classifier,
+        )])
+        .unwrap();
+        let queue = Queue::new(16, Some(1), 0.0, 1);
+        let (sender, receiver) = mpsc::channel(1);
+        let receiver = Arc::new(Mutex::new(receiver));
+        let worker = tokio::spawn(backend_task(
+            pool.clone(),
+            queue.clone(),
+            receiver.clone(),
+            0,
+        ));
+        let (first, response) = dispatched(1);
+        sender.send(first).await.unwrap();
+        assert_eq!(starts.recv().await, Some((0, 1)));
+        drop(response); // Disconnect after native submission.
+        let (canceled, response) = dispatched(2);
+        drop(response); // Disconnect before dispatch.
+        sender.send(canceled).await.unwrap();
+        tokio::task::yield_now().await;
+        // The batch stays shared while active output collection is gated.
+        let waiting = receiver.try_lock().map(|r| r.len());
+        release.send(()).unwrap();
+        assert_eq!(waiting.unwrap(), 1);
+        drop(sender);
+        worker.await.unwrap();
+        assert!(starts.try_recv().is_err(), "canceled queued batch executed");
+        pool.shutdown().await;
+        queue.shutdown().await;
+    }
+
+    #[tokio::test]
+    async fn shutdown_drains_active_response_and_rejects_waiting_batch() {
+        let (started, mut starts) = mpsc::unbounded_channel();
+        let (release, gate) = std::sync::mpsc::channel();
+        let pool = BackendPool::new(vec![Backend::for_test(
+            Box::new(GatedReplica {
+                id: 0,
+                started,
+                gate: Some(Arc::new(std::sync::Mutex::new(gate))),
+            }),
+            ModelType::Classifier,
+        )])
+        .unwrap();
+        let queue = Queue::new(16, Some(1), 0.0, 1);
+        let (sender, receiver) = mpsc::channel(1);
+        let receiver = Arc::new(Mutex::new(receiver));
+        let worker = tokio::spawn(backend_task(
+            pool.clone(),
+            queue.clone(),
+            receiver.clone(),
+            0,
+        ));
+        drop(receiver); // The worker owns the shared queue's remaining receiver.
+        let (active, active_response) = dispatched(1);
+        sender.send(active).await.unwrap();
+        assert_eq!(starts.recv().await, Some((0, 1)));
+        let (waiting, waiting_response) = dispatched(2);
+        sender.send(waiting).await.unwrap();
+        pool.close();
+        tokio::task::yield_now().await;
+        let still_draining = !worker.is_finished();
+        release.send(()).unwrap();
+        assert!(still_draining);
+        tokio::time::timeout(Duration::from_secs(2), worker)
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(active_response.await.unwrap().is_ok());
+        assert!(matches!(
+            waiting_response.await.unwrap(),
+            Err(BackendError::Unhealthy)
+        ));
+        assert!(starts.try_recv().is_err());
+        pool.shutdown().await;
+        queue.shutdown().await;
+    }
+
+    #[tokio::test]
+    async fn shutdown_wakes_idle_replica_while_input_channel_remains_open() {
+        let (started, _) = mpsc::unbounded_channel();
+        let pool = BackendPool::new(vec![Backend::for_test(
+            Box::new(GatedReplica {
+                id: 0,
+                started,
+                gate: None,
+            }),
+            ModelType::Classifier,
+        )])
+        .unwrap();
+        let queue = Queue::new(16, Some(1), 0.0, 1);
+        let (_sender, receiver) = mpsc::channel(1);
+        let receiver = Arc::new(Mutex::new(receiver));
+        let worker = tokio::spawn(backend_task(
+            pool.clone(),
+            queue.clone(),
+            receiver.clone(),
+            0,
+        ));
+        tokio::task::yield_now().await;
+        pool.close();
+        tokio::time::timeout(Duration::from_secs(2), worker)
+            .await
+            .unwrap()
+            .unwrap();
+        pool.shutdown().await;
+        queue.shutdown().await;
+    }
 
     #[tokio::test]
     async fn partial_client_batch_dispatches_before_next_admission() {
