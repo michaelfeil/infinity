@@ -1,4 +1,5 @@
 use crate::envelope::ResponseEnvelope;
+use crate::ServingLimits;
 use infinity_v3_backend_core::BackendError;
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyModule};
@@ -13,6 +14,7 @@ pub(crate) struct ExecutorConfig {
     pub pooling: String,
     pub device_id: usize,
     pub config_json: String,
+    pub serving_limits: ServingLimits,
 }
 
 pub(crate) struct Executor {
@@ -47,6 +49,20 @@ impl Executor {
                 .map_err(start_error)?;
             kwargs
                 .set_item("config_json", config.config_json)
+                .map_err(start_error)?;
+            let value = config.serving_limits;
+            let limits = PyDict::new(py);
+            limits
+                .set_item("max_input_length", value.max_input_length)
+                .map_err(start_error)?;
+            limits
+                .set_item("max_batch_tokens", value.max_batch_tokens)
+                .map_err(start_error)?;
+            limits
+                .set_item("max_batch_requests", value.max_batch_requests)
+                .map_err(start_error)?;
+            kwargs
+                .set_item("serving_limits", limits)
                 .map_err(start_error)?;
             let inner = factory.call((), Some(&kwargs)).map_err(|error| {
                 BackendError::Start(format!("Could not start Python backend executor: {error}"))

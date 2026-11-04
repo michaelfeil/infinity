@@ -21,6 +21,8 @@ use std::path::Path;
 use std::sync::Arc;
 use tokio::sync::Semaphore;
 
+pub use infinity_v3_backend_core::ServingLimits;
+
 /// Runtime configuration supplied by the shared frontend.
 #[derive(Clone, Debug, Default)]
 pub struct PythonBackendConfig {
@@ -69,6 +71,7 @@ impl PythonBackend {
         model_type: ModelType,
         device_id: usize,
         config: PythonBackendConfig,
+        serving_limits: ServingLimits,
     ) -> Result<Self, BackendError> {
         let (pool, classifier, model_type) = match model_type {
             ModelType::Embedding(pool) => (pool, false, "embedding"),
@@ -88,6 +91,7 @@ impl PythonBackend {
             pooling: pool.to_string(),
             device_id,
             config_json: parsed.config_json,
+            serving_limits,
         })?;
         Ok(Self {
             executor,
@@ -271,6 +275,10 @@ mod tests {
         }
     }
 
+    fn serving_limits() -> infinity_v3_backend_core::ServingLimits {
+        infinity_v3_backend_core::ServingLimits::new(16_384, 512, None).unwrap()
+    }
+
     fn batch() -> Batch {
         Batch {
             multimodal: vec![],
@@ -298,6 +306,7 @@ mod tests {
             ModelType::Embedding(Pool::Mean),
             0,
             config(),
+            serving_limits(),
         )
         .unwrap();
         backend.health().unwrap();
@@ -316,6 +325,7 @@ mod tests {
             ModelType::Embedding(Pool::Mean),
             0,
             config(),
+            serving_limits(),
         )
         .unwrap();
         for _ in 0..5 {
@@ -333,6 +343,7 @@ mod tests {
             ModelType::Classifier,
             0,
             config(),
+            serving_limits(),
         )
         .unwrap();
         let predictions = backend.predict(batch()).unwrap();
@@ -381,6 +392,7 @@ def create_executor(**kwargs):
                 PythonBackendConfig {
                     config: Some(config.to_string()),
                 },
+                serving_limits(),
             )
             .unwrap();
             for _ in 0..2 {

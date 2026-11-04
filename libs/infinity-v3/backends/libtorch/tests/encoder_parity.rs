@@ -308,6 +308,7 @@ fn encoders_cpu_preserve_packed_sequence_boundaries() {
             "float32",
             ModelType::Embedding(Pool::Mean),
             "cpu",
+            crate::limits(),
         )
         .unwrap();
         let packed = model.embed(batch()).unwrap();
@@ -343,6 +344,7 @@ fn splade_selected_spans_preserve_mixed_raw_order() {
             dtype,
             ModelType::Embedding(Pool::Splade),
             device,
+            crate::limits(),
         )
         .unwrap();
         let mut input = batch();
@@ -387,6 +389,7 @@ fn mpnet_cuda_varlen_matches_cpu() {
         "float32",
         ModelType::Embedding(Pool::Mean),
         "cpu",
+        crate::limits(),
     )
     .unwrap();
     let gpu = LibtorchBackend::new(
@@ -394,6 +397,7 @@ fn mpnet_cuda_varlen_matches_cpu() {
         "float16",
         ModelType::Embedding(Pool::Mean),
         "cuda:2",
+        crate::limits(),
     )
     .unwrap();
     let expected = cpu.embed(batch()).unwrap();
@@ -437,9 +441,14 @@ fn mpnet_and_deberta_match_independent_transformers() {
             .map(|b| f32::from_le_bytes(b.try_into().unwrap()))
             .collect::<Vec<_>>();
         for (dtype, device, tolerance) in [("float32", "cpu", 2e-5), ("float16", "cuda:2", 0.006)] {
-            let model =
-                LibtorchBackend::new(&path, dtype, ModelType::Embedding(Pool::Mean), device)
-                    .unwrap();
+            let model = LibtorchBackend::new(
+                &path,
+                dtype,
+                ModelType::Embedding(Pool::Mean),
+                device,
+                crate::limits(),
+            )
+            .unwrap();
             let mut b = input_json_batch(&path);
             b.token_type_ids = vec![
                 if path.file_name().unwrap() == "mpnet" {
@@ -471,8 +480,14 @@ fn mpnet_and_deberta_match_independent_transformers() {
                     .chunks_exact(4)
                     .map(|b| f32::from_le_bytes(b.try_into().unwrap()))
                     .collect::<Vec<_>>();
-                let classifier =
-                    LibtorchBackend::new(&path, dtype, ModelType::Classifier, device).unwrap();
+                let classifier = LibtorchBackend::new(
+                    &path,
+                    dtype,
+                    ModelType::Classifier,
+                    device,
+                    crate::limits(),
+                )
+                .unwrap();
                 let input = input_json_batch(&path);
                 let actual = if path
                     .file_name()
@@ -520,4 +535,8 @@ fn input_json_batch(path: &std::path::Path) -> Batch {
     input.pooled_indices = (0..lengths.len() as u32).collect();
     input.raw_indices.clear();
     input
+}
+
+fn limits() -> text_embeddings_backend_core::ServingLimits {
+    text_embeddings_backend_core::ServingLimits::new(16_384, 8_192, None).unwrap()
 }

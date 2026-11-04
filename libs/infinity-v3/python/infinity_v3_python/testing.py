@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from typing import Any
 
 import numpy as np
@@ -69,6 +70,10 @@ class FakeExecutor:
 
 
 def create_executor(**_config: Any) -> FakeExecutor:
+    expected = json.loads(_config.get("config_json", "{}")).get("expected_serving_limits")
+    received = _config.get("serving_limits")
+    if expected is not None and received != expected:
+        raise ValueError(f"Expected serving limits {expected!r}, received {received!r}")
     return FakeExecutor()
 
 

@@ -7,6 +7,10 @@
 - `tests/`: existing native regression fixtures and reference data.
 - `vendor/`: pinned third-party sources and their licenses.
 - `bridge.cpp` and `bridge.h`: C ABI, model construction and request dispatch.
+- Shared `ServingLimits` reach native code through the `_max_batch_tokens`,
+  `_max_sequence_length` (effective `max_input_length`), and optional
+  `_max_batch_requests` options passed through `tei_option`. These communicate
+  resolved limits without changing scheduling or graph policy.
 
 Includes use paths relative to this directory, so dependencies between categories
 are explicit. `models/model.h` defines the model contract; packed request data

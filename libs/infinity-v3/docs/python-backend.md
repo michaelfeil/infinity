@@ -87,6 +87,12 @@ The factory receives:
 - `pooling`: `cls`, `mean`, `last_token`, or `splade`
 - `device_id`: replica/device ordinal
 - `config_json`: the `--python-config` JSON string
+- `serving_limits`: resolved `max_input_length` (effective sequence length),
+  `max_batch_tokens`, and `max_batch_requests` (`None` when uncapped)
+
+`serving_limits` is always supplied as a mapping before warmup. Factories must accept
+that keyword or `**config`. The same shared limits are available to native
+backends; they describe existing frontend bounds.
 
 The returned executor must implement:
 

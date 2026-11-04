@@ -354,6 +354,40 @@ pub enum BackendError {
     WeightsNotFound(String),
 }
 
+/// Resolved per-model limits available to every backend.
+/// `max_input_length` is the effective per-sequence token limit after
+/// checkpoint/config, CLI, auto-truncation and batch-token resolution.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ServingLimits {
+    pub max_input_length: usize,
+    pub max_batch_tokens: usize,
+    pub max_batch_requests: Option<usize>,
+}
+
+impl ServingLimits {
+    pub fn new(
+        max_batch_tokens: usize,
+        max_input_length: usize,
+        max_batch_requests: Option<usize>,
+    ) -> Result<Self, BackendError> {
+        if max_batch_tokens == 0 || max_input_length == 0 {
+            return Err(BackendError::Start(
+                "Serving token limits must be positive".into(),
+            ));
+        }
+        if max_input_length > max_batch_tokens {
+            return Err(BackendError::Start(
+                "max_input_length cannot exceed max_batch_tokens".into(),
+            ));
+        }
+        Ok(Self {
+            max_batch_tokens,
+            max_input_length,
+            max_batch_requests,
+        })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::SharedF32;

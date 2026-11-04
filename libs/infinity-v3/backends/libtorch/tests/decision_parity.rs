@@ -258,7 +258,9 @@ fn requests(kind: &str) -> Vec<DecisionInput> {
 fn decision_startup_ragged_outputs_and_recovery_cpu() {
     for kind in ["laya", "option_tokens", "pplx", "clef"] {
         let f = fixture(kind, false);
-        let model = LibtorchBackend::new(&f.0, "float32", ModelType::Decision, "cpu").unwrap();
+        let model =
+            LibtorchBackend::new(&f.0, "float32", ModelType::Decision, "cpu", crate::limits())
+                .unwrap();
         let inputs = requests(kind);
         let outputs = model.decide(batch(), inputs.clone()).unwrap();
         assert_eq!(outputs.len(), 2);
@@ -302,7 +304,14 @@ fn decision_startup_ragged_outputs_and_recovery_cpu() {
 #[test]
 fn qwen35_explicit_head_dimension_preserves_independent_attention_width() {
     let f = fixture_with_heads("pplx", true, 3);
-    let model = LibtorchBackend::new(&f.0, "bfloat16", ModelType::Decision, "cpu").unwrap();
+    let model = LibtorchBackend::new(
+        &f.0,
+        "bfloat16",
+        ModelType::Decision,
+        "cpu",
+        crate::limits(),
+    )
+    .unwrap();
     let actual = model.decide(batch(), requests("pplx")).unwrap();
     assert_eq!(actual[0].logits.len(), 2);
     assert!(actual
@@ -314,14 +323,19 @@ fn qwen35_explicit_head_dimension_preserves_independent_attention_width() {
     let mut invalid = original.clone();
     invalid["head_dim"] = 0.into();
     std::fs::write(&config_path, serde_json::to_vec(&invalid).unwrap()).unwrap();
-    let reject_dimensions =
-        |model_type, dtype| match LibtorchBackend::new(&f.0, dtype, model_type, "cpu") {
-            Err(error) => assert!(
-                error.to_string().contains("Invalid model dimensions"),
-                "Wrong validation failure: {error}"
-            ),
-            Ok(_) => panic!("Invalid model dimensions accepted"),
-        };
+    let reject_dimensions = |model_type, dtype| match LibtorchBackend::new(
+        &f.0,
+        dtype,
+        model_type,
+        "cpu",
+        crate::limits(),
+    ) {
+        Err(error) => assert!(
+            error.to_string().contains("Invalid model dimensions"),
+            "Wrong validation failure: {error}"
+        ),
+        Ok(_) => panic!("Invalid model dimensions accepted"),
+    };
     reject_dimensions(ModelType::Decision, "bfloat16");
     invalid = original;
     invalid["model_type"] = "bert".into();
@@ -330,4 +344,8 @@ fn qwen35_explicit_head_dimension_preserves_independent_attention_width() {
         ModelType::Embedding(text_embeddings_backend_core::Pool::Cls),
         "float32",
     );
+}
+
+fn limits() -> text_embeddings_backend_core::ServingLimits {
+    text_embeddings_backend_core::ServingLimits::new(16_384, 8_192, None).unwrap()
 }
