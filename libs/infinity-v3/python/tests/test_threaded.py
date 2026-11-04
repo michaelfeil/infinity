@@ -1,5 +1,7 @@
 import threading
+from queue import Queue
 import unittest
+from unittest.mock import patch
 
 from infinity_v3_python.threaded import ThreadedExecutor
 
@@ -53,8 +55,13 @@ class ThreadedExecutorTests(unittest.TestCase):
         executor.submit("embed", response, {})
         self.assertTrue(started.wait(1), "plugin submit did not start")
         self.assertFalse(response.done.is_set(), "envelope completed before plugin work")
+        with self.assertRaisesRegex(RuntimeError, "queue is full"):
+            executor.submit("embed", Response(), {})
         release.set()
         self.assertEqual(wait(response).result, "done")
+        after = Response()
+        executor.submit("embed", after, {})
+        self.assertEqual(wait(after).result, "done")
         executor.close()
 
     def test_two_replicas_overlap(self):
@@ -81,22 +88,58 @@ class ThreadedExecutorTests(unittest.TestCase):
             response.set_result(threading.get_ident())
 
         executor = ThreadedExecutor(Executor(submit))
-        responses = [Response() for _ in range(3)]
-        for response in responses:
+        ids = []
+        for _ in range(3):
+            response = Response()
             executor.submit("embed", response, {})
-        ids = {wait(response).result for response in responses}
+            ids.append(wait(response).result)
         self.assertEqual(len(threads), 1)
-        self.assertEqual(ids, threads)
+        self.assertEqual(set(ids), threads)
         executor.close()
 
-    def test_plugin_exception_completes_response(self):
+    def test_failures_release_admission(self):
         def submit(route, response, payload):
             raise RuntimeError("submit exploded")
 
         executor = ThreadedExecutor(Executor(submit))
+        with patch.object(executor._pool, "submit", side_effect=RuntimeError("schedule failed")):
+            with self.assertRaisesRegex(RuntimeError, "schedule failed"):
+                executor.submit("embed", Response(), {})
         response = wait_after_submit(executor)
         self.assertIsInstance(response.error, RuntimeError)
         self.assertIn("submit exploded", str(response.error))
+        self.assertIsInstance(wait_after_submit(executor).error, RuntimeError)
+        executor.close()
+
+    def test_busy_until_terminal_completion(self):
+        class InvalidResult(Response):
+            def set_result(self, result):
+                raise ValueError("invalid result")
+
+        pending = Queue()
+        executor = ThreadedExecutor(Executor(lambda _, response, __: pending.put(response)))
+        first = InvalidResult()
+        executor.submit("embed", first, {})
+        active = pending.get(timeout=2)
+        self.assertTrue(executor.healthy())  # submit returned; envelope is still pending.
+        with self.assertRaisesRegex(RuntimeError, "queue is full"):
+            executor.submit("embed", Response(), {})
+        with self.assertRaisesRegex(ValueError, "invalid result"):
+            active.set_result(None)
+        with self.assertRaisesRegex(RuntimeError, "queue is full"):
+            executor.submit("embed", Response(), {})
+        active.set_exception(ValueError("invalid result"))
+        self.assertIsInstance(wait(first).error, ValueError)
+
+        second = Response()
+        executor.submit("embed", second, {})
+        next_response = pending.get(timeout=2)
+        with self.assertRaisesRegex(RuntimeError, "already completed"):
+            active.set_result(None)
+        with self.assertRaisesRegex(RuntimeError, "queue is full"):
+            executor.submit("embed", Response(), {})
+        next_response.set_result("ok")
+        self.assertEqual(wait(second).result, "ok")
         executor.close()
 
     def test_legacy_async_plugin_can_complete_later(self):
@@ -135,7 +178,8 @@ class ThreadedExecutorTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "cleanup failed"):
             executor.close()
         self.assertFalse(executor.healthy())
-        self.assertIn("closed", str(wait_after_submit(executor).error))
+        with self.assertRaisesRegex(RuntimeError, "closed"):
+            executor.submit("embed", Response(), {})
 
     def test_close_drains_queue_and_rejects_late_submit(self):
         started = threading.Event()
@@ -148,10 +192,10 @@ class ThreadedExecutorTests(unittest.TestCase):
 
         executor = ThreadedExecutor(Executor(submit))
         first = Response()
-        second = Response()
         executor.submit("embed", first, {"row": 1})
-        executor.submit("embed", second, {"row": 2})
         self.assertTrue(started.wait(1))
+        with self.assertRaisesRegex(RuntimeError, "queue is full"):
+            executor.submit("embed", Response(), {"row": 2})
 
         close_started = threading.Event()
 
@@ -162,16 +206,13 @@ class ThreadedExecutorTests(unittest.TestCase):
         closer = threading.Thread(target=close)
         closer.start()
         self.assertTrue(close_started.wait(1), "close did not start")
-        self.assertTrue(closer.is_alive(), "close did not wait for queued work")
+        self.assertTrue(closer.is_alive(), "close did not wait for in-flight work")
         release.set()
         closer.join(2)
         self.assertFalse(closer.is_alive())
         self.assertEqual(wait(first).result, 1)
-        self.assertEqual(wait(second).result, 2)
-
-        late = Response()
-        executor.submit("embed", late, {"row": 3})
-        self.assertIn("closed", str(wait(late).error))
+        with self.assertRaisesRegex(RuntimeError, "closed"):
+            executor.submit("embed", Response(), {"row": 3})
         executor.close()
 
 

@@ -14,7 +14,6 @@ pub(crate) struct ExecutorConfig {
     pub pooling: String,
     pub device_id: usize,
     pub config_json: String,
-    pub queue_size: usize,
     pub serving_limits: Option<ServingLimits>,
 }
 
@@ -64,9 +63,6 @@ impl Executor {
                 .map_err(start_error)?;
             kwargs
                 .set_item("config_json", config.config_json)
-                .map_err(start_error)?;
-            kwargs
-                .set_item("queue_size", config.queue_size)
                 .map_err(start_error)?;
             if let Some(serving_limits) = config.serving_limits {
                 if factory_accepts_serving_limits(py, &factory) {
