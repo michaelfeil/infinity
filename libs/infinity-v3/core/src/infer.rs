@@ -218,7 +218,10 @@ impl Infer {
             notify_batching_task.clone(),
             sender,
         ))];
-        let prefetch = Arc::new(Semaphore::new(1));
+        // Small pools still need overlap on each device. Larger pools already
+        // provide parallelism, so share just one extra batch between replicas.
+        let ahead = if backend.len() <= 2 { backend.len() } else { 1 };
+        let prefetch = Arc::new(Semaphore::new(ahead));
         for replica in 0..backend.len() {
             tasks.push(tokio::spawn(backend_task(
                 backend.clone(),
