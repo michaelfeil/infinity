@@ -321,6 +321,7 @@ if(INFINITY_BUILD_NATIVE_TESTS)
   endforeach()
   if(TARGET torch_cuda)
     target_compile_definitions(dense_mlp_test PRIVATE TEI_TORCH_CUDA_KERNELS)
+    target_compile_definitions(encoder_models_test PRIVATE TEI_TORCH_CUDA_KERNELS)
     # Match the private cache header layout even when CUDA test registration is
     # disabled: CPU fixtures can still link against a CUDA-enabled library.
     target_compile_definitions(gemma_models_test PRIVATE TEI_TORCH_CUDA_KERNELS)

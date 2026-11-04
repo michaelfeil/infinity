@@ -825,19 +825,23 @@ struct Encoder final : Model {
     bool scaled = family == Family::Nomic && local_cos.defined() &&
                   input.max_sequence > o.integer("max_trained_positions", 2048);
     at::Tensor cos_global, sin_global, cos_local, sin_local;
+    // Modern, Nomic, and GTE rotate fresh Q/K views inside a request-local QKV
+    // output. When positions can index the full tables directly, skip the
+    // materialized per-token frequencies and write the rotation in place.
 #ifdef TEI_TORCH_CUDA_KERNELS
-    const bool indexed_modern =
-        family == Family::Modern && h.is_cuda() && input.positions.device() == h.device() &&
+    const bool indexed_rotary =
+        (family == Family::Modern || family == Family::Nomic || family == Family::Gte) &&
+        h.is_cuda() && input.positions.device() == h.device() &&
         input.positions.scalar_type() == at::kLong && input.positions.is_contiguous() &&
         input.positions.dim() == 1 && input.positions.numel() == h.size(0);
 #else
-    constexpr bool indexed_modern = false;
+    constexpr bool indexed_rotary = false;
 #endif
-    if (global_cos.defined() && !indexed_modern) {
+    if (global_cos.defined() && !indexed_rotary) {
       cos_global = global_cos.index_select(0, input.positions).unsqueeze(1);
       sin_global = global_sin.index_select(0, input.positions).unsqueeze(1);
     }
-    if (local_cos.defined() && !indexed_modern) {
+    if (local_cos.defined() && !indexed_rotary) {
       cos_local = local_cos.index_select(0, input.positions).unsqueeze(1);
       sin_local = local_sin.index_select(0, input.positions).unsqueeze(1);
     }
@@ -879,29 +883,27 @@ struct Encoder final : Model {
       auto q = qkv.narrow(1, 0, heads), k = qkv.narrow(1, heads, heads),
            v = qkv.narrow(1, 2 * heads, heads);
       if (family == Family::Modern || family == Family::Nomic || family == Family::Gte) {
-        const auto& c = local || scaled ? cos_local : cos_global;
-        const auto& s = local || scaled ? sin_local : sin_global;
+        // Nomic selects its scaled local table only beyond max_trained_positions;
+        // Modern alternates tables by layer. Both choices survive the indexed path.
+        const bool local_table = local || scaled;
 #ifdef TEI_TORCH_CUDA_KERNELS
         if (q.is_cuda()) {
-          if (family == Family::Modern) {
-            // Q/K occupy distinct head ranges in this fresh linear QKV output.
-            // No later operation reads unrotated Q/K; the disjoint V view stays intact.
-            if (indexed_modern)
-              encoder_rotary_indexed_inplace(q,
-                                             k,
-                                             local ? local_cos : global_cos,
-                                             local ? local_sin : global_sin,
-                                             input.positions);
-            else
-              encoder_rotary_inplace(q, k, c, s);
-          } else {
-            auto rotated = fused_rotary(q, k, c, s, true);
-            q = rotated.first;
-            k = rotated.second;
-          }
+          // Q/K occupy distinct head ranges in this fresh linear QKV output.
+          // No later operation reads unrotated Q/K; the disjoint V view stays intact.
+          if (indexed_rotary)
+            encoder_rotary_indexed_inplace(q,
+                                           k,
+                                           local_table ? local_cos : global_cos,
+                                           local_table ? local_sin : global_sin,
+                                           input.positions);
+          else
+            encoder_rotary_inplace(
+                q, k, local_table ? cos_local : cos_global, local_table ? sin_local : sin_global);
         } else
 #endif
         {
+          const auto& c = local_table ? cos_local : cos_global;
+          const auto& s = local_table ? sin_local : sin_global;
           q = rotate(q, c, s);
           k = rotate(k, c, s);
         }

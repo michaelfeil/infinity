@@ -3,6 +3,7 @@
 #include "models/encoder_models.h"
 #include "helpers/modern_cpu_math.h"
 #include "helpers/fp8_linear.h"
+#include "kernels/fast_kernels.h"
 #include "batching/cuda_graph.h"
 #ifdef TEI_TORCH_CUDA_KERNELS
 #include <ATen/cuda/CUDAContext.h>
@@ -210,6 +211,169 @@ void fp8_encoder(const infinity::Options& options,
 #endif
 }
 
+void rotary_reuse_regression(c10::Device device, at::ScalarType dtype) {
+  // Indexed rotary must match the materialized-frequency fallback for mixed
+  // packed batches, scaled Nomic tables, and both CUDA model dtypes.
+  auto opts = at::TensorOptions().device(device).dtype(at::kLong);
+  auto mixed_ids = at::tensor({1, 2, 3, 4, 5, 6, 7, 8, 9}, opts),
+       mixed_types = at::zeros({9}, opts),
+       mixed_positions = at::tensor({2, 0, 2, 4, 1, 0, 3, 5, 2}, opts);
+  auto mixed_cumulative = at::tensor({0, 3, 9}, opts.dtype(at::kInt));
+  int32_t mixed_offsets[] = {0, 3, 9};
+  auto strided_positions = at::zeros({9, 2}, opts);
+  strided_positions.select(1, 0).copy_(mixed_positions);
+  auto gathered_positions = strided_positions.select(1, 0);
+  TORCH_CHECK(!gathered_positions.is_contiguous(),
+              "Rotary fallback fixture must not use contiguous positions");
+
+  auto short_ids = at::tensor({1, 2, 3, 4}, opts), short_types = at::zeros({4}, opts),
+       short_positions = at::tensor({3, 0, 1, 2}, opts);
+  auto short_cumulative = at::tensor({0, 4}, opts.dtype(at::kInt));
+  int32_t short_offsets[] = {0, 4};
+  auto graph_first = at::tensor({2, 0, 2, 4, 1, 0, 3, 5, 2}, opts),
+       graph_second = at::tensor({0, 2, 0, 3, 5, 1, 0, 4, 2}, opts);
+
+  auto config_fp8_dynamic = [](infinity::Options options, bool dynamic) {
+    if (dynamic)
+      options.values["_fp8_dynamic"] = "true";
+    return options;
+  };
+  auto run = [&](at::ScalarType model_dtype,
+                 bool fp8,
+                 const infinity::Weights& nomic_base,
+                 const infinity::Weights& gte_base) {
+    auto nomic_options = config_fp8_dynamic(config("nomic_bert"), fp8);
+    auto gte_options = config_fp8_dynamic(config("new"), fp8);
+
+    auto ordinary_weights = nomic_base;
+    auto ordinary = infinity::create_encoder(nomic_options, ordinary_weights, device, model_dtype);
+    ordinary->ready();
+    if (fp8)
+      TORCH_CHECK(ordinary_weights.size() < nomic_base.size(),
+                  "Nomic dynamic FP8 retained original MLP matrices");
+    auto direct = ordinary->forward(
+        {mixed_ids, mixed_types, mixed_positions, mixed_cumulative, mixed_offsets, 2, 6});
+    auto gathered = ordinary->forward(
+        {mixed_ids, mixed_types, gathered_positions, mixed_cumulative, mixed_offsets, 2, 6});
+    TORCH_CHECK(at::equal(direct, gathered),
+                "Indexed Nomic rotary changed ordinary mixed positions or Q/K rounding");
+
+    auto scaled_options = nomic_options;
+    scaled_options.values["rotary_scaling_factor"] = "2";
+    scaled_options.values["max_trained_positions"] = "4";
+    auto scaled_weights = nomic_base;
+    auto scaled = infinity::create_encoder(scaled_options, scaled_weights, device, model_dtype);
+    scaled->ready();
+    auto scaled_direct = scaled->forward(
+        {mixed_ids, mixed_types, mixed_positions, mixed_cumulative, mixed_offsets, 2, 6});
+    auto scaled_gathered = scaled->forward(
+        {mixed_ids, mixed_types, gathered_positions, mixed_cumulative, mixed_offsets, 2, 6});
+    TORCH_CHECK(at::equal(scaled_direct, scaled_gathered),
+                "Indexed scaled Nomic rotary changed the mixed packed table or rounding");
+    TORCH_CHECK(!at::equal(scaled_direct, direct),
+                "Nomic rotary ignored the scaled local table for a mixed max_sequence batch");
+
+    auto short_scaled = scaled->forward(
+        {short_ids, short_types, short_positions, short_cumulative, short_offsets, 1, 4});
+    auto short_ordinary = ordinary->forward(
+        {short_ids, short_types, short_positions, short_cumulative, short_offsets, 1, 4});
+    TORCH_CHECK(at::equal(short_scaled, short_ordinary),
+                "Nomic rotary did not retain the ordinary table at max_trained_positions");
+
+    auto gte_weights = gte_base;
+    auto gte = infinity::create_encoder(gte_options, gte_weights, device, model_dtype);
+    gte->ready();
+    if (fp8)
+      TORCH_CHECK(gte_weights.size() < gte_base.size(),
+                  "GTE dynamic FP8 retained original MLP matrices");
+    auto gte_direct = gte->forward(
+        {mixed_ids, mixed_types, mixed_positions, mixed_cumulative, mixed_offsets, 2, 6});
+    auto gte_gathered = gte->forward(
+        {mixed_ids, mixed_types, gathered_positions, mixed_cumulative, mixed_offsets, 2, 6});
+    TORCH_CHECK(at::equal(gte_direct, gte_gathered),
+                "Indexed GTE rotary changed mixed positions or Q/K rounding");
+
+#ifdef TEI_TORCH_CUDA_KERNELS
+    if (device.is_cuda()) {
+      auto replay = [&](infinity::Model& model, const char* family) {
+        auto first_expected = model.forward(
+            {mixed_ids, mixed_types, graph_first, mixed_cumulative, mixed_offsets, 2, 6});
+        auto second_expected = model.forward(
+            {mixed_ids, mixed_types, graph_second, mixed_cumulative, mixed_offsets, 2, 6});
+        TORCH_CHECK(!at::equal(first_expected, second_expected),
+                    "Rotary graph fixture did not change outputs with positions");
+        infinity::CudaGraphCache graphs(1, 64, 1);
+        graphs.forward(
+            model, {mixed_ids, mixed_types, graph_first, mixed_cumulative, mixed_offsets, 2, 6});
+        auto replayed = graphs.forward(
+            model, {mixed_ids, mixed_types, graph_second, mixed_cumulative, mixed_offsets, 2, 6});
+        TORCH_CHECK(graphs.stats().captures == 1 && graphs.stats().hits >= 1,
+                    family,
+                    " rotary graph was not captured and replayed");
+        TORCH_CHECK(at::equal(replayed, second_expected),
+                    family,
+                    " CUDA graph replay reused captured rotary positions");
+      };
+      replay(*scaled, "Nomic");
+      replay(*gte, "GTE");
+    }
+#endif
+    std::cout << "rotary reuse passed for " << model_dtype << (fp8 ? " dynamic FP8" : "") << "\n";
+  };
+
+#ifdef TEI_TORCH_CUDA_KERNELS
+  auto partial = [&](at::ScalarType model_dtype) {
+    // Unit-only partial rotary shape; this does not claim GTE model configs
+    // expose partial rotary. Indexed in-place must match the old contracted
+    // out-of-place recipe and preserve V and tail lanes.
+    constexpr int64_t tokens = 6, heads = 4, dim = 40, half = 16;
+    auto qkv =
+        at::randn({tokens, 3 * heads, dim}, at::TensorOptions().device(device).dtype(model_dtype));
+    auto original = qkv.clone();
+    auto partial_positions = at::tensor({3, 0, 3, 1, 4, 2}, opts);
+    auto angle = at::randn({tokens, 1, half}, qkv.options());
+    auto cosine = at::cos(angle).squeeze(1), sine = at::sin(angle).squeeze(1);
+    auto expected = infinity::fused_rotary(original.narrow(1, 0, heads),
+                                           original.narrow(1, heads, heads),
+                                           cosine.index_select(0, partial_positions).unsqueeze(1),
+                                           sine.index_select(0, partial_positions).unsqueeze(1),
+                                           true);
+    auto inplace = original.clone();
+    infinity::encoder_rotary_indexed_inplace(inplace.narrow(1, 0, heads),
+                                             inplace.narrow(1, heads, heads),
+                                             cosine,
+                                             sine,
+                                             partial_positions);
+    TORCH_CHECK(at::equal(inplace.narrow(1, 0, heads), expected.first) &&
+                    at::equal(inplace.narrow(1, heads, heads), expected.second),
+                "Indexed partial rotary changed contracted rounding");
+    TORCH_CHECK(
+        at::equal(inplace.narrow(1, 2 * heads, heads), original.narrow(1, 2 * heads, heads)),
+        "Indexed partial rotary overwrote V");
+    TORCH_CHECK(at::equal(inplace.narrow(2, 2 * half, dim - 2 * half),
+                          original.narrow(2, 2 * half, dim - 2 * half)),
+                "Indexed partial rotary changed unrotated tail lanes");
+  };
+#endif
+
+  if (device.is_cuda()) {
+    for (auto model_dtype : {at::kHalf, at::kBFloat16}) {
+      auto nomic_base = weights("nomic_bert", device, model_dtype);
+      auto gte_base = weights("new", device, model_dtype);
+      run(model_dtype, false, nomic_base, gte_base);
+#ifdef TEI_TORCH_CUDA_KERNELS
+      if (infinity::fp8_device_supported(device))
+        run(model_dtype, true, nomic_base, gte_base);
+      partial(model_dtype);
+#endif
+    }
+  } else {
+    auto nomic_base = weights("nomic_bert", device, dtype);
+    auto gte_base = weights("new", device, dtype);
+    run(dtype, false, nomic_base, gte_base);
+  }
+}
+
 void nomic_expert_shape_validation(c10::Device device, at::ScalarType dtype) {
   constexpr int64_t experts = 3;
   auto o = config("nomic_bert");
@@ -335,6 +499,7 @@ int main(int argc, char** argv) {
   auto dtype = device.is_cuda() ? at::kHalf : at::kFloat;
   nomic_expert_shape_validation(device, dtype);
   auto opts = at::TensorOptions().device(device).dtype(at::kLong);
+  rotary_reuse_regression(device, dtype);
   int32_t offsets[] = {0, 3, 8}, short_offsets[] = {0, 3}, long_offsets[] = {0, 5};
   auto ids = at::tensor({2, 3, 4, 5, 6, 7, 8, 9}, opts), types = at::zeros({8}, opts),
        positions = at::tensor({0, 1, 2, 0, 1, 2, 3, 4}, opts);

@@ -14,10 +14,10 @@ exact-length biased attention without padded token activations.
 | ColBERTv2 / Answer.AI ColBERT Small | Packed BERT, learned token projection, L2 normalization and multi-vector output |
 | RoBERTa, XLM-RoBERTa, CamemBERT | BERT path with checkpoint prefixes and matching heads |
 | DistilBERT | Packed encoder, SPLADE projection |
-| GTE / New | Packed rotary encoder, gated MLP and classifier |
+| GTE / New | Packed rotary encoder, CUDA indexed in-place Q/K rotation, gated MLP and classifier |
 | ModernBERT | Packed local/global rotary attention, gated MLP and heads |
 | UltraBERT | Bidirectional packed GQA, per-layer RoPE bases and symmetric windows, embedding and sequence/token classification heads |
-| Nomic BERT | Packed rotary encoder, dense/MoE MLP |
+| Nomic BERT | Packed rotary encoder, CUDA indexed in-place Q/K rotation, dense/MoE MLP |
 | Jina BERT / JinaCode | Packed encoder, one Torch efficient varlen ALiBi call per layer |
 | Llama / Llama bidirectional | Packed GQA, RoPE, RMSNorm, fused projections, sequence/token classification heads |
 | Mistral / Ministral3 | Packed GQA, sliding windows, YaRN |
