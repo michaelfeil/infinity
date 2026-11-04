@@ -119,6 +119,10 @@ class AsyncEmbeddingEngine:
         self._assert_running()
         return self._batch_handler.is_overloaded()
 
+    def is_healthy(self) -> bool:
+        self._assert_running()
+        return self._batch_handler.is_healthy()
+
     @property
     def is_running(self) -> bool:
         return self.running

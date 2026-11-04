@@ -13,6 +13,7 @@ from typing import Any, Optional, Union, TYPE_CHECKING
 import infinity_emb
 from infinity_emb.args import EngineArgs
 from infinity_emb.engine import AsyncEmbeddingEngine, AsyncEngineArray
+from infinity_emb.inference.batch_handler import EngineUnhealthyError
 from infinity_emb.env import MANAGER
 from infinity_emb.fastapi_schemas import docs, errors
 from infinity_emb.log_handler import logger
@@ -167,6 +168,11 @@ def create_server(
         Returns:
             dict(unix=float): dict with unix time stamp
         """
+        if not all(engine.is_healthy() for engine in app.engine_array.engines_dict.values()):
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="one or more model engines are unavailable",
+            )
         return {"unix": time.time()}
 
     if redirect_slash:
@@ -220,6 +226,11 @@ def create_server(
             raise errors.OpenAIException(
                 f"Invalid model: {ex}",
                 code=status.HTTP_400_BAD_REQUEST,
+            )
+        if not engine.is_healthy():
+            raise errors.OpenAIException(
+                f"model {model} is unavailable",
+                code=status.HTTP_503_SERVICE_UNAVAILABLE,
             )
         if engine.is_overloaded():
             raise errors.OpenAIException(
@@ -387,6 +398,11 @@ def create_server(
                 f"{ex.__class__} -> {ex}",
                 code=status.HTTP_400_BAD_REQUEST,
             )
+        except EngineUnhealthyError as ex:
+            raise errors.OpenAIException(
+                str(ex),
+                code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            )
         except Exception as ex:
             raise errors.OpenAIException(
                 f"InternalServerError: {ex}",
@@ -439,6 +455,11 @@ def create_server(
                 f"ModelNotDeployedError: model=`{data.model}` does not support `rerank`. Reason: {ex}",
                 code=status.HTTP_400_BAD_REQUEST,
             )
+        except EngineUnhealthyError as ex:
+            raise errors.OpenAIException(
+                str(ex),
+                code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            )
         except Exception as ex:
             raise errors.OpenAIException(
                 f"InternalServerError: {ex}",
@@ -482,6 +503,11 @@ def create_server(
             raise errors.OpenAIException(
                 f"ModelNotDeployedError: model=`{data.model}` does not support `classify`. Reason: {ex}",
                 code=status.HTTP_400_BAD_REQUEST,
+            )
+        except EngineUnhealthyError as ex:
+            raise errors.OpenAIException(
+                str(ex),
+                code=status.HTTP_503_SERVICE_UNAVAILABLE,
             )
         except Exception as ex:
             raise errors.OpenAIException(
@@ -542,6 +568,11 @@ def create_server(
                 f"ModelNotDeployedError: model=`{data.model}` does not support `image_embed`. Reason: {ex}",
                 code=status.HTTP_400_BAD_REQUEST,
             )
+        except EngineUnhealthyError as ex:
+            raise errors.OpenAIException(
+                str(ex),
+                code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            )
         except Exception as ex:
             raise errors.OpenAIException(
                 f"InternalServerError: {ex}",
@@ -600,6 +631,11 @@ def create_server(
             raise errors.OpenAIException(
                 f"ModelNotDeployedError: model=`{data.model}` does not support `audio_embed`. Reason: {ex}",
                 code=status.HTTP_400_BAD_REQUEST,
+            )
+        except EngineUnhealthyError as ex:
+            raise errors.OpenAIException(
+                str(ex),
+                code=status.HTTP_503_SERVICE_UNAVAILABLE,
             )
         except Exception as ex:
             raise errors.OpenAIException(

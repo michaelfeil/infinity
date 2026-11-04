@@ -2,6 +2,7 @@ import asyncio
 import copy
 import random
 import sys
+import threading
 import time
 
 import numpy as np
@@ -10,6 +11,7 @@ import torch
 
 from infinity_emb.args import EngineArgs
 from infinity_emb.inference import BatchHandler
+from infinity_emb.inference.batch_handler import EngineUnhealthyError
 from infinity_emb.transformer.embedder.sentence_transformer import (
     SentenceTransformerPatched,
 )
@@ -18,6 +20,39 @@ BATCH_SIZE = 32
 N_TIMINGS = 3
 LIMIT_SLOWDOWN = 1.25 if torch.cuda.is_available() else 1.35
 MODEL_NAME: str = pytest.DEFAULT_BERT_MODEL  # type: ignore[assignment]
+
+
+class FailingCoreModel:
+    capabilities = {"embed"}
+
+    def encode_pre(self, inputs):
+        return inputs
+
+    def encode_core(self, features):
+        raise RuntimeError("simulated core failure")
+
+    def encode_post(self, features):
+        return features
+
+    def tokenize_lengths(self, sentences):
+        return [1] * len(sentences)
+
+
+class BlockingCoreModel(FailingCoreModel):
+    def __init__(self):
+        self.release = threading.Event()
+
+    def encode_core(self, features):
+        self.release.wait()
+        return features
+
+
+class WrongResultModel(FailingCoreModel):
+    def encode_core(self, features):
+        return features
+
+    def encode_post(self, features):
+        return []
 
 
 @pytest.fixture
@@ -37,6 +72,63 @@ async def load_patched_bh() -> tuple[SentenceTransformerPatched, BatchHandler]:
     bh = BatchHandler(model_replicas=[model], max_batch_size=BATCH_SIZE)
     await bh.spawn()
     return model, bh
+
+
+@pytest.mark.anyio
+async def test_core_worker_failure_completes_waiting_requests():
+    handler = BatchHandler(
+        model_replicas=[FailingCoreModel()],
+        max_batch_size=1,
+        batch_delay=1e-4,
+        lengths_via_tokenize=True,
+    )
+    await handler.spawn()
+
+    try:
+        with pytest.raises(EngineUnhealthyError, match="simulated core failure"):
+            await asyncio.wait_for(handler.embed(["request"]), timeout=2)
+        assert not handler.is_healthy()
+    finally:
+        await handler.shutdown()
+
+
+@pytest.mark.anyio
+async def test_request_timeout_completes_waiting_requests():
+    model = BlockingCoreModel()
+    handler = BatchHandler(
+        model_replicas=[model],
+        max_batch_size=1,
+        request_timeout=0.05,
+        batch_delay=1e-4,
+        lengths_via_tokenize=True,
+    )
+    await handler.spawn()
+
+    try:
+        with pytest.raises(EngineUnhealthyError, match="request exceeded"):
+            await asyncio.wait_for(handler.embed(["request"]), timeout=2)
+        assert not handler.is_healthy()
+    finally:
+        model.release.set()
+        await handler.shutdown()
+
+
+@pytest.mark.anyio
+async def test_result_length_mismatch_completes_waiting_requests():
+    handler = BatchHandler(
+        model_replicas=[WrongResultModel()],
+        max_batch_size=1,
+        batch_delay=1e-4,
+        lengths_via_tokenize=True,
+    )
+    await handler.spawn()
+
+    try:
+        with pytest.raises(EngineUnhealthyError, match="results for a batch"):
+            await asyncio.wait_for(handler.embed(["request"]), timeout=2)
+        assert not handler.is_healthy()
+    finally:
+        await handler.shutdown()
 
 
 @pytest.mark.performance
