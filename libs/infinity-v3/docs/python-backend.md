@@ -123,20 +123,75 @@ that error with `set_exception`.
 
 `response.set_exception(error)` completes the request with an error. Both
 completion methods release the in-flight permit even if the plugin retains the
-response object. The executor must not block the calling Rust worker; a common implementation uses one
-dedicated Python thread and a bounded queue. `close` must join that thread and
+response object. Core invokes `submit` on a persistent worker, so plugins may
+execute synchronously there or retain the envelope for deferred completion.
+Plugins that manage their own asynchronous work must drain it in `close` and
 release model resources.
+
+### Optional replica capability discovery
+
+A plugin can report replica capabilities before the frontend chooses devices.
+Export a module-level `capabilities` hook (or a `capabilities` attribute on the
+factory) that accepts the same `config_json` string passed to the factory and
+returns `BackendCapabilities`:
+
+```python
+from infinity_v3_python import BackendCapabilities
+
+def capabilities(config_json):
+    return BackendCapabilities(
+        visible_device_count=4,
+        supports_replication=True,
+    )
+
+def create_executor(**config):
+    return MyExecutor(config)
+```
+
+`visible_device_count` must be a positive integer and `supports_replication`
+must be a boolean. Invalid, malformed, or zero capabilities fail startup with a
+clear error. The hook runs before replica placement and before model weights are
+loaded, may run more than once, and must be cheap and side-effect free.
+
+Protocol-1 plugins that omit the hook keep the single-device defaults
+(`visible_device_count=1`, `supports_replication=False`), so existing plugins
+remain compatible without changes. With discovery enabled, existing
+`--device-id` and `--backend-device-ids` selection applies per replica:
+`auto` expands to every visible device only when replication is supported, an
+explicit list selects those ordinals, and a single selected device must be
+within the reported visible count. Each replica is a separate backend worker
+with its own `device_id`, and `BackendPool` schedules batches across them.
 
 ## Lifecycle and threading
 
-- One executor thread per process is recommended. The Rust backend already
-  serializes a single model worker and completion worker.
-- The Rust backend bounds outstanding forwards with `queue_depth`.
-- `healthy` is called by the shared health endpoint.
+- There is one shared frontend queue and scheduler per model. It hands each
+  batch to an exclusive replica lease in `BackendPool`; it does not create a
+  separate frontend per device.
+- Each backend replica owns one persistent Python worker thread and one Rust
+  command queue. Submission validates and enqueues the Rust payload and
+  completion slot without taking the GIL, then returns the normal deferred
+  receiver immediately, even when the plugin's `submit` is synchronous. The
+  worker takes the GIL only around executor construction, health checks,
+  `submit`, and `close`.
+- The worker serializes plugin submissions for its replica while waiting on the
+  Rust queue without the GIL. Completion packing and result delivery stay on
+  the separate Rust completion path. Distinct replicas have distinct workers,
+  so Python waits or native operations that release the GIL can overlap across
+  replicas; Python bytecode itself still serializes under one interpreter GIL.
+- The Rust backend bounds pending calls with admission permits equivalent to
+  `queue_depth`. The command channel uses lazy allocation, so its request
+  backlog cannot exceed those admitted calls and a large configured depth does
+  not preallocate a large buffer. Overload rejection releases its admission
+  permit.
+- `healthy` is routed through the same replica worker, preserving serialized
+  executor ownership.
+- Shutdown stops admission, drains queued work and settles abandoned callers,
+  closes the executor, and joins the worker without holding the GIL. No
+  per-request threads are spawned.
 - The Python interpreter stays initialized for the process lifetime. The plugin
   must be importable before the first model is created.
 - Do not fork after initializing device runtimes. Use a fresh process per
-  device.
+  device unless the plugin explicitly supports sharing one process.
 
 ## Buffer ownership
 

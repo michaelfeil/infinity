@@ -22,13 +22,31 @@ pub use infinity_v3_backend_core::{
 };
 
 #[cfg(feature = "python-backend")]
-pub use infinity_v3_backend_python::PythonBackendConfig;
+pub use infinity_v3_backend_python::{PythonBackendConfig, PythonCapabilities};
 
 /// Parameters for a bring-your-own-Python backend.
 #[cfg(not(feature = "python-backend"))]
 #[derive(Clone, Debug, Default)]
 pub struct PythonBackendConfig {
     pub config: Option<String>,
+}
+
+/// Optional Python replica capabilities when the backend is not compiled.
+#[cfg(not(feature = "python-backend"))]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct PythonCapabilities {
+    pub visible_device_count: usize,
+    pub supports_replication: bool,
+}
+
+#[cfg(not(feature = "python-backend"))]
+impl Default for PythonCapabilities {
+    fn default() -> Self {
+        Self {
+            visible_device_count: 1,
+            supports_replication: false,
+        }
+    }
 }
 
 /// A completed result or an owned completion handle after native submission.
@@ -111,19 +129,55 @@ impl BackendKind {
         }
     }
 
-    /// Whether the selected runtime and accelerator can host GPU replicas.
-    pub fn supports_replication(self, torch: TorchDevice) -> bool {
+    /// Discover optional Python replica capabilities before device placement.
+    /// LibTorch keeps its static accelerator-aware behavior. Protocol-1 plugins
+    /// without a discovery hook resolve to single-device defaults.
+    pub fn python_capabilities(
+        self,
+        config: &PythonBackendConfig,
+    ) -> Result<Option<PythonCapabilities>, BackendError> {
+        match self {
+            Self::Libtorch => Ok(None),
+            Self::PythonBackend => {
+                #[cfg(feature = "python-backend")]
+                {
+                    infinity_v3_backend_python::PythonBackend::discover_capabilities(config)
+                        .map(Some)
+                }
+                #[cfg(not(feature = "python-backend"))]
+                {
+                    let _ = config;
+                    Err(BackendError::Start(
+                        "Python backend was not compiled; build with --features python-backend"
+                            .into(),
+                    ))
+                }
+            }
+        }
+    }
+
+    /// Whether the selected runtime and accelerator can host replicas. Python
+    /// uses discovered capabilities, falling back to protocol-1 defaults.
+    pub fn supports_replication(
+        self,
+        torch: TorchDevice,
+        python: Option<PythonCapabilities>,
+    ) -> bool {
         match self {
             Self::Libtorch => torch == TorchDevice::Cuda,
-            Self::PythonBackend => false,
+            Self::PythonBackend => python.unwrap_or_default().supports_replication,
         }
     }
 
     /// Query the selected runtime rather than another backend's CUDA installation.
-    pub fn visible_device_count(self, torch: TorchDevice) -> Result<usize, BackendError> {
+    pub fn visible_device_count(
+        self,
+        torch: TorchDevice,
+        python: Option<PythonCapabilities>,
+    ) -> Result<usize, BackendError> {
         match self {
             Self::Libtorch => torch.count(),
-            Self::PythonBackend => Ok(1),
+            Self::PythonBackend => Ok(python.unwrap_or_default().visible_device_count),
         }
     }
 }

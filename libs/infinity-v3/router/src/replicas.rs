@@ -1,4 +1,5 @@
 use anyhow::{bail, ensure, Result};
+use infinity_v3_backend::PythonCapabilities;
 use std::collections::HashSet;
 use std::future::Future;
 
@@ -22,14 +23,43 @@ pub(crate) fn resolve_devices(
     device: Option<usize>,
     kind: infinity_v3_backend::BackendKind,
     torch: infinity_v3_backend::TorchDevice,
+    python: Option<PythonCapabilities>,
 ) -> Result<Vec<usize>> {
     use infinity_v3_backend::{BackendKind, TorchDevice};
     if kind == BackendKind::Libtorch && torch == TorchDevice::Cpu {
         ensure!(device.is_none_or(|id| id == 0), "CPU uses device index 0");
     }
-    resolve_devices_with(value, device, kind.supports_replication(torch), || {
-        Ok(kind.visible_device_count(torch)?)
-    })
+    if kind == BackendKind::PythonBackend {
+        return resolve_python_devices(value, device, python.unwrap_or_default());
+    }
+    resolve_devices_with(
+        value,
+        device,
+        kind.supports_replication(torch, python),
+        || Ok(kind.visible_device_count(torch, python)?),
+    )
+}
+
+fn resolve_python_devices(
+    value: Option<&str>,
+    device: Option<usize>,
+    capabilities: PythonCapabilities,
+) -> Result<Vec<usize>> {
+    let count = capabilities.visible_device_count;
+    ensure!(count > 0, "Python backend reports no visible devices");
+    if !capabilities.supports_replication {
+        ensure!(
+            value.is_none(),
+            "backend-device-ids requires a replicated backend"
+        );
+        let device = device.unwrap_or(0);
+        ensure!(
+            device < count,
+            "Device {device} is not visible (visible device count: {count})"
+        );
+        return Ok(vec![device]);
+    }
+    resolve_devices_with(value, device, true, || Ok(count))
 }
 
 fn resolve_devices_with(
@@ -97,15 +127,83 @@ mod tests {
             vec![0]
         );
         use infinity_v3_backend::{BackendKind, TorchDevice};
-        assert!(!BackendKind::Libtorch.supports_replication(TorchDevice::Cpu));
-        assert!(BackendKind::Libtorch.supports_replication(TorchDevice::Cuda));
+        assert!(!BackendKind::Libtorch.supports_replication(TorchDevice::Cpu, None));
+        assert!(BackendKind::Libtorch.supports_replication(TorchDevice::Cuda, None));
         assert_eq!(
-            resolve_devices(None, None, BackendKind::Libtorch, TorchDevice::Cpu).unwrap(),
+            resolve_devices(None, None, BackendKind::Libtorch, TorchDevice::Cpu, None).unwrap(),
             vec![0]
         );
+        assert!(resolve_devices(
+            Some("auto"),
+            None,
+            BackendKind::Libtorch,
+            TorchDevice::Cpu,
+            None
+        )
+        .is_err());
         assert!(
-            resolve_devices(Some("auto"), None, BackendKind::Libtorch, TorchDevice::Cpu).is_err()
+            resolve_devices(None, Some(1), BackendKind::Libtorch, TorchDevice::Cpu, None).is_err()
         );
-        assert!(resolve_devices(None, Some(1), BackendKind::Libtorch, TorchDevice::Cpu).is_err());
+    }
+
+    #[test]
+    fn python_capabilities_control_replica_placement() {
+        use infinity_v3_backend::{BackendKind, TorchDevice};
+        let kind = BackendKind::PythonBackend;
+        let torch = TorchDevice::Auto;
+        let single = PythonCapabilities::default();
+        assert_eq!(
+            resolve_devices(None, None, kind, torch, Some(single)).unwrap(),
+            vec![0]
+        );
+        assert!(resolve_devices(Some("auto"), None, kind, torch, Some(single)).is_err());
+        assert!(resolve_devices(None, Some(1), kind, torch, Some(single)).is_err());
+
+        let multi = PythonCapabilities {
+            visible_device_count: 3,
+            supports_replication: true,
+        };
+        assert_eq!(
+            resolve_devices(None, None, kind, torch, Some(multi)).unwrap(),
+            vec![0, 1, 2]
+        );
+        assert_eq!(
+            resolve_devices(Some("2,0"), None, kind, torch, Some(multi)).unwrap(),
+            vec![2, 0]
+        );
+        assert_eq!(
+            resolve_devices(None, Some(1), kind, torch, Some(multi)).unwrap(),
+            vec![1]
+        );
+        assert!(resolve_devices(Some("3"), None, kind, torch, Some(multi)).is_err());
+        assert!(resolve_devices(Some("0,0"), None, kind, torch, Some(multi)).is_err());
+    }
+
+    #[test]
+    fn python_manual_device_without_replication_stays_single_replica() {
+        use infinity_v3_backend::{BackendKind, TorchDevice};
+        let capabilities = PythonCapabilities {
+            visible_device_count: 4,
+            supports_replication: false,
+        };
+        assert_eq!(
+            resolve_devices(
+                None,
+                Some(2),
+                BackendKind::PythonBackend,
+                TorchDevice::Auto,
+                Some(capabilities)
+            )
+            .unwrap(),
+            vec![2]
+        );
+        assert!(resolve_devices(
+            Some("0,1"),
+            None,
+            BackendKind::PythonBackend,
+            TorchDevice::Auto,
+            Some(capabilities)
+        )
+        .is_err());
     }
 }
