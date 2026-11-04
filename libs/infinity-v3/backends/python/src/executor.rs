@@ -13,7 +13,6 @@ pub(crate) struct ExecutorConfig {
     pub pooling: String,
     pub device_id: usize,
     pub config_json: String,
-    pub queue_size: usize,
 }
 
 pub(crate) struct Executor {
@@ -48,9 +47,6 @@ impl Executor {
                 .map_err(start_error)?;
             kwargs
                 .set_item("config_json", config.config_json)
-                .map_err(start_error)?;
-            kwargs
-                .set_item("queue_size", config.queue_size)
                 .map_err(start_error)?;
             let inner = factory.call((), Some(&kwargs)).map_err(|error| {
                 BackendError::Start(format!("Could not start Python backend executor: {error}"))

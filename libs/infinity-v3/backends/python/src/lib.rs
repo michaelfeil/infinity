@@ -24,14 +24,13 @@ use tokio::sync::Semaphore;
 /// Runtime configuration supplied by the shared frontend.
 #[derive(Clone, Debug, Default)]
 pub struct PythonBackendConfig {
-    /// JSON object. Reserved keys: `backend`, `queue_depth`; other keys are
+    /// JSON object. The `backend` key selects the plugin; other keys are
     /// passed to the plugin.
     pub config: Option<String>,
 }
 
 struct ParsedConfig {
     selector: Option<String>,
-    queue_size: usize,
     config_json: String,
 }
 
@@ -51,21 +50,8 @@ fn parse_config(config: &PythonBackendConfig) -> Result<ParsedConfig, BackendErr
         }
         None => None,
     };
-    let queue_size = match object.get("queue_depth") {
-        Some(value) => value
-            .as_u64()
-            .filter(|&value| value > 0 && value <= Semaphore::MAX_PERMITS as u64)
-            .and_then(|value| usize::try_from(value).ok())
-            .ok_or_else(|| {
-                BackendError::Start(
-                    "--python-config queue_depth must be a positive integer within the semaphore limit".into(),
-                )
-            })?,
-        None => 32,
-    };
     Ok(ParsedConfig {
         selector,
-        queue_size,
         config_json,
     })
 }
@@ -102,7 +88,6 @@ impl PythonBackend {
             pooling: pool.to_string(),
             device_id,
             config_json: parsed.config_json,
-            queue_size: parsed.queue_size,
         })?;
         Ok(Self {
             executor,
@@ -325,16 +310,12 @@ mod tests {
 
     #[test]
     fn completed_requests_release_admission_permits() {
-        let mut config = config();
-        config.config = Some(
-            r#"{"backend":"infinity_v3_python.testing:create_executor","queue_depth":1}"#.into(),
-        );
         let backend = PythonBackend::new(
             Path::new("."),
             "float32",
             ModelType::Embedding(Pool::Mean),
             0,
-            config,
+            config(),
         )
         .unwrap();
         for _ in 0..5 {
@@ -359,23 +340,6 @@ mod tests {
         assert_eq!(predictions[&0], vec![1.0, 0.0]);
         assert_eq!(predictions[&1], vec![0.0, 1.0]);
         backend.shutdown();
-    }
-
-    #[test]
-    fn excessive_queue_depth_is_a_startup_error() {
-        let result = PythonBackend::new(
-            Path::new("."),
-            "float32",
-            ModelType::Embedding(Pool::Mean),
-            0,
-            PythonBackendConfig {
-                config: Some(format!(
-                    r#"{{"queue_depth":{}}}"#,
-                    Semaphore::MAX_PERMITS + 1
-                )),
-            },
-        );
-        assert!(matches!(result, Err(BackendError::Start(_))));
     }
 
     #[test]
@@ -407,7 +371,6 @@ def create_executor(**kwargs):
         for (memory, expected) in [(false, "queue is full"), (true, "result budget exhausted")] {
             let config = serde_json::json!({
                 "backend": "_infinity_submit_error_test:create_executor",
-                "queue_depth": 1,
                 "memory": memory,
             });
             let backend = PythonBackend::new(

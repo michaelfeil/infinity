@@ -19,7 +19,7 @@ Run with:
 infinity_v3 \
   --model-id /models/all-MiniLM-L6-v2 \
   --backend python-backend \
-  --python-config '{"backend":"my-backend","device":"auto","queue_depth":32}'
+  --python-config '{"backend":"my-backend","device":"auto"}'
 ```
 
 `--python-config` is a JSON object. Repeat it per model when serving multiple
@@ -35,9 +35,6 @@ Reserved keys:
 - `backend`: entry-point name in `infinity_v3.backends` or a
   `module:attribute` factory. If omitted, the sole installed entry point is
   used.
-- `queue_depth`: positive integer plugin execution hint passed as `queue_size`.
-  Defaults to 32. The Rust bridge admits one in-flight envelope per replica;
-  shared `BackendPool` scheduling supplies the real replica capacity.
 
 All other keys are passed to the plugin as opaque configuration. `device` is a
 common convention but is not interpreted by the frontend.
@@ -90,7 +87,6 @@ The factory receives:
 - `pooling`: `cls`, `mean`, `last_token`, or `splade`
 - `device_id`: replica/device ordinal
 - `config_json`: the `--python-config` JSON string
-- `queue_size`: the resolved `queue_depth`
 
 The returned executor must implement:
 
