@@ -1,10 +1,12 @@
 use crate::envelope::ResponseEnvelope;
 use crate::ServingLimits;
 use infinity_v3_backend_core::BackendError;
+use pyo3::exceptions::PyRuntimeError;
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyModule};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::mpsc;
 
 pub(crate) struct ExecutorConfig {
     pub selector: Option<String>,
@@ -17,6 +19,34 @@ pub(crate) struct ExecutorConfig {
     pub serving_limits: ServingLimits,
 }
 
+/// Factory completion is separate from inference's numpy response envelope.
+#[pyclass]
+struct StartupEnvelope {
+    sender: Option<mpsc::Sender<PyResult<()>>>,
+}
+
+impl StartupEnvelope {
+    fn complete(&mut self, result: PyResult<()>) -> PyResult<()> {
+        let sender = self
+            .sender
+            .take()
+            .ok_or_else(|| PyRuntimeError::new_err("startup response already completed"))?;
+        let _ = sender.send(result);
+        Ok(())
+    }
+}
+
+#[pymethods]
+impl StartupEnvelope {
+    fn set_result(&mut self, _value: Bound<'_, PyAny>) -> PyResult<()> {
+        self.complete(Ok(()))
+    }
+
+    fn set_exception(&mut self, error: Bound<'_, PyAny>) -> PyResult<()> {
+        self.complete(Err(PyErr::from_value(error)))
+    }
+}
+
 pub(crate) struct Executor {
     inner: Py<PyAny>,
     closed: AtomicBool,
@@ -25,7 +55,7 @@ pub(crate) struct Executor {
 impl Executor {
     pub(crate) fn new(config: ExecutorConfig) -> Result<Self, BackendError> {
         Python::initialize();
-        Python::attach(|py| {
+        let (inner, receiver) = Python::attach(|py| {
             add_python_paths(py);
             let factory = load_factory(py, config.selector)?;
             let kwargs = PyDict::new(py);
@@ -64,23 +94,37 @@ impl Executor {
             kwargs
                 .set_item("serving_limits", limits)
                 .map_err(start_error)?;
-            let inner = factory.call((), Some(&kwargs)).map_err(|error| {
-                BackendError::Start(format!("Could not start Python backend executor: {error}"))
-            })?;
+            let (sender, receiver) = mpsc::channel();
+            let ready = Py::new(
+                py,
+                StartupEnvelope {
+                    sender: Some(sender),
+                },
+            )
+            .map_err(start_error)?;
             let inner = PyModule::import(py, "infinity_v3_python.threaded")
                 .and_then(|module| module.getattr("ThreadedExecutor"))
-                .and_then(|executor| executor.call1((inner,)))
+                .and_then(|executor| executor.call1((factory, kwargs, ready)))
                 .map_err(|error| {
                     BackendError::Start(format!(
                         "Could not start Python backend dispatch worker: {error}"
                     ))
                 })?
                 .unbind();
-            Ok(Self {
-                inner,
-                closed: AtomicBool::new(false),
-            })
-        })
+            Ok::<_, BackendError>((inner, receiver))
+        })?;
+        // Own the wrapper before waiting so failed factories also shut down
+        // their pool. Explicitly release the GIL even if our caller is attached.
+        let executor = Self {
+            inner,
+            closed: AtomicBool::new(false),
+        };
+        Python::attach(|py| py.detach(move || receiver.recv()))
+            .map_err(|_| BackendError::Start("Python factory dropped its startup response".into()))?
+            .map_err(|error| {
+                BackendError::Start(format!("Could not start Python backend executor: {error}"))
+            })?;
+        Ok(executor)
     }
 
     pub(crate) fn submit(
@@ -226,5 +270,133 @@ fn submit_error(error: PyErr) -> BackendError {
         BackendError::Unhealthy
     } else {
         BackendError::Inference(format!("Python backend submit failed: {message}"))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::ffi::CString;
+    use std::time::Duration;
+
+    fn install(name: &str, source: &str) {
+        let name = CString::new(name).unwrap();
+        let source = CString::new(source).unwrap();
+        Python::initialize();
+        Python::attach(|py| {
+            let module = PyModule::from_code(py, &source, c"factory_test.py", &name).unwrap();
+            PyModule::import(py, "sys")
+                .unwrap()
+                .getattr("modules")
+                .unwrap()
+                .set_item(name.to_str().unwrap(), module)
+                .unwrap();
+        });
+    }
+
+    fn config(selector: &str, device: usize) -> ExecutorConfig {
+        ExecutorConfig {
+            selector: Some(selector.into()),
+            model_path: PathBuf::from("."),
+            dtype: "bfloat16".into(),
+            model_type: "embedding".into(),
+            pooling: "mean".into(),
+            device_id: device,
+            config_json: "{}".into(),
+            serving_limits: ServingLimits::new(8192, 512, Some(16)).unwrap(),
+        }
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn eight_factories_complete_without_the_waiter_holding_the_gil() {
+        install(
+            "_infinity_factory_threads",
+            r#"
+import threading
+PROTOCOL_VERSION = 1
+barrier = threading.Barrier(8, timeout=5)
+state = threading.local()
+made = {}
+closed = {}
+class Plugin:
+    def __init__(self):
+        self.device = state.device
+    def healthy(self):
+        return state.device == self.device and made[self.device] == threading.get_ident()
+    def close(self):
+        assert state.device == self.device
+        closed[self.device] = threading.get_ident()
+def create_executor(**kwargs):
+    assert kwargs['serving_limits'] == dict(max_input_length=512, max_batch_tokens=8192, max_batch_requests=16)
+    state.device = kwargs['device_id']
+    made[state.device] = threading.get_ident()
+    barrier.wait()
+    return Plugin()
+"#,
+        );
+        let (done, results) = mpsc::channel();
+        let handles = (0..8)
+            .map(|device| {
+                let done = done.clone();
+                std::thread::spawn(move || {
+                    let result =
+                        Executor::new(config("_infinity_factory_threads:create_executor", device))
+                            .and_then(|executor| executor.health());
+                    let _ = done.send(result.map_err(|error| error.to_string()));
+                })
+            })
+            .collect::<Vec<_>>();
+        for _ in 0..8 {
+            results
+                .recv_timeout(Duration::from_secs(10))
+                .unwrap()
+                .unwrap();
+        }
+        for handle in handles {
+            handle.join().unwrap();
+        }
+        Python::attach(|py| {
+            let module = PyModule::import(py, "_infinity_factory_threads").unwrap();
+            let made = module.getattr("made").unwrap();
+            let closed = module.getattr("closed").unwrap();
+            assert_eq!(made.len().unwrap(), 8);
+            assert!(made.eq(closed).unwrap());
+        });
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn factory_error_reaches_rust_and_stops_the_startup_thread() {
+        install(
+            "_infinity_factory_error",
+            r#"
+import threading
+PROTOCOL_VERSION = 1
+worker = None
+def create_executor(**kwargs):
+    global worker
+    worker = threading.current_thread()
+    raise ValueError('factory initialization exploded')
+"#,
+        );
+        let error = Python::attach(|_| {
+            Executor::new(config("_infinity_factory_error:create_executor", 0))
+                .err()
+                .expect("factory must fail")
+        });
+        assert!(
+            matches!(error, BackendError::Start(message) if message.contains("factory initialization exploded"))
+        );
+        Python::attach(|py| {
+            let module = PyModule::import(py, "_infinity_factory_error").unwrap();
+            assert!(!module
+                .getattr("worker")
+                .unwrap()
+                .call_method0("is_alive")
+                .unwrap()
+                .extract::<bool>()
+                .unwrap());
+        });
     }
 }
