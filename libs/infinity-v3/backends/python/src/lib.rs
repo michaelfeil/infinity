@@ -107,7 +107,7 @@ impl PythonBackend {
         Ok(Self {
             executor,
             classifier,
-            admission: Arc::new(Semaphore::new(parsed.queue_size)),
+            admission: Arc::new(Semaphore::new(1)),
         })
     }
 
@@ -141,7 +141,7 @@ impl PythonBackend {
                 .map(|_| receiver)
         })?;
         let owned = inputs.clone();
-        Ok(Inference::Deferred(Box::new(move || {
+        Ok(Inference::DeferredExclusive(Box::new(move || {
             let result = receiver
                 .blocking_recv()
                 .map_err(|_| {
@@ -341,6 +341,87 @@ mod tests {
             let embeddings = backend.embed(batch()).unwrap();
             assert_eq!(embeddings.len(), 2);
         }
+        backend.shutdown();
+    }
+
+    #[test]
+    fn one_blocked_envelope_keeps_python_capacity_exclusive() {
+        install_module(
+            "_infinity_blocked_envelope_test",
+            r#"
+PROTOCOL_VERSION = 1
+import threading
+import numpy as np
+
+started = threading.Event()
+release = threading.Event()
+
+class Executor:
+    def submit(self, route, response, payload):
+        started.set()
+        if not release.wait(2):
+            raise TimeoutError("release gate timed out")
+        rows = int(payload["batch_size"])
+        response.set_result(np.full((rows, 8), 3.0, dtype=np.float32))
+    def healthy(self):
+        return True
+    def close(self):
+        pass
+
+def create_executor(**kwargs):
+    return Executor()
+
+def wait_started(timeout):
+    return started.wait(timeout=timeout)
+
+def release_work():
+    release.set()
+"#,
+        );
+        let config = PythonBackendConfig {
+            config: Some(r#"{"backend":"_infinity_blocked_envelope_test:create_executor"}"#.into()),
+        };
+        let backend = PythonBackend::new(
+            Path::new("."),
+            "float32",
+            ModelType::Embedding(Pool::Mean),
+            0,
+            config,
+        )
+        .unwrap();
+        let first = backend.submit_embed(batch()).unwrap();
+        assert!(matches!(&first, Inference::DeferredExclusive(_)));
+        let started = Python::attach(|py| {
+            let module =
+                pyo3::types::PyModule::import(py, "_infinity_blocked_envelope_test").unwrap();
+            module
+                .getattr("wait_started")
+                .unwrap()
+                .call1((1.0,))
+                .unwrap()
+                .extract::<bool>()
+                .unwrap()
+        });
+        assert!(started);
+        assert!(matches!(
+            backend.submit_embed(batch()),
+            Err(BackendError::Overloaded(_))
+        ));
+        Python::attach(|py| {
+            let module =
+                pyo3::types::PyModule::import(py, "_infinity_blocked_envelope_test").unwrap();
+            module.getattr("release_work").unwrap().call0().unwrap();
+        });
+        assert_eq!(first.complete().unwrap().len(), 2);
+        assert_eq!(
+            backend
+                .submit_embed(batch())
+                .unwrap()
+                .complete()
+                .unwrap()
+                .len(),
+            2
+        );
         backend.shutdown();
     }
 

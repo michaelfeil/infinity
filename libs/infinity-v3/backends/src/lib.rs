@@ -48,18 +48,21 @@ impl Default for DeviceCapabilities {
 }
 
 /// A completed result or an owned completion handle after native submission.
-/// Deferred results have already been handed to the bounded completion worker,
-/// so the model lease can be released before awaiting the result.
+/// `Deferred` has already released native model capacity; `DeferredExclusive`
+/// retains the replica lease until completion.
 pub enum Submission<T> {
     Ready(T, Duration),
     Deferred(oneshot::Receiver<Result<(T, Duration), BackendError>>),
+    DeferredExclusive(oneshot::Receiver<Result<(T, Duration), BackendError>>),
 }
 
 impl<T> Submission<T> {
     pub async fn complete(self) -> Result<(T, Duration), BackendError> {
         match self {
             Self::Ready(value, duration) => Ok((value, duration)),
-            Self::Deferred(receiver) => receiver.await.map_err(|_| BackendError::Unhealthy)?,
+            Self::Deferred(receiver) | Self::DeferredExclusive(receiver) => {
+                receiver.await.map_err(|_| BackendError::Unhealthy)?
+            }
         }
     }
 }
@@ -708,34 +711,9 @@ fn deliver<T: Send + 'static>(
     health: &watch::Sender<bool>,
     completion: &mut Option<CompletionThread>,
 ) {
-    match result {
-        Ok(Inference::Deferred(complete)) => {
-            let health = health.clone();
-            let (response, receiver) = oneshot::channel();
-            let job = Box::new(move || {
-                let _span = span.entered();
-                // Complete even after receiver cancellation: retain pins/slots until
-                // the GPU finishes, and never free native work on a Tokio worker.
-                let result = complete().map(|value| (value, start.elapsed()));
-                let _ = health.send(
-                    result.is_ok()
-                        || result
-                            .as_ref()
-                            .is_err_and(|e| matches!(e, BackendError::Overloaded(_))),
-                );
-                let _ = response.send(result);
-            });
-            completion
-                .get_or_insert_with(CompletionThread::new)
-                .sender
-                .as_ref()
-                .unwrap()
-                .send(job)
-                .expect("Completion worker exited");
-            // Return the completion handle only after native submission and
-            // bounded handoff. Dropping it still leaves the worker owning the job.
-            let _ = sender.send(Ok(Submission::Deferred(receiver)));
-        }
+    let (complete, exclusive) = match result {
+        Ok(Inference::Deferred(complete)) => (complete, false),
+        Ok(Inference::DeferredExclusive(complete)) => (complete, true),
         result => {
             let result = result
                 .and_then(Inference::complete)
@@ -747,8 +725,39 @@ fn deliver<T: Send + 'static>(
                         .is_err_and(|e| matches!(e, BackendError::Overloaded(_))),
             );
             let _ = sender.send(result);
+            return;
         }
-    }
+    };
+    let health = health.clone();
+    let (response, receiver) = oneshot::channel();
+    let job = Box::new(move || {
+        let _span = span.entered();
+        // Complete even after receiver cancellation: retain pins/slots until
+        // the GPU finishes, and never free native work on a Tokio worker.
+        let result = complete().map(|value| (value, start.elapsed()));
+        let _ = health.send(
+            result.is_ok()
+                || result
+                    .as_ref()
+                    .is_err_and(|e| matches!(e, BackendError::Overloaded(_))),
+        );
+        let _ = response.send(result);
+    });
+    completion
+        .get_or_insert_with(CompletionThread::new)
+        .sender
+        .as_ref()
+        .unwrap()
+        .send(job)
+        .expect("Completion worker exited");
+    // Return the completion handle only after native submission and bounded
+    // handoff. Dropping it still leaves the worker owning the job.
+    let submission = if exclusive {
+        Submission::DeferredExclusive(receiver)
+    } else {
+        Submission::Deferred(receiver)
+    };
+    let _ = sender.send(Ok(submission));
 }
 
 #[derive(Debug)]
@@ -1338,7 +1347,9 @@ mod completion_tests {
             .unwrap();
         let result = match result.blocking_recv().unwrap().unwrap() {
             Submission::Deferred(result) => result,
-            Submission::Ready(..) => panic!("expected deferred completion"),
+            Submission::DeferredExclusive(_) | Submission::Ready(..) => {
+                panic!("expected capacity-releasing deferred completion")
+            }
         };
         // Cancellation before the submission response must also leave the job
         // owned by the worker, alongside the two existing completions.

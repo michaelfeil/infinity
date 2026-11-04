@@ -35,7 +35,9 @@ Reserved keys:
 - `backend`: entry-point name in `infinity_v3.backends` or a
   `module:attribute` factory. If omitted, the sole installed entry point is
   used.
-- `queue_depth`: positive integer maximum in-flight forwards. Defaults to 32.
+- `queue_depth`: positive integer plugin execution hint passed as `queue_size`.
+  Defaults to 32. The Rust bridge admits one in-flight envelope per replica;
+  shared `BackendPool` scheduling supplies the real replica capacity.
 
 All other keys are passed to the plugin as opaque configuration. `device` is a
 common convention but is not interpreted by the frontend.
@@ -160,10 +162,16 @@ explicit ordinals must be visible, and each replica receives its own
   Rust backend worker does not block on a forward pass. Plugin exceptions are
   caught on the pool thread and complete the Rust response envelope through
   `set_exception`. Legacy plugins that internally defer completion remain valid.
-- Queued work is bounded by the existing Rust `queue_depth` admission permits.
+- `ThreadedExecutor` uses one state lock and a busy flag to enforce single-flight:
+  a second submission raises a clear busy/overload error instead of waiting.
+  The busy flag spans the whole response envelope, including legacy plugins that
+  complete later, and is released once after successful completion, exception
+  delivery, or scheduling failure. The Rust bridge also admits one in-flight
+  envelope per replica, while deferred responses retain the replica lease until
+  completion. This is invariant defense, not a second pending queue.
   `healthy` is serialized through the same pool. `close` is the final pool task,
-  after queued work, so cleanup uses the execution thread. Cleanup failures are
-  reported; repeated calls to `close` are safe.
+  after accepted work, so cleanup uses the execution thread. Cleanup failures
+  are reported; repeated calls to `close` are safe.
 - One shared frontend queue and scheduler per model hands batches to exclusive
   `BackendPool` replica leases; there is no separate frontend per device.
   Distinct replicas have distinct Python pool threads. Python bytecode still
