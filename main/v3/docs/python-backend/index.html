@@ -1237,7 +1237,9 @@ models:</p>
 <li><code>backend</code>: entry-point name in <code>infinity_v3.backends</code> or a
   <code>module:attribute</code> factory. If omitted, the sole installed entry point is
   used.</li>
-<li><code>queue_depth</code>: positive integer maximum in-flight forwards. Defaults to 32.</li>
+<li><code>queue_depth</code>: positive integer plugin execution hint passed as <code>queue_size</code>.
+  Defaults to 32. The Rust bridge admits one in-flight envelope per replica;
+  shared <code>BackendPool</code> scheduling supplies the real replica capacity.</li>
 </ul>
 <p>All other keys are passed to the plugin as opaque configuration. <code>device</code> is a
 common convention but is not interpreted by the frontend.</p>
@@ -1334,10 +1336,16 @@ explicit ordinals must be visible, and each replica receives its own
   Rust backend worker does not block on a forward pass. Plugin exceptions are
   caught on the pool thread and complete the Rust response envelope through
   <code>set_exception</code>. Legacy plugins that internally defer completion remain valid.</li>
-<li>Queued work is bounded by the existing Rust <code>queue_depth</code> admission permits.
+<li><code>ThreadedExecutor</code> uses one state lock and a busy flag to enforce single-flight:
+  a second submission raises a clear busy/overload error instead of waiting.
+  The busy flag spans the whole response envelope, including legacy plugins that
+  complete later, and is released once after successful completion, exception
+  delivery, or scheduling failure. The Rust bridge also admits one in-flight
+  envelope per replica, while deferred responses retain the replica lease until
+  completion. This is invariant defense, not a second pending queue.
   <code>healthy</code> is serialized through the same pool. <code>close</code> is the final pool task,
-  after queued work, so cleanup uses the execution thread. Cleanup failures are
-  reported; repeated calls to <code>close</code> are safe.</li>
+  after accepted work, so cleanup uses the execution thread. Cleanup failures
+  are reported; repeated calls to <code>close</code> are safe.</li>
 <li>One shared frontend queue and scheduler per model hands batches to exclusive
   <code>BackendPool</code> replica leases; there is no separate frontend per device.
   Distinct replicas have distinct Python pool threads. Python bytecode still
