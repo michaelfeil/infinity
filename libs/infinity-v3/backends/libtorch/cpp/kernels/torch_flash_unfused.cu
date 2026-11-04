@@ -3,7 +3,7 @@
 #ifndef UNFUSE_FMA
 #define UNFUSE_FMA
 #endif
-#define FLASH_NAMESPACE tei_torch_flash_unfused
+#define FLASH_NAMESPACE infinity_torch_flash_unfused
 #include "flash_launch_setup.h"
 #define cudaFuncSetAttribute infinity::flash_set_attribute
 #include "vendor/torch_flash_attention/flash_fwd_launch_template.h"
@@ -11,7 +11,7 @@
 #include <cstring>
 #include <type_traits>
 
-namespace tei_torch_flash_unfused {
+namespace infinity_torch_flash_unfused {
 template <typename T> void launch(Flash_fwd_params& params, cudaStream_t stream) {
   if (params.d == 64) {
     if (params.is_causal)

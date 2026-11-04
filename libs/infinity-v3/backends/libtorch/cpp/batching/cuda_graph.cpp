@@ -10,7 +10,7 @@
 #include "batching/prefix_cache.h"
 #include "batching/tensor_copy.h"
 #include <string>
-#ifdef TEI_TORCH_CUDA_KERNELS
+#ifdef INFINITY_TORCH_CUDA_KERNELS
 #include <ATen/cuda/CUDAGraph.h>
 #include <ATen/cuda/CUDAContextLight.h>
 #include <ATen/cuda/CUDAEvent.h>
@@ -34,7 +34,7 @@ struct CudaGraphCache::Impl {
   std::string last_shape;
   bool budget_exhausted = false, retain_prefix = false;
   Stats counters;
-#ifdef TEI_TORCH_CUDA_KERNELS
+#ifdef INFINITY_TORCH_CUDA_KERNELS
   /// RAII owner of the CUDA stream used for graph capture on one device.
   struct CaptureLane {
     cudaStream_t raw = nullptr;
@@ -151,7 +151,7 @@ struct CudaGraphCache::Impl {
     TORCH_CHECK(uses > 0 && bytes > 0, "CUDA graph reuse and byte budgets must be positive");
   }
 };
-#ifdef TEI_TORCH_CUDA_KERNELS
+#ifdef INFINITY_TORCH_CUDA_KERNELS
 // Keys live only in this process. Lengths delimit variable-sized fields, and
 // each scalar keeps its native type so metadata needs no stream formatting.
 struct GraphKey {
@@ -285,7 +285,7 @@ void CudaGraphCache::retain_prefix_states(bool enabled) {
 }
 
 size_t CudaGraphCache::size() const {
-#ifdef TEI_TORCH_CUDA_KERNELS
+#ifdef INFINITY_TORCH_CUDA_KERNELS
   return impl->entries.size();
 #else
   return 0;
@@ -307,7 +307,7 @@ at::Tensor CudaGraphCache::forward(const Model& model,
       return model.forward_pooled(input, true);
     return operation == 0 ? model.forward(input) : model.predict(input, operation == 2);
   };
-#ifdef TEI_TORCH_CUDA_KERNELS
+#ifdef INFINITY_TORCH_CUDA_KERNELS
   auto input = original;
   c10::cuda::OptionalCUDAGuard device;
   if (input.ids.is_cuda())

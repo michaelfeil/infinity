@@ -4,7 +4,7 @@
 #ifdef UNFUSE_FMA
 #undef UNFUSE_FMA
 #endif
-#define FLASH_NAMESPACE tei_torch_flash_exact32
+#define FLASH_NAMESPACE infinity_torch_flash_exact32
 #include "vendor/torch_flash_attention/flash.h"
 #include <ATen/cuda/CUDAContext.h>
 #include <c10/cuda/CUDAGuard.h>
@@ -12,7 +12,7 @@
 #include <cmath>
 #include <limits>
 
-namespace tei_torch_flash_exact32 {
+namespace infinity_torch_flash_exact32 {
 void launch(Flash_fwd_params&, cudaStream_t);
 }
 
@@ -44,7 +44,7 @@ at::Tensor torch_flash_exact32(const at::Tensor& q,
               "Exact head32 attention requires compute capability >=8.0");
   auto out = at::empty(q.sizes(), q.options());
   auto lse = at::empty({q.size(1), q.size(0)}, q.options().dtype(at::kFloat));
-  tei_torch_flash_exact32::Flash_fwd_params p{};
+  infinity_torch_flash_exact32::Flash_fwd_params p{};
   p.q_ptr = q.data_ptr();
   p.k_ptr = k.data_ptr();
   p.v_ptr = v.data_ptr();
@@ -84,7 +84,7 @@ at::Tensor torch_flash_exact32(const at::Tensor& q,
   p.window_size_right = -1;
   p.is_bf16 = q.scalar_type() == at::kBFloat16;
   p.num_splits = 1;
-  tei_torch_flash_exact32::launch(p, at::cuda::getCurrentCUDAStream());
+  infinity_torch_flash_exact32::launch(p, at::cuda::getCurrentCUDAStream());
   C10_CUDA_KERNEL_LAUNCH_CHECK();
   return out;
 }

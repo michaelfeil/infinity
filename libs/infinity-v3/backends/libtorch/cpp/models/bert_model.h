@@ -10,7 +10,7 @@
 #include "helpers/attention.h"
 #include "helpers/vendor_error.h"
 #include "helpers/workspace_admission.h"
-#ifdef TEI_TORCH_CUDA_KERNELS
+#ifdef INFINITY_TORCH_CUDA_KERNELS
 #include "kernels/fast_kernels.h"
 #include "kernels/encoder_norm.h"
 #include "kernels/encoder_activation.h"
@@ -35,7 +35,7 @@
 namespace {
 /// Packed BERT/RoBERTa backbone with native attention and optional task readouts.
 struct Bert : infinity::Model {
-  TeiConfig config;
+  InfinityTorchConfig config;
   c10::Device device;
   at::ScalarType dtype;
   std::unordered_map<std::string, at::Tensor> weights;
@@ -50,7 +50,7 @@ struct Bert : infinity::Model {
   bool private_flash_roberta_embedding = false;
   bool private_flash_exact_classifier = false;
   bool exact_biased_norm = false;
-#ifdef TEI_TORCH_CUDA_KERNELS
+#ifdef INFINITY_TORCH_CUDA_KERNELS
   bool cached_classifier_gemm = false;
 
   /// Owns cuBLASLt descriptors and algorithm metadata for a cached classifier GEMM.
@@ -79,7 +79,7 @@ struct Bert : infinity::Model {
   mutable at::Tensor classifier_workspace;
   mutable std::map<std::array<int64_t, 5>, std::unique_ptr<ClassifierPlan>> classifier_plans;
 #endif
-  Bert(TeiConfig cfg, c10::Device dev, at::ScalarType type)
+  Bert(InfinityTorchConfig cfg, c10::Device dev, at::ScalarType type)
       : config(cfg), device(dev), dtype(type) {}
 
   const at::Tensor& w(const std::string& name) const {
@@ -94,7 +94,7 @@ struct Bert : infinity::Model {
                                    const at::Tensor& matrix,
                                    const at::Tensor& bias,
                                    bool gelu = false) const {
-#ifdef TEI_TORCH_CUDA_KERNELS
+#ifdef INFINITY_TORCH_CUDA_KERNELS
     // This cache stores GEMM+bias/activation descriptors. Feature multiples, operand alignment, and
     // the scalar-output exception bound that epilogue path; an ineligible projection still
     // uses its original operator.
@@ -268,7 +268,7 @@ struct Bert : infinity::Model {
   /// the unrounded sum; other CUDA and CPU paths retain their existing fused or composed recipe.
   at::Tensor
   residual_norm(const at::Tensor& x, const at::Tensor& residual, const std::string& name) const {
-#ifdef TEI_TORCH_CUDA_KERNELS
+#ifdef INFINITY_TORCH_CUDA_KERNELS
     if (x.is_cuda() && (exact_biased_norm || config.hidden == 384 ||
                         (private_flash_embedding && options.boolean("_fp8_dynamic", false))))
       return infinity::encoder_layer_norm_only(
@@ -296,7 +296,7 @@ struct Bert : infinity::Model {
     if (device.is_cuda()) {
       TORCH_CHECK(dtype == at::kHalf || dtype == at::kBFloat16,
                   "CUDA varlen attention requires float16 or bfloat16");
-#ifdef TEI_TORCH_CUDA_KERNELS
+#ifdef INFINITY_TORCH_CUDA_KERNELS
       const auto major = at::cuda::getDeviceProperties(device.index())->major;
       cudnn_varlen = options.boolean("_cudnn_varlen", false) && (major == 9 || major == 10) &&
                      at::detail::getCUDAHooks().versionRuntimeCuDNN() >= 91800;
@@ -313,7 +313,7 @@ struct Bert : infinity::Model {
         break;
       }
     }
-#ifdef TEI_TORCH_CUDA_KERNELS
+#ifdef INFINITY_TORCH_CUDA_KERNELS
     // Standard small/large BERT CLS embeddings use the same packed and biased
     // normalization contracts as the existing base-width implementation.
     native_bert_embedding =
@@ -355,7 +355,7 @@ struct Bert : infinity::Model {
         (at::globalContext().blasPreferredBackend() == at::BlasBackend::Cublas ||
          at::globalContext().blasPreferredBackend() == at::BlasBackend::Cublaslt);
 #endif
-#ifdef TEI_TORCH_CUDA_KERNELS
+#ifdef INFINITY_TORCH_CUDA_KERNELS
     // BERT and its aliases share Candle's biased LayerNorm primitive: residual
     // statistics use the unrounded FP32 sum. Kernel eligibility is independent
     // of model alias, pooling and head architecture; other profiles retain their selectors.
@@ -563,7 +563,7 @@ struct Bert : infinity::Model {
     const auto* ends = input.offsets;
     const auto batch = input.batch, max_sequence = input.max_sequence;
     at::Tensor h;
-#ifdef TEI_TORCH_CUDA_KERNELS
+#ifdef INFINITY_TORCH_CUDA_KERNELS
     if (private_flash_roberta_embedding && !exact_biased_norm) {
       h = infinity::fused_embedding_layer_norm(ids,
                                                types,
@@ -580,7 +580,7 @@ struct Bert : infinity::Model {
       auto word = at::embedding(w("embeddings.word_embeddings.weight"), ids);
       auto token_type = at::embedding(w("embeddings.token_type_embeddings.weight"), types);
       auto position = at::embedding(w("embeddings.position_embeddings.weight"), positions);
-#ifdef TEI_TORCH_CUDA_KERNELS
+#ifdef INFINITY_TORCH_CUDA_KERNELS
       if (word.is_cuda() && exact_biased_norm && config.hidden == 768 &&
           word.scalar_type() == at::kHalf)
         h = infinity::encoder_embedding_layer_norm(word,
@@ -692,7 +692,7 @@ struct Bert : infinity::Model {
         // Cumulative INT32 offsets are on-device. No padded batch or mask exists.
         // cuDNN helps long sequences; FlashAttention is faster on the measured
         // ragged batches with maximum length 256, despite a similar token total.
-#ifdef TEI_TORCH_CUDA_KERNELS
+#ifdef INFINITY_TORCH_CUDA_KERNELS
         // Native Torch packed Flash avoids cuDNN setup overhead for moderate
         // token totals. FP8 needs the fused Torch arithmetic at every total
         // to preserve quantization inputs; normal FP16 larger totals retain

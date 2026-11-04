@@ -21,7 +21,7 @@
 #else
 #include <unistd.h>
 #endif
-#ifdef TEI_TORCH_CUDA_KERNELS
+#ifdef INFINITY_TORCH_CUDA_KERNELS
 #include <ATen/core/CachingHostAllocator.h>
 #include <c10/cuda/CUDAException.h>
 #include <c10/cuda/CUDAGuard.h>
@@ -91,7 +91,7 @@ pinned_cached_bytes(int64_t bytes, int64_t blocks, size_t page = pinned_host_pag
               "Torch pinned allocator accounting overflow");
   return static_cast<size_t>(value) + static_cast<size_t>(blocks) * boundaries;
 }
-#ifdef TEI_TORCH_CUDA_KERNELS
+#ifdef INFINITY_TORCH_CUDA_KERNELS
 // This storage does not enter Torch's pinned size-class cache. Its credit stays
 // charged through all Tensor views and is returned only after cudaFreeHost.
 class PinnedAllocation {
@@ -160,7 +160,7 @@ inline at::Tensor allocate_pinned_staging(int64_t count, at::TensorOptions optio
   TORCH_CHECK(element_size > 0 && count >= 0 &&
                   static_cast<uint64_t>(count) <= std::numeric_limits<size_t>::max() / element_size,
               "Native pinned staging capacity overflow");
-#ifdef TEI_TORCH_CUDA_KERNELS
+#ifdef INFINITY_TORCH_CUDA_KERNELS
   auto allocation = std::make_shared<PinnedAllocation>(static_cast<size_t>(count) * element_size);
   return at::from_blob(
       allocation->data,

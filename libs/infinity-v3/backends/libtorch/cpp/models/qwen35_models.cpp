@@ -28,7 +28,7 @@
 #include <array>
 #include <map>
 #include <memory>
-#ifdef TEI_TORCH_CUDA_KERNELS
+#ifdef INFINITY_TORCH_CUDA_KERNELS
 #include <ATen/cuda/CUDAContext.h>
 #include <c10/cuda/CUDAStream.h>
 #include <c10/cuda/CUDAGuard.h>
@@ -111,7 +111,7 @@ class Qwen35 final : public Model {
 
   // Choose the same accumulation tree as the original logical-row GEMM,
   // using descriptors only. Execute on actual compact rows, with no padding.
-#ifdef TEI_TORCH_CUDA_KERNELS
+#ifdef INFINITY_TORCH_CUDA_KERNELS
   /// Retained projection plan and workspace ownership for logical-row GEMMs.
   struct RadixLinearPlan {
     cublasLtMatmulDesc_t operation{};
@@ -150,7 +150,7 @@ class Qwen35 final : public Model {
                                      const PackedInput& packed) const {
     if (auto it = fp8_projections.find(name); it != fp8_projections.end())
       return it->second->forward(x);
-#ifdef TEI_TORCH_CUDA_KERNELS
+#ifdef INFINITY_TORCH_CUDA_KERNELS
     const auto& matrix = w(name + ".weight");
     // This profile qualifies logical-shape planning for the MoE output projection. Other matrices
     // deliberately unfold to their real logical rows in the fallback, preserving the
@@ -351,7 +351,7 @@ class Qwen35 final : public Model {
   /// Interpret the final dimension as [gate | up] and apply the reference SiLU/product stages,
   /// returning half as many features.
   at::Tensor gated(const at::Tensor& gu) const {
-#ifdef TEI_TORCH_CUDA_KERNELS
+#ifdef INFINITY_TORCH_CUDA_KERNELS
     if (device.is_cuda() && dtype == at::kBFloat16)
       return gemma_gated_cuda(gu, false);
 #endif
@@ -404,7 +404,7 @@ class Qwen35 final : public Model {
   /// Apply Qwen3.5 RMSNorm with an offset affine weight: scale is 1 + checkpoint weight. Statistics
   /// and affine scaling stay FP32 until the final cast back to model dtype.
   at::Tensor norm(const at::Tensor& x, const std::string& name) const {
-#ifdef TEI_TORCH_CUDA_KERNELS
+#ifdef INFINITY_TORCH_CUDA_KERNELS
     // Keep FP32 statistics and affine scaling in one CUDA kernel.
     if (device.is_cuda() && dtype == at::kBFloat16 && x.size(-1) <= 8192)
       return qwen35_reference_norm_cuda(x, w(name + ".weight"), epsilon);
@@ -420,7 +420,7 @@ class Qwen35 final : public Model {
                                                   const std::string& name,
                                                   QuantizedRows* quantized = nullptr,
                                                   bool materialize_norm = true) const {
-#ifdef TEI_TORCH_CUDA_KERNELS
+#ifdef INFINITY_TORCH_CUDA_KERNELS
     if (device.is_cuda() && dtype == at::kBFloat16 && x.size(-1) <= 8192)
       return qwen35_reference_residual_norm_cuda(
           x, addition, w(name + ".weight"), epsilon, quantized, materialize_norm);
@@ -434,7 +434,7 @@ class Qwen35 final : public Model {
   /// match the input projection.
   at::Tensor rotate(const at::Tensor& x, const PackedInput& input) const {
     auto r = x.narrow(-1, 0, rotary);
-#ifdef TEI_TORCH_CUDA_KERNELS
+#ifdef INFINITY_TORCH_CUDA_KERNELS
     if (device.is_cuda() && dtype == at::kBFloat16 && !input.multimodal_positions.defined()) {
       auto rotated = gemma_rotary_cuda(r, cos_cache, sin_cache, radix_positions(input));
       return rotary == dim ? rotated : at::cat({rotated, x.narrow(-1, rotary, dim - rotary)}, -1);
@@ -786,7 +786,7 @@ class Qwen35 final : public Model {
     ab = radix_unfold(ab, input);
     at::Tensor output;
     if (device.is_cuda()) {
-#ifdef TEI_TORCH_CUDA_KERNELS
+#ifdef INFINITY_TORCH_CUDA_KERNELS
       auto conv = w(p + "conv1d.weight").view({qkv.size(1), -1}).contiguous();
       const auto& alog = w(p + "A_log");
       const auto& dt = w(p + "dt_bias");

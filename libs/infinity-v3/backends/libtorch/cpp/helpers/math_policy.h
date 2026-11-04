@@ -7,7 +7,7 @@
 #include <ATen/Context.h>
 #include <c10/core/Device.h>
 #include <array>
-#ifdef TEI_TORCH_CUDA_KERNELS
+#ifdef INFINITY_TORCH_CUDA_KERNELS
 #include <ATen/cuda/CUDAContext.h>
 #endif
 
@@ -28,7 +28,7 @@ static inline MathPolicy execution_math_policy(const c10::Device& device) {
                        int64_t(global.deterministicAlgorithms()),
                        int64_t(global.allowTF32CuDNN()),
                        int64_t(global.allowFP16ReductionCPU())};
-#ifdef TEI_TORCH_CUDA_KERNELS
+#ifdef INFINITY_TORCH_CUDA_KERNELS
   if (device.is_cuda()) {
     policy[9] = global._SMCarveout_EXPERIMENTAL().value_or(-1);
     policy[10] = at::cuda::getChosenWorkspaceSize();

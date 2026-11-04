@@ -12,7 +12,7 @@
 #include <thread>
 #include <vector>
 #include <cstdint>
-#ifdef TEI_TORCH_CUDA_KERNELS
+#ifdef INFINITY_TORCH_CUDA_KERNELS
 #include <ATen/cuda/CUDAContext.h>
 #include <ATen/cuda/tunable/Tunable.h>
 #include <c10/cuda/CUDACachingAllocator.h>
@@ -114,7 +114,7 @@ POSSIBILITY OF SUCH DAMAGE.
 */
 // Ordinary Modern projections: no quantization or scale descriptors.
 struct OrdinaryLinearExecutor::Impl {
-#if defined(TEI_TORCH_CUDA_KERNELS) && CUDA_VERSION >= 12090
+#if defined(INFINITY_TORCH_CUDA_KERNELS) && CUDA_VERSION >= 12090
   /// Owns cuBLASLt descriptors, a selected algorithm, and optional retained workspace.
   struct Plan {
     cublasLtMatmulDesc_t operation{};
@@ -172,7 +172,7 @@ OrdinaryLinearExecutor::OrdinaryLinearExecutor() : impl_(std::make_shared<Impl>(
 
 /// Execution identity and shared executor state retained by an ordinary-linear session.
 struct OrdinaryLinearExecutor::Session::State {
-#if defined(TEI_TORCH_CUDA_KERNELS) && CUDA_VERSION >= 12090
+#if defined(INFINITY_TORCH_CUDA_KERNELS) && CUDA_VERSION >= 12090
   std::shared_ptr<Impl> owner;
   int device;
   at::ScalarType dtype;
@@ -191,7 +191,7 @@ struct OrdinaryLinearExecutor::Session::State {
 /// capturing contexts produce an empty session and retain ordinary ATen fallback.
 OrdinaryLinearExecutor::Session OrdinaryLinearExecutor::prepare(const at::Tensor& x) const {
   Session session;
-#if defined(TEI_TORCH_CUDA_KERNELS) && CUDA_VERSION >= 12090
+#if defined(INFINITY_TORCH_CUDA_KERNELS) && CUDA_VERSION >= 12090
   if (!x.is_cuda() || (x.scalar_type() != at::kHalf && x.scalar_type() != at::kBFloat16))
     return session;
   c10::cuda::CUDAGuard guard(x.device());
@@ -233,7 +233,7 @@ OrdinaryLinearExecutor::Session OrdinaryLinearExecutor::prepare(const at::Tensor
 }
 
 at::Tensor OrdinaryLinearExecutor::forward(const at::Tensor& x, const at::Tensor& weight) const {
-#if defined(TEI_TORCH_CUDA_KERNELS) && CUDA_VERSION >= 12090
+#if defined(INFINITY_TORCH_CUDA_KERNELS) && CUDA_VERSION >= 12090
   c10::cuda::OptionalCUDAGuard guard;
   if (x.is_cuda())
     guard.set_device(x.device());
@@ -245,7 +245,7 @@ at::Tensor OrdinaryLinearExecutor::forward(const at::Tensor& x, const at::Tensor
 at::Tensor OrdinaryLinearExecutor::forward(const at::Tensor& x,
                                            const at::Tensor& weight,
                                            const Session& session) const {
-#if defined(TEI_TORCH_CUDA_KERNELS) && CUDA_VERSION >= 12090
+#if defined(INFINITY_TORCH_CUDA_KERNELS) && CUDA_VERSION >= 12090
   // Independent saved Half/BF16 ordinary packets define these layouts.
   // Unknown dtype/strides/policies retain original ATen.
   if (!x.is_cuda() || x.dim() != 2 || !weight.is_cuda() || weight.dim() != 2 ||
@@ -415,12 +415,12 @@ at::Tensor OrdinaryLinearExecutor::forward(const at::Tensor& x,
 #endif
 }
 
-#ifndef TEI_TORCH_CUDA_KERNELS
+#ifndef INFINITY_TORCH_CUDA_KERNELS
 std::pair<at::Tensor, at::Tensor> fp8_quantize_rows(const at::Tensor&) {
   TORCH_CHECK(false, "Dynamic FP8 requires a CUDA LibTorch build");
 }
 #endif
-#if defined(TEI_TORCH_CUDA_KERNELS) && CUDA_VERSION >= 12090
+#if defined(INFINITY_TORCH_CUDA_KERNELS) && CUDA_VERSION >= 12090
 namespace {
 // Reuse the vendor's first heuristic for repeated projection geometries. Plans
 // are thread-local; scale pointers are rebound for each invocation. Workspace
@@ -579,7 +579,7 @@ at::Tensor scaled_mm_cached(const at::Tensor& input,
 #endif
 
 bool fp8_device_supported(const c10::Device& device) {
-#ifdef TEI_TORCH_CUDA_KERNELS
+#ifdef INFINITY_TORCH_CUDA_KERNELS
   if (device.is_cuda()) {
     const auto* props = at::cuda::getDeviceProperties(device.index());
     const auto capability = props->major * 10 + props->minor;
@@ -598,7 +598,7 @@ Fp8Linear::Fp8Linear(const at::Tensor& weight) : dtype_(weight.scalar_type()), r
   // is independent of that constraint and must not be padded to satisfy it.
   TORCH_CHECK(weight.size(0) % 16 == 0 && weight.size(1) % 16 == 0,
               "Dynamic FP8 projection widths must be divisible by16; tokens are never padded");
-#ifdef TEI_TORCH_CUDA_KERNELS
+#ifdef INFINITY_TORCH_CUDA_KERNELS
   c10::cuda::CUDAGuard guard(weight.device());
   const auto* props = at::cuda::getDeviceProperties(weight.device().index());
   const int capability = props->major * 10 + props->minor;
@@ -624,7 +624,7 @@ at::Tensor Fp8Linear::forward(const at::Tensor& input, const at::Tensor& bias) c
               "Invalid dynamic FP8 bias");
   if (input.size(0) == 0)
     return at::empty({0, output_width()}, input.options());
-#ifdef TEI_TORCH_CUDA_KERNELS
+#ifdef INFINITY_TORCH_CUDA_KERNELS
   c10::cuda::CUDAGuard guard(input.device());
 #endif
   auto quantized = fp8_quantize_rows(input.contiguous());
@@ -654,12 +654,12 @@ at::Tensor Fp8Linear::forward_quantized(const at::Tensor& input,
               "Invalid dynamic FP8 bias");
   if (input.size(0) == 0)
     return at::empty({0, output_width()}, input.options().dtype(dtype_));
-#ifdef TEI_TORCH_CUDA_KERNELS
+#ifdef INFINITY_TORCH_CUDA_KERNELS
   c10::cuda::CUDAGuard guard(input.device());
 #endif
   at::Tensor output;
   if (rowwise_) {
-#if defined(TEI_TORCH_CUDA_KERNELS) && CUDA_VERSION >= 12090
+#if defined(INFINITY_TORCH_CUDA_KERNELS) && CUDA_VERSION >= 12090
     output = scaled_mm_cached(input, matrix_, row_scales, scales_, dtype_);
 #endif
     if (!output.defined()) {
@@ -677,7 +677,7 @@ at::Tensor Fp8Linear::forward_quantized(const at::Tensor& input,
   } else {
     // Match the portable recipe: scale full FP32 accumulation before the
     // single model-dtype rounding. No tensorwide activation scale is inferred.
-#ifdef TEI_TORCH_CUDA_KERNELS
+#ifdef INFINITY_TORCH_CUDA_KERNELS
     output = fp8_scale_output(unscaled_product(input), row_scales, scales_, dtype_);
 #else
     output = (unscaled_product(input) * row_scales * scales_.t()).to(dtype_);
@@ -715,7 +715,7 @@ Fp8Linear::forward_gated_quantized_impl(const at::Tensor& input,
   if (input.size(0) == 0)
     return {at::empty({0, output_width() / 2}, input.options().dtype(at::kFloat8_e4m3fn)),
             at::empty({0, 1}, input.options().dtype(at::kFloat))};
-#ifdef TEI_TORCH_CUDA_KERNELS
+#ifdef INFINITY_TORCH_CUDA_KERNELS
   c10::cuda::CUDAGuard guard(input.device());
   auto rows = input;
   auto scales = row_scales;
@@ -778,7 +778,7 @@ Fp8Linear::forward_activation_quantized(const at::Tensor& input,
   if (input.size(0) == 0)
     return {at::empty({0, output_width()}, input.options().dtype(at::kFloat8_e4m3fn)),
             at::empty({0, 1}, input.options().dtype(at::kFloat))};
-#ifdef TEI_TORCH_CUDA_KERNELS
+#ifdef INFINITY_TORCH_CUDA_KERNELS
   c10::cuda::CUDAGuard guard(input.device());
   auto rows = input;
   auto scales = row_scales;

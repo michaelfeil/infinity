@@ -1,7 +1,7 @@
 // Copyright Infinity Core Contributors. Licensed under the repository LICENSE.
 #include "helpers/dense_mlp.h"
 #include <ATen/ops/_addmm_activation.h>
-#ifdef TEI_TORCH_CUDA_KERNELS
+#ifdef INFINITY_TORCH_CUDA_KERNELS
 #include "kernels/encoder_activation.h"
 #include "kernels/fp8_fusions.h"
 #endif
@@ -24,7 +24,7 @@ at::Tensor mlp_activation(const at::Tensor& x, MlpActivation kind) {
   case MlpActivation::RoundedSilu:
     return x / (at::ones({}, x.options()) + at::exp(-x));
   case MlpActivation::RoundedGelu: {
-#ifdef TEI_TORCH_CUDA_KERNELS
+#ifdef INFINITY_TORCH_CUDA_KERNELS
     if (x.is_cuda())
       return encoder_gelu(x);
 #endif
@@ -294,7 +294,7 @@ at::Tensor DenseMlp::forward(const at::Tensor& x,
                           !input_.recipe_.output_clip
                       ? activation_.epilogue
                       : MlpEpilogue::None;
-#ifdef TEI_TORCH_CUDA_KERNELS
+#ifdef INFINITY_TORCH_CUDA_KERNELS
   auto fp8_activation = activation_.fp8_activation;
   if (!fp8_activation && activation_.fusion == MlpFusion::RoundedBiasGelu)
     fp8_activation = Fp8Activation::RoundedGelu;
@@ -319,7 +319,7 @@ at::Tensor DenseMlp::forward(const at::Tensor& x,
                            context);
   }
 #endif
-#ifdef TEI_TORCH_CUDA_KERNELS
+#ifdef INFINITY_TORCH_CUDA_KERNELS
   // One eligibility rule for both fused forms below: the packed rounded SwiGLU output must be
   // consumable as FP8 rows without output transforms.
   const bool rounded_swiglu =
@@ -357,7 +357,7 @@ at::Tensor DenseMlp::forward(const at::Tensor& x,
   }
 #endif
   auto middle = input_.execute(x, context, input_scales, epilogue);
-#ifdef TEI_TORCH_CUDA_KERNELS
+#ifdef INFINITY_TORCH_CUDA_KERNELS
   if (rounded_swiglu && middle.is_cuda() && middle.dim() == 2 && middle.is_contiguous() &&
       middle.size(1) / 2 <= 32768) {
     auto quantized = fp8_swiglu_quantize(middle);

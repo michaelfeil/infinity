@@ -4,10 +4,10 @@
 #ifdef UNFUSE_FMA
 #undef UNFUSE_FMA
 #endif
-#define FLASH_NAMESPACE tei_torch_flash
+#define FLASH_NAMESPACE infinity_torch_flash
 #include "vendor/torch_flash_attention/flash_fwd_launch_template.h"
 
-namespace tei_torch_flash {
+namespace infinity_torch_flash {
 template <typename Element> void launch_512_typed(Flash_fwd_params& params, cudaStream_t stream) {
   using Traits = Flash_fwd_kernel_traits<512, 64, 32, 4, false, false, Element>;
   static_assert(Traits::kBlockM >= 16 * Traits::kNWarps && Traits::kBlockN % 32 == 0,

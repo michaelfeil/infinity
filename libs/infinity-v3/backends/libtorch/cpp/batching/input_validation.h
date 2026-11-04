@@ -90,9 +90,9 @@ inline int64_t validate_input_descriptors(const int64_t* ids,
                                           int64_t batch,
                                           int64_t max_sequence,
                                           const int64_t* media_positions,
-                                          const TeiImage* images,
+                                          const InfinityTorchImage* images,
                                           size_t image_count,
-                                          const TeiAudio* audios,
+                                          const InfinityTorchAudio* audios,
                                           size_t audio_count,
                                           bool single_frame_images = false) {
   TORCH_CHECK(batch > 0 && batch < std::numeric_limits<int64_t>::max() && cumulative,
@@ -112,8 +112,8 @@ inline int64_t validate_input_descriptors(const int64_t* ids,
     input_bytes(input_product(3, tokens, "media positions"), sizeof(int64_t), "media positions");
   TORCH_CHECK(!image_count || images, "Missing counted image descriptors");
   TORCH_CHECK(!audio_count || audios, "Missing counted audio descriptors");
-  TORCH_CHECK(image_count <= std::numeric_limits<size_t>::max() / sizeof(TeiImage) &&
-                  audio_count <= std::numeric_limits<size_t>::max() / sizeof(TeiAudio),
+  TORCH_CHECK(image_count <= std::numeric_limits<size_t>::max() / sizeof(InfinityTorchImage) &&
+                  audio_count <= std::numeric_limits<size_t>::max() / sizeof(InfinityTorchAudio),
               "Overflowing media descriptor count");
   auto span = [&](int64_t start, int64_t count, const char* name) {
     TORCH_CHECK(start >= 0 && start < tokens && count > 0 && count <= tokens - start,
@@ -175,11 +175,11 @@ struct InputUploadBudget {
 inline size_t validate_input_upload_budget(int64_t tokens,
                                            int64_t batch,
                                            bool media_positions,
-                                           const TeiImage* images,
+                                           const InfinityTorchImage* images,
                                            size_t image_count,
-                                           const TeiAudio* audios,
+                                           const InfinityTorchAudio* audios,
                                            size_t audio_count,
-                                           const TeiRadix* radix,
+                                           const InfinityTorchRadix* radix,
                                            size_t image_element_size,
                                            size_t limit,
                                            bool normalize_images = false,
@@ -232,9 +232,9 @@ inline size_t validate_input_upload_budget(int64_t tokens,
     // validate_radix owns two compact parent/context arrays on the host.
     add(radix->compact_tokens, 2 * sizeof(int64_t));
     if (image_count || media_positions) {
-      add(batch, sizeof(std::vector<const TeiImage*>));
+      add(batch, sizeof(std::vector<const InfinityTorchImage*>));
       add(tokens, sizeof(int64_t));
-      add(image_count, 3 * sizeof(const TeiImage*));
+      add(image_count, 3 * sizeof(const InfinityTorchImage*));
       // At most one checked context pair per full token, including tree nodes.
       add(tokens, sizeof(std::pair<int64_t, int64_t>) + 6 * sizeof(void*));
     }
@@ -243,7 +243,7 @@ inline size_t validate_input_upload_budget(int64_t tokens,
 }
 
 /// Extend an existing upload charge with owned decision metadata and validate counted pointers.
-inline size_t validate_decision_metadata_budget(const TeiDecision* requests,
+inline size_t validate_decision_metadata_budget(const InfinityTorchDecision* requests,
                                                 size_t count,
                                                 size_t limit,
                                                 size_t used = 0) {

@@ -36,11 +36,11 @@ DEALINGS IN THE SOFTWARE.
 #include <cuda_bf16.h>
 #include <cuda_fp8.h>
 #include "kernels/fp8_quant_pair.cuh"
-#define gdn_sum tei_reference_gdn_sum
-#define qwen35_conv_bf16 tei_reference_qwen35_conv_bf16
-#define qwen35_gdn_prepare tei_reference_qwen35_gdn_prepare
-#define qwen35_gdn_recurrent tei_reference_qwen35_gdn_recurrent
-#define qwen35_gdn_norm tei_reference_qwen35_gdn_norm
+#define gdn_sum infinity_reference_gdn_sum
+#define qwen35_conv_bf16 infinity_reference_qwen35_conv_bf16
+#define qwen35_gdn_prepare infinity_reference_qwen35_gdn_prepare
+#define qwen35_gdn_recurrent infinity_reference_qwen35_gdn_recurrent
+#define qwen35_gdn_norm infinity_reference_qwen35_gdn_norm
 #include "vendor/candle_kernels/kernels/qwen35_gdn.cu"
 #undef gdn_sum
 #undef qwen35_conv_bf16
@@ -354,10 +354,10 @@ at::Tensor qwen35_reference_delta_cuda(const at::Tensor& qkv,
     qwen35_cached_conv_cuda(
         qkv, conv, input, cached.history, cached.history_lengths, convolution, false);
   else
-    tei_reference_qwen35_conv_bf16<<<(tokens * channels + 255) / 256, 256, 0, stream>>>(
+    infinity_reference_qwen35_conv_bf16<<<(tokens * channels + 255) / 256, 256, 0, stream>>>(
         bf(qkv), bf(conv), cu, mut(convolution), tokens, channels, conv.size(-1), input.batch);
   C10_CUDA_KERNEL_LAUNCH_CHECK();
-  tei_reference_qwen35_gdn_prepare<<<tokens * key_heads, 128, 0, stream>>>(
+  infinity_reference_qwen35_gdn_prepare<<<tokens * key_heads, 128, 0, stream>>>(
       bf(convolution),
       bf(ab),
       a_log.const_data_ptr<float>(),
@@ -384,7 +384,7 @@ at::Tensor qwen35_reference_delta_cuda(const at::Tensor& qkv,
   else if (qwen35_recurrent_supported(qkv.device(), key_heads, value_heads))
     qwen35_recurrent_cuda(convolution, qk, decay, input, recurrence, key_heads, value_heads, false);
   else {
-    tei_reference_qwen35_gdn_recurrent<<<dim3(input.batch, value_heads, 16), 256, 0, stream>>>(
+    infinity_reference_qwen35_gdn_recurrent<<<dim3(input.batch, value_heads, 16), 256, 0, stream>>>(
         bf(convolution),
         qk.const_data_ptr<float>(),
         decay.const_data_ptr<float>(),
@@ -394,7 +394,7 @@ at::Tensor qwen35_reference_delta_cuda(const at::Tensor& qkv,
         value_heads);
     C10_CUDA_KERNEL_LAUNCH_CHECK();
   }
-  tei_reference_qwen35_gdn_norm<<<tokens * value_heads, 128, 0, stream>>>(
+  infinity_reference_qwen35_gdn_norm<<<tokens * value_heads, 128, 0, stream>>>(
       bf(recurrence), bf(z), bf(norm), mut(output), epsilon);
   C10_CUDA_KERNEL_LAUNCH_CHECK();
   if (input.prefix)

@@ -7,7 +7,7 @@
 #include "helpers/workspace_admission.h"
 #include "batching/cuda_graph.h"
 #include <ATen/ops/_flash_attention_forward.h>
-#ifdef TEI_TORCH_CUDA_KERNELS
+#ifdef INFINITY_TORCH_CUDA_KERNELS
 #include <ATen/cuda/CUDAContext.h>
 #include <ATen/cuda/CUDAGraph.h>
 #endif
@@ -15,7 +15,7 @@
 using namespace infinity;
 
 void dynamic_fp8_test(Options cfg, Weights weights, const c10::Device& device) {
-#ifdef TEI_TORCH_CUDA_KERNELS
+#ifdef INFINITY_TORCH_CUDA_KERNELS
   const auto* properties = at::cuda::getDeviceProperties(device.index());
   const auto capability = properties->major * 10 + properties->minor;
   if (capability != 89 && capability != 90 && capability != 100 && capability != 120) {
@@ -73,23 +73,23 @@ void dynamic_fp8_test(Options cfg, Weights weights, const c10::Device& device) {
       if (std::string(scope) != "default")
         enabled.values["_fp8_scope"] = scope;
       // Exercise the serving bridge's family gate, not only model construction.
-      TeiConfig shape{16, 2, 2, 32, 32, 32, 1, 1e-6, 5};
-      std::unique_ptr<void, decltype(&tei_destroy)> engine(
-          tei_create(&shape, device.str().c_str(), 2), tei_destroy);
-      TORCH_CHECK(engine, tei_error());
+      InfinityTorchConfig shape{16, 2, 2, 32, 32, 32, 1, 1e-6, 5};
+      std::unique_ptr<void, decltype(&infinity_torch_destroy)> engine(
+          infinity_torch_create(&shape, device.str().c_str(), 2), infinity_torch_destroy);
+      TORCH_CHECK(engine, infinity_torch_error());
       for (const auto& [name, value] : enabled.values)
-        TORCH_CHECK(tei_option(engine.get(), name.c_str(), value.c_str()) == 0, tei_error());
+        TORCH_CHECK(infinity_torch_option(engine.get(), name.c_str(), value.c_str()) == 0, infinity_torch_error());
       for (const auto& [name, value] : weights) {
         auto host = value.cpu().contiguous();
-        TORCH_CHECK(tei_weight(engine.get(),
+        TORCH_CHECK(infinity_torch_weight(engine.get(),
                                name.c_str(),
                                static_cast<const uint8_t*>(host.const_data_ptr()),
                                host.sizes().data(),
                                host.dim(),
                                2) == 0,
-                    tei_error());
+                    infinity_torch_error());
       }
-      TORCH_CHECK(tei_ready(engine.get()) == 0, tei_error());
+      TORCH_CHECK(infinity_torch_ready(engine.get()) == 0, infinity_torch_error());
       engine.reset();
       Weights loader;
       for (const auto& [name, value] : weights)
@@ -174,7 +174,7 @@ void dynamic_fp8_test(Options cfg, Weights weights, const c10::Device& device) {
 }
 
 void radix_workspace_recovery_test(const c10::Device& device) {
-#ifdef TEI_TORCH_CUDA_KERNELS
+#ifdef INFINITY_TORCH_CUDA_KERNELS
   const auto* properties = at::cuda::getDeviceProperties(device.index());
   if (properties->major != 9 || properties->minor != 0) {
     std::cout << "Qwen3.5 shared workspace fixture skipped: production path requires SM 9.0\n";
@@ -312,7 +312,7 @@ void radix_workspace_recovery_test(const c10::Device& device) {
 }
 
 void paged_block_test(const c10::Device& device) {
-#ifdef TEI_TORCH_CUDA_KERNELS
+#ifdef INFINITY_TORCH_CUDA_KERNELS
   const std::vector<int32_t> prefixes{0, 1025, 1537, 1792}, suffixes{0, 3, 260, 261, 266, 283, 284};
   const std::vector<int64_t> sources{0, 1, 0, 2, 1, 0};
   std::vector<int32_t> kv{0};

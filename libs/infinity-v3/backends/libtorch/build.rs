@@ -35,7 +35,7 @@ fn main() {
     config.define("INFINITY_FA4_ROOT", fa4_root);
     let dst = config.build();
     println!("cargo:rustc-link-search=native={}/lib", dst.display());
-    println!("cargo:rustc-link-lib=dylib=tei_torch");
+    println!("cargo:rustc-link-lib=dylib=infinity_torch");
     println!("cargo:lib_dir={}/lib", dst.display());
     // The bridge carries an rpath to LibTorch. Executables also need to find the bridge.
     if env::var("CARGO_CFG_TARGET_FAMILY").as_deref() == Ok("unix") {

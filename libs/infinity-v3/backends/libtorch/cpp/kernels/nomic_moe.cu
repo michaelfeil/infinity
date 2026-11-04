@@ -189,7 +189,7 @@ at::Tensor nomic_moe_down(const at::Tensor& a,
 } // namespace infinity
 
 extern "C" int
-tei_gemma4_grouped_gemm_bf16(void*, int, void*, void*, void*, void*, void*, void*, cudaStream_t);
+infinity_gemma4_grouped_gemm_bf16(void*, int, void*, void*, void*, void*, void*, void*, cudaStream_t);
 
 namespace infinity {
 namespace {
@@ -242,7 +242,7 @@ at::Tensor nomic_moe_up(const at::Tensor& a, const at::Tensor& first, const at::
   C10_CUDA_KERNEL_LAUNCH_CHECK();
   auto* p = pointers.mutable_data_ptr<int64_t>();
   auto* l = strides.mutable_data_ptr<int64_t>();
-  int status = tei_gemma4_grouped_gemm_bf16(
+  int status = infinity_gemma4_grouped_gemm_bf16(
       coords.data_ptr(), E, p, p + E, p + 2 * E, l, l + E, l + 2 * E, stream);
   TORCH_CHECK(status == 0, "Grouped Nomic up failed:", status);
   return result;

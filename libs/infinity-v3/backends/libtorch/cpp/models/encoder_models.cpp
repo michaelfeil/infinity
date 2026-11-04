@@ -9,7 +9,7 @@
 #include "batching/packed_pool.h"
 #include "helpers/fp8_linear.h"
 #include "helpers/dense_mlp.h"
-#ifdef TEI_TORCH_CUDA_KERNELS
+#ifdef INFINITY_TORCH_CUDA_KERNELS
 #include <ATen/cuda/CUDAContext.h>
 #include "kernels/distil_embedding.h"
 #include "kernels/fast_kernels.h"
@@ -24,7 +24,7 @@
 #endif
 #include <ATen/ops/_flash_attention_forward.h>
 #include <ATen/ops/_addmm_activation.h>
-#ifdef TEI_TORCH_CUDA_KERNELS
+#ifdef INFINITY_TORCH_CUDA_KERNELS
 #include <c10/cuda/CUDAGuard.h>
 #endif
 #include <cmath>
@@ -98,7 +98,7 @@ struct Encoder final : Model {
   size_t nomic_policy_workspace = 0;
 
   bool device_routing_ready() const {
-#ifdef TEI_TORCH_CUDA_KERNELS
+#ifdef INFINITY_TORCH_CUDA_KERNELS
     return family == Family::Nomic && exact_moe && nomic_split_policy.defined() &&
            !o.boolean("_fp8_dynamic", false) &&
            at::globalContext().blasPreferredBackend() == at::BlasBackend::Cublaslt &&
@@ -209,7 +209,7 @@ struct Encoder final : Model {
   /// Normalize the last feature dimension using family-specific scale/bias names. Qualified
   /// JinaCode Q/K norms use their actual head-flattened width; ModernBERT norms omit affine bias.
   at::Tensor norm(const at::Tensor& x, const std::string& n) const {
-#ifdef TEI_TORCH_CUDA_KERNELS
+#ifdef INFINITY_TORCH_CUDA_KERNELS
     if (family == Family::JinaCode && alibi && x.is_cuda() &&
         (x.scalar_type() == at::kHalf || x.scalar_type() == at::kBFloat16) &&
         (n.ends_with(".layer_norm_q") || n.ends_with(".layer_norm_k")))
@@ -237,7 +237,7 @@ struct Encoder final : Model {
   /// paths retain FP32 sum statistics instead of first materializing a rounded residual tensor.
   at::Tensor
   residual_norm(const at::Tensor& x, const at::Tensor& residual, const std::string& n) const {
-#ifdef TEI_TORCH_CUDA_KERNELS
+#ifdef INFINITY_TORCH_CUDA_KERNELS
     if (family == Family::JinaCode && alibi && x.is_cuda() &&
         (x.scalar_type() == at::kHalf || x.scalar_type() == at::kBFloat16))
       return encoder_layer_norm_only(x.contiguous(),
@@ -284,7 +284,7 @@ struct Encoder final : Model {
   at::Tensor gated(const at::Tensor& x, bool gate_first = true) const {
     if (exact_cpu_half && gate_first)
       return modern_cpu::gated_gelu(x);
-#ifdef TEI_TORCH_CUDA_KERNELS
+#ifdef INFINITY_TORCH_CUDA_KERNELS
     // Candle SwiGLU rounds intermediate values to model dtype.
     if (family == Family::Nomic && !exact_moe && activation == "swiglu" && x.is_cuda() &&
         (x.scalar_type() == at::kHalf || x.scalar_type() == at::kBFloat16))
@@ -413,7 +413,7 @@ struct Encoder final : Model {
           (dtype == at::kHalf || dtype == at::kBFloat16) && (hidden / heads) % 8 == 0 &&
               hidden / heads <= 256,
           "CUDA varlen requires half/bfloat16 and head dimension divisible by eight, at most 256");
-#ifdef TEI_TORCH_CUDA_KERNELS
+#ifdef INFINITY_TORCH_CUDA_KERNELS
     exact_distil_flash = family == Family::Distil && device.is_cuda() && dtype == at::kHalf &&
                          hidden == 768 && heads == 12 && activation == "gelu" &&
                          at::cuda::getDeviceProperties(device.index())->major >= 8;
@@ -442,7 +442,7 @@ struct Encoder final : Model {
         alibi = at::from_blob(slopes.data(), {heads}, at::TensorOptions().dtype(at::kFloat))
                     .to(device)
                     .clone();
-#ifdef TEI_TORCH_CUDA_KERNELS
+#ifdef INFINITY_TORCH_CUDA_KERNELS
         exact_alibi32 = family == Family::Jina &&
                         torch_flash_fma_alibi32_supported(device, dtype, hidden / heads);
         exact_alibi64 = family == Family::JinaCode &&
@@ -458,7 +458,7 @@ struct Encoder final : Model {
         TORCH_CHECK(o.integer("num_experts", 0) > 0 && o.integer("moe_top_k", 0) > 0 &&
                         o.integer("moe_top_k", 0) <= o.integer("num_experts", 0),
                     "Invalid Nomic MoE expert count/top-k");
-#ifdef TEI_TORCH_CUDA_KERNELS
+#ifdef INFINITY_TORCH_CUDA_KERNELS
         if (activation == "gelu")
           nomic_split_policy = nomic_moe_split_policy(device,
                                                       dtype,
@@ -616,7 +616,7 @@ struct Encoder final : Model {
     // selected token rows are sent to each expert, matching Candle's dispatch.
     auto logits = linear(h, p + "mlp.router.layer").to(at::kFloat);
     at::Tensor probabilities;
-#ifdef TEI_TORCH_CUDA_KERNELS
+#ifdef INFINITY_TORCH_CUDA_KERNELS
     // Reuse Candle's precise FP32 softmax before selected Half weights round.
     // A one-ulp probability difference can cross a Half midpoint.
     if (exact_moe && dtype == at::kHalf && logits.is_cuda() && logits.size(-1) == 8)
@@ -626,7 +626,7 @@ struct Encoder final : Model {
       probabilities = at::softmax(logits, -1);
     const auto top_k = o.integer("moe_top_k", 2);
     auto top = [&]() {
-#ifdef TEI_TORCH_CUDA_KERNELS
+#ifdef INFINITY_TORCH_CUDA_KERNELS
       if (exact_moe && h.is_cuda() && probabilities.size(-1) == 8) {
         auto selected = nomic_router_topk8(probabilities, top_k);
         return std::make_tuple(selected.first, selected.second);
@@ -638,7 +638,7 @@ struct Encoder final : Model {
     const auto count = o.integer("num_experts", 0), width = o.integer("n_inner", 0);
     auto first = w(p + "mlp.experts.mlp.w1").view({count, width, hidden});
     auto second = w(p + "mlp.experts.mlp.w2").view({count, width, hidden});
-#ifdef TEI_TORCH_CUDA_KERNELS
+#ifdef INFINITY_TORCH_CUDA_KERNELS
     if (device_routing_ready() && h.size(0) > 0 && h.size(0) <= kNomicGroupedMaxTokens) {
       return nomic_grouped_experts(h, first, second, experts, scores, nomic_split_policy) +
              w(p + "mlp.experts.bias");
@@ -652,7 +652,7 @@ struct Encoder final : Model {
       auto rows = matches.select(1, 0), slots = matches.select(1, 1);
       auto expert_hidden = at::linear(h.index_select(0, rows), first[e]);
       at::Tensor expert_act;
-#ifdef TEI_TORCH_CUDA_KERNELS
+#ifdef INFINITY_TORCH_CUDA_KERNELS
       if (expert_hidden.is_cuda() && activation == "gelu")
         expert_act = encoder_gelu(expert_hidden);
       else
@@ -696,7 +696,7 @@ struct Encoder final : Model {
       if (fa4.defined())
         return fa4;
     }
-#ifdef TEI_TORCH_CUDA_KERNELS
+#ifdef INFINITY_TORCH_CUDA_KERNELS
     if (exact_alibi64)
       return torch_flash_alibi64(q,
                                  k,
@@ -734,7 +734,7 @@ struct Encoder final : Model {
   /// norms. An ordinary-linear session is local to this call so all its
   /// projections share one stream/context policy.
   at::Tensor forward(const PackedInput& input) const override {
-#ifdef TEI_TORCH_CUDA_KERNELS
+#ifdef INFINITY_TORCH_CUDA_KERNELS
     // The guard belongs to this synchronous call, never to a copyable session.
     c10::cuda::OptionalCUDAGuard ordinary_guard;
     if (ordinary_executor)
@@ -748,7 +748,7 @@ struct Encoder final : Model {
     at::Tensor h, modern_residual, modern_normalized;
     if (family == Family::Modern)
       h = norm(at::embedding(w("embeddings.tok_embeddings.weight"), input.ids), "embeddings.norm");
-#ifdef TEI_TORCH_CUDA_KERNELS
+#ifdef INFINITY_TORCH_CUDA_KERNELS
     else if (exact_distil_flash && !has("embeddings.token_type_embeddings.weight"))
       h = distil_embedding_norm(w("embeddings.word_embeddings.weight"),
                                 w("embeddings.position_embeddings.weight"),
@@ -769,7 +769,7 @@ struct Encoder final : Model {
         h = residual_norm(h, types, "emb_ln");
       } else {
         bool embedding_norm_done = false;
-#ifdef TEI_TORCH_CUDA_KERNELS
+#ifdef INFINITY_TORCH_CUDA_KERNELS
         if (family == Family::Nomic && !exact_moe && types.defined() && h.is_cuda() &&
             (h.scalar_type() == at::kHalf || h.scalar_type() == at::kBFloat16)) {
           // Candle keeps the residual sum in Float until normalization finishes.
@@ -825,7 +825,7 @@ struct Encoder final : Model {
     bool scaled = family == Family::Nomic && local_cos.defined() &&
                   input.max_sequence > o.integer("max_trained_positions", 2048);
     at::Tensor cos_global, sin_global, cos_local, sin_local;
-#ifdef TEI_TORCH_CUDA_KERNELS
+#ifdef INFINITY_TORCH_CUDA_KERNELS
     const bool indexed_modern =
         family == Family::Modern && h.is_cuda() && input.positions.device() == h.device() &&
         input.positions.scalar_type() == at::kLong && input.positions.is_contiguous() &&
@@ -851,7 +851,7 @@ struct Encoder final : Model {
       // contain only the latest MLP branch. Scratch normalization must
       // consume that sum before reuse.
       auto source = h;
-#ifdef TEI_TORCH_CUDA_KERNELS
+#ifdef INFINITY_TORCH_CUDA_KERNELS
       if (exact_norm && family == Family::Modern && h.is_cuda()) {
         if (i == 0) {
           modern_residual = h;
@@ -881,7 +881,7 @@ struct Encoder final : Model {
       if (family == Family::Modern || family == Family::Nomic || family == Family::Gte) {
         const auto& c = local || scaled ? cos_local : cos_global;
         const auto& s = local || scaled ? sin_local : sin_global;
-#ifdef TEI_TORCH_CUDA_KERNELS
+#ifdef INFINITY_TORCH_CUDA_KERNELS
         if (q.is_cuda()) {
           if (family == Family::Modern) {
             // Q/K occupy distinct head ranges in this fresh linear QKV output.
@@ -931,7 +931,7 @@ struct Encoder final : Model {
       auto residual = h;
       auto projected = linear(a, output, &ordinary_session);
       if (family == Family::Modern) {
-#ifdef TEI_TORCH_CUDA_KERNELS
+#ifdef INFINITY_TORCH_CUDA_KERNELS
         if (exact_norm && h.is_cuda()) {
           auto normalized = encoder_layer_norm_update_residual_scratch(
               projected, w(p + "mlp_norm.weight"), eps, modern_residual, modern_normalized);
@@ -965,7 +965,7 @@ struct Encoder final : Model {
       }
     }
     if (family == Family::Modern) {
-#ifdef TEI_TORCH_CUDA_KERNELS
+#ifdef INFINITY_TORCH_CUDA_KERNELS
       if (exact_norm && h.is_cuda())
         // Merge the outstanding branch with the retained residual for final statistics; returning h
         // alone here would omit accumulated model state.
@@ -1037,7 +1037,7 @@ struct Encoder final : Model {
   at::Tensor sequence_readout(const PackedInput& input, at::Tensor h) const {
     std::vector<at::Tensor> rows;
     const auto pool = family == Family::Modern ? o.string("classifier_pooling", "cls") : "cls";
-#ifdef TEI_TORCH_CUDA_KERNELS
+#ifdef INFINITY_TORCH_CUDA_KERNELS
     if (family == Family::Modern && pool == "mean" && h.is_cuda() && h.is_contiguous() &&
         (h.scalar_type() == at::kHalf || h.scalar_type() == at::kBFloat16) && hidden > 0 &&
         hidden <= std::numeric_limits<uint32_t>::max() && input.batch > 0 && input.batch <= 65535 &&
@@ -1314,7 +1314,7 @@ struct Deberta final : Model {
   }
 
   at::Tensor norm(const at::Tensor& x, const std::string& n) const {
-#ifdef TEI_TORCH_CUDA_KERNELS
+#ifdef INFINITY_TORCH_CUDA_KERNELS
     if (exact_cuda_norm())
       return encoder_layer_norm_only(
           x, w(n + ".weight"), o.real("layer_norm_eps", 1e-7), at::Tensor(), w(n + ".bias"), true);
@@ -1325,7 +1325,7 @@ struct Deberta final : Model {
 
   at::Tensor
   residual_norm(const at::Tensor& x, const at::Tensor& residual, const std::string& n) const {
-#ifdef TEI_TORCH_CUDA_KERNELS
+#ifdef INFINITY_TORCH_CUDA_KERNELS
     if (exact_cuda_norm())
       return encoder_layer_norm_only(
           x, w(n + ".weight"), o.real("layer_norm_eps", 1e-7), residual, w(n + ".bias"), true);
@@ -1505,7 +1505,7 @@ struct Deberta final : Model {
           bytes, o.integer("_attention_bias_max_bytes", default_attention_bias_max_bytes));
       fa4_buckets = signed_buckets(input.max_sequence);
     } else
-#ifdef TEI_TORCH_CUDA_KERNELS
+#ifdef INFINITY_TORCH_CUDA_KERNELS
         if (device.is_cuda() && (dtype == at::kHalf || dtype == at::kBFloat16))
       shared_indices = cached_buckets(input.max_sequence);
     else
@@ -1562,7 +1562,7 @@ struct Deberta final : Model {
           content_key = at::matmul(q.transpose(0, 1), position_key[layer]) / scale;
         if (position_query[layer].defined())
           position_content = at::matmul(k.transpose(0, 1), position_query[layer]) / scale;
-#ifdef TEI_TORCH_CUDA_KERNELS
+#ifdef INFINITY_TORCH_CUDA_KERNELS
         if (shared_indices.defined()) {
           packed_bias_fill(packed_bias,
                            content_key,

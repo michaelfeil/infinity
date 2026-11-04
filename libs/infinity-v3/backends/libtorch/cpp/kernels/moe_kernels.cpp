@@ -4,7 +4,7 @@
 /// Validates layouts and supplies on-device routing/workspace buffers.
 
 #include "kernels/moe_kernels.h"
-#ifdef TEI_TORCH_MOE_KERNELS
+#ifdef INFINITY_TORCH_MOE_KERNELS
 #include <ATen/cuda/CUDAContext.h>
 #include <c10/cuda/CUDAGuard.h>
 #include <climits>
@@ -48,7 +48,7 @@ extern "C" int gemma4_moe_forward_bf16(const float*,
                                        void*,
                                        size_t,
                                        cudaStream_t);
-#ifdef TEI_TORCH_MOE_HOPPER
+#ifdef INFINITY_TORCH_MOE_HOPPER
 extern "C" size_t hopper_qwen3_moe_workspace_bytes(int, int, int);
 extern "C" size_t hopper_qwen35_moe_workspace_bytes(int, int, int);
 extern "C" size_t hopper_gemma4_moe_workspace_bytes(int, int, int);
@@ -92,7 +92,7 @@ extern "C" int hopper_gemma4_moe_forward_bf16(const float*,
 #endif
 namespace infinity {
 bool native_hopper_moe_available(const c10::Device& device) {
-#if defined(TEI_TORCH_MOE_KERNELS) && defined(TEI_TORCH_MOE_HOPPER)
+#if defined(INFINITY_TORCH_MOE_KERNELS) && defined(INFINITY_TORCH_MOE_HOPPER)
   if (!device.is_cuda())
     return false;
   auto props = device.has_index() ? at::cuda::getDeviceProperties(device.index())
@@ -111,7 +111,7 @@ at::Tensor routed_moe_cuda(const at::Tensor& x,
                            const at::Tensor& down,
                            bool renormalize,
                            const at::Tensor& scales) {
-#ifdef TEI_TORCH_MOE_KERNELS
+#ifdef INFINITY_TORCH_MOE_KERNELS
   if (!x.is_cuda() || x.scalar_type() != at::kBFloat16 || x.dim() != 2 || x.size(0) == 0 ||
       gu.dim() != 3 || down.dim() != 3 || logits.dim() != 2)
     return {};
@@ -142,7 +142,7 @@ at::Tensor routed_moe_cuda(const at::Tensor& x,
                                 : (e == 128 ? qwen3_moe_workspace_bytes(t, h, i)
                                             : qwen35_moe_workspace_bytes(t, h, i));
   bool hopper = false;
-#ifdef TEI_TORCH_MOE_HOPPER
+#ifdef INFINITY_TORCH_MOE_HOPPER
   hopper = props->major == 9;
   if (hopper)
     bytes = scales.defined() ? hopper_gemma4_moe_workspace_bytes(t, h, i)
@@ -154,7 +154,7 @@ at::Tensor routed_moe_cuda(const at::Tensor& x,
   auto out = at::empty_like(x);
   auto stream = at::cuda::getCurrentCUDAStream(x.get_device()).stream();
   int status;
-#ifdef TEI_TORCH_MOE_HOPPER
+#ifdef INFINITY_TORCH_MOE_HOPPER
   if (hopper) {
     if (scales.defined())
       status = hopper_gemma4_moe_forward_bf16(logits.data_ptr<float>(),

@@ -69,7 +69,7 @@ fn config_file(path: &std::path::Path, name: &str, value: serde_json::Value) {
 fn fixture_with_heads(kind: &str, noncausal: bool, query_heads: usize) -> Fixture {
     static NEXT: AtomicU64 = AtomicU64::new(0);
     let path = std::env::temp_dir().join(format!(
-        "tei-decision-{}-{}",
+        "infinity-decision-{}-{}",
         std::process::id(),
         NEXT.fetch_add(1, Ordering::Relaxed)
     ));

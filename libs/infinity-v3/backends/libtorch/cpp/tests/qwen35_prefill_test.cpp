@@ -110,7 +110,7 @@ int main() {
       continue;
     c10::cuda::CUDAGuard guard(index);
     bool supported = infinity::flashinfer_gdn_available(c10::Device(at::kCUDA, index));
-#ifdef TEI_TORCH_GDN_HOPPER
+#ifdef INFINITY_TORCH_GDN_HOPPER
     supported = supported || device.major == 9;
 #endif
     if (!supported)
@@ -169,7 +169,7 @@ int main() {
             TORCH_CHECK(at::equal(initial, immutable), "GDN resume mutated shared prefix states");
           } else if (!infinity::flashinfer_gdn_prefill(
                          values, qk, gates, input, output, kh, heads, &state)) {
-#ifdef TEI_TORCH_GDN_HOPPER
+#ifdef INFINITY_TORCH_GDN_HOPPER
             infinity::qwen35_prefill_cuda(values, qk, gates, input, output, kh, heads, &state);
 #else
             TORCH_CHECK(false, "Registered FlashInfer GDN bundle was unavailable");

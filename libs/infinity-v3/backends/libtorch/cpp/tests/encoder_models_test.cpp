@@ -4,7 +4,7 @@
 #include "helpers/modern_cpu_math.h"
 #include "helpers/fp8_linear.h"
 #include "batching/cuda_graph.h"
-#ifdef TEI_TORCH_CUDA_KERNELS
+#ifdef INFINITY_TORCH_CUDA_KERNELS
 #include <ATen/cuda/CUDAContext.h>
 #endif
 #include <ATen/Parallel.h>
@@ -171,7 +171,7 @@ infinity::Weights weights(const std::string& type, c10::Device d, at::ScalarType
 void fp8_encoder(const infinity::Options& options,
                  const infinity::Weights& checkpoint,
                  const infinity::PackedInput& input) {
-#ifdef TEI_TORCH_CUDA_KERNELS
+#ifdef INFINITY_TORCH_CUDA_KERNELS
   const auto device = input.ids.device();
   if (!infinity::fp8_device_supported(device))
     return;

@@ -6,7 +6,7 @@
 #include "helpers/image_feature_cache.h"
 #include <iostream>
 #include <cstring>
-#ifdef TEI_TORCH_CUDA_KERNELS
+#ifdef INFINITY_TORCH_CUDA_KERNELS
 #include "kernels/gemma_score.h"
 #include "kernels/qwen35_kernels.h"
 #include <ATen/cuda/CUDAContext.h>
@@ -119,7 +119,7 @@ void feature_cache_bounds() {
   TORCH_CHECK(entry_bound.usage() == std::make_pair(size_t(32), size_t(32)),
               "Default image cache32entry bound failed");
 }
-#ifdef TEI_TORCH_CUDA_KERNELS
+#ifdef INFINITY_TORCH_CUDA_KERNELS
 void publisher_bf16_score_readout(const c10::Device& device) {
   c10::cuda::CUDAGuard guard(device);
   auto exact = [](const at::Tensor& a, const at::Tensor& b) {
@@ -425,7 +425,7 @@ PackedInput input(const std::vector<int64_t>& ids, const std::vector<int32_t>& o
           static_cast<int64_t>(offsets.size() - 1),
           maximum};
 }
-#ifdef TEI_TORCH_CUDA_KERNELS
+#ifdef INFINITY_TORCH_CUDA_KERNELS
 void dynamic_fp8(const c10::Device& device, const std::string& family) {
   if (!fp8_device_supported(device))
     return;
@@ -601,7 +601,7 @@ void embedding_layer_key_aliases() {
               "Omitted head default conflicts with explicit alias");
 }
 
-#ifdef TEI_TORCH_CUDA_KERNELS
+#ifdef INFINITY_TORCH_CUDA_KERNELS
 // Exercise the actual local/global head widths and strided packed QKV layouts.
 // Unary/gated activation and rotary must retain their low-precision stages.
 void gemma_low_precision_pointwise(c10::Device device) {
@@ -692,7 +692,7 @@ void gemma_low_precision_pointwise(c10::Device device) {
 int main(int argc, char** argv) {
   embedding_layer_key_aliases();
   feature_cache_bounds();
-#ifdef TEI_TORCH_CUDA_KERNELS
+#ifdef INFINITY_TORCH_CUDA_KERNELS
   if (argc > 1) {
     gemma_low_precision_pointwise(c10::Device(argv[1]));
     for (const auto* family : {"gemma3", "gemma3_text", "gemma4", "embedding_gemma2"})

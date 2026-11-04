@@ -16,7 +16,7 @@
 #include <limits>
 #include <mutex>
 #include <vector>
-#ifdef TEI_TORCH_CUDA_KERNELS
+#ifdef INFINITY_TORCH_CUDA_KERNELS
 #include <ATen/cuda/CUDAEvent.h>
 #include <c10/cuda/CUDAGuard.h>
 #include <c10/cuda/CUDAStream.h>
@@ -109,7 +109,7 @@ class OutputLease {
                              "Native output staging memory budget is occupied by pending results");
   }
 
-#ifdef TEI_TORCH_CUDA_KERNELS
+#ifdef INFINITY_TORCH_CUDA_KERNELS
   c10::cuda::CUDAStream stream;
   at::cuda::CUDAEvent ready;
   bool recorded = false;
@@ -120,7 +120,7 @@ public:
 
   OutputLease(std::shared_ptr<OutputPool> owner, at::Device dev, size_t count)
       : pool(std::move(owner)), device(dev),
-#ifdef TEI_TORCH_CUDA_KERNELS
+#ifdef INFINITY_TORCH_CUDA_KERNELS
         stream(c10::cuda::getCurrentCUDAStream(dev.index())),
 #endif
         size(count) {
@@ -134,7 +134,7 @@ public:
   }
 
   ~OutputLease() {
-#ifdef TEI_TORCH_CUDA_KERNELS
+#ifdef INFINITY_TORCH_CUDA_KERNELS
     // Also drain partially submitted work on errors, before releasing pins.
     try {
       if (!finished.load(std::memory_order_acquire)) {
@@ -149,7 +149,7 @@ public:
     slot->gpu.clear();
     {
       std::lock_guard lock(pool->mutex);
-#ifdef TEI_TORCH_CUDA_KERNELS
+#ifdef INFINITY_TORCH_CUDA_KERNELS
       if (!recorded) {
         // A failed submission has no result to preserve. Do not cache its
         // partially allocated buffers after draining any submitted transfers.
@@ -229,7 +229,7 @@ public:
 
   /// Record completion after all submission work on the lease stream has been enqueued.
   void record() {
-#ifdef TEI_TORCH_CUDA_KERNELS
+#ifdef INFINITY_TORCH_CUDA_KERNELS
     // H2D, graph replay and D2H use this same stream. The next replay cannot
     // overwrite graph inputs/outputs before this submission has consumed them.
     ready.record(stream);
@@ -239,7 +239,7 @@ public:
 
   /// Wait for recorded CUDA completion and borrow the host result until this lease is destroyed.
   const float* wait() {
-#ifdef TEI_TORCH_CUDA_KERNELS
+#ifdef INFINITY_TORCH_CUDA_KERNELS
     c10::cuda::CUDAGuard guard(stream.device());
     TORCH_CHECK(recorded, "Output event was not recorded");
     ready.synchronize();

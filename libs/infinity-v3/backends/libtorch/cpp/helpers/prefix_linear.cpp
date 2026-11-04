@@ -6,7 +6,7 @@
 #include <array>
 #include <map>
 #include <algorithm>
-#ifdef TEI_TORCH_CUDA_KERNELS
+#ifdef INFINITY_TORCH_CUDA_KERNELS
 #include <ATen/cuda/CUDAContext.h>
 #include <c10/cuda/CUDAGuard.h>
 #include <cublasLt.h>
@@ -15,7 +15,7 @@
 namespace infinity {
 /// Retained cuBLASLt plans and lookup state for suffix-only linear execution.
 struct PrefixLinearPlans::Impl {
-#ifdef TEI_TORCH_CUDA_KERNELS
+#ifdef INFINITY_TORCH_CUDA_KERNELS
   /// Owns cuBLASLt descriptors and algorithm metadata for one cached linear layout.
   struct Plan {
     cublasLtMatmulDesc_t operation{};
@@ -57,7 +57,7 @@ at::Tensor PrefixLinearPlans::forward(const at::Tensor& x,
                                       const at::Tensor& bias,
                                       int64_t logical_rows,
                                       bool float32) {
-#ifdef TEI_TORCH_CUDA_KERNELS
+#ifdef INFINITY_TORCH_CUDA_KERNELS
   const bool eligible =
       x.is_cuda() && x.dim() == 2 && matrix.dim() == 2 && x.is_contiguous() &&
       matrix.is_contiguous() && x.size(0) > 0 && logical_rows > x.size(0) &&

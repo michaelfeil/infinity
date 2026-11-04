@@ -17,7 +17,7 @@
 #ifdef __linux__
 #include <sys/vfs.h>
 #endif
-#ifdef TEI_TORCH_CUDA_KERNELS
+#ifdef INFINITY_TORCH_CUDA_KERNELS
 #include <cuda_runtime_api.h>
 #include <c10/cuda/CUDAGuard.h>
 #endif
@@ -63,7 +63,7 @@ struct Drain {
       operations->cudaDeviceSynchronize();
   }
 };
-#ifdef TEI_TORCH_CUDA_KERNELS
+#ifdef INFINITY_TORCH_CUDA_KERNELS
 int gpu_device(int n) {
   return cudaSetDevice(n);
 }
@@ -170,7 +170,7 @@ void read_safetensors(
     int fd,
     uint64_t data_start,
     uint64_t data_length,
-    const TeiWeight* weights,
+    const InfinityTorchWeight* weights,
     size_t count,
     const at::Device& device,
     size_t threads,
@@ -226,7 +226,7 @@ void read_safetensors(
   bool cuda = device.is_cuda();
   const auto* ops = &cpu_ops;
   int device_id = 0;
-#ifdef TEI_TORCH_CUDA_KERNELS
+#ifdef INFINITY_TORCH_CUDA_KERNELS
   std::optional<c10::cuda::CUDAGuard> guard;
   if (cuda) {
     guard.emplace(device);

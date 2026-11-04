@@ -2,7 +2,7 @@
 // Ports the typed head contracts in Candle models/laya.rs and models/clef.rs.
 #include "models/decision_models.h"
 #include "helpers/dense_mlp.h"
-#ifdef TEI_TORCH_CUDA_KERNELS
+#ifdef INFINITY_TORCH_CUDA_KERNELS
 #include "kernels/laya_features.h"
 #endif
 #include <ATen/ops/_flash_attention_forward.h>
@@ -477,7 +477,7 @@ struct LayaHead final : DecisionHead {
     // sequence. Marker offsets partition the resulting logits back into independent requests.
     auto selected = h.index_select(0, indices.narrow(0, tokens, markers));
     auto all_logits = scorer_mlp.forward(scorer_norm(selected)).flatten().to(at::kFloat);
-#ifdef TEI_TORCH_CUDA_KERNELS
+#ifdef INFINITY_TORCH_CUDA_KERNELS
     auto features =
         laya_action_features(all_logits, indices.narrow(0, tokens + markers, marker_offsets.size()))
             .to(hidden.scalar_type());

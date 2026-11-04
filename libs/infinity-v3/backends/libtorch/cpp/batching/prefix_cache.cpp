@@ -18,7 +18,7 @@
 #include <ATen/ops/_efficient_attention_forward.h>
 #include <ATen/ops/_cudnn_attention_forward.h>
 #include <ATen/ops/_foreach_copy.h>
-#ifdef TEI_TORCH_CUDA_KERNELS
+#ifdef INFINITY_TORCH_CUDA_KERNELS
 #include "kernels/torch_flash_fma.h"
 #include "kernels/prefix_input.h"
 #include <ATen/cuda/CUDAEvent.h>
@@ -316,7 +316,7 @@ at::Tensor prefix_attention(const at::Tensor& q,
       }
       return outputs.size() == 1 ? outputs[0] : at::cat(outputs, 0);
     }
-#ifdef TEI_TORCH_CUDA_KERNELS
+#ifdef INFINITY_TORCH_CUDA_KERNELS
     if (!exact && input.max_sequence == 1 && left < 0 && right < 0 &&
         (q.size(2) == 64 || q.size(2) == 128) &&
         torch_flash_fma_supported(q, kv.key, kv.value, true, left, right))
@@ -637,7 +637,7 @@ void PrefixCache::clear() {
 }
 
 at::Tensor PrefixCache::cumulative(const std::vector<int32_t>& offsets, const c10::Device& device) {
-#ifdef TEI_TORCH_CUDA_KERNELS
+#ifdef INFINITY_TORCH_CUDA_KERNELS
   // Keep at most four immutable shapes, each no larger than the default graph
   // token bound. Larger requests retain the ordinary per-request allocation.
   if (device.is_cuda() && offsets.size() <= 4097) {
@@ -992,7 +992,7 @@ at::Tensor PrefixCache::run(const Model& model,
         std::vector<at::Tensor> outputs;
         outputs.reserve(complete.size());
         for (auto& entry : complete) {
-#ifdef TEI_TORCH_CUDA_KERNELS
+#ifdef INFINITY_TORCH_CUDA_KERNELS
           if (original.ids.is_cuda())
             c10::cuda::CUDACachingAllocator::recordStream(
                 entry->output.storage().data_ptr(),
@@ -1026,7 +1026,7 @@ at::Tensor PrefixCache::run(const Model& model,
     context.linear = linear.get();
     context.math_policy = policy;
     bool pack_inputs = false;
-#ifdef TEI_TORCH_CUDA_KERNELS
+#ifdef INFINITY_TORCH_CUDA_KERNELS
     pack_inputs = original.batch > 1 &&
                   prefix_inputs_supported(original.ids, original.positions, original.types);
 #endif
@@ -1049,7 +1049,7 @@ at::Tensor PrefixCache::run(const Model& model,
         source->used = ++clock;
       } else
         ++counters.misses;
-#ifdef TEI_TORCH_CUDA_KERNELS
+#ifdef INFINITY_TORCH_CUDA_KERNELS
       if (source && original.ids.is_cuda()) {
         auto stream = at::cuda::getCurrentCUDAStream(original.ids.get_device());
         auto retain = [&](const at::Tensor& tensor) {
@@ -1218,7 +1218,7 @@ at::Tensor PrefixCache::run(const Model& model,
     // Cold capture keeps the caller's original metadata and device buffers.
     // Only a real hit needs packed suffix rows and a new Radix mapping.
     if (std::any_of(context.hits.begin(), context.hits.end(), [](auto hit) { return hit != 0; })) {
-#ifdef TEI_TORCH_CUDA_KERNELS
+#ifdef INFINITY_TORCH_CUDA_KERNELS
       if (pack_inputs) {
         auto packed = pack_prefix_inputs(original.ids,
                                          original.positions,
@@ -1294,7 +1294,7 @@ at::Tensor PrefixCache::run(const Model& model,
                       ? has_hit ? graphs->forward(model, input, operation)
                                 : graphs->forward(model, original, operation, &policy, &context)
                       : run(input);
-#ifdef TEI_TORCH_CUDA_KERNELS
+#ifdef INFINITY_TORCH_CUDA_KERNELS
     std::shared_ptr<at::cuda::CUDAEvent> event;
     // Native engine submission fences already cover snapshot writes and result
     // staging. Independent caches still need per-publication completion events.
@@ -1308,7 +1308,7 @@ at::Tensor PrefixCache::run(const Model& model,
           int64_t(entry->layers.size()) == model.prefix_layers()) {
         budget->reserved_bytes -= entry->reserved_bytes;
         entry->reserved_bytes = 0;
-#ifdef TEI_TORCH_CUDA_KERNELS
+#ifdef INFINITY_TORCH_CUDA_KERNELS
         if (event) {
           const auto producer = at::cuda::getCurrentCUDAStream(input.ids.get_device());
           // All snapshot writes and the event are queued before publication.
