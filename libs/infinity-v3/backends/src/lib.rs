@@ -354,13 +354,16 @@ impl Backend {
     }
 
     #[instrument(skip(self))]
-    pub async fn warmup(
-        &self,
-        max_input_length: usize,
-        max_batch_tokens: usize,
-        max_batch_requests: Option<usize>,
-    ) -> Result<(), BackendError> {
-        let warmup_tokens = max_batch_tokens;
+    pub async fn warmup(&self, limits: ServingLimits) -> Result<(), BackendError> {
+        let ServingLimits {
+            max_input_length,
+            max_batch_tokens: warmup_tokens,
+            max_batch_requests,
+        } = limits;
+        let max_batch_requests = match (max_batch_requests, self.max_batch_size) {
+            (Some(configured), Some(capacity)) => Some(configured.min(capacity)),
+            (configured, capacity) => configured.or(capacity),
+        };
 
         let mut input_ids = Vec::with_capacity(warmup_tokens);
         let mut token_type_ids = Vec::with_capacity(warmup_tokens);
@@ -1480,6 +1483,7 @@ mod backend_selection_tests {
         )
         .await
         .unwrap();
+        backend.warmup(limits).await.unwrap();
         backend.shutdown().await;
     }
 

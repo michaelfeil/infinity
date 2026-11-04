@@ -50,17 +50,30 @@ class _GuardedResponse:
 class ThreadedExecutor:
     """Own one persistent Python thread per backend replica.
 
+    The factory initializes on that thread and completes the startup envelope.
     ``submit`` only schedules work and returns immediately. Plugin submissions
     are serialized on the pool thread, and plugin exceptions complete the Rust
     response envelope instead of escaping the pool future.
     """
 
-    def __init__(self, executor: Any) -> None:
-        self._executor = executor
+    def __init__(self, factory: Any, config: dict[str, Any], ready: Any) -> None:
+        self._executor = None
         self._pool = ThreadPoolExecutor(
             max_workers=1, thread_name_prefix="infinity-python"
         )
         self._state = _ExecutorState()
+        try:
+            self._pool.submit(self._initialize, factory, config, ready)
+        except BaseException:
+            self._pool.shutdown(wait=True, cancel_futures=True)
+            raise
+
+    def _initialize(self, factory: Any, config: dict[str, Any], ready: Any) -> None:
+        try:
+            self._executor = factory(**config)
+            ready.set_result(None)
+        except BaseException as error:
+            ready.set_exception(error)
 
     def submit(self, route: str, response: Any, payload: dict[str, Any]) -> None:
         guarded = _GuardedResponse(response, self._state)
@@ -89,7 +102,7 @@ class ThreadedExecutor:
         with self._state.lock:
             if self._state.closed:
                 return False
-            future = self._pool.submit(self._executor.healthy)
+            future = self._pool.submit(lambda: self._executor.healthy())
         return bool(future.result())
 
     def close(self) -> None:
@@ -97,10 +110,15 @@ class ThreadedExecutor:
             if self._state.closed:
                 return
             self._state.closed = True
-            close = self._pool.submit(self._executor.close)
+            close = self._pool.submit(self._close)
         # Close is the final task, after accepted submissions and on their
         # execution thread. Python's waits release the GIL.
         try:
             close.result()
         finally:
             self._pool.shutdown(wait=True, cancel_futures=False)
+
+    def _close(self) -> None:
+        executor, self._executor = self._executor, None
+        if executor is not None:
+            executor.close()

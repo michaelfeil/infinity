@@ -155,8 +155,13 @@ explicit ordinals must be visible, and each replica receives its own
 
 ## Lifecycle and threading
 
-- Backend startup and capability discovery are synchronous. The plugin factory
-  loads the model before the backend returns; startup errors surface directly.
+- Capability discovery is synchronous. Each factory runs on its replica's
+  persistent Python executor thread, also used for inference, health, and cleanup.
+  Rust waits on a startup envelope with the GIL released; startup errors surface
+  directly. Replicas can initialize concurrently, and the server waits for all
+  factories and warmups before serving. Factory arguments, including
+  `serving_limits`, are unchanged. Factories remain synchronous Python functions;
+  pure Python initialization still shares the GIL.
 - `infinity_v3_python.threaded.ThreadedExecutor` wraps the plugin with one
   persistent `ThreadPoolExecutor(max_workers=1)` per backend replica. It owns
   the plugin's single execution thread.
