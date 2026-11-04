@@ -2,14 +2,14 @@
 // Translate native packed buffers to FlashInfer's fresh and cached GDN contract.
 #include "flashinfer_gdn.h"
 #include "models/model.h"
-#ifdef TEI_FLASHINFER_GDN
+#ifdef INFINITY_FLASHINFER_GDN
 #include "vendor/infinity_gdn/bridge.h"
 #include <ATen/cuda/CUDAContext.h>
 #include <c10/cuda/CUDAGuard.h>
 #endif
 namespace infinity {
 bool flashinfer_gdn_available(const c10::Device& device) {
-#ifdef TEI_FLASHINFER_GDN
+#ifdef INFINITY_FLASHINFER_GDN
   return device.is_cuda() &&
          infinity_gdn_supported_v1(at::cuda::getDeviceProperties(device.index())->major);
 #else
@@ -26,7 +26,7 @@ static bool run_gdn(const at::Tensor& values,
                     int64_t vh,
                     at::Tensor* final_state,
                     const at::Tensor& initial) {
-#ifdef TEI_FLASHINFER_GDN
+#ifdef INFINITY_FLASHINFER_GDN
   if (!values.is_cuda() ||
       (values.scalar_type() != at::kHalf && values.scalar_type() != at::kBFloat16))
     return false;

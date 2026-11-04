@@ -10,7 +10,7 @@
 #include <unistd.h>
 #include <vector>
 
-#ifdef TEI_TEST_PREAD_WRAPPER
+#ifdef INFINITY_TEST_PREAD_WRAPPER
 namespace {
 std::atomic<int> read_mode{0}; // 1 buffered shorts, 2 partial+EIO, 3 direct shorts, 4 fallback
 std::atomic<size_t> read_calls{0}, short_reads{0};
@@ -157,7 +157,7 @@ int main() {
         rejected = true;
       }
       require(rejected);
-#ifdef TEI_TEST_PREAD_WRAPPER
+#ifdef INFINITY_TEST_PREAD_WRAPPER
       // Force partial success and EINTR in real file reads, preserving
       // exact bytes through the deferred-copy path across many blocks.
       read_mode = 1;

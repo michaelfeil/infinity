@@ -45,5 +45,5 @@ and adaptation notice are in `backends/libtorch/cpp/vendor/transformers_gdn/`.
 
 Hopper Gated DeltaNet prefill uses FlashInfer 0.6.13 at revision
 `57ba7eeb7ea3003a2d6ad5d9a057c4f952709bac` (Apache-2.0). Its LICENSE, NOTICE,
-and third-party license texts are installed under `share/licenses/tei_torch/flashinfer/`.
+and third-party license texts are installed under `share/licenses/infinity_torch/flashinfer/`.
 Its device launcher is locally patched to initialize shared-memory opt-in on each CUDA device/context.

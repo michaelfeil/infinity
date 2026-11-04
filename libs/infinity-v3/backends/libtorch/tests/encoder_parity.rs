@@ -25,7 +25,7 @@ fn fixture(family: &str) -> Fixture {
     };
     static NEXT: AtomicU64 = AtomicU64::new(0);
     let path = std::env::temp_dir().join(format!(
-        "tei-encoder-{}-{}",
+        "infinity-encoder-{}-{}",
         std::process::id(),
         NEXT.fetch_add(1, Ordering::Relaxed)
     ));

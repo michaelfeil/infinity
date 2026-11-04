@@ -1,6 +1,6 @@
 // Copyright Infinity Core Contributors. Licensed under the repository LICENSE.
 #include "helpers/dense_mlp.h"
-#ifdef TEI_TORCH_CUDA_KERNELS
+#ifdef INFINITY_TORCH_CUDA_KERNELS
 #include "kernels/fast_kernels.h"
 #endif
 #include <c10/core/InferenceMode.h>
@@ -238,7 +238,7 @@ void check(const c10::Device& device, at::ScalarType dtype) {
   auto before = *calls;
   check_equal(copied.forward(x.to(at::kFloat)), expected_owned);
   TORCH_CHECK(failed && *calls == before + 2, "Failed preparation replaced a live method");
-#ifdef TEI_TORCH_CUDA_KERNELS
+#ifdef INFINITY_TORCH_CUDA_KERNELS
   if (device.is_cuda()) {
     // Explicit composition retains the projection's model-dtype rounding, bias position,
     // activation recipe and output transforms for comparison with the fused candidate.

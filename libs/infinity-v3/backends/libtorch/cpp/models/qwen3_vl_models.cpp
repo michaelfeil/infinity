@@ -39,7 +39,7 @@ at::Tensor Qwen3VL::linear(const at::Tensor& x, const std::string& name) const {
 /// Normalize the final vision feature dimension with affine scale/bias and epsilon 1e-6; use the
 /// qualified reference reduction for exact vision.
 at::Tensor Qwen3VL::ln(const at::Tensor& x, const std::string& name) const {
-#ifdef TEI_TORCH_CUDA_KERNELS
+#ifdef INFINITY_TORCH_CUDA_KERNELS
   if (exact_vision)
     return qwen35_vision_layer_norm(x.contiguous(), w(name + ".weight"), w(name + ".bias"), 1e-6f);
 #endif
@@ -123,7 +123,7 @@ Qwen3VL::vision(const std::vector<ImageInput>& images) const {
              at::floor_divide(ix, merge * width).remainder(height / merge) * merge;
     auto table = w("pos_embed.weight");
     at::Tensor corners;
-#ifdef TEI_TORCH_CUDA_KERNELS
+#ifdef INFINITY_TORCH_CUDA_KERNELS
     if (device.is_cuda())
       corners = vision_position_corners(table.contiguous(), side, frames, height, width, merge);
     else
@@ -186,7 +186,7 @@ Qwen3VL::vision(const std::vector<ImageInput>& images) const {
     auto normalized = ln(states, p + "norm1");
     auto qkv = linear(normalized, p + "attn.qkv").view({states.size(0), 3, heads, dim});
     at::Tensor q, k, v;
-#ifdef TEI_TORCH_CUDA_KERNELS
+#ifdef INFINITY_TORCH_CUDA_KERNELS
     if (device.is_cuda()) {
       // Preserve the attention provider's operand precision while fusing FP32 rotation and casts.
       auto packed = vision_rotary_qkv(
@@ -341,7 +341,7 @@ void Qwen3VL::ready() {
   TORCH_CHECK(!cfg.boolean("_multi_vector", false) || patch_kernel.dim() == 5,
               "Invalid Qwen3-VL patch kernel");
   w("pos_embed.weight");
-#ifdef TEI_TORCH_CUDA_KERNELS
+#ifdef INFINITY_TORCH_CUDA_KERNELS
   exact_vision =
       device.is_cuda() && dtype == at::kHalf && cfg.string("model_type").starts_with("qwen3_5") &&
       patch_kernel.dim() == 5 && patch_kernel.size(0) == hidden && patch_kernel.size(1) == 3 &&
@@ -366,7 +366,7 @@ void Qwen3VL::ready() {
   auto bind_merger = [&](const std::string& p) {
     const bool exact = exact_vision, multi_vector = cfg.boolean("_multi_vector", false);
     auto activation = MlpActivationRecipe::numerical([exact, multi_vector](const at::Tensor& rows) {
-#ifdef TEI_TORCH_CUDA_KERNELS
+#ifdef INFINITY_TORCH_CUDA_KERNELS
       if (exact)
         return encoder_gelu(rows);
 #endif
@@ -389,7 +389,7 @@ void Qwen3VL::ready() {
     const auto act = cfg.string("vision_config.hidden_act", "gelu_pytorch_tanh");
     const bool exact = exact_vision;
     auto activation = MlpActivationRecipe::numerical([act, exact](const at::Tensor& rows) {
-#ifdef TEI_TORCH_CUDA_KERNELS
+#ifdef INFINITY_TORCH_CUDA_KERNELS
       if (exact && act != "silu" && act != "gelu")
         return encoder_gelu(rows);
 #endif

@@ -2,7 +2,7 @@
 // Compact/unfold contract adapted from Candle's RadixMLP by Michael Feil.
 // Copyright (c) 2025 michaelfeil
 #include "batching/radix.h"
-#ifdef TEI_TORCH_CUDA_KERNELS
+#ifdef INFINITY_TORCH_CUDA_KERNELS
 #include "kernels/radix_qkv.h"
 #endif
 #include <vector>
@@ -47,7 +47,7 @@ std::array<at::Tensor, 3> radix_unfold_qkv(const at::Tensor& q,
                                            const PackedInput& p) {
   if (!radix_enabled(p))
     return {q, k, v};
-#ifdef TEI_TORCH_CUDA_KERNELS
+#ifdef INFINITY_TORCH_CUDA_KERNELS
   if (radix_qkv_cuda_supported(q, k, v, p.scatter_unfold)) {
     TORCH_CHECK(q.size(0) == p.compact_ids.numel(), "Radix QKV requires compact token rows");
     return radix_unfold_qkv_cuda(q, k, v, p.scatter_unfold);

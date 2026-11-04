@@ -19,7 +19,7 @@ inline bool same_block_prefix(int64_t left,
                               const int64_t* axes,
                               int64_t tokens,
                               const int32_t* offsets,
-                              const TeiImage* images,
+                              const InfinityTorchImage* images,
                               size_t image_count) {
   const auto a = offsets[left], b = offsets[right];
   for (const auto* values : {ids, types, positions})
@@ -31,7 +31,7 @@ inline bool same_block_prefix(int64_t left,
                       axes + axis * tokens + a + length,
                       axes + axis * tokens + b))
         return false;
-  auto next = [&](size_t& index, int64_t start) -> const TeiImage* {
+  auto next = [&](size_t& index, int64_t start) -> const InfinityTorchImage* {
     while (index < image_count) {
       const auto& image = images[index++];
       if (image.sequence_start == start && image.token_start < start + length)

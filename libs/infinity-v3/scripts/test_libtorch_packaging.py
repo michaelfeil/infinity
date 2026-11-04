@@ -62,7 +62,7 @@ class PackagingTests(unittest.TestCase):
         (self.lib / "libnvrtc-builtins.so.13.0").unlink()
         native = self.root / "native"
         (native / "lib").mkdir(parents=True)
-        shutil.copy2(self.server, native / "lib/libtei_torch.so")
+        shutil.copy2(self.server, native / "lib/libinfinity_torch.so")
         with patch.dict(os.environ, {"LIBTORCH_CUDA_ARCHITECTURES": "90-virtual"}), \
                 patch.object(packager.subprocess, "check_output", return_value=""):
             with self.assertRaisesRegex(RuntimeError, "Missing runtime-loaded SDK library"):

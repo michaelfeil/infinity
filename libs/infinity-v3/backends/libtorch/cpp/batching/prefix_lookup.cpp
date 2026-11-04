@@ -10,7 +10,7 @@
 #include <type_traits>
 #include <unordered_map>
 #define XXH_INLINE_ALL
-#define XXH_NAMESPACE tei_prefix_
+#define XXH_NAMESPACE infinity_prefix_
 #include "vendor/xxhash/xxhash.h"
 
 namespace infinity {

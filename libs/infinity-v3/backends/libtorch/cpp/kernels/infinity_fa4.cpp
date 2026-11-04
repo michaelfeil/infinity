@@ -5,7 +5,7 @@
 
 #include "kernels/infinity_fa4.h"
 
-#if defined(TEI_TORCH_CUDA_KERNELS) && defined(INFINITY_FA4_ROOT)
+#if defined(INFINITY_TORCH_CUDA_KERNELS) && defined(INFINITY_FA4_ROOT)
 #include "env_config.h"
 #include <ATen/cuda/CUDAContext.h>
 #include <c10/cuda/CUDAGuard.h>

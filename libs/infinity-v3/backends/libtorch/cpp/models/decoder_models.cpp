@@ -8,7 +8,7 @@
 #include "helpers/dense_mlp.h"
 #include "kernels/moe_kernels.h"
 #include "kernels/infinity_fa4.h"
-#ifdef TEI_TORCH_CUDA_KERNELS
+#ifdef INFINITY_TORCH_CUDA_KERNELS
 #include "kernels/fast_kernels.h"
 #include "helpers/fp8_linear.h"
 #include "kernels/fp8_fusions.h"
@@ -43,7 +43,7 @@ struct DecoderLayer {
   at::Tensor qkv, qkv_bias, out, out_bias, input_norm, post_norm, q_norm, k_norm;
   at::Tensor gate_up, gate_up_bias, down, down_bias, router;
   DenseMlp dense_mlp;
-#ifdef TEI_TORCH_CUDA_KERNELS
+#ifdef INFINITY_TORCH_CUDA_KERNELS
   std::unique_ptr<Fp8Linear> fp8_qkv, fp8_out;
 #endif
   /// Per-expert matrices use [2I,H] and [H,I]. Prepared grouped tensors use transposed GEMM
@@ -54,14 +54,14 @@ struct DecoderLayer {
 
 /// Packed decoder-family backbone with dense/MoE layers and optional task heads.
 class Decoder final : public Model {
-#ifdef TEI_TORCH_CUDA_KERNELS
+#ifdef INFINITY_TORCH_CUDA_KERNELS
   mutable CachedNoBiasLt no_bias_cache;
 #endif
   /// Attempt qualified bias-free decoder GEMMs while retaining ordinary ATen linear for all other
   /// shapes, biases, precision policies, and model families.
   at::Tensor
   cached_linear(const at::Tensor& x, const at::Tensor& w, const at::Tensor& b = {}) const {
-#ifdef TEI_TORCH_CUDA_KERNELS
+#ifdef INFINITY_TORCH_CUDA_KERNELS
     // These family/width checks select the validated alternate prefill recipe, rather than defining
     // which decoder shapes can execute. Widening this call site also requires widening and checking
     // CachedNoBiasLt's prefill guard.
@@ -159,7 +159,7 @@ class Decoder final : public Model {
   /// activations to model dtype before the affine multiply; ordinary paths use their
   /// existing ATen norm operator.
   at::Tensor norm(const at::Tensor& x, const at::Tensor& w) const {
-#ifdef TEI_TORCH_CUDA_KERNELS
+#ifdef INFINITY_TORCH_CUDA_KERNELS
     if (transformers_fused_norm)
       return transformers_rms_norm(x, {}, w, epsilon).first;
 #endif
@@ -171,7 +171,7 @@ class Decoder final : public Model {
       return std::get<0>(at::_fused_rms_norm(x.contiguous(), {w.numel()}, w, epsilon));
     return at::rms_norm(x, {w.numel()}, w, epsilon);
   }
-#ifdef TEI_TORCH_CUDA_KERNELS
+#ifdef INFINITY_TORCH_CUDA_KERNELS
   bool exact_mistral_math() const {
     // The original Candle RMS launcher registers BF16 width 3072 with a
     // 1x4 warp layout. Learned causal Mistral operands independently prove
@@ -411,7 +411,7 @@ class Decoder final : public Model {
                                    (right_window < 0 || (causal && right_window == 0) ||
                                     right_window >= input.max_sequence - 1);
       bool use_cudnn = cudnn_varlen && input.max_sequence >= 512 && window_inactive;
-#ifdef TEI_TORCH_CUDA_KERNELS
+#ifdef INFINITY_TORCH_CUDA_KERNELS
       use_cudnn = use_cudnn && allow_cudnn_attention();
       if (!use_cudnn && exact_decoder_math() &&
           torch_flash_fma_supported(q, k, v, causal, left_window, right_window))
@@ -514,7 +514,7 @@ class Decoder final : public Model {
     }
     bool exact = false;
     bool allow_cudnn = true;
-#ifdef TEI_TORCH_CUDA_KERNELS
+#ifdef INFINITY_TORCH_CUDA_KERNELS
     exact = exact_decoder_math();
     allow_cudnn = allow_cudnn_attention();
 #endif
@@ -570,7 +570,7 @@ class Decoder final : public Model {
     if (!layer.router.defined()) {
       MlpContext context;
       context.gemm = [&](const MlpProjection& projection, const at::Tensor& rows) {
-#ifdef TEI_TORCH_CUDA_KERNELS
+#ifdef INFINITY_TORCH_CUDA_KERNELS
         if (projection.role() == MlpProjectionRole::Input) {
           if (transformers_math() && !rows.is_cuda())
             return separate_linear(
@@ -595,7 +595,7 @@ class Decoder final : public Model {
         return native;
     }
     at::Tensor probabilities;
-#ifdef TEI_TORCH_CUDA_KERNELS
+#ifdef INFINITY_TORCH_CUDA_KERNELS
     if (qwen_half_exact && family == "qwen3_moe" && logits.is_cuda())
       probabilities = decoder_half_moe_probabilities(logits);
     else
@@ -604,7 +604,7 @@ class Decoder final : public Model {
     // Stable sorting gives Candle's lower-expert-index tie break. Routing remains on-device.
     auto ids = at::argsort(probabilities, true, -1, true).narrow(-1, 0, top_k);
     auto routing = probabilities.gather(-1, ids);
-#ifdef TEI_TORCH_CUDA_KERNELS
+#ifdef INFINITY_TORCH_CUDA_KERNELS
     if (qwen_half_exact && family == "qwen3_moe" && routing.is_cuda())
       routing = decoder_half_moe_route_weights(routing, renormalize);
     else
@@ -628,7 +628,7 @@ class Decoder final : public Model {
       auto both = at::_grouped_mm(selected, layer.grouped_gate_up, ends);
       auto width = both.size(-1) / 2;
       at::Tensor activated;
-#ifdef TEI_TORCH_CUDA_KERNELS
+#ifdef INFINITY_TORCH_CUDA_KERNELS
       activated = fused_gated_activation(both, 0);
 #else
       activated = at::silu(both.narrow(-1, 0, width)) * both.narrow(-1, width, width);
@@ -678,7 +678,7 @@ class Decoder final : public Model {
       auto both = at::linear(input, layer.expert_gate_up[expert]);
       auto width = both.size(-1) / 2;
       at::Tensor activated;
-#ifdef TEI_TORCH_CUDA_KERNELS
+#ifdef INFINITY_TORCH_CUDA_KERNELS
       // Original Candle Half MoE rounds exp, denominator, SiLU and product
       // separately in model dtype, including Half exp overflow.
       if (qwen_half_exact && family == "qwen3_moe" && both.is_cuda())
@@ -742,7 +742,7 @@ public:
         TORCH_CHECK(
             key != "quantization_config" && key.rfind("quantization_config.", 0) != 0,
             "Dynamic FP8 requires an unquantized checkpoint without supplied quantization scales");
-#ifndef TEI_TORCH_CUDA_KERNELS
+#ifndef INFINITY_TORCH_CUDA_KERNELS
       TORCH_CHECK(false, "Dynamic FP8 decoder MLPs require native CUDA kernels");
 #endif
     }
@@ -768,7 +768,7 @@ public:
                     "Scaled Qwen3 MoE RoPE is unsupported");
     TORCH_CHECK(!options.boolean("use_sliding_window", false) || family == "mistral",
                 "Qwen sliding-window configuration is unsupported");
-#ifdef TEI_TORCH_CUDA_KERNELS
+#ifdef INFINITY_TORCH_CUDA_KERNELS
     if (device.is_cuda()) {
       const auto* properties = at::cuda::getDeviceProperties(device.index());
       auto major = properties->major;
@@ -889,7 +889,7 @@ public:
                                                 : (transformers_math() ? 2 : 4);
         auto recipe = MlpActivationRecipe::numerical(
             [this, code](const at::Tensor& both) {
-#ifdef TEI_TORCH_CUDA_KERNELS
+#ifdef INFINITY_TORCH_CUDA_KERNELS
               if (both.is_cuda())
                 return fused_gated_activation(both, code);
 #endif
@@ -901,7 +901,7 @@ public:
           recipe.fusion = MlpFusion::RoundedSwiGlu;
         layer.dense_mlp = DenseMlp(
             {layer.gate_up, layer.gate_up_bias}, {layer.down, layer.down_bias}, std::move(recipe));
-#ifdef TEI_TORCH_CUDA_KERNELS
+#ifdef INFINITY_TORCH_CUDA_KERNELS
         if (fp8_dynamic) {
           // Shape checks above precede one-time row quantization. Bias and the
           // gated activation retain their existing model-dtype arithmetic.
@@ -1168,7 +1168,7 @@ public:
       auto starts = input.cumulative.narrow(0, 0, input.batch).to(at::kLong);
       return at::linear(hidden_states.index_select(0, starts), score, score_bias);
     }
-#ifdef TEI_TORCH_CUDA_KERNELS
+#ifdef INFINITY_TORCH_CUDA_KERNELS
     if (hidden_states.is_cuda() && hidden_states.dim() == 2 && hidden_states.is_contiguous() &&
         (hidden_states.scalar_type() == at::kBFloat16 || hidden_states.scalar_type() == at::kHalf ||
          hidden_states.scalar_type() == at::kFloat) &&
@@ -1311,7 +1311,7 @@ public:
       const auto& layer_sine =
           layer.rotary_index < 0 ? sine : selected_rotary[layer.rotary_index].second;
       at::Tensor normalized, normalized_scales;
-#ifdef TEI_TORCH_CUDA_KERNELS
+#ifdef INFINITY_TORCH_CUDA_KERNELS
       if (h.is_cuda() && (!transformers_math() || transformers_fused_norm)) {
         if (layer.fp8_qkv && dtype == at::kBFloat16 && hidden <= 8192 && hidden % 256 == 0 &&
             !exact_decoder_math() && h.is_contiguous() &&
@@ -1330,7 +1330,7 @@ public:
 #endif
         normalized = norm(h, layer.input_norm);
       at::Tensor qkv;
-#ifdef TEI_TORCH_CUDA_KERNELS
+#ifdef INFINITY_TORCH_CUDA_KERNELS
       if (layer.fp8_qkv)
         qkv = normalized_scales.defined()
                   ? layer.fp8_qkv->forward_quantized(normalized, normalized_scales, layer.qkv_bias)
@@ -1348,7 +1348,7 @@ public:
       qkv = qkv.view({h.size(0), heads + 2 * kvheads, head_dim});
       auto q = qkv.narrow(1, 0, heads), k = qkv.narrow(1, heads, kvheads),
            v = qkv.narrow(1, heads + kvheads, kvheads);
-#ifdef TEI_TORCH_CUDA_KERNELS
+#ifdef INFINITY_TORCH_CUDA_KERNELS
       if (q.is_cuda() && layer.q_norm.defined() && head_dim == 128) {
         if (input.prefix && input.prefix->collect_graph && !radix_enabled(input) &&
             (q.scalar_type() == at::kHalf || q.scalar_type() == at::kBFloat16)) {
@@ -1399,7 +1399,7 @@ public:
           q = norm(q, layer.q_norm);
           k = norm(k, layer.k_norm);
         }
-#ifdef TEI_TORCH_CUDA_KERNELS
+#ifdef INFINITY_TORCH_CUDA_KERNELS
         if (q.is_cuda()) {
           // Preserve Llama's path; learned causal BF16 Mistral operands prove
           // the same contract with the registered exact RMS geometry.
@@ -1439,13 +1439,13 @@ public:
           residual = residual.index_select(0, output_rows);
       }
       at::Tensor projected;
-#ifdef TEI_TORCH_CUDA_KERNELS
+#ifdef INFINITY_TORCH_CUDA_KERNELS
       if (layer.fp8_out)
         projected = layer.fp8_out->forward(attended, layer.out_bias);
       else
 #endif
         projected = cached_prefix_linear(attended, layer.out, layer.out_bias, input);
-#ifdef TEI_TORCH_CUDA_KERNELS
+#ifdef INFINITY_TORCH_CUDA_KERNELS
       if (h.is_cuda() && (!transformers_math() || transformers_fused_norm)) {
         if (layer.dense_mlp.fp8() && dtype == at::kBFloat16 && hidden <= 8192 &&
             hidden % 256 == 0 && !exact_decoder_math() && projected.is_contiguous() &&
@@ -1486,7 +1486,7 @@ public:
       if (residual.defined())
         h = h + residual;
     } else {
-#ifdef TEI_TORCH_CUDA_KERNELS
+#ifdef INFINITY_TORCH_CUDA_KERNELS
       if (h.is_cuda() && (!transformers_math() || transformers_fused_norm))
         h = residual_norm(h, residual, final_norm).first;
       else
@@ -1523,7 +1523,7 @@ at::Tensor decoder_moe_forward(const at::Tensor& x,
     routing = routing / routing.sum(-1, true);
   routing = routing.to(x.scalar_type());
   auto activate = [](const at::Tensor& both) {
-#ifdef TEI_TORCH_CUDA_KERNELS
+#ifdef INFINITY_TORCH_CUDA_KERNELS
     if (both.is_cuda())
       return fused_gated_activation(both, 0);
 #endif

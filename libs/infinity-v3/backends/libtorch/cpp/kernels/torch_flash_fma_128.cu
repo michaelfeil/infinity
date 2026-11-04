@@ -3,10 +3,10 @@
 #ifdef UNFUSE_FMA
 #undef UNFUSE_FMA
 #endif
-#define FLASH_NAMESPACE tei_torch_flash
+#define FLASH_NAMESPACE infinity_torch_flash
 #include "vendor/torch_flash_attention/flash_fwd_launch_template.h"
 
-namespace tei_torch_flash {
+namespace infinity_torch_flash {
 void launch_128(Flash_fwd_params& params, cudaStream_t stream) {
   if (params.is_bf16 && params.is_causal && params.seqlen_q > 1 && params.seqlen_q <= 64 &&
       params.seqlen_q < params.seqlen_k) {

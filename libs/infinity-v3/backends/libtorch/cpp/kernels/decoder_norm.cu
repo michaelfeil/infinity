@@ -42,7 +42,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include <c10/cuda/CUDAException.h>
 #include <vector>
 #include <cstdint>
-#define layer_norm tei_decoder_exact_norm
+#define layer_norm infinity_decoder_exact_norm
 #include "vendor/candle_kernels/layer_norm/ln_fwd_kernels.cuh"
 #undef layer_norm
 
@@ -133,7 +133,7 @@ exact_norm(const at::Tensor& x, const at::Tensor& residual, const at::Tensor& w,
   auto out = at::empty_like(x), sum = residual.defined() ? at::empty_like(x) : x;
   if (x.size(0) == 0)
     return {out, sum};
-  tei_decoder_exact_norm::FwdParams p;
+  infinity_decoder_exact_norm::FwdParams p;
   p.rows = x.size(0);
   p.cols = Even ? Width : x.size(1);
   p.x0 = x.data_ptr();
@@ -154,8 +154,8 @@ exact_norm(const at::Tensor& x, const at::Tensor& residual, const at::Tensor& w,
   p.round_residual = false;
   p.is_rms_norm = true;
   using Traits =
-      tei_decoder_exact_norm::Kernel_traits<T, T, T, T, float, int, Width, 1, WarpsM, WarpsN, 16>;
-  auto kernel = tei_decoder_exact_norm::ln_fwd_kernel<Traits, false, false, false, Even>;
+      infinity_decoder_exact_norm::Kernel_traits<T, T, T, T, float, int, Width, 1, WarpsM, WarpsN, 16>;
+  auto kernel = infinity_decoder_exact_norm::ln_fwd_kernel<Traits, false, false, false, Even>;
   // Each registered width uses its original Candle warp geometry. Cache
   // occupancy separately per specialization and device, before graph capture.
   static thread_local std::vector<int> cache;

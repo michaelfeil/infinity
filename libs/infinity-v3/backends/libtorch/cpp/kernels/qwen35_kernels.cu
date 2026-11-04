@@ -164,7 +164,7 @@ at::Tensor gemma_rotary_cuda(const at::Tensor& x,
 // as separate FP32 rounds without changing other native kernel flags.
 template <bool VIRTUAL_LANES, bool PAIRED = false, bool RESIDUAL = false>
 __device__ __forceinline__ void
-tei_gemma_rms_norm_reference_impl(const __nv_bfloat16* x,
+infinity_gemma_rms_norm_reference_impl(const __nv_bfloat16* x,
                                   const float* scale,
                                   __nv_bfloat16* out,
                                   unsigned int width,
@@ -240,14 +240,14 @@ tei_gemma_rms_norm_reference_impl(const __nv_bfloat16* x,
   }
 }
 
-static __global__ void tei_gemma_rms_norm_reference_bf16(const __nv_bfloat16* x,
+static __global__ void infinity_gemma_rms_norm_reference_bf16(const __nv_bfloat16* x,
                                                          const float* scale,
                                                          __nv_bfloat16* out,
                                                          unsigned int width,
                                                          unsigned int heads,
                                                          unsigned long long token_stride,
                                                          float eps) {
-  tei_gemma_rms_norm_reference_impl<false>(x, scale, out, width, heads, token_stride, eps);
+  infinity_gemma_rms_norm_reference_impl<false>(x, scale, out, width, heads, token_stride, eps);
 }
 
 // SPDX-License-Identifier: MIT
@@ -439,7 +439,7 @@ static __global__ void g2_residual_reference(const __nv_bfloat16* x,
                                              __nv_bfloat16* out,
                                              unsigned width,
                                              float eps) {
-  tei_gemma_rms_norm_reference_impl<false, false, true>(
+  infinity_gemma_rms_norm_reference_impl<false, false, true>(
       x, scale, out, width, 1, width, eps, nullptr, {}, residual);
 }
 
@@ -701,7 +701,7 @@ static at::Tensor gemma_norm_impl(const at::Tensor& x,
   auto source = reinterpret_cast<const __nv_bfloat16*>(x.const_data_ptr());
   auto destination = reinterpret_cast<__nv_bfloat16*>(output.mutable_data_ptr());
   if (reference)
-    tei_gemma_rms_norm_reference_bf16<<<rows, threads, 0, stream>>>(
+    infinity_gemma_rms_norm_reference_bf16<<<rows, threads, 0, stream>>>(
         source, scale.const_data_ptr<float>(), destination, width, heads, x.stride(0), epsilon);
   else
     gemma_rms_norm_bf16<<<rows, threads, 0, stream>>>(
@@ -1569,7 +1569,7 @@ at::Tensor qwen35_delta_cuda(const at::Tensor& qkv,
                  convolution, qk, decay, input, recurrence, key_heads, value_heads, final_state)) {
     // The AOT bundle selects the upstream provider for the actual device family.
   } else
-#ifdef TEI_TORCH_GDN_HOPPER
+#ifdef INFINITY_TORCH_GDN_HOPPER
       if ((final_state || allow_prefill) && !initial.defined() && !input.prefix &&
           at::cuda::getDeviceProperties(qkv.get_device())->major == 9) {
     qwen35_prefill_cuda(

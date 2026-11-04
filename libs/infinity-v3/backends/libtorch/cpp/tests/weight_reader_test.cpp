@@ -22,7 +22,7 @@ int main(int argc, char**) {
                 "write failed");
     std::vector<std::string> names;
     std::vector<std::vector<int64_t>> shapes;
-    std::vector<TeiWeight> weights;
+    std::vector<InfinityTorchWeight> weights;
     names.reserve(516);
     shapes.reserve(516);
     weights.reserve(516);
@@ -119,7 +119,7 @@ int main(int argc, char**) {
     TORCH_CHECK(pwrite(fd, finite.data(), source_bytes, header) ==
                 static_cast<ssize_t>(source_bytes));
     int64_t size = finite.size();
-    TeiWeight convert{"convert", &size, 1, 0, 0, source_bytes};
+    InfinityTorchWeight convert{"convert", &size, 1, 0, 0, source_bytes};
     for (auto type : {at::kHalf, at::kBFloat16}) {
       at::Tensor result;
       infinity::read_safetensors(

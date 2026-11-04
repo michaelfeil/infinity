@@ -190,12 +190,16 @@ impl OwnedDecision {
     }
 }
 extern "C" {
-    fn tei_error() -> *const c_char;
-    fn tei_last_error_kind() -> i32;
-    fn tei_device_count(device: *const c_char) -> i64;
-    fn tei_device_preflight(device: *const c_char) -> i32;
-    fn tei_create(config: *const NativeConfig, device: *const c_char, dtype: i32) -> *mut c_void;
-    fn tei_weight(
+    fn infinity_torch_error() -> *const c_char;
+    fn infinity_torch_last_error_kind() -> i32;
+    fn infinity_torch_device_count(device: *const c_char) -> i64;
+    fn infinity_torch_device_preflight(device: *const c_char) -> i32;
+    fn infinity_torch_create(
+        config: *const NativeConfig,
+        device: *const c_char,
+        dtype: i32,
+    ) -> *mut c_void;
+    fn infinity_torch_weight(
         handle: *mut c_void,
         name: *const c_char,
         data: *const u8,
@@ -203,24 +207,24 @@ extern "C" {
         rank: usize,
         dtype: i32,
     ) -> i32;
-    fn tei_option(handle: *mut c_void, key: *const c_char, value: *const c_char) -> i32;
+    fn infinity_torch_option(handle: *mut c_void, key: *const c_char, value: *const c_char) -> i32;
     #[cfg(test)]
-    fn tei_runtime_limits(handle: *mut c_void, limits: *mut i64, count: usize) -> i32;
-    fn tei_output_width(handle: *mut c_void) -> i64;
-    fn tei_pooled_width(handle: *mut c_void) -> i64;
-    fn tei_classification_width(handle: *mut c_void) -> i64;
-    fn tei_supports_radix(handle: *mut c_void) -> i32;
-    fn tei_prefix_cache_supported(handle: *mut c_void, operation: i32) -> i32;
-    fn tei_prefix_cache_set_probe(handle: *mut c_void, enabled: i32) -> i32;
-    fn tei_graph_count(handle: *mut c_void) -> i64;
-    fn tei_ready(handle: *mut c_void) -> i32;
-    fn tei_decision_counts(
+    fn infinity_torch_runtime_limits(handle: *mut c_void, limits: *mut i64, count: usize) -> i32;
+    fn infinity_torch_output_width(handle: *mut c_void) -> i64;
+    fn infinity_torch_pooled_width(handle: *mut c_void) -> i64;
+    fn infinity_torch_classification_width(handle: *mut c_void) -> i64;
+    fn infinity_torch_supports_radix(handle: *mut c_void) -> i32;
+    fn infinity_torch_prefix_cache_supported(handle: *mut c_void, operation: i32) -> i32;
+    fn infinity_torch_prefix_cache_set_probe(handle: *mut c_void, enabled: i32) -> i32;
+    fn infinity_torch_graph_count(handle: *mut c_void) -> i64;
+    fn infinity_torch_ready(handle: *mut c_void) -> i32;
+    fn infinity_torch_decision_counts(
         handle: *mut c_void,
         requests: *const NativeDecision,
         count: usize,
         counts: *mut i64,
     ) -> i32;
-    fn tei_decide_radix(
+    fn infinity_torch_decide_radix(
         handle: *mut c_void,
         ids: *const i64,
         types: *const i64,
@@ -239,7 +243,7 @@ extern "C" {
         audio_count: usize,
         radix: *const NativeRadix,
     ) -> i32;
-    fn tei_forward_radix(
+    fn infinity_torch_forward_radix(
         handle: *mut c_void,
         ids: *const i64,
         types: *const i64,
@@ -261,7 +265,7 @@ extern "C" {
         audio_count: usize,
         radix: *const NativeRadix,
     ) -> i32;
-    fn tei_forward_submit(
+    fn infinity_torch_forward_submit(
         handle: *mut c_void,
         ids: *const i64,
         types: *const i64,
@@ -282,18 +286,22 @@ extern "C" {
         audio_count: usize,
         radix: *const NativeRadix,
     ) -> *mut c_void;
-    fn tei_output_wait(handle: *mut c_void) -> *const f32;
-    fn tei_output_destroy(handle: *mut c_void);
-    fn tei_destroy(handle: *mut c_void);
+    fn infinity_torch_output_wait(handle: *mut c_void) -> *const f32;
+    fn infinity_torch_output_destroy(handle: *mut c_void);
+    fn infinity_torch_destroy(handle: *mut c_void);
 }
 
 fn native_error() -> String {
     // SAFETY: the bridge owns a thread-local, NUL-terminated string valid until the next call.
-    unsafe { CStr::from_ptr(tei_error()).to_string_lossy().into_owned() }
+    unsafe {
+        CStr::from_ptr(infinity_torch_error())
+            .to_string_lossy()
+            .into_owned()
+    }
 }
 fn native_failure() -> BackendError {
     // Read the structured thread-local kind before any subsequent bridge call.
-    let kind = unsafe { tei_last_error_kind() };
+    let kind = unsafe { infinity_torch_last_error_kind() };
     let message = native_error();
     match kind {
         2 => BackendError::Overloaded(message),
@@ -370,7 +378,7 @@ fn upload_weight(
     // SAFETY: byte length matches the checked shape and dtype; native code copies
     // the data synchronously. The caller owns the live model handle.
     if unsafe {
-        tei_weight(
+        infinity_torch_weight(
             handle.as_ptr(),
             name.as_ptr(),
             data.as_ptr(),
@@ -447,7 +455,7 @@ fn host_output_bytes(
 pub fn device_count(device: &str) -> Result<usize, BackendError> {
     let device = CString::new(device).map_err(start)?;
     // SAFETY: the C string is valid for the duration of the synchronous call.
-    let count = unsafe { tei_device_count(device.as_ptr()) };
+    let count = unsafe { infinity_torch_device_count(device.as_ptr()) };
     usize::try_from(count).map_err(|_| start(native_error()))
 }
 
@@ -492,14 +500,14 @@ pub struct LibtorchBackend {
     host_result_pool: std::sync::Arc<text_embeddings_backend_core::result_memory::ResultPool>,
     prefix_cache: bool,
 }
-// SAFETY: the handle owns its tensors and is used by TEI's single backend worker.
+// SAFETY: the handle owns its tensors and is used by Infinity's backend worker.
 // It can move between threads; it is deliberately not Sync. InferenceMode is set per native call.
 unsafe impl Send for LibtorchBackend {}
 
 impl Drop for LibtorchBackend {
     fn drop(&mut self) {
         // SAFETY: this handle is uniquely owned and destroyed exactly once.
-        unsafe { tei_destroy(self.handle.as_ptr()) };
+        unsafe { infinity_torch_destroy(self.handle.as_ptr()) };
     }
 }
 
@@ -507,7 +515,7 @@ impl LibtorchBackend {
     /// Number of captured packed shapes; zero also covers eager fallback.
     pub fn cuda_graph_count(&self) -> usize {
         // SAFETY: this uniquely owned handle stays live throughout the synchronous query.
-        unsafe { tei_graph_count(self.handle.as_ptr()) as usize }
+        unsafe { infinity_torch_graph_count(self.handle.as_ptr()) as usize }
     }
     pub fn new(
         path: &Path,
@@ -1138,7 +1146,7 @@ impl LibtorchBackend {
             tracing::info!("Starting LibTorch device check");
             // SAFETY: the device string outlives this synchronous call; native
             // code catches C++ exceptions and completes the CUDA check/readback.
-            if unsafe { tei_device_preflight(name.as_ptr()) } != 0 {
+            if unsafe { infinity_torch_device_preflight(name.as_ptr()) } != 0 {
                 return Err(start(format!(
                     "Device preflight failed for {device}: {}",
                     native_error()
@@ -1160,8 +1168,9 @@ impl LibtorchBackend {
         if host_output_max_bytes == 0 {
             return Err(start("Host output memory budget must be positive"));
         }
-        let handle = NonNull::new(unsafe { tei_create(&native, device.as_ptr(), dtype) })
-            .ok_or_else(|| start(native_error()))?;
+        let handle =
+            NonNull::new(unsafe { infinity_torch_create(&native, device.as_ptr(), dtype) })
+                .ok_or_else(|| start(native_error()))?;
         let mut model = Self {
             handle,
             config,
@@ -1209,7 +1218,8 @@ impl LibtorchBackend {
             let key = CString::new(key).map_err(start)?;
             let value = CString::new(value).map_err(start)?;
             // SAFETY: the bridge copies both NUL-terminated strings before returning.
-            if unsafe { tei_option(handle.as_ptr(), key.as_ptr(), value.as_ptr()) } != 0 {
+            if unsafe { infinity_torch_option(handle.as_ptr(), key.as_ptr(), value.as_ptr()) } != 0
+            {
                 return Err(start(native_error()));
             }
         }
@@ -1247,15 +1257,18 @@ impl LibtorchBackend {
             .collect::<Vec<_>>();
         if let Some(kind) = decision_kind {
             if matches!(kind, "pplx" | "d3") {
-                files.push(("readout.safetensors".into(), "__tei_decision.".into()));
+                files.push(("readout.safetensors".into(), "__infinity_decision.".into()));
             }
             if kind == "clef" {
-                files.push(("joint_head.safetensors".into(), "__tei_decision.".into()));
+                files.push((
+                    "joint_head.safetensors".into(),
+                    "__infinity_decision.".into(),
+                ));
             }
             if kind == "vela3_vision" {
                 files.push((
                     "decision_adapter.safetensors".into(),
-                    "__tei_decision.".into(),
+                    "__infinity_decision.".into(),
                 ));
             }
         }
@@ -1337,28 +1350,31 @@ impl LibtorchBackend {
             "Finished checkpoint load"
         );
         // SAFETY: the live handle is owned by model; this checks every required weight and its shape.
-        if unsafe { tei_ready(handle.as_ptr()) } != 0 {
+        if unsafe { infinity_torch_ready(handle.as_ptr()) } != 0 {
             return Err(start(native_error()));
         }
         // SAFETY: ready() has created and validated the concrete model.
-        model.output_width = usize::try_from(unsafe { tei_output_width(handle.as_ptr()) })
-            .map_err(|_| start(native_error()))?;
+        model.output_width =
+            usize::try_from(unsafe { infinity_torch_output_width(handle.as_ptr()) })
+                .map_err(|_| start(native_error()))?;
         // SAFETY: ready() has validated the projection chain and its output width.
-        model.pooled_width = usize::try_from(unsafe { tei_pooled_width(handle.as_ptr()) })
-            .map_err(|_| start(native_error()))?;
+        model.pooled_width =
+            usize::try_from(unsafe { infinity_torch_pooled_width(handle.as_ptr()) })
+                .map_err(|_| start(native_error()))?;
         // SAFETY: ready() has validated the concrete model and owns its weights.
         model.classification_width =
-            usize::try_from(unsafe { tei_classification_width(handle.as_ptr()) })
+            usize::try_from(unsafe { infinity_torch_classification_width(handle.as_ptr()) })
                 .map_err(|_| start(native_error()))?;
         if model_type == ModelType::Classifier && model.classification_width == 0 {
             return Err(start("Checkpoint has no supported classification head"));
         }
         // SAFETY: the initialized handle owns immutable model capability flags.
-        model.supports_radix = unsafe { tei_supports_radix(handle.as_ptr()) } == 1;
+        model.supports_radix = unsafe { infinity_torch_supports_radix(handle.as_ptr()) } == 1;
         if model.prefix_cache {
             let operation = i32::from(model_type == ModelType::Classifier);
             // SAFETY: the initialized handle owns the concrete model capability.
-            let supported = unsafe { tei_prefix_cache_supported(handle.as_ptr(), operation) };
+            let supported =
+                unsafe { infinity_torch_prefix_cache_supported(handle.as_ptr(), operation) };
             if supported < 0 {
                 return Err(start(native_error()));
             }
@@ -1394,7 +1410,7 @@ impl<'a> PrefixProbe<'a> {
     fn new(backend: &'a LibtorchBackend) -> Result<Self, BackendError> {
         let handle = backend.handle;
         // SAFETY: the backend worker serializes access to this live engine.
-        let previous = unsafe { tei_prefix_cache_set_probe(handle.as_ptr(), 1) };
+        let previous = unsafe { infinity_torch_prefix_cache_set_probe(handle.as_ptr(), 1) };
         if previous < 0 {
             return Err(inference(native_error()));
         }
@@ -1408,7 +1424,7 @@ impl<'a> PrefixProbe<'a> {
 impl Drop for PrefixProbe<'_> {
     fn drop(&mut self) {
         // SAFETY: this scope cannot outlive the borrowed backend; restore even on errors.
-        unsafe { tei_prefix_cache_set_probe(self.handle.as_ptr(), self.previous) };
+        unsafe { infinity_torch_prefix_cache_set_probe(self.handle.as_ptr(), self.previous) };
     }
 }
 // SAFETY: the uniquely owned lease is transferred once; it never calls the model.
@@ -1416,7 +1432,7 @@ unsafe impl Send for NativeOutput {}
 impl NativeOutput {
     fn values(&self) -> Result<&[f32], BackendError> {
         // SAFETY: wait synchronizes the lease's event before exposing its pinned output.
-        let values = unsafe { tei_output_wait(self.handle.as_ptr()) };
+        let values = unsafe { infinity_torch_output_wait(self.handle.as_ptr()) };
         if values.is_null() {
             return Err(native_failure());
         }
@@ -1427,7 +1443,7 @@ impl NativeOutput {
 impl Drop for NativeOutput {
     fn drop(&mut self) {
         // SAFETY: uniquely owned lease; destruction drains work before buffer reuse.
-        unsafe { tei_output_destroy(self.handle.as_ptr()) };
+        unsafe { infinity_torch_output_destroy(self.handle.as_ptr()) };
     }
 }
 
@@ -1630,7 +1646,7 @@ impl LibtorchBackend {
                 }
             }
         }
-        // Preserve TEI's packed layout: allocations scale with actual tokens, never B * max_length.
+        // Preserve the packed layout: allocations scale with actual tokens, never B * max_length.
         let ids = collect_fallible(batch.input_ids.iter().map(|&id| id as i64))?;
         let types = collect_fallible(batch.token_type_ids.iter().map(|&id| id as i64))?;
         let positions = collect_fallible(batch.position_ids.iter().map(|&id| id as i64))?;
@@ -1667,7 +1683,7 @@ impl LibtorchBackend {
             let mut counts = filled_vec(b, 0i64)?;
             // SAFETY: descriptors and their backing span/token buffers remain owned above.
             if unsafe {
-                tei_decision_counts(
+                infinity_torch_decision_counts(
                     self.handle.as_ptr(),
                     native.as_ptr(),
                     native.len(),
@@ -1704,7 +1720,7 @@ impl LibtorchBackend {
             // SAFETY: native output counts bound capacity, validated packed/media buffers stay live,
             // and all exceptions are caught by the bridge before returning across the C ABI.
             if unsafe {
-                tei_decide_radix(
+                infinity_torch_decide_radix(
                     self.handle.as_ptr(),
                     ids.as_ptr(),
                     types.as_ptr(),
@@ -1800,7 +1816,7 @@ impl LibtorchBackend {
             // SAFETY: all descriptors remain live during submission. Native code
             // copies staged inputs and owns every buffer needed after return.
             let handle = NonNull::new(unsafe {
-                tei_forward_submit(
+                infinity_torch_forward_submit(
                     self.handle.as_ptr(),
                     ids.as_ptr(),
                     types.as_ptr(),
@@ -1848,7 +1864,7 @@ impl LibtorchBackend {
         // SAFETY: validated dimensions and indices bound every native read/write. All buffers stay
         // live until this synchronous call returns; exceptions cannot cross the C ABI.
         if unsafe {
-            tei_forward_radix(
+            infinity_torch_forward_radix(
                 self.handle.as_ptr(),
                 ids.as_ptr(),
                 types.as_ptr(),
@@ -2030,7 +2046,11 @@ mod tests {
         let mut received = [0i64; 3];
         // SAFETY: the initialized handle is live and the output has exactly three slots.
         let status = unsafe {
-            tei_runtime_limits(model.handle.as_ptr(), received.as_mut_ptr(), received.len())
+            infinity_torch_runtime_limits(
+                model.handle.as_ptr(),
+                received.as_mut_ptr(),
+                received.len(),
+            )
         };
         assert_eq!(status, 0, "{}", native_error());
         assert_eq!(received, [10_003, 2_301, 37]);
@@ -2127,7 +2147,7 @@ mod tests {
         // SAFETY: a valid two-token packed input and one 16-dimensional pooled
         // result; the caller intentionally supplies four unused output elements.
         let status = unsafe {
-            tei_forward_radix(
+            infinity_torch_forward_radix(
                 model.handle.as_ptr(),
                 [1i64, 2].as_ptr(),
                 [0i64, 0].as_ptr(),
@@ -2201,7 +2221,7 @@ mod tests {
     fn fixture_with_intermediate(prefix: &str, sharded: bool, intermediate: usize) -> Fixture {
         static NEXT: AtomicUsize = AtomicUsize::new(0);
         let path = std::env::temp_dir().join(format!(
-            "tei-libtorch-test-{}-{}",
+            "infinity-libtorch-test-{}-{}",
             std::process::id(),
             NEXT.fetch_add(1, Ordering::Relaxed)
         ));

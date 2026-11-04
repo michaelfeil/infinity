@@ -392,7 +392,7 @@ void d3_test() {
   });
   TORCH_CHECK(upload_calls == 3, "Distinct matrix strides incorrectly reused upload");
   // Admission reads descriptors only, even before the caller's pixels are readable.
-  TeiImage aliases[2]{};
+  InfinityTorchImage aliases[2]{};
   for (auto& image : aliases) {
     image.pixels = reinterpret_cast<const float*>(uintptr_t(4096));
     image.rows = 16;

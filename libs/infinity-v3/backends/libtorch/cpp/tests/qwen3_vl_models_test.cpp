@@ -7,14 +7,14 @@
 #include <c10/core/InferenceMode.h>
 #include <ATen/Parallel.h>
 #include <iostream>
-#ifdef TEI_TORCH_CUDA_KERNELS
+#ifdef INFINITY_TORCH_CUDA_KERNELS
 #include "kernels/qwen35_vision.h"
 #include <ATen/cuda/CUDAContext.h>
 #include <c10/cuda/CUDACachingAllocator.h>
 #endif
 using namespace infinity;
 
-#ifdef TEI_TORCH_CUDA_KERNELS
+#ifdef INFINITY_TORCH_CUDA_KERNELS
 void vision_position_test(const c10::Device& device) {
   for (auto dtype : {at::kHalf, at::kBFloat16, at::kFloat})
     for (auto grid : {std::array<int64_t, 3>{4, 6, 2}, {6, 4, 2}, {1, 1, 1}}) {
@@ -418,7 +418,7 @@ int main(int argc, char** argv) {
   std::cout << "Qwen3.5 FP16 vision, BF16-compatible injection and mRoPE packed isolation passed\n";
   if (argc > 1) {
     c10::Device device(argv[1]);
-#ifdef TEI_TORCH_CUDA_KERNELS
+#ifdef INFINITY_TORCH_CUDA_KERNELS
     vision_position_test(device);
     vision_rotary_test(device);
 #endif
@@ -488,7 +488,7 @@ int main(int argc, char** argv) {
                 (expected - actual).abs().max().item<float>());
     std::cout << "Qwen3-VL CUDA/CPU float16 parity maxabs="
               << (expected - actual).abs().max().item<float>() << "\n";
-#ifdef TEI_TORCH_CUDA_KERNELS
+#ifdef INFINITY_TORCH_CUDA_KERNELS
     // Actual 64x64 patch grid: two heads make each original F32 score
     // tensor 128 MiB, exercising production query chunking rather than the
     // unchanged small-image branch. These are synthetic functional weights,

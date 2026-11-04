@@ -3,13 +3,13 @@
 #ifdef UNFUSE_FMA
 #undef UNFUSE_FMA
 #endif
-#define FLASH_NAMESPACE tei_torch_flash
+#define FLASH_NAMESPACE infinity_torch_flash
 #include "flash_launch_setup.h"
 #define cudaFuncSetAttribute infinity::flash_set_attribute
 #include "vendor/torch_flash_attention/flash_fwd_launch_template.h"
 #undef cudaFuncSetAttribute
 
-namespace tei_torch_flash {
+namespace infinity_torch_flash {
 void launch_64(Flash_fwd_params& params, cudaStream_t stream) {
   // Short sequences and small local windows waste query work in a 128-row
   // tile. Retain 128 key columns and the existing softmax accumulation order.

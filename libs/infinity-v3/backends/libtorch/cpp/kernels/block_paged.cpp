@@ -2,7 +2,7 @@
 #include "block_paged.h"
 #include <algorithm>
 #include <ATen/ops/_flash_attention_forward.h>
-#ifdef TEI_TORCH_CUDA_KERNELS
+#ifdef INFINITY_TORCH_CUDA_KERNELS
 #include <ATen/cuda/CUDAContext.h>
 #endif
 
@@ -61,7 +61,7 @@ BlockPages prepare_block_pages(const std::vector<int32_t>& prefixes,
 }
 
 bool block_paged_supported(const at::Tensor& q) {
-#ifdef TEI_TORCH_CUDA_KERNELS
+#ifdef INFINITY_TORCH_CUDA_KERNELS
   return q.is_cuda() && q.dim() == 3 && q.size(0) > 0 && q.stride(2) == 1 &&
          (q.scalar_type() == at::kHalf || q.scalar_type() == at::kBFloat16) &&
          (q.size(2) == 64 || q.size(2) == 128 || q.size(2) == 256) &&

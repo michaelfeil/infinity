@@ -16,7 +16,7 @@
 #ifndef _WIN32
 #include "helpers/weight_reader.h"
 #endif
-#ifdef TEI_TORCH_CUDA_KERNELS
+#ifdef INFINITY_TORCH_CUDA_KERNELS
 #include "kernels/fast_kernels.h"
 #include "kernels/encoder_norm.h"
 #include "kernels/encoder_activation.h"
@@ -114,7 +114,7 @@ c10::Device device(const char* name) {
 /// before the engine reloads or destroys native state.
 struct Engine {
   std::mutex mutex;
-  TeiConfig config;
+  InfinityTorchConfig config;
   c10::Device device;
   at::ScalarType dtype;
   infinity::Options options;
@@ -129,7 +129,7 @@ struct Engine {
   std::atomic<bool> prefix_probe = false;
   bool media_graphs = false;
   bool nomic_moe_graphs = false;
-#ifdef TEI_TORCH_CUDA_KERNELS
+#ifdef INFINITY_TORCH_CUDA_KERNELS
   std::unique_ptr<at::cuda::CUDAEvent> submitted;
   std::optional<c10::cuda::CUDAStream> producer;
   bool submission_failed = false;
@@ -137,7 +137,7 @@ struct Engine {
   /// Finish the last producer submission before engine resources are replaced or destroyed. A
   /// failed event submission requires draining the remembered producer stream instead.
   void drain() {
-#ifdef TEI_TORCH_CUDA_KERNELS
+#ifdef INFINITY_TORCH_CUDA_KERNELS
     if (submission_failed && producer)
       producer->synchronize();
     else if (submitted)
@@ -156,7 +156,7 @@ struct Engine {
     return !nomic_moe_graphs || infinity::encoder_nomic_device_routing_ready(*model);
   }
 
-  Engine(TeiConfig cfg, c10::Device dev, at::ScalarType type)
+  Engine(InfinityTorchConfig cfg, c10::Device dev, at::ScalarType type)
       : config(cfg), device(dev), dtype(type) {}
 
   /// Rebuild adapters and caches from current options/weights only after prior GPU work completes.
@@ -193,7 +193,7 @@ struct Engine {
       infinity::Options head_config;
       infinity::Weights head_weights;
       constexpr std::string_view config_prefix = "_decision.config.",
-                                 weight_prefix = "__tei_decision.";
+                                 weight_prefix = "__infinity_decision.";
       for (const auto& [key, value] : options.values)
         if (key.starts_with(config_prefix))
           head_config.values[key.substr(config_prefix.size())] = value;
@@ -298,7 +298,7 @@ struct Engine {
     // geometries retain eager execution rather than synchronizing in capture.
     nomic_moe_graphs = infinity::encoder_nomic_device_routing_ready(*model);
     bool native_moe_graphs = nomic_moe_graphs;
-#if defined(TEI_TORCH_MOE_KERNELS) && defined(TEI_TORCH_MOE_HOPPER)
+#if defined(INFINITY_TORCH_MOE_KERNELS) && defined(INFINITY_TORCH_MOE_HOPPER)
     if (device.is_cuda() && dtype == at::kBFloat16 && family == "qwen3_moe" &&
         options.integer("hidden_size", 0) == 2048 && options.integer("num_experts", 0) == 128 &&
         options.integer("num_experts_per_tok", 0) == 8 &&
@@ -372,7 +372,7 @@ at::ScalarType weight_dtype(const Engine& model, const char* name) {
   auto target_dtype = key.ends_with(".A_log") || key.ends_with(".dt_bias") || fp32_audio_filter
                           ? at::kFloat
                           : model.dtype;
-  if (key.starts_with("__tei_decision.")) {
+  if (key.starts_with("__infinity_decision.")) {
     auto kind = model.options.string("_decision.kind");
     if (kind == "pplx")
       target_dtype = at::kBFloat16;
@@ -397,7 +397,7 @@ class EngineCall {
   Engine& engine;
   std::unique_lock<std::mutex> lock;
   bool inference, finished = false;
-#ifdef TEI_TORCH_CUDA_KERNELS
+#ifdef INFINITY_TORCH_CUDA_KERNELS
   c10::cuda::OptionalCUDAGuard device;
   std::optional<c10::cuda::CUDAStream> stream;
 #endif
@@ -411,7 +411,7 @@ public:
   /// The host mutex alone cannot protect buffers reused by asynchronous GPU work.
   explicit EngineCall(void* handle, bool submits = false)
       : engine(get(handle)), lock(engine.mutex), inference(submits) {
-#ifdef TEI_TORCH_CUDA_KERNELS
+#ifdef INFINITY_TORCH_CUDA_KERNELS
     if (inference && engine.device.is_cuda()) {
       TORCH_CHECK(!engine.submission_failed,
                   "Native engine requires recreation after CUDA submission failure");
@@ -427,7 +427,7 @@ public:
   void finish() {
     if (finished)
       return;
-#ifdef TEI_TORCH_CUDA_KERNELS
+#ifdef INFINITY_TORCH_CUDA_KERNELS
     if (stream) {
       // Also remember the stream if recording fails after work was queued.
       engine.producer = stream;
@@ -443,7 +443,7 @@ public:
     try {
       finish();
     } catch (...) {
-#ifdef TEI_TORCH_CUDA_KERNELS
+#ifdef INFINITY_TORCH_CUDA_KERNELS
       engine.submission_failed = true;
 #endif
     }
@@ -471,11 +471,11 @@ size_t validate_request_input(Engine& model,
                               int64_t batch,
                               int64_t max_sequence,
                               const int64_t* media_positions,
-                              const TeiImage* images,
+                              const InfinityTorchImage* images,
                               size_t image_count,
-                              const TeiAudio* audios,
+                              const InfinityTorchAudio* audios,
                               size_t audio_count,
-                              const TeiRadix* radix) {
+                              const InfinityTorchRadix* radix) {
   const auto family = model.options.string("model_type");
   const bool gemma = family == "gemma4" || family == "gemma4_text" || family == "embedding_gemma2";
   const auto tokens = infinity::validate_input_descriptors(ids,
@@ -519,11 +519,11 @@ void validate_forward_descriptors(Engine& model,
                                   size_t raw_count,
                                   size_t capacity,
                                   const int64_t* media_positions,
-                                  const TeiImage* images,
+                                  const InfinityTorchImage* images,
                                   size_t image_count,
-                                  const TeiAudio* audios,
+                                  const InfinityTorchAudio* audios,
                                   size_t audio_count,
-                                  const TeiRadix* radix,
+                                  const InfinityTorchRadix* radix,
                                   bool deferred = false) {
   validate_request_input(model,
                          ids,
@@ -559,18 +559,18 @@ void validate_forward_descriptors(Engine& model,
 // Synchronous calls must drain work queued before an exception while their
 // borrowed host descriptors and temporary tensors are still alive.
 struct SynchronousStreamGuard {
-#ifdef TEI_TORCH_CUDA_KERNELS
+#ifdef INFINITY_TORCH_CUDA_KERNELS
   std::optional<c10::cuda::CUDAStream> stream;
 #endif
   explicit SynchronousStreamGuard(Engine& model) {
-#ifdef TEI_TORCH_CUDA_KERNELS
+#ifdef INFINITY_TORCH_CUDA_KERNELS
     if (model.device.is_cuda())
       stream = c10::cuda::getCurrentCUDAStream(model.device.index());
 #endif
   }
 
   ~SynchronousStreamGuard() {
-#ifdef TEI_TORCH_CUDA_KERNELS
+#ifdef INFINITY_TORCH_CUDA_KERNELS
     try {
       if (stream)
         stream->synchronize();
@@ -590,9 +590,9 @@ infinity::PackedInput packed_input(Engine& model,
                                    int64_t batch,
                                    int64_t max_sequence,
                                    const int64_t* media_positions,
-                                   const TeiImage* images,
+                                   const InfinityTorchImage* images,
                                    size_t image_count,
-                                   const TeiAudio* audios,
+                                   const InfinityTorchAudio* audios,
                                    size_t audio_count,
                                    infinity::OutputLease* completion = nullptr) {
   const auto family = model.options.string("model_type");
@@ -681,10 +681,10 @@ void attach_radix(Engine& model,
                   int64_t batch,
                   int64_t max_sequence,
                   const int64_t* media_positions,
-                  const TeiImage* images,
+                  const InfinityTorchImage* images,
                   size_t image_count,
                   size_t audio_count,
-                  const TeiRadix* radix,
+                  const InfinityTorchRadix* radix,
                   infinity::OutputLease* completion = nullptr) {
   if (radix) {
     TORCH_CHECK(model.model->supports_radix(), "This native model does not support radix folding");
@@ -716,7 +716,7 @@ void attach_radix(Engine& model,
     if (image_count || media_positions) {
       // Token IDs alone cannot establish equivalent image contexts. Compare
       // host pixel bits, placement and all rotary axes before map upload.
-      std::vector<std::vector<const TeiImage*>> contexts(batch);
+      std::vector<std::vector<const InfinityTorchImage*>> contexts(batch);
       std::vector<int64_t> rows(total);
       for (int64_t row = 0; row < batch; ++row)
         std::fill(rows.begin() + cumulative[row], rows.begin() + cumulative[row + 1], row);
@@ -790,7 +790,7 @@ void attach_radix(Engine& model,
 }
 
 /// Copy counted FFI metadata into request-owned vectors and translate protocol kind values.
-std::vector<infinity::DecisionRequest> decision_requests(const TeiDecision* requests,
+std::vector<infinity::DecisionRequest> decision_requests(const InfinityTorchDecision* requests,
                                                          size_t count) {
   TORCH_CHECK(requests || !count, "Missing decision metadata buffer");
   std::vector<infinity::DecisionRequest> result;
@@ -867,15 +867,15 @@ template <class F> int32_t checked(F&& f) {
 }
 
 extern "C" {
-const char* tei_error() {
+const char* infinity_torch_error() {
   return error_fallback ? error_fallback : error.c_str();
 }
 
-int32_t tei_last_error_kind() {
+int32_t infinity_torch_last_error_kind() {
   return error_kind;
 }
 
-int64_t tei_device_count(const char* name) {
+int64_t infinity_torch_device_count(const char* name) {
   int64_t count = -1;
   checked([&] {
     auto dev = device(name);
@@ -884,14 +884,14 @@ int64_t tei_device_count(const char* name) {
   return count;
 }
 
-int32_t tei_device_preflight(const char* name) {
+int32_t infinity_torch_device_preflight(const char* name) {
   return checked([&] {
     TORCH_CHECK(name, "Missing preflight device");
     const auto dev = device(name);
     if (dev.is_cpu())
       return;
     TORCH_CHECK(dev.is_cuda(), "Unsupported preflight device: ", dev);
-#ifdef TEI_TORCH_CUDA_KERNELS
+#ifdef INFINITY_TORCH_CUDA_KERNELS
     c10::cuda::CUDAGuard guard(dev);
     const auto one = at::ones({1}, at::TensorOptions().dtype(at::kFloat).device(dev));
     const auto result = one + one;
@@ -903,7 +903,7 @@ int32_t tei_device_preflight(const char* name) {
   });
 }
 
-void* tei_create(const TeiConfig* cfg, const char* name, int32_t dtype) {
+void* infinity_torch_create(const InfinityTorchConfig* cfg, const char* name, int32_t dtype) {
   Engine* model = nullptr;
   checked([&] {
     initialize_precision();
@@ -912,7 +912,7 @@ void* tei_create(const TeiConfig* cfg, const char* name, int32_t dtype) {
   return model;
 }
 
-int32_t tei_weight(void* handle,
+int32_t infinity_torch_weight(void* handle,
                    const char* name,
                    const uint8_t* data,
                    const int64_t* shape,
@@ -928,11 +928,11 @@ int32_t tei_weight(void* handle,
   });
 }
 #ifndef _WIN32
-int32_t tei_load_safetensors(void* handle,
+int32_t infinity_torch_load_safetensors(void* handle,
                              int fd,
                              uint64_t start,
                              uint64_t length,
-                             const TeiWeight* weights,
+                             const InfinityTorchWeight* weights,
                              size_t count,
                              size_t threads,
                              size_t buffer_bytes,
@@ -956,14 +956,14 @@ int32_t tei_load_safetensors(void* handle,
 }
 #endif
 
-int32_t tei_option(void* handle, const char* key, const char* value) {
+int32_t infinity_torch_option(void* handle, const char* key, const char* value) {
   return checked([&] {
     EngineCall access(handle);
     static_cast<Engine*>(handle)->options.values[key] = value;
   });
 }
 
-int32_t tei_runtime_limits(void* handle, int64_t* limits, size_t count) {
+int32_t infinity_torch_runtime_limits(void* handle, int64_t* limits, size_t count) {
   return checked([&] {
     EngineCall access(handle);
     TORCH_CHECK(limits && count >= 3, "Runtime limits require three values");
@@ -974,7 +974,7 @@ int32_t tei_runtime_limits(void* handle, int64_t* limits, size_t count) {
   });
 }
 
-int64_t tei_output_width(void* handle) {
+int64_t infinity_torch_output_width(void* handle) {
   int64_t width = -1;
   checked([&] {
     EngineCall access(handle);
@@ -983,7 +983,7 @@ int64_t tei_output_width(void* handle) {
   return width;
 }
 
-int32_t tei_supports_radix(void* handle) {
+int32_t infinity_torch_supports_radix(void* handle) {
   int32_t supported = -1;
   checked([&] {
     EngineCall access(handle);
@@ -992,7 +992,7 @@ int32_t tei_supports_radix(void* handle) {
   return supported;
 }
 
-int32_t tei_prefix_cache_supported(void* handle, int32_t operation) {
+int32_t infinity_torch_prefix_cache_supported(void* handle, int32_t operation) {
   int32_t supported = -1;
   checked([&] {
     EngineCall access(handle);
@@ -1004,7 +1004,7 @@ int32_t tei_prefix_cache_supported(void* handle, int32_t operation) {
   return supported;
 }
 
-int32_t tei_prefix_cache_stats(void* handle, uint64_t* counters, size_t count) {
+int32_t infinity_torch_prefix_cache_stats(void* handle, uint64_t* counters, size_t count) {
   return checked([&] {
     EngineCall access(handle);
     TORCH_CHECK(counters && count >= 7, "Prefix-cache stats require seven counters");
@@ -1020,7 +1020,7 @@ int32_t tei_prefix_cache_stats(void* handle, uint64_t* counters, size_t count) {
   });
 }
 
-int32_t tei_prefix_cache_clear(void* handle) {
+int32_t infinity_torch_prefix_cache_clear(void* handle) {
   return checked([&] {
     EngineCall access(handle);
     auto& engine = *static_cast<Engine*>(handle);
@@ -1029,7 +1029,7 @@ int32_t tei_prefix_cache_clear(void* handle) {
   });
 }
 
-int32_t tei_prefix_cache_set_probe(void* handle, int32_t enabled) {
+int32_t infinity_torch_prefix_cache_set_probe(void* handle, int32_t enabled) {
   int32_t previous = -1;
   checked([&] {
     TORCH_CHECK(handle && (enabled == 0 || enabled == 1), "Invalid prefix-cache probe flag");
@@ -1040,7 +1040,7 @@ int32_t tei_prefix_cache_set_probe(void* handle, int32_t enabled) {
   return previous;
 }
 
-int64_t tei_graph_count(void* handle) {
+int64_t infinity_torch_graph_count(void* handle) {
   int64_t count = -1;
   checked([&] {
     EngineCall access(handle);
@@ -1050,7 +1050,7 @@ int64_t tei_graph_count(void* handle) {
   return count;
 }
 
-int32_t tei_graph_stats(void* handle, uint64_t* counters, size_t count) {
+int32_t infinity_torch_graph_stats(void* handle, uint64_t* counters, size_t count) {
   return checked([&] {
     EngineCall access(handle);
     TORCH_CHECK(counters && count >= 7, "CUDA graph stats require seven counters");
@@ -1070,7 +1070,7 @@ int32_t tei_graph_stats(void* handle, uint64_t* counters, size_t count) {
   });
 }
 
-int64_t tei_classification_width(void* handle) {
+int64_t infinity_torch_classification_width(void* handle) {
   int64_t width = -1;
   checked([&] {
     EngineCall access(handle);
@@ -1079,7 +1079,7 @@ int64_t tei_classification_width(void* handle) {
   return width;
 }
 
-int64_t tei_pooled_width(void* handle) {
+int64_t infinity_torch_pooled_width(void* handle) {
   int64_t width = -1;
   checked([&] {
     EngineCall access(handle);
@@ -1091,7 +1091,7 @@ int64_t tei_pooled_width(void* handle) {
   return width;
 }
 
-int32_t tei_ready(void* handle) {
+int32_t infinity_torch_ready(void* handle) {
   return checked([&] {
     EngineCall access(handle, true);
     static_cast<Engine*>(handle)->ready();
@@ -1100,7 +1100,7 @@ int32_t tei_ready(void* handle) {
 }
 
 int32_t
-tei_decision_counts(void* handle, const TeiDecision* requests, size_t count, int64_t* counts) {
+infinity_torch_decision_counts(void* handle, const InfinityTorchDecision* requests, size_t count, int64_t* counts) {
   return checked([&] {
     EngineCall access(handle);
     auto& engine = *static_cast<Engine*>(handle);
@@ -1113,23 +1113,23 @@ tei_decision_counts(void* handle, const TeiDecision* requests, size_t count, int
   });
 }
 
-int32_t tei_decide(void* handle,
+int32_t infinity_torch_decide(void* handle,
                    const int64_t* ids,
                    const int64_t* types,
                    const int64_t* positions,
                    const int32_t* cumulative,
                    int64_t batch,
                    int64_t max_sequence,
-                   const TeiDecision* requests,
+                   const InfinityTorchDecision* requests,
                    float* logits,
                    size_t capacity,
                    float* actions,
                    const int64_t* media_positions,
-                   const TeiImage* images,
+                   const InfinityTorchImage* images,
                    size_t image_count,
-                   const TeiAudio* audios,
+                   const InfinityTorchAudio* audios,
                    size_t audio_count) {
-  return tei_decide_radix(handle,
+  return infinity_torch_decide_radix(handle,
                           ids,
                           types,
                           positions,
@@ -1148,23 +1148,23 @@ int32_t tei_decide(void* handle,
                           nullptr);
 }
 
-int32_t tei_decide_radix(void* handle,
+int32_t infinity_torch_decide_radix(void* handle,
                          const int64_t* ids,
                          const int64_t* types,
                          const int64_t* positions,
                          const int32_t* cumulative,
                          int64_t batch,
                          int64_t max_sequence,
-                         const TeiDecision* requests,
+                         const InfinityTorchDecision* requests,
                          float* logits,
                          size_t capacity,
                          float* actions,
                          const int64_t* media_positions,
-                         const TeiImage* images,
+                         const InfinityTorchImage* images,
                          size_t image_count,
-                         const TeiAudio* audios,
+                         const InfinityTorchAudio* audios,
                          size_t audio_count,
-                         const TeiRadix* radix) {
+                         const InfinityTorchRadix* radix) {
   return checked([&] {
     EngineCall access(handle, true);
     auto& engine = *static_cast<Engine*>(handle);
@@ -1314,14 +1314,14 @@ static int32_t forward_radix(void* handle,
                              float* output,
                              size_t capacity,
                              const int64_t* media_positions,
-                             const TeiImage* images,
+                             const InfinityTorchImage* images,
                              size_t image_count,
-                             const TeiAudio* audios,
+                             const InfinityTorchAudio* audios,
                              size_t audio_count,
-                             const TeiRadix* radix,
+                             const InfinityTorchRadix* radix,
                              infinity::OutputLease* completion);
 
-int32_t tei_forward(void* handle,
+int32_t infinity_torch_forward(void* handle,
                     const int64_t* ids,
                     const int64_t* types,
                     const int64_t* positions,
@@ -1336,11 +1336,11 @@ int32_t tei_forward(void* handle,
                     float* output,
                     size_t capacity,
                     const int64_t* media_positions,
-                    const TeiImage* images,
+                    const InfinityTorchImage* images,
                     size_t image_count,
-                    const TeiAudio* audios,
+                    const InfinityTorchAudio* audios,
                     size_t audio_count) {
-  return tei_forward_radix(handle,
+  return infinity_torch_forward_radix(handle,
                            ids,
                            types,
                            positions,
@@ -1377,11 +1377,11 @@ static int32_t forward_radix(void* handle,
                              float* output,
                              size_t capacity,
                              const int64_t* media_positions,
-                             const TeiImage* images,
+                             const InfinityTorchImage* images,
                              size_t image_count,
-                             const TeiAudio* audios,
+                             const InfinityTorchAudio* audios,
                              size_t audio_count,
-                             const TeiRadix* radix,
+                             const InfinityTorchRadix* radix,
                              infinity::OutputLease* completion) {
   return checked([&] {
     EngineCall access(handle, true);
@@ -1478,7 +1478,7 @@ static int32_t forward_radix(void* handle,
     }
     std::vector<at::Tensor> outputs;
     bool mean_pooled = false;
-#ifdef TEI_TORCH_CUDA_KERNELS
+#ifdef INFINITY_TORCH_CUDA_KERNELS
     if (pool == 1 && pooled_count && !model.model->model_dtype_mean_pool() && h.is_cuda() &&
         h.is_contiguous() && (h.scalar_type() == at::kHalf || h.scalar_type() == at::kBFloat16) &&
         pooled_count <= 65535) {
@@ -1559,7 +1559,7 @@ static int32_t forward_radix(void* handle,
   });
 }
 
-int32_t tei_forward_radix(void* handle,
+int32_t infinity_torch_forward_radix(void* handle,
                           const int64_t* ids,
                           const int64_t* types,
                           const int64_t* positions,
@@ -1574,11 +1574,11 @@ int32_t tei_forward_radix(void* handle,
                           float* output,
                           size_t capacity,
                           const int64_t* media_positions,
-                          const TeiImage* images,
+                          const InfinityTorchImage* images,
                           size_t image_count,
-                          const TeiAudio* audios,
+                          const InfinityTorchAudio* audios,
                           size_t audio_count,
-                          const TeiRadix* radix) {
+                          const InfinityTorchRadix* radix) {
   return forward_radix(handle,
                        ids,
                        types,
@@ -1602,7 +1602,7 @@ int32_t tei_forward_radix(void* handle,
                        nullptr);
 }
 
-void* tei_forward_submit(void* handle,
+void* infinity_torch_forward_submit(void* handle,
                          const int64_t* ids,
                          const int64_t* types,
                          const int64_t* positions,
@@ -1616,11 +1616,11 @@ void* tei_forward_submit(void* handle,
                          size_t raw_count,
                          size_t capacity,
                          const int64_t* media_positions,
-                         const TeiImage* images,
+                         const InfinityTorchImage* images,
                          size_t image_count,
-                         const TeiAudio* audios,
+                         const InfinityTorchAudio* audios,
                          size_t audio_count,
-                         const TeiRadix* radix) {
+                         const InfinityTorchRadix* radix) {
   std::unique_ptr<infinity::OutputLease> lease;
   const auto status = checked([&] {
     std::shared_ptr<infinity::OutputPool> output_pool;
@@ -1682,17 +1682,17 @@ void* tei_forward_submit(void* handle,
   return status == 0 ? lease.release() : nullptr;
 }
 
-const float* tei_output_wait(void* handle) {
+const float* infinity_torch_output_wait(void* handle) {
   const float* output = nullptr;
   checked([&] { output = static_cast<infinity::OutputLease*>(handle)->wait(); });
   return output;
 }
 
-void tei_output_destroy(void* handle) {
+void infinity_torch_output_destroy(void* handle) {
   delete static_cast<infinity::OutputLease*>(handle);
 }
 
-void tei_destroy(void* handle) {
+void infinity_torch_destroy(void* handle) {
   delete static_cast<Engine*>(handle);
 }
 }

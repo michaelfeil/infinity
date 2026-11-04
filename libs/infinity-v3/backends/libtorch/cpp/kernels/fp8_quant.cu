@@ -42,7 +42,7 @@ DEALINGS IN THE SOFTWARE.
 namespace infinity {
 namespace {
 template <typename T>
-__device__ void tei_fp8_quant_row(const T* x, __nv_fp8_e4m3* y, float* scales, int k) {
+__device__ void infinity_fp8_quant_row(const T* x, __nv_fp8_e4m3* y, float* scales, int k) {
   __shared__ float partial[4];
   int row = blockIdx.x, lane = threadIdx.x % 32, warp = threadIdx.x / 32;
   float mx = 0;
@@ -72,7 +72,7 @@ __device__ void tei_fp8_quant_row(const T* x, __nv_fp8_e4m3* y, float* scales, i
 template <typename T>
 __global__ void quant_kernel(const T* x, __nv_fp8_e4m3* y, float* scales, int width) {
   wait_for_producer();
-  tei_fp8_quant_row(x, y, scales, width);
+  infinity_fp8_quant_row(x, y, scales, width);
 }
 
 /// Aligned scalar pack for vectorized row-wise FP8 quantization.

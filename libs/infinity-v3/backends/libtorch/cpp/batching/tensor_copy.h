@@ -7,7 +7,7 @@
 #include <array>
 #include <map>
 #include <vector>
-#ifdef TEI_TORCH_CUDA_KERNELS
+#ifdef INFINITY_TORCH_CUDA_KERNELS
 #include "kernels/prefix_state_copy.h"
 #endif
 
@@ -20,7 +20,7 @@ inline void tensor_copies(const std::vector<at::Tensor>& targets,
                           const std::vector<at::Tensor>& sources,
                           bool leading_rows = false) {
   TORCH_CHECK(targets.size() == sources.size(), "Invalid tensor copy batch");
-#ifdef TEI_TORCH_CUDA_KERNELS
+#ifdef INFINITY_TORCH_CUDA_KERNELS
   // K/V views can have gaps between rows, which makes foreach copy fall back
   // to separate launches. The raw batched route also accepts mixed dtypes.
   if (prefix_state_copies(targets, sources, leading_rows))

@@ -14,7 +14,7 @@
 #include <mutex>
 #include <optional>
 #include <vector>
-#ifdef TEI_TORCH_CUDA_KERNELS
+#ifdef INFINITY_TORCH_CUDA_KERNELS
 #include <ATen/cuda/CUDAContext.h>
 #include <ATen/cuda/CUDAEvent.h>
 #include <c10/cuda/CUDACachingAllocator.h>
@@ -30,7 +30,7 @@ private:
   struct Entry {
     Key key;
     at::Tensor value;
-#ifdef TEI_TORCH_CUDA_KERNELS
+#ifdef INFINITY_TORCH_CUDA_KERNELS
     std::unique_ptr<at::cuda::CUDAEvent> ready;
 #endif
   };
@@ -45,7 +45,7 @@ private:
   at::Tensor find(const Key& key) const {
     for (auto found = entries.begin(); found != entries.end(); ++found)
       if (found->key == key) {
-#ifdef TEI_TORCH_CUDA_KERNELS
+#ifdef INFINITY_TORCH_CUDA_KERNELS
         if (found->ready) {
           auto stream = at::cuda::getCurrentCUDAStream(found->value.get_device());
           found->ready->block(stream);
@@ -82,7 +82,7 @@ private:
     Entry entry;
     entry.key = key;
     entry.value = value;
-#ifdef TEI_TORCH_CUDA_KERNELS
+#ifdef INFINITY_TORCH_CUDA_KERNELS
     if (value.is_cuda()) {
       entry.ready = std::make_unique<at::cuda::CUDAEvent>();
       entry.ready->record(at::cuda::getCurrentCUDAStream(value.get_device()));

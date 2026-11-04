@@ -705,7 +705,7 @@ impl CompletionThread {
     fn new() -> Self {
         let (sender, receiver) = std::sync::mpsc::sync_channel::<CompletionJob>(2);
         let handle = std::thread::Builder::new()
-            .name("tei-completion".into())
+            .name("infinity-completion".into())
             .spawn(move || {
                 while let Ok(job) = receiver.recv() {
                     job();
@@ -1221,7 +1221,7 @@ mod completion_tests {
                 self.completed.clone(),
             );
             Ok(Inference::Deferred(Box::new(move || {
-                assert_eq!(std::thread::current().name(), Some("tei-completion"));
+                assert_eq!(std::thread::current().name(), Some("infinity-completion"));
                 started.send(()).unwrap();
                 let result = gate.lock().unwrap().recv().unwrap();
                 completed.fetch_add(1, Ordering::SeqCst);
