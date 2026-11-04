@@ -164,6 +164,9 @@ with its own `device_id`, and `BackendPool` schedules batches across them.
 
 ## Lifecycle and threading
 
+- Initial startup is synchronous: backend construction waits until the plugin
+  factory finishes loading the model or returns a startup error. The factory
+  runs on the persistent worker that will execute its requests.
 - There is one shared frontend queue and scheduler per model. It hands each
   batch to an exclusive replica lease in `BackendPool`; it does not create a
   separate frontend per device.
