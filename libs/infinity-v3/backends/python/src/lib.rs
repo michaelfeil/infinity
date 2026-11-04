@@ -210,7 +210,7 @@ fn validate_capacity(serving: ServingLimits, limits: PackedLimits) -> Result<(),
         return Err(BackendError::Start(format!(
             "Python backend capacity is smaller than the resolved serving limits: \
              max_input_length={} > plugin packed_limits.max_seq_len={}. Increase the plugin \
-             sequence capacity or lower --max-input-length/--max-batch-tokens.",
+             sequence capacity or lower --max-sequence-length/--max-batch-tokens.",
             serving.max_input_length, limits.max_seq_len
         )));
     }
@@ -874,6 +874,16 @@ def create_executor(**kwargs):
             match result {
                 Err(BackendError::Start(message)) => {
                     assert!(message.contains(expected), "{name}: {message}");
+                    assert!(
+                        !message.contains("--max-input-length"),
+                        "{name}: startup error names a non-existent CLI flag: {message}"
+                    );
+                    if expected.contains("max_seq_len") {
+                        assert!(
+                            message.contains("--max-sequence-length"),
+                            "{name}: startup error should name the real CLI flag: {message}"
+                        );
+                    }
                 }
                 Err(error) => panic!("{name}: expected a startup error, got {error}"),
                 Ok(_) => panic!("{name}: underprovisioned capacity must fail startup"),

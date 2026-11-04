@@ -170,8 +170,10 @@ reachable_total_tokens = min(max_batch_tokens, effective_requests * max_input_le
 
 It rejects the plugin when `reachable_total_tokens > max_total_tokens` or
 `max_input_length > max_seq_len`; either is an actionable startup error, never a
-silent truncation. `max_total_tokens` is the logical valid token capacity, not a
-physical rounded execution bucket: if the physical bucket is larger than the
+silent truncation. The CLI flag for the resolved `max_input_length` is
+`--max-sequence-length`; `max_input_length` is the internal field name.
+`max_total_tokens` is the logical valid token capacity, not a physical rounded
+execution bucket: if the physical bucket is larger than the
 valid cap, advertise the logical cap and use a separate field for the physical
 size. Advertise the full context the plugin can actually execute. Malformed
 capabilities are startup errors. Omitting capabilities leaves batching and
