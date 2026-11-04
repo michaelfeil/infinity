@@ -67,6 +67,7 @@ fn block_decisions_match_full_transformers() -> Result<(), Box<dyn std::error::E
         &dtype,
         ModelType::Decision,
         &device,
+        crate::limits(),
     )?;
     assert!(!backend.supports_radix_mlp());
     let compare = |actual: &[f32], expected: &[f32]| {
@@ -166,4 +167,8 @@ fn block_decisions_match_full_transformers() -> Result<(), Box<dyn std::error::E
         .decide(batch(&[first]), vec![DecisionInput::Warmup])
         .is_ok());
     Ok(())
+}
+
+fn limits() -> text_embeddings_backend_core::ServingLimits {
+    text_embeddings_backend_core::ServingLimits::new(16_384, 8_192, None).unwrap()
 }

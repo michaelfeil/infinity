@@ -89,7 +89,13 @@ fn ultrabert_matches_hf() -> Result<()> {
     let cases: Vec<Reference> = serde_json::from_slice(&reference)?;
     assert!(cases.len() >= 5);
     let dtype = std::env::var("ULTRABERT_DTYPE").unwrap_or("float32".into());
-    let backend = LibtorchBackend::new(&model, &dtype, ModelType::Embedding(Pool::Cls), &device())?;
+    let backend = LibtorchBackend::new(
+        &model,
+        &dtype,
+        ModelType::Embedding(Pool::Cls),
+        &device(),
+        crate::limits(),
+    )?;
     for case in &cases {
         let outputs = backend.embed(input(&[case], vec![0], vec![]))?;
         let Embedding::Pooled(actual) = &outputs[&0] else {
@@ -121,7 +127,13 @@ fn ultrabert_matches_hf() -> Result<()> {
         (Pool::Mean, &cases[4].mean),
         (Pool::LastToken, &cases[4].last),
     ] {
-        let backend = LibtorchBackend::new(&model, &dtype, ModelType::Embedding(pool), &device())?;
+        let backend = LibtorchBackend::new(
+            &model,
+            &dtype,
+            ModelType::Embedding(pool),
+            &device(),
+            crate::limits(),
+        )?;
         let outputs = backend.embed(input(&[&cases[4]], vec![0], vec![]))?;
         let Embedding::Pooled(actual) = &outputs[&0] else {
             panic!("expected pooled output")
@@ -206,6 +218,7 @@ mod classification {
                 &dtype,
                 ModelType::Classifier,
                 &device(),
+                crate::limits(),
             )?;
             assert!(!backend.supports_radix_mlp());
             let cases: Vec<_> = reference.cases.iter().collect();
@@ -255,6 +268,7 @@ fn ultrabert_cuda_graphs_capture() -> Result<()> {
         "bfloat16",
         ModelType::Embedding(Pool::Cls),
         "cuda:0",
+        crate::limits(),
     )?;
     for _ in 0..8 {
         let outputs = backend.embed(input(&[&cases[0]], vec![0], vec![]))?;
@@ -268,4 +282,8 @@ fn ultrabert_cuda_graphs_capture() -> Result<()> {
         "UltraBERT text execution did not capture a CUDA graph"
     );
     Ok(())
+}
+
+fn limits() -> text_embeddings_backend_core::ServingLimits {
+    text_embeddings_backend_core::ServingLimits::new(16_384, 8_192, None).unwrap()
 }

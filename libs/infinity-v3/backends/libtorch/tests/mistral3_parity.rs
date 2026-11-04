@@ -32,8 +32,14 @@ fn mistral3_packed_hidden_states_match_transformers() {
         Ok("last-token") | Err(_) => Pool::LastToken,
         Ok(value) => panic!("Unsupported test pooling: {value}"),
     };
-    let backend =
-        LibtorchBackend::new(&model, &dtype, ModelType::Embedding(pool.clone()), &device).unwrap();
+    let backend = LibtorchBackend::new(
+        &model,
+        &dtype,
+        ModelType::Embedding(pool.clone()),
+        &device,
+        crate::limits(),
+    )
+    .unwrap();
     let cases: Vec<serde_json::Value> =
         serde_json::from_slice(&std::fs::read(root.join("cases.json")).unwrap()).unwrap();
     let mut batch = Batch {
@@ -200,4 +206,8 @@ fn assert_close(actual: &[f32], wanted: &[f32], dtype: &str, name: &str) {
         relative < 0.05
     });
     assert!(cosine > if dtype == "float32" { 0.99999 } else { 0.999 });
+}
+
+fn limits() -> text_embeddings_backend_core::ServingLimits {
+    text_embeddings_backend_core::ServingLimits::new(16_384, 8_192, None).unwrap()
 }

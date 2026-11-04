@@ -514,8 +514,9 @@ impl LibtorchBackend {
         dtype: &str,
         model_type: ModelType,
         device: &str,
+        limits: text_embeddings_backend_core::ServingLimits,
     ) -> Result<Self, BackendError> {
-        Self::new_with_dense_paths(path, dtype, model_type, device, None)
+        Self::new_with_dense_paths(path, dtype, model_type, device, None, limits)
     }
     pub fn new_with_dense_paths(
         path: &Path,
@@ -523,8 +524,17 @@ impl LibtorchBackend {
         model_type: ModelType,
         device: &str,
         dense_paths: Option<Vec<String>>,
+        limits: text_embeddings_backend_core::ServingLimits,
     ) -> Result<Self, BackendError> {
-        Self::new_with_dense_paths_and_fp8(path, dtype, model_type, device, dense_paths, false)
+        Self::new_with_dense_paths_and_fp8(
+            path,
+            dtype,
+            model_type,
+            device,
+            dense_paths,
+            false,
+            limits,
+        )
     }
     #[tracing::instrument(
         name = "model_load", skip_all,
@@ -537,29 +547,7 @@ impl LibtorchBackend {
         device: &str,
         dense_paths: Option<Vec<String>>,
         enable_fp8_dynamic: bool,
-    ) -> Result<Self, BackendError> {
-        Self::new_with_dense_paths_and_fp8_and_limits(
-            path,
-            dtype,
-            model_type,
-            device,
-            dense_paths,
-            enable_fp8_dynamic,
-            None,
-        )
-    }
-    #[tracing::instrument(
-        name = "model_load", skip_all,
-        fields(path = %path.display(), device = device, pid = std::process::id())
-    )]
-    pub fn new_with_dense_paths_and_fp8_and_limits(
-        path: &Path,
-        dtype: &str,
-        model_type: ModelType,
-        device: &str,
-        dense_paths: Option<Vec<String>>,
-        enable_fp8_dynamic: bool,
-        runtime_limits: Option<text_embeddings_backend_core::ServingLimits>,
+        runtime_limits: text_embeddings_backend_core::ServingLimits,
     ) -> Result<Self, BackendError> {
         if device != "cpu" && device != "auto" && !device.starts_with("cuda:") {
             return Err(start("LibTorch 2.14.1 varlen attention requires CUDA; only CPU reference and CUDA are supported"));
@@ -582,7 +570,8 @@ impl LibtorchBackend {
         } else {
             "config.json"
         })?;
-        if let Some(limits) = runtime_limits {
+        {
+            let limits = runtime_limits;
             if limits.max_input_length > limits.max_batch_tokens {
                 return Err(start("max_input_length cannot exceed max_batch_tokens"));
             }
@@ -2019,20 +2008,23 @@ mod pytorch_checkpoint;
 #[cfg(test)]
 mod tests {
     use super::*;
+    fn limits() -> text_embeddings_backend_core::ServingLimits {
+        text_embeddings_backend_core::ServingLimits::new(16_384, 8_192, None).unwrap()
+    }
 
     #[test]
     fn native_runtime_receives_the_resolved_limits() {
         let fixture = fixture("", false);
         let limits =
             text_embeddings_backend_core::ServingLimits::new(10_003, 2_301, Some(37)).unwrap();
-        let model = LibtorchBackend::new_with_dense_paths_and_fp8_and_limits(
+        let model = LibtorchBackend::new_with_dense_paths_and_fp8(
             &fixture.0,
             "float32",
             ModelType::Embedding(Pool::Mean),
             "cpu",
             None,
             false,
-            Some(limits),
+            limits,
         )
         .unwrap();
         let mut received = [0i64; 3];
@@ -2053,6 +2045,7 @@ mod tests {
             "bfloat16",
             ModelType::Embedding(Pool::Mean),
             "cuda:999",
+            limits(),
         )
         .err()
         .expect("Invalid device must fail initialization");
@@ -2074,6 +2067,7 @@ mod tests {
             "float32",
             ModelType::Embedding(Pool::Mean),
             "cpu",
+            limits(),
         )
         .unwrap();
         let expected = model.embed(batch()).unwrap();
@@ -2110,9 +2104,10 @@ mod tests {
         )
         .unwrap();
         for dtype in ["float32", "float16"] {
-            let error = LibtorchBackend::new(&fixture.0, dtype, ModelType::Decision, "cpu")
-                .err()
-                .expect("D3 must reject unsupported precision");
+            let error =
+                LibtorchBackend::new(&fixture.0, dtype, ModelType::Decision, "cpu", limits())
+                    .err()
+                    .expect("D3 must reject unsupported precision");
             assert!(error.to_string().contains("D3 requires bfloat16"));
         }
     }
@@ -2125,6 +2120,7 @@ mod tests {
             "float32",
             ModelType::Embedding(Pool::Mean),
             "cpu",
+            limits(),
         )
         .unwrap();
         let mut output = [42.0f32; 20];
@@ -2360,7 +2356,8 @@ mod tests {
         ));
         fs::write(&file, serialize(views, None).unwrap()).unwrap();
         let kind = ModelType::Embedding(Pool::Mean);
-        let baseline = LibtorchBackend::new(&fixture.0, "float32", kind.clone(), "cpu").unwrap();
+        let baseline =
+            LibtorchBackend::new(&fixture.0, "float32", kind.clone(), "cpu", limits()).unwrap();
         let mut input = batch();
         input.pooled_indices.clear();
         input.raw_indices = vec![0, 1];
@@ -2370,7 +2367,8 @@ mod tests {
             serde_json::from_slice(&fs::read(&config_file).unwrap()).unwrap();
         config["architectures"] = serde_json::json!(["HF_ColBERT"]);
         fs::write(config_file, serde_json::to_vec(&config).unwrap()).unwrap();
-        let model = LibtorchBackend::new(&fixture.0, "float32", kind.clone(), "cpu").unwrap();
+        let model =
+            LibtorchBackend::new(&fixture.0, "float32", kind.clone(), "cpu", limits()).unwrap();
         model.probe(batch(), &kind).unwrap();
         let actual = model.embed(input).unwrap();
         for index in [0, 1] {
@@ -2399,7 +2397,7 @@ mod tests {
             "pooled ColBERT output must be rejected"
         );
         fs::write(file, &bytes).unwrap();
-        let error = LibtorchBackend::new(&fixture.0, "float32", kind, "cpu")
+        let error = LibtorchBackend::new(&fixture.0, "float32", kind, "cpu", limits())
             .err()
             .unwrap();
         assert!(error.to_string().contains("missing its token projection"));
@@ -2452,10 +2450,11 @@ mod tests {
             let model_type = ModelType::Embedding(Pool::Mean);
             // Safetensors takes priority over a present incompatible fallback.
             fs::write(fixture.0.join("pytorch_model.bin"), b"invalid pickle").unwrap();
-            let baseline = LibtorchBackend::new(&fixture.0, "float32", model_type.clone(), "cpu")
-                .unwrap()
-                .embed(batch())
-                .unwrap();
+            let baseline =
+                LibtorchBackend::new(&fixture.0, "float32", model_type.clone(), "cpu", limits())
+                    .unwrap()
+                    .embed(batch())
+                    .unwrap();
             if base_bin {
                 pytorch_checkpoint::from_safetensors(
                     &fixture.0.join("model.safetensors"),
@@ -2473,7 +2472,7 @@ mod tests {
                     fs::remove_file(dir.join("model.safetensors")).unwrap();
                 }
             }
-            let actual = LibtorchBackend::new(&fixture.0, "float32", model_type, "cpu")
+            let actual = LibtorchBackend::new(&fixture.0, "float32", model_type, "cpu", limits())
                 .unwrap()
                 .embed(batch())
                 .unwrap();
@@ -2488,6 +2487,7 @@ mod tests {
                         "float32",
                         ModelType::Embedding(Pool::Mean),
                         "cpu",
+                        limits()
                     ),
                     Err(BackendError::Start(_))
                 ));
@@ -2507,6 +2507,7 @@ mod tests {
             "cuda:0",
             None,
             std::env::var("INFINITY_TEST_FP8_DYNAMIC").as_deref() == Ok("1"),
+            limits(),
         )
         .unwrap();
         let loaded = started.elapsed();
@@ -2534,6 +2535,7 @@ mod tests {
             "float16",
             ModelType::Embedding(Pool::Mean),
             "cuda:0",
+            limits(),
         )
         .unwrap();
         // The same CUDA path also accepts a valid batch with no requested rows.
@@ -2594,8 +2596,10 @@ mod tests {
         for pool in [Pool::Cls, Pool::Mean, Pool::LastToken] {
             let model_type = ModelType::Embedding(pool);
             let cpu =
-                LibtorchBackend::new(&fixture.0, "float32", model_type.clone(), "cpu").unwrap();
-            let gpu = LibtorchBackend::new(&fixture.0, "float16", model_type, "cuda:0").unwrap();
+                LibtorchBackend::new(&fixture.0, "float32", model_type.clone(), "cpu", limits())
+                    .unwrap();
+            let gpu = LibtorchBackend::new(&fixture.0, "float16", model_type, "cuda:0", limits())
+                .unwrap();
             let expected = cpu.embed(batch()).unwrap();
             let actual = gpu.embed(batch()).unwrap();
             for (row, embedding) in actual {
@@ -2627,10 +2631,17 @@ mod tests {
             .unwrap();
             for pool in [Pool::Cls, Pool::Mean, Pool::LastToken, Pool::Splade] {
                 let model_type = ModelType::Embedding(pool);
-                let cpu =
-                    LibtorchBackend::new(&fixture.0, "float32", model_type.clone(), "cpu").unwrap();
+                let cpu = LibtorchBackend::new(
+                    &fixture.0,
+                    "float32",
+                    model_type.clone(),
+                    "cpu",
+                    limits(),
+                )
+                .unwrap();
                 let gpu =
-                    LibtorchBackend::new(&fixture.0, "float16", model_type, "cuda:0").unwrap();
+                    LibtorchBackend::new(&fixture.0, "float16", model_type, "cuda:0", limits())
+                        .unwrap();
                 let expected = cpu.embed(batch()).unwrap();
                 let actual = std::thread::spawn(move || gpu.embed(batch()).unwrap())
                     .join()
@@ -2710,6 +2721,7 @@ mod tests {
             "cpu",
             None,
             true,
+            limits(),
         )
         .err()
         .unwrap();
@@ -2729,6 +2741,7 @@ mod tests {
             "cuda:0",
             None,
             true,
+            limits(),
         )
         .err()
         .unwrap();
@@ -2775,12 +2788,19 @@ mod tests {
             input.max_length = second.len() as u32;
             input.pooled_indices.clear();
             input.raw_indices = vec![0, 1];
-            let baseline = LibtorchBackend::new(&path, "bfloat16", kind.clone(), "cuda:0")
-                .unwrap()
-                .embed(input.clone())
-                .unwrap();
+            let baseline =
+                LibtorchBackend::new(&path, "bfloat16", kind.clone(), "cuda:0", limits())
+                    .unwrap()
+                    .embed(input.clone())
+                    .unwrap();
             let fp8 = LibtorchBackend::new_with_dense_paths_and_fp8(
-                &path, "bfloat16", kind, "cuda:0", None, true,
+                &path,
+                "bfloat16",
+                kind,
+                "cuda:0",
+                None,
+                true,
+                limits(),
             )
             .unwrap()
             .embed(input)
@@ -2831,12 +2851,19 @@ mod tests {
         });
         fs::write(&file, serialize(renamed, None).unwrap()).unwrap();
         let kind = ModelType::Embedding(Pool::Mean);
-        let baseline = LibtorchBackend::new(&fixture.0, "bfloat16", kind.clone(), "cuda:0")
-            .unwrap()
-            .embed(batch())
-            .unwrap();
+        let baseline =
+            LibtorchBackend::new(&fixture.0, "bfloat16", kind.clone(), "cuda:0", limits())
+                .unwrap()
+                .embed(batch())
+                .unwrap();
         let fp8 = LibtorchBackend::new_with_dense_paths_and_fp8(
-            &fixture.0, "bfloat16", kind, "cuda:0", None, true,
+            &fixture.0,
+            "bfloat16",
+            kind,
+            "cuda:0",
+            None,
+            true,
+            limits(),
         )
         .unwrap()
         .embed(batch())
@@ -2873,6 +2900,7 @@ mod tests {
                     dtype,
                     ModelType::Embedding(pool.clone()),
                     "cuda:0",
+                    limits(),
                 )
                 .unwrap();
                 let quantized = LibtorchBackend::new_with_dense_paths_and_fp8(
@@ -2882,6 +2910,7 @@ mod tests {
                     "cuda:0",
                     None,
                     true,
+                    limits(),
                 )
                 .unwrap();
                 let expected = dense.embed(batch()).unwrap();
@@ -2910,6 +2939,7 @@ mod tests {
                 "cuda:0",
                 None,
                 true,
+                limits(),
             )
             .unwrap();
             let mut classifier_batch = batch();
@@ -2931,6 +2961,7 @@ mod tests {
             "float32",
             ModelType::Embedding(Pool::Mean),
             "cpu",
+            limits(),
         )
         .unwrap();
         assert!(
@@ -2965,6 +2996,7 @@ mod tests {
             "float32",
             ModelType::Embedding(Pool::Mean),
             "cpu",
+            limits(),
         )
         .err()
         .unwrap();
