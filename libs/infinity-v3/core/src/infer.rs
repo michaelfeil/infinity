@@ -211,13 +211,11 @@ impl Infer {
         let notify_batching_task = Arc::new(Notify::new());
         let (sender, receiver) = mpsc::channel(1);
         let receiver = Arc::new(Mutex::new(receiver));
-        let ready = Arc::new(Semaphore::new(0));
         let mut tasks = vec![tokio::spawn(batching_task(
             backend.clone(),
             queue.clone(),
             notify_batching_task.clone(),
             sender,
-            ready.clone(),
         ))];
         for replica in 0..backend.len() {
             tasks.push(tokio::spawn(backend_task(
@@ -225,7 +223,6 @@ impl Infer {
                 queue.clone(),
                 receiver.clone(),
                 replica,
-                ready.clone(),
             )));
         }
         let lifetime = Arc::new(PipelineLifetime {
@@ -913,7 +910,6 @@ async fn batching_task(
     queue: Queue,
     notify: Arc<Notify>,
     sender: mpsc::Sender<DispatchedBatch>,
-    ready: Arc<Semaphore>,
 ) {
     let mut changed = pool.changes();
     loop {
@@ -925,22 +921,14 @@ async fn batching_task(
             permit = sender.reserve() => match permit { Ok(p) => p, Err(_) => break },
             _ = changed.changed() => { if pool.is_closed() { break; } continue; }
         };
-        // Form a batch only for an available consumer. A spare channel slot
-        // alone must not freeze a partial batch while every GPU is busy.
-        let demand = tokio::select! {
-            demand = ready.acquire() => match demand { Ok(p) => p, Err(_) => break },
-            _ = changed.changed() => { if pool.is_closed() { break; } continue; }
-        };
         if pool.is_closed() {
             break;
         }
         let started = Instant::now();
         if let Some(batch) = queue.next_batch().await {
             pool.observe_preparation(started.elapsed());
-            demand.forget();
             permit.send(DispatchedBatch(Some(batch)));
         } else {
-            drop(demand);
             drop(permit);
             tokio::select! { _ = arrival => {}, _ = changed.changed() => {} }
             // Let already-ready tokenization futures enqueue together before selecting a batch.
@@ -956,28 +944,31 @@ async fn backend_task(
     queue: Queue,
     receiver: Arc<Mutex<mpsc::Receiver<DispatchedBatch>>>,
     replica: usize,
-    ready: Arc<Semaphore>,
 ) {
     let mut changed = backend.changes();
+    let mut completions = tokio::task::JoinSet::new();
+    let mut previous: Option<Duration> = None;
     loop {
-        if backend.is_closed() || backend.wait_available(replica, &mut changed).await.is_err() {
+        if backend.is_closed() {
             break;
         }
-        let next = async {
-            ready.add_permits(1);
-            receiver.lock().await.recv().await
-        };
-        // Keep this one demand alive across unrelated pool changes.
-        let stopped = async {
-            loop {
-                if changed.changed().await.is_err() || backend.is_closed() {
-                    break;
-                }
+        while let Some(result) = completions.try_join_next() {
+            previous = result.ok();
+        }
+        // Keep the existing overlap for fast batches. An unknown or slower
+        // last completion must drain before taking more shared work.
+        if previous.is_none_or(|duration| duration > Duration::from_millis(5)) {
+            while let Some(result) = completions.join_next().await {
+                previous = result.ok();
             }
-        };
+        }
+        if backend.wait_available(replica, &mut changed).await.is_err() {
+            break;
+        }
+        let next = async { receiver.lock().await.recv().await };
         let mut dispatched = tokio::select! {
             batch = next => match batch { Some(b) => b, None => break },
-            _ = stopped => break,
+            _ = changed.changed() => { if backend.is_closed() { break; } continue; }
         };
         let execution = match backend.acquire_replica(replica).await {
             Ok(execution) => execution,
@@ -986,10 +977,14 @@ async fn backend_task(
         let Some(batch) = dispatched.0.take().and_then(prune_canceled_batch) else {
             continue;
         };
-        // Isolate malformed-result decoding while keeping this replica from
-        // requesting another batch until its current response is complete.
-        let _ = tokio::spawn(complete_batch(execution, backend.model_type.clone(), batch)).await;
+        let model_type = backend.model_type.clone();
+        completions.spawn(async move {
+            let started = Instant::now();
+            complete_batch(execution, model_type, batch).await;
+            started.elapsed()
+        });
     }
+    while completions.join_next().await.is_some() {}
     queue.close();
 }
 
@@ -1325,7 +1320,10 @@ mod completion_tests {
             BackendError,
         > {
             self.started.send((self.id, batch.input_ids[0])).unwrap();
-            let gate = self.gate.clone().filter(|_| batch.input_ids[0] == 1);
+            let gate = self
+                .gate
+                .clone()
+                .filter(|_| matches!(batch.input_ids[0], 1 | 3));
             // Model native submission: the lease can be released while output
             // collection is still pending. This replica still must not prefetch.
             Ok(infinity_v3_backend::TestInference::Deferred(Box::new(
@@ -1415,7 +1413,6 @@ mod completion_tests {
             queue.clone(),
             receiver.clone(),
             0,
-            Arc::new(Semaphore::new(1)),
         ));
         let (first, first_response) = dispatched(1);
         sender.send(first).await.unwrap();
@@ -1430,7 +1427,6 @@ mod completion_tests {
             queue.clone(),
             receiver.clone(),
             1,
-            Arc::new(Semaphore::new(1)),
         ));
         let assigned = tokio::time::timeout(Duration::from_secs(2), starts.recv()).await;
         // Always unblock native completion, even when this regression fails.
@@ -1465,7 +1461,6 @@ mod completion_tests {
             queue.clone(),
             Arc::new(Mutex::new(receiver)),
             0,
-            Arc::new(Semaphore::new(1)),
         ));
         let (malformed, failed_response) = dispatched(99);
         sender.send(malformed).await.unwrap();
@@ -1482,7 +1477,7 @@ mod completion_tests {
     }
 
     #[tokio::test]
-    async fn busy_replica_does_not_freeze_partial_batches() {
+    async fn last_batch_duration_controls_waiting_and_overlap() {
         let (started, mut starts) = mpsc::unbounded_channel();
         let (release, gate) = std::sync::mpsc::channel();
         let pool = BackendPool::new(vec![Backend::for_test(
@@ -1494,68 +1489,46 @@ mod completion_tests {
             ModelType::Classifier,
         )])
         .unwrap();
-        let queue = Queue::new(16, Some(8), 0.0, 16);
-        let notify = Arc::new(Notify::new());
-        let ready = Arc::new(Semaphore::new(0));
+        let queue = Queue::new(16, Some(1), 0.0, 1);
         let (sender, receiver) = mpsc::channel(1);
-        let batcher = tokio::spawn(batching_task(
-            pool.clone(),
-            queue.clone(),
-            notify.clone(),
-            sender,
-            ready.clone(),
-        ));
+        let receiver = Arc::new(Mutex::new(receiver));
         let worker = tokio::spawn(backend_task(
             pool.clone(),
             queue.clone(),
-            Arc::new(Mutex::new(receiver)),
+            receiver.clone(),
             0,
-            ready,
         ));
-        let mut responses = Vec::new();
-        let mut leases = Vec::new();
-        for token in 1..=3 {
-            let (mut input, response) = dispatched(token);
-            let (mut entries, batch) = input.0.take().unwrap();
-            leases.push(
-                queue
-                    .append(Entry {
-                        metadata: entries.pop().unwrap(),
-                        encoding: crate::tokenization::ValidEncoding {
-                            multimodal: None,
-                            input_ids: batch.input_ids,
-                            token_type_ids: batch.token_type_ids,
-                            position_ids: batch.position_ids,
-                            tokens: vec![],
-                            offsets: vec![],
-                        },
-                    })
-                    .await
-                    .unwrap(),
-            );
-            responses.push(response);
-            notify.notify_one();
-            if token == 1 {
-                assert_eq!(starts.recv().await, Some((0, 1)));
-            } else {
-                // A late arrival should join the earlier waiter instead of
-                // being split by preparation while the first output is gated.
-                tokio::time::sleep(Duration::from_millis(10)).await;
-            }
-        }
+        let (slow, slow_response) = dispatched(1);
+        sender.send(slow).await.unwrap();
+        assert_eq!(starts.recv().await, Some((0, 1)));
+        tokio::time::sleep(Duration::from_millis(10)).await;
         release.send(()).unwrap();
-        for response in responses {
-            assert!(response.await.unwrap().is_ok());
-        }
+        assert!(slow_response.await.unwrap().is_ok());
+        let (active, active_response) = dispatched(3);
+        sender.send(active).await.unwrap();
+        assert_eq!(starts.recv().await, Some((0, 3)));
+        let (waiting, waiting_response) = dispatched(2);
+        sender.send(waiting).await.unwrap();
+        tokio::task::yield_now().await;
+        let shared = receiver.try_lock().map(|r| r.len());
+        release.send(()).unwrap();
+        assert_eq!(shared.unwrap(), 1, "slow history allowed prefetch");
+        assert!(active_response.await.unwrap().is_ok());
+        assert!(waiting_response.await.unwrap().is_ok());
         assert_eq!(starts.recv().await, Some((0, 2)));
-        assert!(
-            starts.try_recv().is_err(),
-            "late arrival was fragmented into a third batch"
-        );
-        pool.close();
-        batcher.await.unwrap();
+        // A subsequent fast completion restores the original overlapping path.
+        let (active, active_response) = dispatched(1);
+        sender.send(active).await.unwrap();
+        assert_eq!(starts.recv().await, Some((0, 1)));
+        let (next, next_response) = dispatched(4);
+        sender.send(next).await.unwrap();
+        let overlapped = tokio::time::timeout(Duration::from_secs(2), starts.recv()).await;
+        release.send(()).unwrap();
+        assert_eq!(overlapped.unwrap(), Some((0, 4)));
+        assert!(active_response.await.unwrap().is_ok());
+        assert!(next_response.await.unwrap().is_ok());
+        drop(sender);
         worker.await.unwrap();
-        drop(leases);
         pool.shutdown().await;
         queue.shutdown().await;
     }
@@ -1581,7 +1554,6 @@ mod completion_tests {
             queue.clone(),
             receiver.clone(),
             0,
-            Arc::new(Semaphore::new(1)),
         ));
         let (first, response) = dispatched(1);
         sender.send(first).await.unwrap();
@@ -1623,7 +1595,6 @@ mod completion_tests {
             queue.clone(),
             receiver.clone(),
             0,
-            Arc::new(Semaphore::new(1)),
         ));
         drop(receiver); // The worker owns the shared queue's remaining receiver.
         let (active, active_response) = dispatched(1);
@@ -1670,7 +1641,6 @@ mod completion_tests {
             queue.clone(),
             receiver.clone(),
             0,
-            Arc::new(Semaphore::new(1)),
         ));
         tokio::task::yield_now().await;
         pool.close();
