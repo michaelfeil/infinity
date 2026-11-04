@@ -1328,8 +1328,13 @@ explicit ordinals must be visible, and each replica receives its own
 <code>device_id</code>. <code>BackendPool</code> schedules batches across replicas.</p>
 <h2 id="lifecycle-and-threading">Lifecycle and threading</h2>
 <ul>
-<li>Backend startup and capability discovery are synchronous. The plugin factory
-  loads the model before the backend returns; startup errors surface directly.</li>
+<li>Capability discovery is synchronous. Each factory runs on its replica's
+  persistent Python executor thread, also used for inference, health, and cleanup.
+  Rust waits on a startup envelope with the GIL released; startup errors surface
+  directly. Replicas can initialize concurrently, and the server waits for all
+  factories and warmups before serving. Factory arguments, including
+  <code>serving_limits</code>, are unchanged. Factories remain synchronous Python functions;
+  pure Python initialization still shares the GIL.</li>
 <li><code>infinity_v3_python.threaded.ThreadedExecutor</code> wraps the plugin with one
   persistent <code>ThreadPoolExecutor(max_workers=1)</code> per backend replica. It owns
   the plugin's single execution thread.</li>
