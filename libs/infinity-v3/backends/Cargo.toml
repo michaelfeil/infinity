@@ -20,6 +20,7 @@ tokio = { workspace = true }
 tracing = { workspace = true }
 
 [features]
+test-utils = []
 default = ["libtorch"]
 clap = ["dep:clap", "infinity_v3-backend-core/clap"]
 libtorch = ["dep:infinity-backend-libtorch"]
