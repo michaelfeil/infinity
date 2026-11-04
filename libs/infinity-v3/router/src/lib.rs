@@ -749,6 +749,11 @@ async fn initialize_model(
     let torch_device = backend_kind.resolve_device(torch_device)?;
     let python_backend_config = infinity_v3_backend::PythonBackendConfig {
         config: python_config.clone(),
+        serving_limits: Some(infinity_v3_backend::ServingLimits {
+            max_input_length,
+            max_batch_tokens,
+            max_batch_requests,
+        }),
     };
     let model_dtype = if vela_encoder {
         Some("bfloat16")

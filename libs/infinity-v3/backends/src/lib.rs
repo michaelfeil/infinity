@@ -22,13 +22,23 @@ pub use infinity_v3_backend_core::{
 };
 
 #[cfg(feature = "python-backend")]
-pub use infinity_v3_backend_python::PythonBackendConfig;
+pub use infinity_v3_backend_python::{PythonBackendConfig, ServingLimits};
+
+/// Resolved limits the shared frontend uses for one model.
+#[cfg(not(feature = "python-backend"))]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ServingLimits {
+    pub max_input_length: usize,
+    pub max_batch_tokens: usize,
+    pub max_batch_requests: Option<usize>,
+}
 
 /// Parameters for a bring-your-own-Python backend.
 #[cfg(not(feature = "python-backend"))]
 #[derive(Clone, Debug, Default)]
 pub struct PythonBackendConfig {
     pub config: Option<String>,
+    pub serving_limits: Option<ServingLimits>,
 }
 
 /// A completed result or an owned completion handle after native submission.

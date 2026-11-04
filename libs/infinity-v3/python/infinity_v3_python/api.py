@@ -4,6 +4,12 @@ A Python backend supplies a factory that returns an object with three methods:
 ``submit``, ``healthy``, and ``close``. The Infinity Rust backend owns request
 scheduling, batching, result packing, and the HTTP API. The plugin owns model
 loading and execution.
+
+A factory may explicitly declare a ``serving_limits`` keyword to receive the
+router's resolved limits (``max_input_length``, ``max_batch_tokens``,
+``max_batch_requests``). An executor may optionally implement ``capabilities()``
+returning ``{"protocol_version": 1, "packed_limits": {...}}`` to advertise its
+real per-call capacity; omission keeps the legacy behavior.
 """
 
 from __future__ import annotations

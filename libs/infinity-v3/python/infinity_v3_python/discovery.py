@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import inspect
 from importlib import import_module
 from importlib.metadata import entry_points
 from types import ModuleType
@@ -75,6 +76,27 @@ def load_factory(selector: str | None = None) -> Callable[..., Any]:
         module = _import(module_name, selector)
         _check_module(module, selector)
     return factory
+
+
+def factory_accepts_serving_limits(factory: Callable[..., Any]) -> bool:
+    """Return whether ``factory`` explicitly declares ``serving_limits``.
+
+    A ``**kwargs`` catch-all does not opt in: legacy factories keep receiving
+    only the original keyword arguments. Signature inspection failures are
+    treated as no opt-in rather than retrying a factory call.
+    """
+
+    try:
+        parameters = inspect.signature(factory).parameters
+    except (TypeError, ValueError):
+        return False
+    parameter = parameters.get("serving_limits")
+    if parameter is None:
+        return False
+    return parameter.kind in (
+        inspect.Parameter.POSITIONAL_OR_KEYWORD,
+        inspect.Parameter.KEYWORD_ONLY,
+    )
 
 
 def list_plugins() -> list[str]:

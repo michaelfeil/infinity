@@ -1,7 +1,8 @@
 use crate::envelope::ResponseEnvelope;
+use crate::ServingLimits;
 use infinity_v3_backend_core::BackendError;
 use pyo3::prelude::*;
-use pyo3::types::{PyDict, PyModule};
+use pyo3::types::{PyBool, PyDict, PyInt, PyModule};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 
@@ -14,11 +15,24 @@ pub(crate) struct ExecutorConfig {
     pub device_id: usize,
     pub config_json: String,
     pub queue_size: usize,
+    pub serving_limits: Option<ServingLimits>,
 }
 
 pub(crate) struct Executor {
     inner: Py<PyAny>,
     closed: AtomicBool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct PackedLimits {
+    pub max_total_tokens: usize,
+    pub max_sequences: usize,
+    pub max_seq_len: usize,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct BackendCapabilities {
+    pub packed_limits: Option<PackedLimits>,
 }
 
 impl Executor {
@@ -52,6 +66,25 @@ impl Executor {
             kwargs
                 .set_item("queue_size", config.queue_size)
                 .map_err(start_error)?;
+            if let Some(serving_limits) = config.serving_limits {
+                if factory_accepts_serving_limits(py, &factory) {
+                    let limits = PyDict::new(py);
+                    limits
+                        .set_item("max_input_length", serving_limits.max_input_length)
+                        .map_err(start_error)?;
+                    limits
+                        .set_item("max_batch_tokens", serving_limits.max_batch_tokens)
+                        .map_err(start_error)?;
+                    match serving_limits.max_batch_requests {
+                        Some(value) => limits.set_item("max_batch_requests", value),
+                        None => limits.set_item("max_batch_requests", py.None()),
+                    }
+                    .map_err(start_error)?;
+                    kwargs
+                        .set_item("serving_limits", limits)
+                        .map_err(start_error)?;
+                }
+            }
             let inner = factory
                 .call((), Some(&kwargs))
                 .map_err(|error| {
@@ -80,6 +113,63 @@ impl Executor {
             .call_method1("submit", (route, envelope, payload))
             .map(|_| ())
             .map_err(submit_error)
+    }
+
+    /// Optional capability negotiation. `None` means the executor has no
+    /// `capabilities` method and keeps the legacy behavior.
+    pub(crate) fn capabilities(&self) -> Result<Option<BackendCapabilities>, BackendError> {
+        if self.closed.load(Ordering::Acquire) {
+            return Err(BackendError::Unhealthy);
+        }
+        Python::attach(|py| {
+            let inner = self.inner.bind(py);
+            let capabilities = match inner.getattr("capabilities") {
+                Ok(value) => value,
+                Err(error) if error.is_instance_of::<pyo3::exceptions::PyAttributeError>(py) => {
+                    return Ok(None);
+                }
+                Err(error) => {
+                    return Err(BackendError::Start(format!(
+                        "Python backend capabilities could not be read: {error}"
+                    )));
+                }
+            };
+            if !capabilities.is_callable() {
+                return Err(BackendError::Start(
+                    "Python backend capabilities must be callable".into(),
+                ));
+            }
+            let capabilities = capabilities.call0().map_err(|error| {
+                BackendError::Start(format!("Python backend capabilities failed: {error}"))
+            })?;
+            let capabilities = capabilities
+                .extract::<Bound<'_, PyDict>>()
+                .map_err(|error| {
+                    BackendError::Start(format!(
+                        "Python backend capabilities must return a mapping: {error}"
+                    ))
+                })?;
+            if let Some(version) = capabilities
+                .get_item("protocol_version")
+                .map_err(capability_error)?
+            {
+                if version.is_instance_of::<PyBool>() {
+                    return Err(BackendError::Start(
+                        "Python backend protocol_version must be an integer".into(),
+                    ));
+                }
+                let version = version.extract::<i64>().map_err(capability_error)?;
+                if version != 1 {
+                    return Err(BackendError::Start(format!(
+                        "Python backend uses protocol {version}; this transport supports \
+                         protocol 1"
+                    )));
+                }
+            }
+            Ok(Some(BackendCapabilities {
+                packed_limits: packed_limits(&capabilities)?,
+            }))
+        })
     }
 
     pub(crate) fn health(&self) -> Result<(), BackendError> {
@@ -132,6 +222,77 @@ fn load_factory<'py>(
         .getattr("load_factory")
         .and_then(|function| function.call1((selector,)))
         .map_err(|error| BackendError::Start(format!("Could not load Python backend: {error}")))
+}
+
+fn factory_accepts_serving_limits(py: Python<'_>, factory: &Bound<'_, PyAny>) -> bool {
+    let Ok(discovery) = PyModule::import(py, "infinity_v3_python.discovery") else {
+        return false;
+    };
+    let Ok(helper) = discovery.getattr("factory_accepts_serving_limits") else {
+        return false;
+    };
+    helper
+        .call1((factory.clone(),))
+        .ok()
+        .and_then(|accepted| accepted.extract::<bool>().ok())
+        .unwrap_or(false)
+}
+
+fn packed_limits(capabilities: &Bound<'_, PyDict>) -> Result<Option<PackedLimits>, BackendError> {
+    let Some(limits) = capabilities
+        .get_item("packed_limits")
+        .map_err(capability_error)?
+    else {
+        return Ok(None);
+    };
+    if limits.is_instance_of::<PyBool>() {
+        return Err(BackendError::Start(
+            "Python backend capabilities.packed_limits must be a mapping".into(),
+        ));
+    }
+    let limits = limits.extract::<Bound<'_, PyDict>>().map_err(|error| {
+        BackendError::Start(format!(
+            "Python backend capabilities.packed_limits must be a mapping: {error}"
+        ))
+    })?;
+    Ok(Some(PackedLimits {
+        max_total_tokens: positive_limit(&limits, "max_total_tokens")?,
+        max_sequences: positive_limit(&limits, "max_sequences")?,
+        max_seq_len: positive_limit(&limits, "max_seq_len")?,
+    }))
+}
+
+fn positive_limit(limits: &Bound<'_, PyDict>, name: &str) -> Result<usize, BackendError> {
+    let Some(value) = limits.get_item(name).map_err(capability_error)? else {
+        return Err(BackendError::Start(format!(
+            "Python backend capabilities.packed_limits.{name} is required"
+        )));
+    };
+    if value.is_instance_of::<PyBool>() {
+        return Err(BackendError::Start(format!(
+            "Python backend capabilities.packed_limits.{name} must be an integer, not a boolean"
+        )));
+    }
+    if !value.is_instance_of::<PyInt>() {
+        return Err(BackendError::Start(format!(
+            "Python backend capabilities.packed_limits.{name} must be an integer"
+        )));
+    }
+    let value = value.extract::<i64>().map_err(capability_error)?;
+    usize::try_from(value)
+        .ok()
+        .filter(|value| *value > 0)
+        .ok_or_else(|| {
+            BackendError::Start(format!(
+                "Python backend capabilities.packed_limits.{name} must be a positive integer"
+            ))
+        })
+}
+
+fn capability_error(error: PyErr) -> BackendError {
+    BackendError::Start(format!(
+        "Python backend capabilities returned an invalid value: {error}"
+    ))
 }
 
 fn add_python_paths(py: Python<'_>) {
