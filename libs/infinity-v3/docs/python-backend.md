@@ -130,73 +130,46 @@ release model resources.
 
 ### Optional replica capability discovery
 
-A plugin can report replica capabilities before the frontend chooses devices.
-Export a module-level `capabilities` hook (or a `capabilities` attribute on the
-factory) that accepts the same `config_json` string passed to the factory and
-returns `BackendCapabilities`:
+A plugin may export a module-level `capabilities(config_json)` hook returning
+exactly `visible_device_count` and `supports_replication`:
 
 ```python
-from infinity_v3_python import BackendCapabilities
-
 def capabilities(config_json):
-    return BackendCapabilities(
-        visible_device_count=4,
-        supports_replication=True,
-    )
-
-def create_executor(**config):
-    return MyExecutor(config)
+    return {"visible_device_count": 4, "supports_replication": True}
 ```
 
-`visible_device_count` must be a positive integer and `supports_replication`
-must be a boolean. Invalid, malformed, or zero capabilities fail startup with a
-clear error. The hook runs before replica placement and before model weights are
-loaded, may run more than once, and must be cheap and side-effect free. Core
-awaits discovery on a blocking worker so a synchronous hook does not occupy the
-async router thread; plugins do not need to implement a Python coroutine.
+The hook receives the same `config_json` as the factory and runs synchronously
+before replica placement and model startup. It may run more than once, so keep
+it cheap and side-effect free. The count must be a positive integer and the
+flag must be a boolean; invalid values fail startup clearly.
 
-Protocol-1 plugins that omit the hook keep the single-device defaults
-(`visible_device_count=1`, `supports_replication=False`), so existing plugins
-remain compatible without changes. With discovery enabled, existing
-`--device-id` and `--backend-device-ids` selection applies per replica:
-`auto` expands to every visible device only when replication is supported, an
-explicit list selects those ordinals, and a single selected device must be
-within the reported visible count. Each replica is a separate backend worker
-with its own `device_id`, and `BackendPool` schedules batches across them.
+Protocol-1 plugins without the hook keep the single-device defaults
+(`1`, `False`). Existing `--device-id` and `--backend-device-ids` selection
+then applies per replica: `auto` expands only when replication is supported,
+explicit ordinals must be visible, and each replica receives its own
+`device_id`. `BackendPool` schedules batches across replicas.
 
 ## Lifecycle and threading
 
-- Initial startup is synchronous: backend construction waits until the plugin
-  factory finishes loading the model or returns a startup error. The factory
-  runs on the persistent worker that will execute its requests.
-- There is one shared frontend queue and scheduler per model. It hands each
-  batch to an exclusive replica lease in `BackendPool`; it does not create a
-  separate frontend per device.
-- Each backend replica owns one persistent Python worker thread and one Rust
-  command queue. Submission validates and enqueues the Rust payload and
-  completion slot without taking the GIL, then returns the normal deferred
-  receiver immediately, even when the plugin's `submit` is synchronous. The
-  worker takes the GIL only around executor construction, health checks,
-  `submit`, and `close`.
-- The worker serializes plugin submissions for its replica while waiting on the
-  Rust queue without the GIL. Completion packing and result delivery stay on
-  the separate Rust completion path. Distinct replicas have distinct workers,
-  so Python waits or native operations that release the GIL can overlap across
-  replicas; Python bytecode itself still serializes under one interpreter GIL.
-- The Rust backend bounds pending calls with admission permits equivalent to
-  `queue_depth`. The command channel uses lazy allocation, so its request
-  backlog cannot exceed those admitted calls and a large configured depth does
-  not preallocate a large buffer. Overload rejection releases its admission
-  permit.
-- `healthy` is routed through the same replica worker, preserving serialized
-  executor ownership.
-- Shutdown stops admission, drains queued work and settles abandoned callers,
-  closes the executor, and joins the worker without holding the GIL. No
-  per-request threads are spawned.
-- The Python interpreter stays initialized for the process lifetime. The plugin
-  must be importable before the first model is created.
-- Do not fork after initializing device runtimes. Use a fresh process per
-  device unless the plugin explicitly supports sharing one process.
+- Plugin factory initialization is synchronous: backend construction returns
+  after the factory loads the model or reports a startup error. The executor is
+  then owned by one persistent worker for that replica.
+- One shared frontend queue and scheduler per model hands batches to exclusive
+  `BackendPool` replica leases; there is no separate frontend per device.
+- Submission enqueues the Rust payload and completion slot without taking the
+  GIL, then returns the normal deferred receiver immediately, even when the
+  plugin's `submit` is synchronous. Each replica has one persistent Python
+  worker that serializes `submit`, takes the GIL only around interpreter calls,
+  and waits on the Rust queue without it. Result packing stays on the separate
+  Rust completion path.
+- Admission permits equivalent to `queue_depth` bound pending calls, and the
+  command channel uses lazy allocation. Distinct replicas can overlap when
+  Python waits or native operations release the GIL; Python bytecode still
+  serializes under one interpreter GIL.
+- `healthy` is routed through the same worker. Shutdown drains queued work,
+  settles abandoned callers, closes the executor, and joins the worker without
+  holding the GIL. The interpreter stays initialized for the process lifetime;
+  do not fork after initializing device runtimes.
 
 ## Buffer ownership
 

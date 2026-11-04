@@ -1,25 +1,28 @@
 use crate::batch::PaddedInputs;
-use crate::envelope::{ResponseEnvelope, ResponseSink};
-use crate::executor::{Executor, ExecutorConfig};
+use crate::envelope::ResponseEnvelope;
+use crate::executor::Executor;
 use infinity_v3_backend_core::BackendError;
 use pyo3::prelude::*;
 use std::sync::mpsc::{channel, sync_channel, Receiver, Sender, SyncSender};
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
 
-/// One persistent Python worker per backend replica. Submission only enqueues
-/// into the Rust command channel, whose pending requests are bounded by the
-/// backend admission permits. The worker acquires the GIL around interpreter
-/// calls and waits for commands without holding it.
+/// One persistent Python worker per backend replica. Pending submissions are
+/// bounded by the backend admission permits; the worker takes the GIL only
+/// around interpreter calls and waits on the Rust queue without holding it.
 pub(crate) struct Worker {
-    sender: Mutex<Option<Sender<Command>>>,
-    handle: Mutex<Option<JoinHandle<()>>>,
+    state: Mutex<Option<State>>,
+}
+
+struct State {
+    sender: Sender<Command>,
+    handle: JoinHandle<()>,
 }
 
 struct SubmitJob {
     route: &'static str,
     payload: Arc<PaddedInputs>,
-    sink: ResponseSink,
+    envelope: ResponseEnvelope,
 }
 
 enum Command {
@@ -28,48 +31,30 @@ enum Command {
 }
 
 impl Worker {
-    pub(crate) fn start(config: ExecutorConfig) -> Result<Self, BackendError> {
-        // Request admission already bounds pending work. A lazily allocated
-        // channel avoids preallocating a user-configurable queue capacity.
+    pub(crate) fn start(executor: Executor) -> Result<Self, BackendError> {
         let (sender, receiver) = channel();
-        let (started_sender, started_receiver) = sync_channel(1);
         let handle = std::thread::Builder::new()
             .name("infinity-python".into())
-            .spawn(move || worker_loop(config, receiver, started_sender))
+            .spawn(move || worker_loop(executor, receiver))
             .map_err(|error| {
                 BackendError::Start(format!("Could not start Python backend worker: {error}"))
             })?;
-        let started = Python::attach(|py| py.detach(move || started_receiver.recv()));
-        match started {
-            Ok(Ok(())) => Ok(Self {
-                sender: Mutex::new(Some(sender)),
-                handle: Mutex::new(Some(handle)),
-            }),
-            Ok(Err(error)) => {
-                let _ = Python::attach(|py| py.detach(move || handle.join()));
-                Err(error)
-            }
-            Err(_) => {
-                let _ = Python::attach(|py| py.detach(move || handle.join()));
-                Err(BackendError::Start(
-                    "Python backend worker exited during startup".into(),
-                ))
-            }
-        }
+        Ok(Self {
+            state: Mutex::new(Some(State { sender, handle })),
+        })
     }
 
     pub(crate) fn submit(
         &self,
         route: &'static str,
         payload: Arc<PaddedInputs>,
-        sink: ResponseSink,
+        envelope: ResponseEnvelope,
     ) -> Result<(), BackendError> {
-        let sender = self.sender()?;
-        sender
+        self.sender()?
             .send(Command::Submit(SubmitJob {
                 route,
                 payload,
-                sink,
+                envelope,
             }))
             .map_err(|_| BackendError::Unhealthy)
     }
@@ -84,34 +69,28 @@ impl Worker {
     }
 
     pub(crate) fn close(&self) {
-        {
-            let mut sender = self
-                .sender
-                .lock()
-                .unwrap_or_else(|poison| poison.into_inner());
-            sender.take();
-        }
-        let handle = {
-            let mut handle = self
-                .handle
-                .lock()
-                .unwrap_or_else(|poison| poison.into_inner());
-            handle.take()
+        let Some(state) = self
+            .state
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner())
+            .take()
+        else {
+            return;
         };
-        if let Some(handle) = handle {
-            // Joining while the GIL is held would deadlock if the worker is
-            // waiting to acquire it. Detach for the join even when this thread
-            // already owns the GIL.
-            let _ = Python::attach(|py| py.detach(|| handle.join()));
-        }
+        let State { sender, handle } = state;
+        drop(sender);
+        // Joining while holding the GIL would deadlock if the worker is waiting
+        // to acquire it, so detach even when this thread already owns the GIL.
+        let _ = Python::attach(|py| py.detach(|| handle.join()));
     }
 
     fn sender(&self) -> Result<Sender<Command>, BackendError> {
-        let sender = self
-            .sender
+        self.state
             .lock()
-            .unwrap_or_else(|poison| poison.into_inner());
-        sender.clone().ok_or(BackendError::Unhealthy)
+            .unwrap_or_else(|poison| poison.into_inner())
+            .as_ref()
+            .map(|state| state.sender.clone())
+            .ok_or(BackendError::Unhealthy)
     }
 }
 
@@ -121,23 +100,7 @@ impl Drop for Worker {
     }
 }
 
-fn worker_loop(
-    config: ExecutorConfig,
-    receiver: Receiver<Command>,
-    started: SyncSender<Result<(), BackendError>>,
-) {
-    let executor = match Executor::new(config) {
-        Ok(executor) => {
-            let _ = started.send(Ok(()));
-            executor
-        }
-        Err(error) => {
-            let _ = started.send(Err(error));
-            return;
-        }
-    };
-    // Blocking recv waits on the Rust queue without holding the GIL. Dropping
-    // the last sender drains commands already accepted before closing.
+fn worker_loop(executor: Executor, receiver: Receiver<Command>) {
     while let Ok(command) = receiver.recv() {
         match command {
             Command::Submit(job) => execute(&executor, job),
@@ -154,7 +117,7 @@ fn worker_loop(
 
 fn execute(executor: &Executor, job: SubmitJob) {
     Python::attach(|py| {
-        let envelope = match ResponseEnvelope::from_sink(py, job.sink) {
+        let envelope = match Py::new(py, job.envelope) {
             Ok(envelope) => envelope,
             Err(error) => {
                 tracing::error!(%error, "Could not create Python response envelope");

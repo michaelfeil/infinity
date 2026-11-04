@@ -17,15 +17,17 @@ pub(crate) struct OutputSnapshot {
 
 pub(crate) type ForwardResult = Result<OutputSnapshot, PyErr>;
 
-/// Rust completion slot filled by a Python executor. Creating the slot does
-/// not require the GIL, so submission can enqueue before a worker runs Python.
-pub(crate) struct ResponseSink {
+/// Bridge used by the Python executor to complete a deferred Rust submission.
+/// Constructing the slot does not require the GIL, so submission can enqueue
+/// before a worker runs Python.
+#[pyclass]
+pub(crate) struct ResponseEnvelope {
     sender: Option<oneshot::Sender<ForwardResult>>,
     lease: Option<OwnedSemaphorePermit>,
 }
 
-impl ResponseSink {
-    pub(crate) fn channel(
+impl ResponseEnvelope {
+    pub(crate) fn new(
         lease: Option<OwnedSemaphorePermit>,
     ) -> (Self, oneshot::Receiver<ForwardResult>) {
         let (sender, receiver) = oneshot::channel();
@@ -38,42 +40,24 @@ impl ResponseSink {
         )
     }
 
-    fn complete(&mut self, result: ForwardResult) {
-        let sender = self.sender.take();
-        // The admission permit must not outlive completion: the Rust receiver
-        // may be waiting for it before it wakes the deferred request.
-        self.lease = None;
-        if let Some(sender) = sender {
-            let _ = sender.send(result);
-        }
-    }
-}
-
-/// Bridge used by the Python executor to complete a deferred Rust submission.
-#[pyclass]
-pub(crate) struct ResponseEnvelope {
-    sink: Option<ResponseSink>,
-}
-
-impl ResponseEnvelope {
     #[cfg(test)]
     pub(crate) fn channel(
         py: Python<'_>,
         lease: Option<OwnedSemaphorePermit>,
     ) -> PyResult<(Py<Self>, oneshot::Receiver<ForwardResult>)> {
-        let (sink, receiver) = ResponseSink::channel(lease);
-        Ok((Self::from_sink(py, sink)?, receiver))
-    }
-
-    pub(crate) fn from_sink(py: Python<'_>, sink: ResponseSink) -> PyResult<Py<Self>> {
-        Py::new(py, Self { sink: Some(sink) })
+        let (envelope, receiver) = Self::new(lease);
+        Ok((Py::new(py, envelope)?, receiver))
     }
 
     fn complete(&mut self, result: ForwardResult) -> PyResult<()> {
-        self.sink
+        let sender = self
+            .sender
             .take()
-            .ok_or_else(|| PyRuntimeError::new_err("response already completed"))?
-            .complete(result);
+            .ok_or_else(|| PyRuntimeError::new_err("response already completed"))?;
+        // The admission permit must not outlive completion: the Rust receiver
+        // may be waiting for it before it wakes the deferred request.
+        self.lease = None;
+        let _ = sender.send(result);
         Ok(())
     }
 
@@ -153,7 +137,7 @@ fn snapshot_result(
 #[pymethods]
 impl ResponseEnvelope {
     fn set_result(&mut self, result: Bound<'_, PyArrayDyn<f32>>) -> PyResult<()> {
-        if self.sink.is_none() {
+        if self.sender.is_none() {
             return Err(PyRuntimeError::new_err("response already completed"));
         }
         let pool = result_memory::global_pool().map_err(|error| {

@@ -134,18 +134,9 @@ pub(crate) fn discover_capabilities(
                 "Could not import infinity_v3_python for capability discovery: {error}"
             ))
         })?;
-        let load_capabilities = match discovery.getattr("load_capabilities") {
-            Ok(function) => function,
-            Err(error) if error.is_instance_of::<pyo3::exceptions::PyAttributeError>(py) => {
-                // Older protocol-1 helper packages have no discovery function.
-                // Their plugins keep the single-device defaults.
-                return Ok(PythonCapabilities::default());
-            }
-            Err(error) => {
-                return Err(BackendError::Start(format!(
-                    "Could not load Python capability discovery: {error}"
-                )))
-            }
+        let Ok(load_capabilities) = discovery.getattr("load_capabilities") else {
+            // Older protocol-1 helper packages have no discovery function.
+            return Ok(PythonCapabilities::default());
         };
         let capabilities = load_capabilities
             .call1((selector, config_json))
@@ -157,27 +148,10 @@ pub(crate) fn discover_capabilities(
         if capabilities.is_none() {
             return Ok(PythonCapabilities::default());
         }
-        let visible_device_count = capabilities
-            .getattr("visible_device_count")
-            .and_then(|value| value.extract::<usize>())
-            .map_err(|error| {
-                BackendError::Start(format!(
-                    "Python backend capability visible_device_count is invalid: {error}"
-                ))
+        let (visible_device_count, supports_replication) =
+            capabilities.extract::<(usize, bool)>().map_err(|error| {
+                BackendError::Start(format!("Python backend capabilities are invalid: {error}"))
             })?;
-        let supports_replication = capabilities
-            .getattr("supports_replication")
-            .and_then(|value| value.extract::<bool>())
-            .map_err(|error| {
-                BackendError::Start(format!(
-                    "Python backend capability supports_replication is invalid: {error}"
-                ))
-            })?;
-        if visible_device_count == 0 {
-            return Err(BackendError::Start(
-                "Python backend capability visible_device_count must be positive".into(),
-            ));
-        }
         Ok(PythonCapabilities {
             visible_device_count,
             supports_replication,

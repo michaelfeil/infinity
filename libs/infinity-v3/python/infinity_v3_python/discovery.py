@@ -2,19 +2,12 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
 from importlib import import_module
 from importlib.metadata import entry_points
 from types import ModuleType
 from typing import Any, Callable
 
-from .api import (
-    DEFAULT_SUPPORTS_REPLICATION,
-    DEFAULT_VISIBLE_DEVICE_COUNT,
-    ENTRY_POINT_GROUP,
-    PROTOCOL_VERSION,
-    BackendCapabilities,
-)
+from .api import ENTRY_POINT_GROUP, PROTOCOL_VERSION
 
 
 class PluginError(RuntimeError):
@@ -87,77 +80,51 @@ def load_factory(selector: str | None = None) -> Callable[..., Any]:
 def load_capabilities(
     selector: str | None = None,
     config_json: str = "{}",
-) -> BackendCapabilities | None:
-    """Return optional replica capabilities for a backend factory.
+) -> tuple[int, bool] | None:
+    """Return optional ``(visible_device_count, supports_replication)``.
 
-    A plugin reports capabilities with a module-level ``capabilities`` hook
-    (or a ``capabilities`` attribute on the factory) accepting ``config_json``.
-    Plugins without the hook keep the protocol-1 single-device defaults. The
-    hook runs before replica placement, before model startup, and may run more
-    than once, so it must be cheap and side-effect free.
+    A plugin reports this by exporting a module-level ``capabilities`` hook
+    that accepts the factory's ``config_json`` and returns a dict with exactly
+    ``visible_device_count`` and ``supports_replication``. Plugins without the
+    hook keep the protocol-1 single-device defaults.
     """
 
     factory = load_factory(selector)
-    hook = getattr(factory, "capabilities", None)
-    if hook is None:
-        module_name = getattr(factory, "__module__", None)
-        if module_name:
-            module = _import(module_name, selector or repr(factory))
-            hook = getattr(module, "capabilities", None)
+    module_name = getattr(factory, "__module__", None)
+    if not module_name:
+        return None
+    module = _import(module_name, selector or repr(factory))
+    hook = getattr(module, "capabilities", None)
     if hook is None:
         return None
     try:
-        value = hook(config_json=config_json)
+        value = hook(config_json)
     except Exception as error:
         raise PluginError(
-            f"Python backend {selector or repr(factory)!r} capabilities hook "
+            f"Python backend {selector or module_name!r} capabilities hook "
             f"failed: {error}"
         ) from error
-    return _validate_capabilities(value, selector or repr(factory))
-
-
-def _validate_capabilities(
-    value: Any,
-    selector: str,
-) -> BackendCapabilities:
-    if isinstance(value, BackendCapabilities):
-        count = value.visible_device_count
-        replication = value.supports_replication
-    elif isinstance(value, Mapping):
-        unknown = set(value) - {
-            "visible_device_count",
-            "supports_replication",
-        }
-        if unknown:
-            raise PluginError(
-                f"Python backend {selector!r} capabilities has unknown keys: "
-                f"{', '.join(sorted(map(str, unknown)))}"
-            )
-        count = value.get(
-            "visible_device_count", DEFAULT_VISIBLE_DEVICE_COUNT
-        )
-        replication = value.get(
-            "supports_replication", DEFAULT_SUPPORTS_REPLICATION
-        )
-    else:
+    if not isinstance(value, dict) or set(value) != {
+        "visible_device_count",
+        "supports_replication",
+    }:
         raise PluginError(
-            f"Python backend {selector!r} capabilities must be a "
-            "BackendCapabilities instance or mapping"
+            f"Python backend {selector or module_name!r} capabilities must be "
+            "a dict with visible_device_count and supports_replication"
         )
+    count = value["visible_device_count"]
+    replication = value["supports_replication"]
     if isinstance(count, bool) or not isinstance(count, int) or count < 1:
         raise PluginError(
-            f"Python backend {selector!r} capabilities visible_device_count "
-            f"must be a positive integer, got {count!r}"
+            f"Python backend {selector or module_name!r} capabilities "
+            f"visible_device_count must be a positive integer, got {count!r}"
         )
     if not isinstance(replication, bool):
         raise PluginError(
-            f"Python backend {selector!r} capabilities supports_replication "
-            f"must be a boolean, got {replication!r}"
+            f"Python backend {selector or module_name!r} capabilities "
+            f"supports_replication must be a boolean, got {replication!r}"
         )
-    return BackendCapabilities(
-        visible_device_count=count,
-        supports_replication=replication,
-    )
+    return count, replication
 
 
 def list_plugins() -> list[str]:
