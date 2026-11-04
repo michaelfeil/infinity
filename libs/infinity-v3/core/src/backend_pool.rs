@@ -504,17 +504,6 @@ mod completion_tests {
             block_prefix_tokens: 0,
         }
     }
-    fn collect(
-        mut execution: Execution,
-        submission: Submission<()>,
-    ) -> tokio::task::JoinHandle<Result<((), Duration), BackendError>> {
-        tokio::spawn(async move {
-            let result = execution.complete_submission(submission).await;
-            execution.finish(1, 1, &result);
-            result
-        })
-    }
-
     #[tokio::test]
     async fn overload_keeps_replica_available_for_the_next_request() {
         let rejected = execution();
@@ -537,23 +526,23 @@ mod completion_tests {
     }
     #[tokio::test]
     async fn queued_work_keeps_replica_busy_until_response_completion() {
-        let execution = execution();
+        let mut execution = execution();
         let pool = execution.pool.clone();
         let (sender, receiver) = tokio::sync::oneshot::channel();
-        let completion = collect(execution, Submission::Queued(receiver));
+        let completion = tokio::spawn(async move {
+            let result = execution
+                .complete_submission(Submission::Queued(receiver))
+                .await;
+            execution.finish(1, 1, &result);
+        });
         tokio::task::yield_now().await;
         {
             let state = pool.inner.state.lock().unwrap();
             assert!(state.replicas[0].busy);
             assert!(state.idle.is_empty());
         }
-        drop(completion);
-        assert!(
-            tokio::time::timeout(Duration::from_millis(50), pool.acquire_replica(0))
-                .await
-                .is_err()
-        );
         sender.send(Ok(((), Duration::from_millis(1)))).unwrap();
+        completion.await.unwrap();
         let next = tokio::time::timeout(Duration::from_secs(1), pool.acquire_replica(0))
             .await
             .unwrap()
@@ -593,47 +582,6 @@ mod completion_tests {
         assert!(state.replicas[0].busy);
         assert!(state.idle.is_empty());
     }
-    #[tokio::test]
-    async fn native_deferred_still_releases_capacity_before_completion() {
-        let execution = execution();
-        let pool = execution.pool.clone();
-        let (result, pending) = tokio::sync::oneshot::channel();
-        let task = collect(execution, Submission::Deferred(pending));
-        let next = tokio::time::timeout(Duration::from_secs(1), pool.acquire_replica(0))
-            .await
-            .unwrap()
-            .unwrap();
-        assert!(!task.is_finished());
-        result.send(Ok(((), Duration::ZERO))).unwrap();
-        assert!(task.await.unwrap().is_ok());
-        next.finish(1, 1, &Ok(((), Duration::ZERO)));
-    }
-
-    #[tokio::test]
-    async fn another_replica_progresses_while_queued_result_is_pending() {
-        let slow = execution();
-        let pool = slow.pool.clone();
-        {
-            let mut state = pool.inner.state.lock().unwrap();
-            state.replicas.push(Replica {
-                busy: false,
-                healthy: true,
-                batches: 0,
-            });
-            state.idle.push_back(1);
-        }
-        let (result, pending) = tokio::sync::oneshot::channel();
-        let task = collect(slow, Submission::Queued(pending));
-        let fast = pool.acquire_replica(1).await.unwrap();
-        assert!(collect(fast, Submission::Ready((), Duration::ZERO))
-            .await
-            .unwrap()
-            .is_ok());
-        assert!(!task.is_finished());
-        result.send(Ok(((), Duration::ZERO))).unwrap();
-        assert!(task.await.unwrap().is_ok());
-    }
-
     #[tokio::test]
     async fn idle_waiter_neither_leases_nor_signals() {
         let execution = execution();

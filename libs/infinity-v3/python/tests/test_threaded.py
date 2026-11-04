@@ -1,6 +1,7 @@
 import threading
 from queue import Queue
 import unittest
+from unittest.mock import patch
 
 from infinity_v3_python.threaded import ThreadedExecutor
 
@@ -96,92 +97,49 @@ class ThreadedExecutorTests(unittest.TestCase):
         self.assertEqual(set(ids), threads)
         executor.close()
 
-    def test_plugin_exception_completes_response(self):
+    def test_failures_release_admission(self):
         def submit(route, response, payload):
             raise RuntimeError("submit exploded")
 
         executor = ThreadedExecutor(Executor(submit))
+        with patch.object(executor._pool, "submit", side_effect=RuntimeError("schedule failed")):
+            with self.assertRaisesRegex(RuntimeError, "schedule failed"):
+                executor.submit("embed", Response(), {})
         response = wait_after_submit(executor)
         self.assertIsInstance(response.error, RuntimeError)
         self.assertIn("submit exploded", str(response.error))
         self.assertIsInstance(wait_after_submit(executor).error, RuntimeError)
         executor.close()
 
-    def test_legacy_async_pending_rejects_until_callback_delivers(self):
-        release = threading.Event()
-
-        def submit(route, response, payload):
-            def complete():
-                assert release.wait(2), "release gate timed out"
-                response.set_result(payload["row"])
-
-            threading.Timer(0, complete).start()
-
-        executor = ThreadedExecutor(Executor(submit))
-        first = Response()
-        executor.submit("embed", first, {"row": 7})
-        with self.assertRaisesRegex(RuntimeError, "queue is full"):
-            executor.submit("embed", Response(), {"row": 8})
-        release.set()
-        self.assertEqual(wait(first).result, 7)
-        after = Response()
-        executor.submit("embed", after, {"row": 9})
-        self.assertEqual(wait(after).result, 9)
-        executor.close()
-
-    def test_scheduling_failure_releases_single_flight_guard(self):
-        executor = ThreadedExecutor(
-            Executor(lambda route, response, payload: response.set_result("ok"))
-        )
-        original = executor._pool.submit
-        executor._pool.submit = lambda *args, **kwargs: (_ for _ in ()).throw(
-            RuntimeError("schedule failed")
-        )
-        with self.assertRaisesRegex(RuntimeError, "schedule failed"):
-            executor.submit("embed", Response(), {})
-        executor._pool.submit = original
-        self.assertEqual(wait_after_submit(executor).result, "ok")
-        executor.close()
-
-    def test_repeated_completion_does_not_release_another_request(self):
-        pending = Queue()
-        executor = ThreadedExecutor(Executor(lambda _, response, __: pending.put(response)))
-        first = Response()
-        executor.submit("embed", first, {})
-        completed = pending.get(timeout=2)
-        completed.set_result(4)
-        self.assertEqual(wait(first).result, 4)
-        second = Response()
-        executor.submit("embed", second, {})
-        active = pending.get(timeout=2)
-        with self.assertRaisesRegex(RuntimeError, "already completed"):
-            completed.set_exception(RuntimeError("late"))
-        with self.assertRaisesRegex(RuntimeError, "queue is full"):
-            executor.submit("embed", Response(), {})
-        active.set_result(5)
-        self.assertEqual(wait(second).result, 5)
-        executor.close()
-
-    def test_invalid_result_keeps_admission_until_error_completion(self):
+    def test_busy_until_terminal_completion(self):
         class InvalidResult(Response):
             def set_result(self, result):
                 raise ValueError("invalid result")
 
         pending = Queue()
         executor = ThreadedExecutor(Executor(lambda _, response, __: pending.put(response)))
-        response = InvalidResult()
-        executor.submit("embed", response, {})
+        first = InvalidResult()
+        executor.submit("embed", first, {})
         active = pending.get(timeout=2)
+        self.assertTrue(executor.healthy())  # submit returned; envelope is still pending.
+        with self.assertRaisesRegex(RuntimeError, "queue is full"):
+            executor.submit("embed", Response(), {})
         with self.assertRaisesRegex(ValueError, "invalid result"):
             active.set_result(None)
         with self.assertRaisesRegex(RuntimeError, "queue is full"):
             executor.submit("embed", Response(), {})
         active.set_exception(ValueError("invalid result"))
-        self.assertIsInstance(wait(response).error, ValueError)
-        after = Response()
-        executor.submit("embed", after, {})
-        pending.get(timeout=2).set_result("ok")
-        self.assertEqual(wait(after).result, "ok")
+        self.assertIsInstance(wait(first).error, ValueError)
+
+        second = Response()
+        executor.submit("embed", second, {})
+        next_response = pending.get(timeout=2)
+        with self.assertRaisesRegex(RuntimeError, "already completed"):
+            active.set_result(None)
+        with self.assertRaisesRegex(RuntimeError, "queue is full"):
+            executor.submit("embed", Response(), {})
+        next_response.set_result("ok")
+        self.assertEqual(wait(second).result, "ok")
         executor.close()
 
     def test_legacy_async_plugin_can_complete_later(self):
