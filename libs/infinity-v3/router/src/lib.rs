@@ -836,12 +836,8 @@ async fn initialize_model(
                 .health()
                 .await
                 .with_context(|| format!("Model backend on device {device} is not healthy"))?;
-            let replica_batch_limit = match (max_batch_requests, backend.max_batch_size) {
-                (Some(a), Some(b)) => Some(a.min(b)),
-                (a, b) => a.or(b),
-            };
             backend
-                .warmup(max_input_length, max_batch_tokens, replica_batch_limit)
+                .warmup(runtime_limits)
                 .await
                 .with_context(|| format!("Warmup failed on device {device}"))?;
             tracing::info!(device, replica, elapsed = ?started.elapsed(), "Backend replica ready");
