@@ -34,6 +34,7 @@ class EngineArgs:
     Args:
         model_name_or_path, str:  Defaults to "michaelfeil/bge-small-en-v1.5".
         batch_size, int: Defaults to 32.
+        dimensions, int: Defaults to 0 (no matryoshka slicing).
         revision, str: Defaults to None.
         trust_remote_code, bool: Defaults to True.
         engine, InferenceEngine or str: backend for inference.
@@ -54,6 +55,7 @@ class EngineArgs:
 
     model_name_or_path: str = MANAGER.model_id[0]
     batch_size: int = MANAGER.batch_size[0]
+    dimensions: int = MANAGER.dimensions[0]
     revision: Optional[str] = MANAGER.revision[0]
     trust_remote_code: bool = MANAGER.trust_remote_code[0]
     engine: InferenceEngine = InferenceEngine[MANAGER.engine[0]]
@@ -150,6 +152,7 @@ class EngineArgs:
             EngineArgs(
                 model_name_or_path=model_name_or_path,
                 batch_size=batch_size,
+                dimensions=dimensions,
                 revision=revision,
                 trust_remote_code=trust_remote_code,
                 engine=engine,
@@ -165,9 +168,10 @@ class EngineArgs:
                 onnx_disable_optimize=onnx_disable_optimize,
                 onnx_do_not_prefer_quantized=onnx_do_not_prefer_quantized
             )
-            for model_name_or_path, batch_size, revision, trust_remote_code, engine, model_warmup, device, compile, bettertransformer, dtype, pooling_method, lengths_via_tokenize, embedding_dtype, served_model_name,onnx_disable_optimize,onnx_do_not_prefer_quantized in zip_longest(
+            for model_name_or_path, batch_size, dimensions, revision, trust_remote_code, engine, model_warmup, device, compile, bettertransformer, dtype, pooling_method, lengths_via_tokenize, embedding_dtype, served_model_name,onnx_disable_optimize,onnx_do_not_prefer_quantized in zip_longest(
                 MANAGER.model_id,
                 MANAGER.batch_size,
+                MANAGER.dimensions,
                 MANAGER.revision,
                 MANAGER.trust_remote_code,
                 MANAGER.engine,

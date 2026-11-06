@@ -57,6 +57,7 @@ def create_server(
     permissive_cors: bool = MANAGER.permissive_cors,
     api_key: str = MANAGER.api_key,
     proxy_root_path: str = MANAGER.proxy_root_path,
+    dimensions: int = MANAGER.dimensions,
 ):
     """
     creates the FastAPI server for a set of EngineArgs.
