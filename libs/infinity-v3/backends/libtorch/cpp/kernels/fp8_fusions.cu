@@ -271,16 +271,45 @@ __global__ __launch_bounds__(512) void gated_quant_vector_kernel(const T* input,
     for (int lane = 0; lane < 8; ++lane) {
       if constexpr (!Scaled)
         values[j][lane] = float(rounded.value[lane]);
-      amax = fmaxf(amax, fabsf(float(rounded.value[lane])));
+      const float magnitude = fabsf(float(rounded.value[lane]));
+      amax = fmaxf(amax, magnitude);
     }
     if constexpr (Scaled)
       staged[col] = rounded;
   }
   // row_scale also synchronizes the completed shared row before reuse below.
   float scale = row_scale(amax);
+  const float reciprocal = __frcp_rn(scale);
+  // A non-finite maximum needs the original IEEE division, including finite / infinity.
+  const bool fast = isfinite(scale);
 
   if (!threadIdx.x)
     scales[row] = scale;
+  if (fast) {
+#pragma unroll
+    for (int j = 0; j < Groups; ++j) {
+      int col = threadIdx.x + j * blockDim.x;
+      if (col < stride) {
+        Packed<__nv_fp8x2_e4m3, 4> result;
+        Packed<T, 8> rounded;
+        if constexpr (Scaled)
+          rounded = staged[col];
+#pragma unroll
+        for (int pair = 0; pair < 4; ++pair) {
+          if constexpr (Scaled)
+            result.value[pair] = fp8_quantize_pair_recip(float(rounded.value[2 * pair]),
+                                                         float(rounded.value[2 * pair + 1]),
+                                                         scale,
+                                                         reciprocal);
+          else
+            result.value[pair] = fp8_quantize_pair_recip(
+                values[j][2 * pair], values[j][2 * pair + 1], scale, reciprocal);
+        }
+        reinterpret_cast<Packed<__nv_fp8x2_e4m3, 4>*>(out)[row * stride + col] = result;
+      }
+    }
+    return;
+  }
 #pragma unroll
   for (int j = 0; j < Groups; ++j) {
     int col = threadIdx.x + j * blockDim.x;

@@ -693,6 +693,155 @@ class Decoder final : public Model {
     return result;
   }
 
+  /// Run this layer's normalized input through attention and the output projection.
+  /// Keeping the attention locals in this frame releases packed QKV, Q/K/V views, and
+  /// attended rows before the caller prepares the feed-forward input.
+  at::Tensor attention_projection(const PackedInput& input,
+                                  const DecoderLayer& layer,
+                                  at::Tensor& h,
+                                  at::Tensor& residual,
+                                  size_t layer_index,
+                                  const at::Tensor& layer_cosine,
+                                  const at::Tensor& layer_sine,
+                                  const at::Tensor& query_scales,
+                                  const at::Tensor& output_rows) const {
+    at::Tensor normalized, normalized_scales;
+#ifdef INFINITY_TORCH_CUDA_KERNELS
+    if (h.is_cuda() && (!transformers_math() || transformers_fused_norm)) {
+      if (layer.fp8_qkv && dtype == at::kBFloat16 && hidden <= 8192 && hidden % 256 == 0 &&
+          !exact_decoder_math() && h.is_contiguous() &&
+          (!residual.defined() || residual.is_contiguous())) {
+        auto [quantized, summed, scales] =
+            fp8_add_rms_quantize(h, residual, layer.input_norm, epsilon);
+        normalized = std::move(quantized);
+        residual = std::move(summed);
+        normalized_scales = std::move(scales);
+      } else {
+        auto pair = residual_norm(h, residual, layer.input_norm);
+        normalized = pair.first;
+        residual = pair.second;
+      }
+    } else
+#endif
+      normalized = norm(h, layer.input_norm);
+    at::Tensor qkv;
+#ifdef INFINITY_TORCH_CUDA_KERNELS
+    if (layer.fp8_qkv)
+      qkv = normalized_scales.defined()
+                ? layer.fp8_qkv->forward_quantized(normalized, normalized_scales, layer.qkv_bias)
+                : layer.fp8_qkv->forward(normalized, layer.qkv_bias);
+    else
+#endif
+      qkv = transformers_math() && !normalized.is_cuda()
+                ? separate_linear(normalized,
+                                  layer.qkv,
+                                  layer.qkv_bias,
+                                  {heads * head_dim, kvheads * head_dim, kvheads * head_dim})
+                : at::linear(normalized, layer.qkv, layer.qkv_bias);
+    // Projection layout is [Q heads | K heads | V heads]. GQA preserves fewer K/V heads rather
+    // than expanding the checkpoint projections to the query-head count.
+    qkv = qkv.view({h.size(0), heads + 2 * kvheads, head_dim});
+    auto q = qkv.narrow(1, 0, heads), k = qkv.narrow(1, heads, kvheads),
+         v = qkv.narrow(1, heads + kvheads, kvheads);
+#ifdef INFINITY_TORCH_CUDA_KERNELS
+    if (q.is_cuda() && layer.q_norm.defined() && head_dim == 128) {
+      if (input.prefix && input.prefix->collect_graph && !radix_enabled(input) &&
+          (q.scalar_type() == at::kHalf || q.scalar_type() == at::kBFloat16)) {
+        // Write normalized/rotated suffix K and raw V directly into full-context arenas. Cached
+        // prefix rows stay intact; a validated row map handles mixed sequence lengths.
+        auto& packed = input.prefix->prepare_graph_layer(layer_index, k, v);
+        if (input.batch == 1) {
+          auto key_target = packed.key.narrow(0, input.prefix->hits[0], k.size(0));
+          auto value_target = packed.value.narrow(0, input.prefix->hits[0], v.size(0));
+          q = fused_qkv_norm_rope_into(q,
+                                       k,
+                                       v,
+                                       layer.q_norm,
+                                       layer.k_norm,
+                                       layer_cosine,
+                                       layer_sine,
+                                       epsilon,
+                                       key_target,
+                                       value_target);
+          k = key_target;
+          v = value_target;
+        } else {
+          const auto& rows = input.prefix->prepare_graph_rows(q.device());
+          q = fused_qkv_norm_rope_into(q,
+                                       k,
+                                       v,
+                                       layer.q_norm,
+                                       layer.k_norm,
+                                       layer_cosine,
+                                       layer_sine,
+                                       epsilon,
+                                       packed.key,
+                                       packed.value,
+                                       rows);
+          k = packed.key;
+          v = packed.value;
+        }
+      } else {
+        auto pair =
+            fused_qk_norm_rope(q, k, layer.q_norm, layer.k_norm, layer_cosine, layer_sine, epsilon);
+        q = pair.first;
+        k = pair.second;
+      }
+    } else
+#endif
+    {
+      if (layer.q_norm.defined()) {
+        q = norm(q, layer.q_norm);
+        k = norm(k, layer.k_norm);
+      }
+#ifdef INFINITY_TORCH_CUDA_KERNELS
+      if (q.is_cuda()) {
+        // Preserve Llama's path; learned causal BF16 Mistral operands prove
+        // the same contract with the registered exact RMS geometry.
+        if (transformers_math()) {
+          auto pair = fused_rotary(q, k, layer_cosine, layer_sine, false);
+          q = pair.first;
+          k = pair.second;
+        } else if ((dtype == at::kBFloat16 || qwen_half_exact) && family == "qwen2" &&
+                   hidden == 896 && head_dim == 64) {
+          // The fresh packed QKV projection gives disjoint Q/K/V views.
+          // Preserve original model-dtype HFMA and leave V unchanged.
+          encoder_rotary_inplace(q, k, layer_cosine, layer_sine);
+        } else {
+          auto pair = fused_rotary(
+              q, k, layer_cosine, layer_sine, family == "llama" || exact_mistral_math());
+          q = pair.first;
+          k = pair.second;
+        }
+      }
+
+      else
+#endif
+      {
+        q = rotate(q, layer_cosine, layer_sine);
+        k = rotate(k, layer_cosine, layer_sine);
+      }
+    }
+    if (query_scales.defined())
+      q = q * query_scales;
+    auto attended =
+        attend(q, k, v, input, layer_index, layer).contiguous().view({h.size(0), heads * head_dim});
+    if (output_rows.defined() && layer_index + 1 == layers.size()) {
+      attended = attended.index_select(0, output_rows);
+      h = h.index_select(0, output_rows);
+      if (residual.defined())
+        residual = residual.index_select(0, output_rows);
+    }
+    at::Tensor projected;
+#ifdef INFINITY_TORCH_CUDA_KERNELS
+    if (layer.fp8_out)
+      projected = layer.fp8_out->forward(attended, layer.out_bias);
+    else
+#endif
+      projected = cached_prefix_linear(attended, layer.out, layer.out_bias, input);
+    return projected;
+  }
+
 public:
   Decoder(const Options& cfg, Weights& tensors, c10::Device dev, at::ScalarType type)
       : options(cfg), weights(std::move(tensors)), device(dev), dtype(type),
@@ -1310,161 +1459,43 @@ public:
           layer.rotary_index < 0 ? cosine : selected_rotary[layer.rotary_index].first;
       const auto& layer_sine =
           layer.rotary_index < 0 ? sine : selected_rotary[layer.rotary_index].second;
-      at::Tensor normalized, normalized_scales;
-#ifdef INFINITY_TORCH_CUDA_KERNELS
-      if (h.is_cuda() && (!transformers_math() || transformers_fused_norm)) {
-        if (layer.fp8_qkv && dtype == at::kBFloat16 && hidden <= 8192 && hidden % 256 == 0 &&
-            !exact_decoder_math() && h.is_contiguous() &&
-            (!residual.defined() || residual.is_contiguous())) {
-          auto [quantized, summed, scales] =
-              fp8_add_rms_quantize(h, residual, layer.input_norm, epsilon);
-          normalized = std::move(quantized);
-          residual = std::move(summed);
-          normalized_scales = std::move(scales);
-        } else {
-          auto pair = residual_norm(h, residual, layer.input_norm);
-          normalized = pair.first;
-          residual = pair.second;
-        }
-      } else
-#endif
-        normalized = norm(h, layer.input_norm);
-      at::Tensor qkv;
-#ifdef INFINITY_TORCH_CUDA_KERNELS
-      if (layer.fp8_qkv)
-        qkv = normalized_scales.defined()
-                  ? layer.fp8_qkv->forward_quantized(normalized, normalized_scales, layer.qkv_bias)
-                  : layer.fp8_qkv->forward(normalized, layer.qkv_bias);
-      else
-#endif
-        qkv = transformers_math() && !normalized.is_cuda()
-                  ? separate_linear(normalized,
-                                    layer.qkv,
-                                    layer.qkv_bias,
-                                    {heads * head_dim, kvheads * head_dim, kvheads * head_dim})
-                  : at::linear(normalized, layer.qkv, layer.qkv_bias);
-      // Projection layout is [Q heads | K heads | V heads]. GQA preserves fewer K/V heads rather
-      // than expanding the checkpoint projections to the query-head count.
-      qkv = qkv.view({h.size(0), heads + 2 * kvheads, head_dim});
-      auto q = qkv.narrow(1, 0, heads), k = qkv.narrow(1, heads, kvheads),
-           v = qkv.narrow(1, heads + kvheads, kvheads);
-#ifdef INFINITY_TORCH_CUDA_KERNELS
-      if (q.is_cuda() && layer.q_norm.defined() && head_dim == 128) {
-        if (input.prefix && input.prefix->collect_graph && !radix_enabled(input) &&
-            (q.scalar_type() == at::kHalf || q.scalar_type() == at::kBFloat16)) {
-          // Write normalized/rotated suffix K and raw V directly into full-context arenas. Cached
-          // prefix rows stay intact; a validated row map handles mixed sequence lengths.
-          auto& packed = input.prefix->prepare_graph_layer(layer_index, k, v);
-          if (input.batch == 1) {
-            auto key_target = packed.key.narrow(0, input.prefix->hits[0], k.size(0));
-            auto value_target = packed.value.narrow(0, input.prefix->hits[0], v.size(0));
-            q = fused_qkv_norm_rope_into(q,
-                                         k,
-                                         v,
-                                         layer.q_norm,
-                                         layer.k_norm,
-                                         layer_cosine,
-                                         layer_sine,
-                                         epsilon,
-                                         key_target,
-                                         value_target);
-            k = key_target;
-            v = value_target;
-          } else {
-            const auto& rows = input.prefix->prepare_graph_rows(q.device());
-            q = fused_qkv_norm_rope_into(q,
-                                         k,
-                                         v,
-                                         layer.q_norm,
-                                         layer.k_norm,
-                                         layer_cosine,
-                                         layer_sine,
-                                         epsilon,
-                                         packed.key,
-                                         packed.value,
-                                         rows);
-            k = packed.key;
-            v = packed.value;
-          }
-        } else {
-          auto pair = fused_qk_norm_rope(
-              q, k, layer.q_norm, layer.k_norm, layer_cosine, layer_sine, epsilon);
-          q = pair.first;
-          k = pair.second;
-        }
-      } else
-#endif
+      at::Tensor mlp_input, mlp_scales;
+      bool add_mlp_to_residual = false;
       {
-        if (layer.q_norm.defined()) {
-          q = norm(q, layer.q_norm);
-          k = norm(k, layer.k_norm);
-        }
+        auto projected = attention_projection(input,
+                                              layer,
+                                              h,
+                                              residual,
+                                              layer_index,
+                                              layer_cosine,
+                                              layer_sine,
+                                              query_scales,
+                                              output_rows);
 #ifdef INFINITY_TORCH_CUDA_KERNELS
-        if (q.is_cuda()) {
-          // Preserve Llama's path; learned causal BF16 Mistral operands prove
-          // the same contract with the registered exact RMS geometry.
-          if (transformers_math()) {
-            auto pair = fused_rotary(q, k, layer_cosine, layer_sine, false);
-            q = pair.first;
-            k = pair.second;
-          } else if ((dtype == at::kBFloat16 || qwen_half_exact) && family == "qwen2" &&
-                     hidden == 896 && head_dim == 64) {
-            // The fresh packed QKV projection gives disjoint Q/K/V views.
-            // Preserve original model-dtype HFMA and leave V unchanged.
-            encoder_rotary_inplace(q, k, layer_cosine, layer_sine);
+        if (h.is_cuda() && (!transformers_math() || transformers_fused_norm)) {
+          if (layer.dense_mlp.fp8() && dtype == at::kBFloat16 && hidden <= 8192 &&
+              hidden % 256 == 0 && !exact_decoder_math() && projected.is_contiguous() &&
+              (!residual.defined() || residual.is_contiguous())) {
+            auto [quantized, summed, scales] =
+                fp8_add_rms_quantize(projected, residual, layer.post_norm, epsilon);
+            residual = std::move(summed);
+            mlp_input = std::move(quantized);
+            mlp_scales = std::move(scales);
           } else {
-            auto pair = fused_rotary(
-                q, k, layer_cosine, layer_sine, family == "llama" || exact_mistral_math());
-            q = pair.first;
-            k = pair.second;
+            auto pair = residual_norm(projected, residual, layer.post_norm);
+            residual = pair.second;
+            mlp_input = std::move(pair.first);
           }
-        }
-
-        else
+        } else
 #endif
         {
-          q = rotate(q, layer_cosine, layer_sine);
-          k = rotate(k, layer_cosine, layer_sine);
+          h = h + projected;
+          mlp_input = norm(h, layer.post_norm);
+          add_mlp_to_residual = true;
         }
       }
-      if (query_scales.defined())
-        q = q * query_scales;
-      auto attended = attend(q, k, v, input, layer_index, layer)
-                          .contiguous()
-                          .view({h.size(0), heads * head_dim});
-      if (output_rows.defined() && layer_index + 1 == layers.size()) {
-        attended = attended.index_select(0, output_rows);
-        h = h.index_select(0, output_rows);
-        if (residual.defined())
-          residual = residual.index_select(0, output_rows);
-      }
-      at::Tensor projected;
-#ifdef INFINITY_TORCH_CUDA_KERNELS
-      if (layer.fp8_out)
-        projected = layer.fp8_out->forward(attended, layer.out_bias);
-      else
-#endif
-        projected = cached_prefix_linear(attended, layer.out, layer.out_bias, input);
-#ifdef INFINITY_TORCH_CUDA_KERNELS
-      if (h.is_cuda() && (!transformers_math() || transformers_fused_norm)) {
-        if (layer.dense_mlp.fp8() && dtype == at::kBFloat16 && hidden <= 8192 &&
-            hidden % 256 == 0 && !exact_decoder_math() && projected.is_contiguous() &&
-            (!residual.defined() || residual.is_contiguous())) {
-          auto [quantized, summed, scales] =
-              fp8_add_rms_quantize(projected, residual, layer.post_norm, epsilon);
-          residual = std::move(summed);
-          h = mlp(quantized, layer, input, scales);
-        } else {
-          auto pair = residual_norm(projected, residual, layer.post_norm);
-          residual = pair.second;
-          h = mlp(pair.first, layer, input);
-        }
-      } else
-#endif
-      {
-        h = h + projected;
-        h = h + mlp(norm(h, layer.post_norm), layer, input);
-      }
+      auto mlp_output = mlp(mlp_input, layer, input, mlp_scales);
+      h = add_mlp_to_residual ? h + mlp_output : mlp_output;
       // Deepstack additions operate on the complete residual stream at selected visual rows.
       // Consolidate any deferred residual before injecting that layer's vision features.
       if (visual_indices.defined() && layer_index < deepstack.size()) {
