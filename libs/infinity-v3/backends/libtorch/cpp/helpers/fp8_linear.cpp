@@ -27,17 +27,24 @@
 
 namespace infinity {
 namespace {
-// The provider has shipped the SM100 BF16 row-scaled kernel since Torch 2.9;
-// FP16 output remains portable here. CUDA 12.8 is the Blackwell build floor.
-bool sm100_rowwise_qualified() {
-#if defined(INFINITY_TORCH_CUDA_KERNELS) &&                                                        \
-    ((TORCH_VERSION_MAJOR > 2) || (TORCH_VERSION_MAJOR == 2 && TORCH_VERSION_MINOR >= 9)) &&       \
-    defined(CUDA_VERSION) && CUDA_VERSION >= 12080
-  return at::Context::versionCUDART() >= 12080;
+#ifdef INFINITY_TORCH_CUDA_KERNELS
+// Blackwell target support arrived in CUDA 12.8, 12.9 (new minor revisions),
+// and 13.0 (Thor). Check both our toolkit and the LibTorch provider's build.
+bool blackwell_cuda_qualified(int major, int minor) {
+  const int required = major == 11 ? 13000 : minor == 0 ? 12080 : 12090;
+  return CUDA_VERSION >= required && at::Context::versionCUDART() >= required;
+}
+
+// Torch dispatches by family: SM10x/12x since 2.9, SM11x since 2.10.
+// Keep FP16 on the portable recipe across provider versions.
+bool blackwell_rowwise_qualified(int major) {
+#if (TORCH_VERSION_MAJOR > 2) || (TORCH_VERSION_MAJOR == 2 && TORCH_VERSION_MINOR >= 9)
+  return major != 11 || TORCH_VERSION_MAJOR > 2 || TORCH_VERSION_MINOR >= 10;
 #else
   return false;
 #endif
 }
+#endif
 }
 
 /*
@@ -597,8 +604,9 @@ bool fp8_device_supported(const c10::Device& device) {
 #ifdef INFINITY_TORCH_CUDA_KERNELS
   if (device.is_cuda()) {
     const auto* props = at::cuda::getDeviceProperties(device.index());
-    const auto capability = props->major * 10 + props->minor;
-    return capability == 89 || capability == 90 || capability == 100 || capability == 120;
+    return (props->major == 8 && props->minor == 9) || props->major == 9 ||
+           ((props->major == 10 || props->major == 11 || props->major == 12) &&
+            blackwell_cuda_qualified(props->major, props->minor));
   }
 #endif
   return false;
@@ -617,13 +625,12 @@ Fp8Linear::Fp8Linear(const at::Tensor& weight)
 #ifdef INFINITY_TORCH_CUDA_KERNELS
   c10::cuda::CUDAGuard guard(weight.device());
   const auto* props = at::cuda::getDeviceProperties(weight.device().index());
-  const int capability = props->major * 10 + props->minor;
-  TORCH_CHECK(fp8_device_supported(weight.device()), "Dynamic FP8 requires SM89/90/100/120");
-  // Blackwell (SM100) uses Torch's BF16 row-scaled CUTLASS projection with full
-  // accumulation; its FP16 path stays portable. Hopper keeps fast accumulation.
-  rowwise_ = capability == 90 ||
-             (capability == 100 && dtype_ == at::kBFloat16 && sm100_rowwise_qualified());
-  fast_accum_ = capability == 90;
+  TORCH_CHECK(fp8_device_supported(weight.device()),
+              "Dynamic FP8 requires Ada SM89, Hopper, or Blackwell with a compatible CUDA build");
+  // Use the provider's shared family dispatch; Hopper keeps fast accumulation.
+  fast_accum_ = props->major == 9;
+  rowwise_ = fast_accum_ || (props->major >= 10 && dtype_ == at::kBFloat16 &&
+                             blackwell_rowwise_qualified(props->major));
 #else
   TORCH_CHECK(false, "Dynamic FP8 requires a CUDA LibTorch build");
 #endif
@@ -677,10 +684,10 @@ at::Tensor Fp8Linear::forward_quantized(const at::Tensor& input,
 #ifdef INFINITY_TORCH_CUDA_KERNELS
   c10::cuda::CUDAGuard guard(input.device());
 #endif
-  // The SM100 provider's TMA path faults on borrowed FP8 storage that is not
+  // The Blackwell provider's TMA path faults on borrowed FP8 storage that is not
   // 16-byte aligned; reject it before dispatch instead of risking the context.
   if (rowwise_ && !fast_accum_ && reinterpret_cast<uintptr_t>(input.const_data_ptr()) % 16 != 0)
-    TORCH_CHECK(false, "SM100 row-scaled FP8 projections require 16-byte aligned activations");
+    TORCH_CHECK(false, "Blackwell row-scaled FP8 projections require 16-byte aligned activations");
   at::Tensor output;
   if (rowwise_) {
     if (fast_accum_) {
@@ -702,7 +709,7 @@ at::Tensor Fp8Linear::forward_quantized(const at::Tensor& input,
         }
       }
     } else {
-      // SM100 uses Torch's CUTLASS rowwise provider with full accumulation and
+      // Blackwell uses Torch's CUTLASS rowwise provider with full accumulation and
       // no cached plan shared with the Hopper fast path.
       output = at::_scaled_mm(input, matrix_.t(), row_scales, scales_.t(), {}, {}, dtype_, false);
     }

@@ -51,11 +51,15 @@ void check_same_or_nan(const at::Tensor& expected, const at::Tensor& actual, con
               " changed non-NaN bytes");
 }
 
-bool sm100_bf16(at::ScalarType dtype) {
+bool blackwell_bf16(at::ScalarType dtype) {
 #if ((TORCH_VERSION_MAJOR > 2) || (TORCH_VERSION_MAJOR == 2 && TORCH_VERSION_MINOR >= 9)) &&       \
     defined(CUDA_VERSION) && CUDA_VERSION >= 12080
-  return dtype == at::kBFloat16 && at::cuda::getCurrentDeviceProperties()->major == 10 &&
-         at::Context::versionCUDART() >= 12080;
+  const auto* props = at::cuda::getCurrentDeviceProperties();
+  const int required = props->major == 11 ? 13000 : props->minor == 0 ? 12080 : 12090;
+  return dtype == at::kBFloat16 &&
+         (props->major == 10 || props->major == 12 ||
+          (props->major == 11 && (TORCH_VERSION_MAJOR > 2 || TORCH_VERSION_MINOR >= 10))) &&
+         CUDA_VERSION >= required && at::Context::versionCUDART() >= required;
 #else
   return false;
 #endif
@@ -67,7 +71,7 @@ void check_projection_close(const at::Tensor& expected,
   TORCH_CHECK(expected.sizes() == actual.sizes() && expected.scalar_type() == actual.scalar_type(),
               label,
               " changed shape or dtype");
-  if (!sm100_bf16(expected.scalar_type())) {
+  if (!blackwell_bf16(expected.scalar_type())) {
     TORCH_CHECK(at::equal(expected, actual), label, " differs from reference");
     return;
   }
@@ -652,6 +656,35 @@ int main() {
                               down.forward(activated, bias)),
                     "Fused MLP changed output or bias rounding");
       }
+    // Check every gate encoding against frozen scalar staging on each GPU family.
+    // Constant rows expose activation differences in the scale, even after FP8 rounding.
+    auto gates = at::arange(65536, options.dtype(at::kInt)).to(at::kShort).view(dtype);
+    auto exhaustive = at::empty({65536, 16}, options);
+    exhaustive.narrow(1, 0, 8).copy_(gates.unsqueeze(1));
+    auto unit_rows = at::ones({65536, 1}, options.dtype(at::kFloat));
+    auto unit_columns = at::ones({16, 1}, options.dtype(at::kFloat));
+    for (float up : {-1.f, .5f, 1.f, 3.f}) {
+      exhaustive.narrow(1, 8, 8).fill_(up);
+      for (bool scaled : {false, true}) {
+        auto values = scaled ? exhaustive.to(at::kFloat) : exhaustive;
+        auto reference = scaled
+                             ? infinity::detail::fp8_scaled_gated_quantize_impl(
+                                   values,
+                                   unit_rows,
+                                   unit_columns,
+                                   dtype,
+                                   infinity::Fp8GatedActivation::RoundedSilu,
+                                   true,
+                                   true)
+                             : infinity::detail::fp8_gated_quantize_impl(
+                                   values, infinity::Fp8GatedActivation::RoundedSilu, true, true);
+        auto actual =
+            scaled ? infinity::fp8_scaled_swiglu_quantize(values, unit_rows, unit_columns, dtype)
+                   : infinity::fp8_swiglu_quantize(values);
+        check_same_or_nan(reference.first, actual.first, "Paired SwiGLU changed scalar FP8 bytes");
+        check_same_or_nan(reference.second, actual.second, "Paired SwiGLU changed scalar scales");
+      }
+    }
     // Large gates and dtype-subnormal operands, including the misaligned scalar fallback.
     auto check_swiglu_pattern = [&](int64_t width, float gate_value, float up_value, bool aligned) {
       auto storage = at::empty({17 * 2 * width + 1}, options);
@@ -1127,7 +1160,7 @@ int main() {
                         legacy_prequantized.second,
                         "Legacy prequantized linear SwiGLU changed FP8 scales");
     }
-    if (sm100_bf16(dtype)) {
+    if (blackwell_bf16(dtype)) {
       // Exceed the fused gate-width limit with signed, exactly representable projections.
       auto columns = (at::arange(49152, options).remainder(5) - 2) * .0625;
       infinity::Fp8Linear wide(columns.unsqueeze(1).expand({49152, 64}).contiguous());
@@ -1202,8 +1235,8 @@ int main() {
                     dtype);
       }
     }
-    if (at::cuda::getCurrentDeviceProperties()->major == 10) {
-      // The SM100 BF16 provider rounds once to BF16; the portable recipe keeps
+    if (at::cuda::getCurrentDeviceProperties()->major >= 10) {
+      // The Blackwell BF16 provider rounds once to BF16; the portable recipe keeps
       // an FP32 product until that same rounding. FP16 stays portable, so its
       // bytes must match the portable recipe exactly.
       for (const auto& shape : {std::array<int64_t, 3>{0, 2560, 512},
@@ -1220,7 +1253,7 @@ int main() {
           auto empty = projection.forward(at::empty({0, width}, options));
           TORCH_CHECK(empty.sizes() == at::IntArrayRef({0, out_width}) &&
                           empty.scalar_type() == dtype,
-                      "SM100 empty rows changed shape or dtype");
+                      "Blackwell empty rows changed shape or dtype");
           continue;
         }
         auto input = at::randn({rows, width}, options) * .3;
@@ -1230,7 +1263,7 @@ int main() {
             quantized.first, projection.matrix(), quantized.second, projection.scales(), dtype);
         if (dtype == at::kHalf) {
           TORCH_CHECK(at::equal(actual, portable),
-                      "SM100 FP16 left the portable recipe: rows=",
+                      "Blackwell FP16 left the portable recipe: rows=",
                       rows,
                       " width=",
                       width,
@@ -1239,10 +1272,10 @@ int main() {
           continue;
         }
         check_projection_close(
-            portable, actual, "SM100 BF16 row-scaled drift exceeded one BF16 ULP");
+            portable, actual, "Blackwell BF16 row-scaled drift exceeded one BF16 ULP");
       }
-      if (sm100_bf16(dtype)) {
-        // Borrowed FP8 storage must be 16-byte aligned for the SM100 TMA path.
+      if (blackwell_bf16(dtype)) {
+        // Borrowed FP8 storage must be 16-byte aligned for the Blackwell TMA path.
         constexpr int64_t rows = 17, width = 2560, out_width = 512;
         auto weight = at::randn({out_width, width}, options) * .05;
         infinity::Fp8Linear projection(weight);
@@ -1253,7 +1286,7 @@ int main() {
         auto aligned = aligned_storage.narrow(0, 16, quantized.first.numel()).view({rows, width});
         aligned.copy_(quantized.first);
         TORCH_CHECK(at::equal(projection.forward_quantized(aligned, quantized.second), expected),
-                    "SM100 aligned borrowed FP8 storage failed");
+                    "Blackwell aligned borrowed FP8 storage failed");
         auto unaligned_storage =
             at::empty({quantized.first.numel() + 1}, quantized.first.options());
         auto unaligned =
@@ -1265,7 +1298,7 @@ int main() {
         } catch (const c10::Error&) {
           rejected = true;
         }
-        TORCH_CHECK(rejected, "SM100 unaligned FP8 activation was not rejected");
+        TORCH_CHECK(rejected, "Blackwell unaligned FP8 activation was not rejected");
       }
     }
     std::cout << "FP8 row-scale/bytes, odd real rows, model-dtype GEMM and bias: " << dtype

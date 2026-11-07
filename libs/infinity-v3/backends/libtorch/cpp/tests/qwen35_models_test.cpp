@@ -5,6 +5,7 @@
 #include "models/decision_models.h"
 #include "batching/radix.h"
 #include "helpers/workspace_admission.h"
+#include "helpers/fp8_linear.h"
 #include "batching/cuda_graph.h"
 #include <ATen/ops/_flash_attention_forward.h>
 #ifdef INFINITY_TORCH_CUDA_KERNELS
@@ -16,10 +17,8 @@ using namespace infinity;
 
 void dynamic_fp8_test(Options cfg, Weights weights, const c10::Device& device) {
 #ifdef INFINITY_TORCH_CUDA_KERNELS
-  const auto* properties = at::cuda::getDeviceProperties(device.index());
-  const auto capability = properties->major * 10 + properties->minor;
-  if (capability != 89 && capability != 90 && capability != 100 && capability != 120) {
-    std::cout << "Qwen3.5 FP8 fixture skipped: requires SM89/90/100/120\n";
+  if (!fp8_device_supported(device)) {
+    std::cout << "Qwen3.5 FP8 fixture skipped: unsupported device or CUDA build\n";
     return;
   }
 #endif
