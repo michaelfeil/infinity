@@ -397,6 +397,26 @@ int main() {
       std::cout << "Ordinary request-local stream/policy/capture and owned output: " << dtype
                 << " passed\n";
     }
+    {
+      // Odd width forces scalar conversion; known row maxima give an independent oracle.
+      auto edges = at::zeros({5, 9729}, options);
+      edges.select(0, 0).fill_(-0.f);
+      edges.select(0, 1).fill_(std::ldexp(1.f, dtype == at::kHalf ? -24 : -133));
+      edges.select(0, 2).fill_(std::numeric_limits<float>::infinity());
+      edges.select(0, 2).select(0, 1).zero_();
+      edges.select(0, 3).fill_(std::numeric_limits<float>::quiet_NaN());
+      edges.select(0, 4).fill_(3.5f);
+      auto scales = at::full({5, 1}, 1e-12f * (1.f / 448.f), at::TensorOptions().dtype(at::kFloat));
+      if (dtype == at::kHalf)
+        scales.select(0, 1).fill_(std::ldexp(1.f, -24) * (1.f / 448.f));
+      scales.select(0, 2).fill_(std::numeric_limits<float>::infinity());
+      scales.select(0, 4).fill_(3.5f * (1.f / 448.f));
+      auto expected = (edges.to(at::kCPU).to(at::kFloat) / scales).to(at::kFloat8_e4m3fn);
+      auto actual = infinity::fp8_quantize_rows(edges);
+      TORCH_CHECK(at::equal(actual.second.to(at::kCPU), scales), "Scalar FP8 edge scales differ");
+      check_same_or_nan(
+          expected.to(options.device()), actual.first, "Scalar FP8 edge conversion differs");
+    }
     auto weight = at::randn({512, 256}, options) * .05;
     infinity::Fp8Linear linear(weight);
     for (int64_t rows : {1, 3, 7, 17, 35, 128}) {

@@ -7,6 +7,25 @@
 #include <cuda_fp16.h>
 #include <stdint.h>
 
+__device__ __forceinline__ uint32_t qk_pair_bits(__half a, __half b) {
+  return uint32_t(__half_as_ushort(a)) | (uint32_t(__half_as_ushort(b)) << 16);
+}
+
+__device__ __forceinline__ uint32_t qk_pair_bits(__nv_bfloat16 a, __nv_bfloat16 b) {
+  return uint32_t(__bfloat16_as_ushort(a)) | (uint32_t(__bfloat16_as_ushort(b)) << 16);
+}
+
+__device__ __forceinline__ void qk_pair_halves(uint32_t bits, __half& a, __half& b) {
+  a = __ushort_as_half(uint16_t(bits));
+  b = __ushort_as_half(uint16_t(bits >> 16));
+}
+
+__device__ __forceinline__ void qk_pair_halves(uint32_t bits, __nv_bfloat16& a,
+                                               __nv_bfloat16& b) {
+  a = __ushort_as_bfloat16(uint16_t(bits));
+  b = __ushort_as_bfloat16(uint16_t(bits >> 16));
+}
+
 template <class T>
 __device__ void fused_qk_norm_rope(const T* q,
                                    const T* k,
@@ -78,15 +97,26 @@ __device__ void fused_qk_norm_rope(const T* q,
       c.load_from(cos, token * 8 + lane);
       s.load_from(sin, token * 8 + lane);
     }
+    uint32_t packed[4], peer_bits[4];
 #pragma unroll
-    for (int j = 0; j < 8; j++) {
-      T peer = T(__shfl_xor_sync(
-          (threadIdx.x % 32) < 16 ? 0x0000ffff : 0xffff0000, float(vals[j]), 8, 16));
-      if (lane < 8) {
-        T v = vals[j];
-        T cv = c.data.elt[j], sv = s.data.elt[j];
-        a.data.elt[j] = v * cv - peer * sv;
-        b.data.elt[j] = peer * cv + v * sv;
+    for (int q = 0; q < 4; q++)
+      packed[q] = qk_pair_bits(vals[2 * q], vals[2 * q + 1]);
+#pragma unroll
+    for (int q = 0; q < 4; q++)
+      peer_bits[q] = __shfl_xor_sync(
+          (threadIdx.x % 32) < 16 ? 0x0000ffff : 0xffff0000, packed[q], 8, 16);
+    if (lane < 8) {
+#pragma unroll
+      for (int q = 0; q < 4; q++) {
+        T peer0, peer1;
+        qk_pair_halves(peer_bits[q], peer0, peer1);
+        T v0 = vals[2 * q], v1 = vals[2 * q + 1];
+        T cv0 = c.data.elt[2 * q], cv1 = c.data.elt[2 * q + 1];
+        T sv0 = s.data.elt[2 * q], sv1 = s.data.elt[2 * q + 1];
+        a.data.elt[2 * q] = v0 * cv0 - peer0 * sv0;
+        a.data.elt[2 * q + 1] = v1 * cv1 - peer1 * sv1;
+        b.data.elt[2 * q] = peer0 * cv0 + v0 * sv0;
+        b.data.elt[2 * q + 1] = peer1 * cv1 + v1 * sv1;
       }
     }
     if (lane < 8) {

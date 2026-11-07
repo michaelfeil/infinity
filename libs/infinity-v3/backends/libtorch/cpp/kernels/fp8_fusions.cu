@@ -383,9 +383,30 @@ __global__ __launch_bounds__(512) void activation_quant_vector_kernel(const T* i
   }
   // row_scale also synchronizes the completed shared row before reuse below.
   float scale = row_scale(amax);
+  const float reciprocal = __frcp_rn(scale);
+  // A non-finite maximum needs the original IEEE division, including finite / infinity.
+  const bool fast = isfinite(scale);
 
   if (!threadIdx.x)
     scales[row] = scale;
+  if (fast) {
+#pragma unroll
+    for (int j = 0; j < Groups; ++j) {
+      int col = threadIdx.x + j * blockDim.x;
+      if (col < stride) {
+        Packed<__nv_fp8x2_e4m3, 4> result;
+        const auto rounded = staged[col];
+#pragma unroll
+        for (int pair = 0; pair < 4; ++pair)
+          result.value[pair] = fp8_quantize_pair_recip(float(rounded.value[2 * pair]),
+                                                       float(rounded.value[2 * pair + 1]),
+                                                       scale,
+                                                       reciprocal);
+        reinterpret_cast<Packed<__nv_fp8x2_e4m3, 4>*>(out)[row * stride + col] = result;
+      }
+    }
+    return;
+  }
 #pragma unroll
   for (int j = 0; j < Groups; ++j) {
     int col = threadIdx.x + j * blockDim.x;
@@ -540,8 +561,26 @@ __global__ void rms_quant_vector(const __nv_bfloat16* x,
     }
   }
   float scale = row_scale(amax);
+  const float reciprocal = __frcp_rn(scale);
+  // A non-finite maximum needs the original IEEE division, including finite / infinity.
+  const bool fast = isfinite(scale);
   if (!threadIdx.x)
     scales[row] = scale;
+  if (fast) {
+#pragma unroll
+    for (int group = 0; group < Groups; ++group) {
+      int col = threadIdx.x + group * 256;
+      if (col >= stride)
+        continue;
+      Packed<__nv_fp8x2_e4m3, 4> result;
+#pragma unroll
+      for (int lane = 0; lane < 4; ++lane)
+        result.value[lane] = fp8_quantize_pair_recip(
+            values[group][2 * lane], values[group][2 * lane + 1], scale, reciprocal);
+      reinterpret_cast<Packed<__nv_fp8x2_e4m3, 4>*>(out)[row * stride + col] = result;
+    }
+    return;
+  }
 #pragma unroll
   for (int group = 0; group < Groups; ++group) {
     int col = threadIdx.x + group * 256;

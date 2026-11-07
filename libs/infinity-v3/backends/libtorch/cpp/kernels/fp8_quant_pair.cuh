@@ -24,4 +24,13 @@ __device__ __forceinline__ __nv_fp8x2_e4m3 fp8_quantize_pair_recip(float low,
   };
   return __nv_fp8x2_e4m3(make_float2(quotient(low), quotient(high)));
 }
+
+// Single-value form for the scalar row fallback. Same precondition as the pair form.
+__device__ __forceinline__ __nv_fp8_e4m3 fp8_quantize_value_recip(float value,
+                                                                  float scale,
+                                                                  float reciprocal) {
+  const float approximate = __fmaf_rn(value, reciprocal, 0.0f);
+  const float remainder = __fmaf_rn(-scale, approximate, value);
+  return __nv_fp8_e4m3(copysignf(__fmaf_rn(remainder, reciprocal, approximate), value));
+}
 }
