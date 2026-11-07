@@ -13,6 +13,7 @@
 namespace infinity {
 #ifdef INFINITY_TORCH_CUDA_KERNELS
 namespace {
+#if CUBLAS_VERSION >= 120800
 const int32_t kBlockScaleMode = CUBLASLT_MATMUL_MATRIX_SCALE_VEC32_UE8M0;
 const cublasLtEpilogue_t kEpilogue = CUBLASLT_EPILOGUE_DEFAULT;
 
@@ -97,6 +98,11 @@ bool probe_geometry(cublasLtHandle_t handle, int64_t m, int64_t n, int64_t k) {
   return status == CUBLAS_STATUS_SUCCESS && returned == 1 &&
          heuristic.state == CUBLAS_STATUS_SUCCESS && heuristic.workspaceSize <= workspace;
 }
+#else
+bool probe_geometry(cublasLtHandle_t, int64_t, int64_t, int64_t) {
+  return false;
+}
+#endif
 
 at::Tensor mxfp8_gemm_torch(const Mxfp8Quantized& lhs, const Mxfp8Quantized& rhs) {
   TORCH_CHECK(lhs.values.is_cuda() && rhs.values.is_cuda() && lhs.cols == rhs.cols,

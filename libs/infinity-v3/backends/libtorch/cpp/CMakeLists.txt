@@ -367,7 +367,8 @@ if(INFINITY_BUILD_NATIVE_TESTS)
       ENVIRONMENT "${ENV_VAR_BASE}_TORCH_MXFP8_MLP=0")
     add_test(NAME decoder_mxfp8_cuda COMMAND decoder_fp8_test cuda:0 --mxfp8)
     set_tests_properties(decoder_mxfp8_cuda PROPERTIES
-      ENVIRONMENT "${ENV_VAR_BASE}_TORCH_MXFP8_MLP=1")
+      ENVIRONMENT "${ENV_VAR_BASE}_TORCH_MXFP8_MLP=1"
+      SKIP_RETURN_CODE 77)
     target_compile_definitions(output_test PRIVATE INFINITY_TORCH_CUDA_KERNELS)
     target_compile_definitions(bert_private_flash_test PRIVATE INFINITY_TORCH_CUDA_KERNELS)
     target_compile_definitions(encoder_models_test PRIVATE INFINITY_TORCH_CUDA_KERNELS)
@@ -376,6 +377,7 @@ if(INFINITY_BUILD_NATIVE_TESTS)
     target_link_libraries(decoder_fp8_test PRIVATE CUDA::cublasLt)
     target_link_libraries(mxfp8_linear_test PRIVATE CUDA::cublasLt)
     target_compile_definitions(mxfp8_linear_test PRIVATE INFINITY_TORCH_CUDA_KERNELS)
+    set_tests_properties(mxfp8_linear_cuda PROPERTIES SKIP_RETURN_CODE 77)
     target_link_libraries(fast_kernels_test PRIVATE CUDA::cublasLt)
     set_tests_properties(cuda_graph_cuda PROPERTIES
       ENVIRONMENT "TORCH_CUBLAS_WORKSPACE_CACHE=1")
