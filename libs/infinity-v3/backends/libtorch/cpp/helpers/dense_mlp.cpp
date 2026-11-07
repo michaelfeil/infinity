@@ -1,9 +1,13 @@
 // Copyright Infinity Core Contributors. Licensed under the repository LICENSE.
 #include "helpers/dense_mlp.h"
+#include "env_config.h"
+#include "helpers/mxfp8_linear.h"
+#include <cstdlib>
+#include <cstring>
 #include <ATen/ops/_addmm_activation.h>
+#include "kernels/fp8_fusions.h"
 #ifdef INFINITY_TORCH_CUDA_KERNELS
 #include "kernels/encoder_activation.h"
-#include "kernels/fp8_fusions.h"
 #endif
 
 namespace infinity {
@@ -133,6 +137,76 @@ public:
                    MlpEpilogue epilogue,
                    const at::Tensor& scales) const override {
     TORCH_CHECK(epilogue == MlpEpilogue::None, "FP8 method has no GEMM activation epilogue");
+    auto rows = x.dim() == 2
+                    ? x
+                    : x.reshape({x.numel() / projection.input_width(), projection.input_width()});
+    auto output = scales.defined() ? linear_.forward_quantized(rows, scales, bias)
+                                   : linear_.forward(rows, bias);
+    if (x.dim() != 2) {
+      auto shape = x.sizes().vec();
+      shape.back() = projection.output_width();
+      output = output.reshape(shape);
+    }
+    return output;
+  }
+};
+
+class Mxfp8LinearMethod final : public MlpLinearMethod {
+  Mxfp8Linear linear_;
+  at::Tensor ordinary_weight_;
+
+public:
+  explicit Mxfp8LinearMethod(const at::Tensor& weight) : linear_(weight) {}
+
+  MlpPrecision precision() const override {
+    return MlpPrecision::Fp8;
+  }
+
+  const at::Tensor& weight() const override {
+    return ordinary_weight_;
+  }
+
+  bool accepts_fp8_rows() const override {
+    return true;
+  }
+
+  bool supports_epilogue() const override {
+    return false;
+  }
+
+  bool supports_rowwise_rms_input() const override {
+    return false;
+  }
+
+  std::pair<at::Tensor, at::Tensor> apply_swiglu_quantized(const MlpProjection& projection,
+                                                           const at::Tensor& x,
+                                                           const at::Tensor& scales,
+                                                           const MlpContext&) const override {
+    TORCH_CHECK(x.dim() == 2 && x.size(1) == projection.input_width(),
+                "Fused MXFP8 SwiGLU requires 2D projection rows");
+    return linear_.forward_gated_quantized(x, scales, Fp8GatedActivation::RoundedSilu, true);
+  }
+
+  std::pair<at::Tensor, at::Tensor> apply_gated_quantized(const MlpProjection& projection,
+                                                          const at::Tensor& x,
+                                                          const at::Tensor& scales,
+                                                          const MlpContext&,
+                                                          Fp8GatedActivation kind,
+                                                          bool gate_first) const override {
+    TORCH_CHECK(x.dim() == 2 && x.size(1) == projection.input_width(),
+                "Fused MXFP8 gated activation requires 2D projection rows");
+    if (kind != Fp8GatedActivation::RoundedSilu || !gate_first)
+      return {};
+    return linear_.forward_gated_quantized(x, scales, kind, gate_first);
+  }
+
+  at::Tensor apply(const MlpProjection& projection,
+                   const at::Tensor& x,
+                   const at::Tensor& bias,
+                   const MlpContext&,
+                   MlpEpilogue epilogue,
+                   const at::Tensor& scales) const override {
+    TORCH_CHECK(epilogue == MlpEpilogue::None, "MXFP8 MLP has no GEMM activation epilogue");
     auto rows = x.dim() == 2
                     ? x
                     : x.reshape({x.numel() / projection.input_width(), projection.input_width()});
@@ -284,6 +358,18 @@ void DenseMlp::prepare(const MlpMethodFactory& factory) {
   up_ = std::move(up);
 }
 
+bool DenseMlp::supports_mxfp8() const {
+  if (up_ || !activation_.packed || !activation_.gate_first ||
+      activation_.fusion != MlpFusion::RoundedSwiGlu || input_.recipe_.input_clip ||
+      input_.recipe_.cast_input || input_.recipe_.output_clip || output_.recipe_.input_clip ||
+      output_.recipe_.cast_input || output_.recipe_.output_clip || input_.bias_.defined() ||
+      !input_.weight().defined() || !output_.weight().defined())
+    return false;
+  if (input_.output_width() % 2 != 0 || input_.output_width() / 2 > fp8_scaled_swiglu_max_width)
+    return false;
+  return mxfp8_mlp_supported(input_.weight(), output_.weight());
+}
+
 at::Tensor DenseMlp::forward(const at::Tensor& x,
                              const MlpContext& context,
                              const at::Tensor& input_scales) const {
@@ -374,5 +460,31 @@ at::Tensor DenseMlp::forward(const at::Tensor& x,
   if (up_)
     activated = activated * up_->execute(x, context, input_scales);
   return output_.forward(activated, context);
+}
+
+bool mxfp8_mlp_supported(const at::Tensor& gate_up, const at::Tensor& down) {
+  if (const char* override = std::getenv(INFINITY_ENV("TORCH_MXFP8_MLP"));
+      override && (std::strcmp(override, "0") == 0 || std::strcmp(override, "false") == 0 ||
+                   std::strcmp(override, "off") == 0))
+    return false;
+  if (!gate_up.is_cuda() || !down.is_cuda() || gate_up.device() != down.device() ||
+      gate_up.dim() != 2 || down.dim() != 2 || gate_up.scalar_type() != at::kBFloat16 ||
+      down.scalar_type() != at::kBFloat16 || gate_up.size(0) <= 0 || down.size(0) <= 0 ||
+      gate_up.size(1) % 32 != 0 || down.size(1) % 32 != 0 || gate_up.size(0) % 64 != 0 ||
+      down.size(1) != gate_up.size(0) / 2)
+    return false;
+  const auto device = gate_up.device();
+  if (!mxfp8_provider_supported(device))
+    return false;
+  return mxfp8_geometry_supported(device, 1, gate_up.size(0), gate_up.size(1)) &&
+         mxfp8_geometry_supported(device, 128, gate_up.size(0), gate_up.size(1)) &&
+         mxfp8_geometry_supported(device, 1, down.size(0), down.size(1)) &&
+         mxfp8_geometry_supported(device, 128, down.size(0), down.size(1));
+}
+
+MlpMethodFactory mxfp8_mlp_factory() {
+  return [](const MlpProjection& projection) -> std::shared_ptr<const MlpLinearMethod> {
+    return std::make_shared<Mxfp8LinearMethod>(projection.weight());
+  };
 }
 }

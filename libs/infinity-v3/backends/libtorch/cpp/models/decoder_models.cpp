@@ -1052,9 +1052,13 @@ public:
             {layer.gate_up, layer.gate_up_bias}, {layer.down, layer.down_bias}, std::move(recipe));
 #ifdef INFINITY_TORCH_CUDA_KERNELS
         if (fp8_dynamic) {
-          // Shape checks above precede one-time row quantization. Bias and the
-          // gated activation retain their existing model-dtype arithmetic.
-          layer.dense_mlp.prepare(MlpPrecision::Fp8);
+          // Shape checks above precede one-time quantization. Qualified SM100+
+          // BF16 MLP projections use native MXFP8 block-scaled weights; other
+          // capabilities/dtypes retain the existing rowwise FP8 method.
+          if (layer.dense_mlp.supports_mxfp8())
+            layer.dense_mlp.prepare(mxfp8_mlp_factory());
+          else
+            layer.dense_mlp.prepare(MlpPrecision::Fp8);
           if (fp8_all_linear) {
             layer.fp8_qkv = std::make_unique<Fp8Linear>(layer.qkv);
             layer.fp8_out = std::make_unique<Fp8Linear>(layer.out);
@@ -1473,8 +1477,9 @@ public:
                                               output_rows);
 #ifdef INFINITY_TORCH_CUDA_KERNELS
         if (h.is_cuda() && (!transformers_math() || transformers_fused_norm)) {
-          if (layer.dense_mlp.fp8() && dtype == at::kBFloat16 && hidden <= 8192 &&
-              hidden % 256 == 0 && !exact_decoder_math() && projected.is_contiguous() &&
+          if (layer.dense_mlp.fp8() && layer.dense_mlp.supports_rowwise_rms_input() &&
+              dtype == at::kBFloat16 && hidden <= 8192 && hidden % 256 == 0 &&
+              !exact_decoder_math() && projected.is_contiguous() &&
               (!residual.defined() || residual.is_contiguous())) {
             auto [quantized, summed, scales] =
                 fp8_add_rms_quantize(projected, residual, layer.post_norm, epsilon);

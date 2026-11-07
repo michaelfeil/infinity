@@ -37,6 +37,7 @@ infinity::Weights
 weights(const infinity::Options& options, c10::Device device, at::ScalarType dtype) {
   infinity::Weights tensors;
   const auto hidden = options.integer("hidden_size", 32);
+  const auto intermediate = options.integer("intermediate_size", 64);
   auto add = [&](const std::string& name, std::initializer_list<int64_t> shape, bool norm = false) {
     int64_t count = 1;
     float offset = 0;
@@ -68,9 +69,9 @@ weights(const infinity::Options& options, c10::Device device, at::ScalarType dty
       add(p + "self_attn.q_norm.weight", {8}, true);
       add(p + "self_attn.k_norm.weight", {8}, true);
     }
-    add(p + "mlp.gate_proj.weight", {64, hidden});
-    add(p + "mlp.up_proj.weight", {64, hidden});
-    add(p + "mlp.down_proj.weight", {hidden, 64});
+    add(p + "mlp.gate_proj.weight", {intermediate, hidden});
+    add(p + "mlp.up_proj.weight", {intermediate, hidden});
+    add(p + "mlp.down_proj.weight", {hidden, intermediate});
   }
   return tensors;
 }
@@ -160,9 +161,11 @@ void check_family(const std::string& family,
                   at::ScalarType dtype,
                   bool all = false,
                   int64_t hidden = 32,
-                  bool default_scope = false) {
+                  bool default_scope = false,
+                  int64_t intermediate = 64) {
   auto options = config(family);
   options.values["hidden_size"] = std::to_string(hidden);
+  options.values["intermediate_size"] = std::to_string(intermediate);
   auto enabled = options;
   enabled.values["_fp8_dynamic"] = "true";
   if (!default_scope)
@@ -381,6 +384,13 @@ int main(int argc, char** argv) {
   auto capability = properties->major * 10 + properties->minor;
   if (!infinity::fp8_device_supported(device)) {
     std::cout << "FP8 CUDA fixture skipped unsupported capability " << capability << "\n";
+    return 0;
+  }
+  if (argc > 2 && std::string(argv[2]) == "--mxfp8") {
+    // Qualified MLPs exercise the decoder RMS input, ragged-row folding,
+    // causal isolation and weight ownership with the native block format.
+    for (auto family : {"llama", "qwen2", "qwen3"})
+      check_family(family, device, at::kBFloat16, false, 4096, false, 128);
     return 0;
   }
   check_registered_causal_contract(device);

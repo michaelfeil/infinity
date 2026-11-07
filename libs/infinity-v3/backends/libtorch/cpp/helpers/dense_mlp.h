@@ -45,6 +45,13 @@ public:
     return false;
   }
 
+  /// Whether a fused post-attention residual/norm producer may hand this method
+  /// per-row FP32 RMS FP8 rows. Native MXFP8 methods require model-dtype rows and
+  /// return false so the decoder keeps the ordinary residual_norm output.
+  virtual bool supports_rowwise_rms_input() const {
+    return true;
+  }
+
   virtual bool supports_epilogue() const {
     return false;
   }
@@ -199,6 +206,15 @@ public:
     return input_.fp8();
   }
 
+  bool supports_rowwise_rms_input() const {
+    return input_.method().supports_rowwise_rms_input();
+  }
+
+  /// Load-time qualification for the experimental packed SwiGLU gate-first
+  /// MXFP8 MLP path. Other activations, reversed gates, biases on the packed
+  /// projection, casts/clipping, or wide projections keep the rowwise method.
+  bool supports_mxfp8() const;
+
   const MlpProjection& input() const {
     return input_;
   }
@@ -215,4 +231,9 @@ public:
                      const MlpContext& context = {},
                      const at::Tensor& input_scales = {}) const;
 };
+
+/// Load-time qualification for the experimental native MXFP8 MLP method.
+bool mxfp8_mlp_supported(const at::Tensor& gate_up, const at::Tensor& down);
+/// Method factory that replaces the model-dtype method with MXFP8 weights.
+MlpMethodFactory mxfp8_mlp_factory();
 }
