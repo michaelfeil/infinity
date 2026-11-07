@@ -254,6 +254,15 @@ int main() {
               at::equal(actual.first.to(at::kCPU).view(at::kByte), expected.view(at::kByte)),
           "FP8 conversion changed exhaustive input/significand rounding: ",
           dtype);
+      // Exercise the hoisted gated division with varied numerators and a fixed row maximum.
+      // A power-of-two gate preserves representable up values; the independent composition
+      // also covers any model-dtype underflow before quantization.
+      auto model_values = values.to(options);
+      auto gate_up = at::cat({at::full_like(model_values, 64), model_values / 64}, 1);
+      check_gated_quantize(gate_up,
+                           infinity::Fp8GatedActivation::RoundedSilu,
+                           true,
+                           "Gated division changed exhaustive input/significand rounding");
     };
     const int significands = dtype == at::kHalf ? 1024 : 128;
     for (int first = 0; first < significands; first += 32)
@@ -659,6 +668,13 @@ int main() {
     // Check every gate encoding against frozen scalar staging on each GPU family.
     // Constant rows expose activation differences in the scale, even after FP8 rounding.
     auto gates = at::arange(65536, options.dtype(at::kInt)).to(at::kShort).view(dtype);
+    auto signed_zeros = at::ones({2, 4096}, options);
+    signed_zeros.select(0, 0).zero_();
+    signed_zeros.select(0, 1).select(0, 2048).fill_(-0.f);
+    check_gated_quantize(signed_zeros,
+                         infinity::Fp8GatedActivation::RoundedSilu,
+                         true,
+                         "Hoisted gated division changed signed zero");
     auto exhaustive = at::empty({65536, 16}, options);
     exhaustive.narrow(1, 0, 8).copy_(gates.unsqueeze(1));
     auto unit_rows = at::ones({65536, 1}, options.dtype(at::kFloat));
