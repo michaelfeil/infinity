@@ -330,6 +330,14 @@ DenseMlp::DenseMlp(MlpProjection gate,
 }
 
 void DenseMlp::prepare(MlpPrecision precision) {
+  // Select the FP8 format once for every model using this shared MLP policy.
+  // The provider probe qualifies native block scaling; other providers keep rowwise FP8.
+  if (precision == MlpPrecision::Fp8 && supports_mxfp8()) {
+    prepare([](const MlpProjection& projection) -> std::shared_ptr<const MlpLinearMethod> {
+      return std::make_shared<Mxfp8LinearMethod>(projection.weight());
+    });
+    return;
+  }
   prepare([precision](const MlpProjection& projection) -> std::shared_ptr<const MlpLinearMethod> {
     if (precision == projection.method().precision())
       return projection.method_;
@@ -482,9 +490,4 @@ bool mxfp8_mlp_supported(const at::Tensor& gate_up, const at::Tensor& down) {
          mxfp8_geometry_supported(device, 128, down.size(0), down.size(1));
 }
 
-MlpMethodFactory mxfp8_mlp_factory() {
-  return [](const MlpProjection& projection) -> std::shared_ptr<const MlpLinearMethod> {
-    return std::make_shared<Mxfp8LinearMethod>(projection.weight());
-  };
-}
 }

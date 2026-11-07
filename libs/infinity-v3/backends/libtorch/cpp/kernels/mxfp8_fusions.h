@@ -5,7 +5,7 @@
 #include <utility>
 
 namespace infinity {
-/// Native Blackwell MXFP8 rows: E4M3 values plus swizzled UE8M0 scales for
+/// Native MXFP8 rows: E4M3 values plus swizzled UE8M0 scales for
 /// every 32 adjacent K elements. `scales` is contiguous byte metadata sized by
 /// mxfp8_scale_elements(rows, cols); it is not a per-row FP32 RMS scale.
 struct Mxfp8Quantized {

@@ -1052,13 +1052,7 @@ public:
             {layer.gate_up, layer.gate_up_bias}, {layer.down, layer.down_bias}, std::move(recipe));
 #ifdef INFINITY_TORCH_CUDA_KERNELS
         if (fp8_dynamic) {
-          // Shape checks above precede one-time quantization. Qualified SM100+
-          // BF16 MLP projections use native MXFP8 block-scaled weights; other
-          // capabilities/dtypes retain the existing rowwise FP8 method.
-          if (layer.dense_mlp.supports_mxfp8())
-            layer.dense_mlp.prepare(mxfp8_mlp_factory());
-          else
-            layer.dense_mlp.prepare(MlpPrecision::Fp8);
+          layer.dense_mlp.prepare(MlpPrecision::Fp8);
           if (fp8_all_linear) {
             layer.fp8_qkv = std::make_unique<Fp8Linear>(layer.qkv);
             layer.fp8_out = std::make_unique<Fp8Linear>(layer.out);

@@ -363,6 +363,8 @@ if(INFINITY_BUILD_NATIVE_TESTS)
     add_test(NAME dense_mlp_cuda COMMAND dense_mlp_test --cuda)
     set_tests_properties(decoder_fp8_cuda PROPERTIES
       ENVIRONMENT "${ENV_VAR_BASE}_TORCH_MXFP8_MLP=0")
+    set_tests_properties(dense_mlp_cuda PROPERTIES
+      ENVIRONMENT "${ENV_VAR_BASE}_TORCH_MXFP8_MLP=0")
     add_test(NAME decoder_mxfp8_cuda COMMAND decoder_fp8_test cuda:0 --mxfp8)
     set_tests_properties(decoder_mxfp8_cuda PROPERTIES
       ENVIRONMENT "${ENV_VAR_BASE}_TORCH_MXFP8_MLP=1")

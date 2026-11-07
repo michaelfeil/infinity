@@ -234,6 +234,4 @@ public:
 
 /// Load-time qualification for the experimental native MXFP8 MLP method.
 bool mxfp8_mlp_supported(const at::Tensor& gate_up, const at::Tensor& down);
-/// Method factory that replaces the model-dtype method with MXFP8 weights.
-MlpMethodFactory mxfp8_mlp_factory();
 }

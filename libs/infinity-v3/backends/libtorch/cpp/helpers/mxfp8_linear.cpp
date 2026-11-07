@@ -140,11 +140,10 @@ at::Tensor add_bias(at::Tensor output, const at::Tensor& bias, int64_t width) {
 
 bool mxfp8_provider_supported(const c10::Device& device) {
 #ifdef INFINITY_TORCH_CUDA_KERNELS
-  if (!device.is_cuda())
+  if (!device.is_cuda() || CUBLAS_VERSION < 120800 || cublasLtGetVersion() < 120800)
     return false;
-  const auto* properties = at::cuda::getDeviceProperties(device.index());
-  return properties && properties->major >= 10 && CUBLAS_VERSION >= 120800 &&
-         cublasLtGetVersion() >= 120800;
+  c10::cuda::CUDAGuard guard(device);
+  return probe_geometry(at::cuda::getCurrentCUDABlasLtHandle(), 1, 128, 128);
 #else
   return false;
 #endif
@@ -168,7 +167,7 @@ Mxfp8Linear::Mxfp8Linear(const at::Tensor& weight) {
                   weight.scalar_type() == at::kBFloat16,
               "MXFP8 MLP weights require BF16 [N,K], N divisible by 16 and K by 32");
   TORCH_CHECK(mxfp8_provider_supported(weight.device()),
-              "MXFP8 MLP requires a supported compute capability and cuBLASLt");
+              "MXFP8 MLP requires a provider with native block-scaling support");
   c10::cuda::CUDAGuard guard(weight.device());
   matrix_ = mxfp8_quantize_rows(weight);
   dtype_ = weight.scalar_type();
