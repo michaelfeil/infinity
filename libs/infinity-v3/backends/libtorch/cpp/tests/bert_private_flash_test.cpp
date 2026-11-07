@@ -239,11 +239,11 @@ int main(int argc, char** argv) {
   check(infinity_torch_option(engine, "_cuda_graph_reuse", "1"));
   for (const auto& [name, t] : weights)
     check(infinity_torch_weight(engine,
-                     name.c_str(),
-                     reinterpret_cast<const uint8_t*>(t.const_data_ptr()),
-                     t.sizes().data(),
-                     t.dim(),
-                     1));
+                                name.c_str(),
+                                reinterpret_cast<const uint8_t*>(t.const_data_ptr()),
+                                t.sizes().data(),
+                                t.dim(),
+                                1));
   check(infinity_torch_ready(engine));
   std::vector<int64_t> ids, types, positions;
   std::vector<int32_t> cu{0, 5, 134, 143};
@@ -258,24 +258,24 @@ int main(int argc, char** argv) {
   auto run = [&]() {
     auto out = at::empty({outrows, 768}, at::kFloat);
     check(infinity_torch_forward(engine,
-                      ids.data(),
-                      types.data(),
-                      positions.data(),
-                      cu.data(),
-                      3,
-                      129,
-                      0,
-                      pooled,
-                      3,
-                      raw,
-                      2,
-                      out.mutable_data_ptr<float>(),
-                      out.numel(),
-                      nullptr,
-                      nullptr,
-                      0,
-                      nullptr,
-                      0));
+                                 ids.data(),
+                                 types.data(),
+                                 positions.data(),
+                                 cu.data(),
+                                 3,
+                                 129,
+                                 0,
+                                 pooled,
+                                 3,
+                                 raw,
+                                 2,
+                                 out.mutable_data_ptr<float>(),
+                                 out.numel(),
+                                 nullptr,
+                                 nullptr,
+                                 0,
+                                 nullptr,
+                                 0));
     return out;
   };
   // Independent FP32 CPU reference uses explicit attention probabilities at each

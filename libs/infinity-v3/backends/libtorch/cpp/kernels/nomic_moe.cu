@@ -188,8 +188,8 @@ at::Tensor nomic_moe_down(const at::Tensor& a,
 }
 } // namespace infinity
 
-extern "C" int
-infinity_gemma4_grouped_gemm_bf16(void*, int, void*, void*, void*, void*, void*, void*, cudaStream_t);
+extern "C" int infinity_gemma4_grouped_gemm_bf16(
+    void*, int, void*, void*, void*, void*, void*, void*, cudaStream_t);
 
 namespace infinity {
 namespace {

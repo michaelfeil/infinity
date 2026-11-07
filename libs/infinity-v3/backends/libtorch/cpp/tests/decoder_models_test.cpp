@@ -151,88 +151,92 @@ void input_descriptor_test() {
   auto handle = infinity_torch_create(&cfg, "cpu", 0);
   TORCH_CHECK(handle, infinity_torch_error());
   auto code = infinity_torch_forward(handle,
-                          data,
-                          data,
-                          data,
-                          offsets,
-                          2,
-                          32,
-                          0,
-                          nullptr,
-                          0,
-                          nullptr,
-                          0,
-                          nullptr,
-                          0,
-                          nullptr,
-                          nullptr,
-                          1,
-                          nullptr,
-                          0);
-  TORCH_CHECK(code != 0 && std::string(infinity_torch_error()).find("counted image") != std::string::npos,
+                                     data,
+                                     data,
+                                     data,
+                                     offsets,
+                                     2,
+                                     32,
+                                     0,
+                                     nullptr,
+                                     0,
+                                     nullptr,
+                                     0,
+                                     nullptr,
+                                     0,
+                                     nullptr,
+                                     nullptr,
+                                     1,
+                                     nullptr,
+                                     0);
+  TORCH_CHECK(code != 0 &&
+                  std::string(infinity_torch_error()).find("counted image") != std::string::npos,
               "Native bridge did not reject malformed media before upload/model access");
   auto pending = infinity_torch_forward_submit(handle,
-                                    data,
-                                    data,
-                                    data,
-                                    offsets,
-                                    2,
-                                    32,
-                                    0,
-                                    nullptr,
-                                    0,
-                                    nullptr,
-                                    0,
-                                    std::numeric_limits<size_t>::max(),
-                                    nullptr,
-                                    nullptr,
-                                    1,
-                                    nullptr,
-                                    0,
-                                    nullptr);
-  TORCH_CHECK(!pending && std::string(infinity_torch_error()).find("counted image") != std::string::npos,
+                                               data,
+                                               data,
+                                               data,
+                                               offsets,
+                                               2,
+                                               32,
+                                               0,
+                                               nullptr,
+                                               0,
+                                               nullptr,
+                                               0,
+                                               std::numeric_limits<size_t>::max(),
+                                               nullptr,
+                                               nullptr,
+                                               1,
+                                               nullptr,
+                                               0,
+                                               nullptr);
+  TORCH_CHECK(!pending &&
+                  std::string(infinity_torch_error()).find("counted image") != std::string::npos,
               "Deferred bridge did not validate descriptors before output allocation");
   code = infinity_torch_forward(handle,
-                     data,
-                     data,
-                     data,
-                     offsets,
-                     2,
-                     32,
-                     0,
-                     nullptr,
-                     1,
-                     nullptr,
-                     0,
-                     nullptr,
-                     0,
-                     nullptr,
-                     nullptr,
-                     0,
-                     nullptr,
-                     0);
-  TORCH_CHECK(code != 0 && std::string(infinity_torch_error()).find("counted pooled") != std::string::npos,
+                                data,
+                                data,
+                                data,
+                                offsets,
+                                2,
+                                32,
+                                0,
+                                nullptr,
+                                1,
+                                nullptr,
+                                0,
+                                nullptr,
+                                0,
+                                nullptr,
+                                nullptr,
+                                0,
+                                nullptr,
+                                0);
+  TORCH_CHECK(code != 0 &&
+                  std::string(infinity_torch_error()).find("counted pooled") != std::string::npos,
               "Native bridge did not reject missing output indices before model access");
   pending = infinity_torch_forward_submit(handle,
-                               data,
-                               data,
-                               data,
-                               offsets,
-                               2,
-                               32,
-                               0,
-                               nullptr,
-                               0,
-                               &invalid,
-                               1,
-                               std::numeric_limits<size_t>::max(),
-                               nullptr,
-                               nullptr,
-                               0,
-                               nullptr,
-                               0,
-                               nullptr);
-  TORCH_CHECK(!pending && std::string(infinity_torch_error()).find("raw output index") != std::string::npos,
+                                          data,
+                                          data,
+                                          data,
+                                          offsets,
+                                          2,
+                                          32,
+                                          0,
+                                          nullptr,
+                                          0,
+                                          &invalid,
+                                          1,
+                                          std::numeric_limits<size_t>::max(),
+                                          nullptr,
+                                          nullptr,
+                                          0,
+                                          nullptr,
+                                          0,
+                                          nullptr);
+  TORCH_CHECK(!pending &&
+                  std::string(infinity_torch_error()).find("raw output index") != std::string::npos,
               "Deferred bridge did not reject output indices before output allocation");
   infinity_torch_destroy(handle);
 }
@@ -323,20 +327,22 @@ void output_capacity_bridge_test() {
   auto handle = infinity_torch_create(&native_cfg, "cpu", 0);
   TORCH_CHECK(handle, infinity_torch_error());
   for (const auto& [key, value] : cfg.values)
-    TORCH_CHECK(infinity_torch_option(handle, key.c_str(), value.c_str()) == 0, infinity_torch_error());
+    TORCH_CHECK(infinity_torch_option(handle, key.c_str(), value.c_str()) == 0,
+                infinity_torch_error());
   TORCH_CHECK(infinity_torch_option(handle, "_decision.kind", "option_tokens") == 0 &&
                   infinity_torch_option(handle, "tie_word_embeddings", "true") == 0,
               infinity_torch_error());
   for (const auto& [key, value] : w)
     TORCH_CHECK(infinity_torch_weight(handle,
-                           key.c_str(),
-                           reinterpret_cast<const uint8_t*>(value.const_data_ptr()),
-                           value.sizes().data(),
-                           value.dim(),
-                           0) == 0,
+                                      key.c_str(),
+                                      reinterpret_cast<const uint8_t*>(value.const_data_ptr()),
+                                      value.sizes().data(),
+                                      value.dim(),
+                                      0) == 0,
                 infinity_torch_error());
   TORCH_CHECK(infinity_torch_option(handle, "_transient_max_bytes", "1") == 0 &&
-                  infinity_torch_option(handle, "_device_memory_headroom_bytes", "9223372036854775807") == 0,
+                  infinity_torch_option(
+                      handle, "_device_memory_headroom_bytes", "9223372036854775807") == 0,
               infinity_torch_error());
   TORCH_CHECK(infinity_torch_ready(handle) == 0, infinity_torch_error());
   // Legacy estimate options must not reject valid requests or alter their results.
@@ -347,24 +353,24 @@ void output_capacity_bridge_test() {
   auto readout = [&](int pool, std::vector<int64_t> selected, std::vector<int64_t> raw) {
     std::vector<float> result(16 * (selected.size() + 2 * raw.size()));
     TORCH_CHECK(infinity_torch_forward(handle,
-                            ids,
-                            types,
-                            positions,
-                            cumulative,
-                            2,
-                            2,
-                            pool,
-                            selected.data(),
-                            selected.size(),
-                            raw.data(),
-                            raw.size(),
-                            result.data(),
-                            result.size(),
-                            nullptr,
-                            nullptr,
-                            0,
-                            nullptr,
-                            0) == 0,
+                                       ids,
+                                       types,
+                                       positions,
+                                       cumulative,
+                                       2,
+                                       2,
+                                       pool,
+                                       selected.data(),
+                                       selected.size(),
+                                       raw.data(),
+                                       raw.size(),
+                                       result.data(),
+                                       result.size(),
+                                       nullptr,
+                                       nullptr,
+                                       0,
+                                       nullptr,
+                                       0) == 0,
                 infinity_torch_error());
     return result;
   };
@@ -393,68 +399,69 @@ void output_capacity_bridge_test() {
   valid_head[1].kind = 3;
   float head_logits[3]{}, head_actions[2]{};
   TORCH_CHECK(infinity_torch_decide(handle,
-                         ids,
-                         types,
-                         positions,
-                         cumulative,
-                         2,
-                         2,
-                         valid_head,
-                         head_logits,
-                         3,
-                         head_actions,
-                         nullptr,
-                         nullptr,
-                         0,
-                         nullptr,
-                         0) == 0,
-              infinity_torch_error());
-  for (auto value : head_logits)
-    TORCH_CHECK(std::isfinite(value), "Typed response contains non-finite logits");
-  for (const auto capacity : {size_t(17), std::numeric_limits<size_t>::max()}) {
-    auto pending = infinity_torch_forward_submit(handle,
-                                      ids,
-                                      types,
-                                      positions,
-                                      cumulative,
-                                      2,
-                                      2,
-                                      0,
-                                      &pooled,
-                                      1,
-                                      nullptr,
-                                      0,
-                                      capacity,
-                                      nullptr,
-                                      nullptr,
-                                      0,
-                                      nullptr,
-                                      0,
-                                      nullptr);
-    TORCH_CHECK(!pending &&
-                    std::string(infinity_torch_error()).find("Deferred output capacity must exactly") !=
-                        std::string::npos,
-                "Deferred spare capacity reached CUDA/output allocation");
-  }
-  auto pending = infinity_torch_forward_submit(handle,
                                     ids,
                                     types,
                                     positions,
                                     cumulative,
                                     2,
                                     2,
-                                    0,
-                                    &pooled,
-                                    1,
-                                    nullptr,
-                                    0,
-                                    16,
+                                    valid_head,
+                                    head_logits,
+                                    3,
+                                    head_actions,
                                     nullptr,
                                     nullptr,
                                     0,
                                     nullptr,
-                                    0,
-                                    nullptr);
+                                    0) == 0,
+              infinity_torch_error());
+  for (auto value : head_logits)
+    TORCH_CHECK(std::isfinite(value), "Typed response contains non-finite logits");
+  for (const auto capacity : {size_t(17), std::numeric_limits<size_t>::max()}) {
+    auto pending = infinity_torch_forward_submit(handle,
+                                                 ids,
+                                                 types,
+                                                 positions,
+                                                 cumulative,
+                                                 2,
+                                                 2,
+                                                 0,
+                                                 &pooled,
+                                                 1,
+                                                 nullptr,
+                                                 0,
+                                                 capacity,
+                                                 nullptr,
+                                                 nullptr,
+                                                 0,
+                                                 nullptr,
+                                                 0,
+                                                 nullptr);
+    TORCH_CHECK(
+        !pending &&
+            std::string(infinity_torch_error()).find("Deferred output capacity must exactly") !=
+                std::string::npos,
+        "Deferred spare capacity reached CUDA/output allocation");
+  }
+  auto pending = infinity_torch_forward_submit(handle,
+                                               ids,
+                                               types,
+                                               positions,
+                                               cumulative,
+                                               2,
+                                               2,
+                                               0,
+                                               &pooled,
+                                               1,
+                                               nullptr,
+                                               0,
+                                               16,
+                                               nullptr,
+                                               nullptr,
+                                               0,
+                                               nullptr,
+                                               0,
+                                               nullptr);
   TORCH_CHECK(!pending && infinity_torch_last_error_kind() == 1 &&
                   std::string(infinity_torch_error()).find("Deferred output requires CUDA") !=
                       std::string::npos,
@@ -462,24 +469,24 @@ void output_capacity_bridge_test() {
   float output[20];
   std::fill_n(output, 20, std::numeric_limits<float>::quiet_NaN());
   TORCH_CHECK(infinity_torch_forward(handle,
-                          ids,
-                          types,
-                          positions,
-                          cumulative,
-                          2,
-                          2,
-                          0,
-                          &pooled,
-                          1,
-                          nullptr,
-                          0,
-                          output,
-                          20,
-                          nullptr,
-                          nullptr,
-                          0,
-                          nullptr,
-                          0) == 0,
+                                     ids,
+                                     types,
+                                     positions,
+                                     cumulative,
+                                     2,
+                                     2,
+                                     0,
+                                     &pooled,
+                                     1,
+                                     nullptr,
+                                     0,
+                                     output,
+                                     20,
+                                     nullptr,
+                                     nullptr,
+                                     0,
+                                     nullptr,
+                                     0) == 0,
               infinity_torch_error());
   for (int i = 0; i < 16; ++i)
     TORCH_CHECK(std::isfinite(output[i]), "Valid response failed after capacity rejection");
@@ -500,149 +507,152 @@ void output_capacity_bridge_test() {
                 "Input budget did not reject before payload read/allocation");
   };
   budget_error(infinity_torch_forward(handle,
-                           ids,
-                           types,
-                           positions,
-                           cumulative,
-                           2,
-                           2,
-                           0,
-                           &pooled,
-                           1,
-                           nullptr,
-                           0,
-                           output,
-                           20,
-                           nullptr,
-                           &huge,
-                           1,
-                           nullptr,
-                           0));
+                                      ids,
+                                      types,
+                                      positions,
+                                      cumulative,
+                                      2,
+                                      2,
+                                      0,
+                                      &pooled,
+                                      1,
+                                      nullptr,
+                                      0,
+                                      output,
+                                      20,
+                                      nullptr,
+                                      &huge,
+                                      1,
+                                      nullptr,
+                                      0));
   pending = infinity_torch_forward_submit(handle,
-                               ids,
-                               types,
-                               positions,
-                               cumulative,
-                               2,
-                               2,
-                               0,
-                               &pooled,
-                               1,
-                               nullptr,
-                               0,
-                               16,
-                               nullptr,
-                               &huge,
-                               1,
-                               nullptr,
-                               0,
-                               nullptr);
+                                          ids,
+                                          types,
+                                          positions,
+                                          cumulative,
+                                          2,
+                                          2,
+                                          0,
+                                          &pooled,
+                                          1,
+                                          nullptr,
+                                          0,
+                                          16,
+                                          nullptr,
+                                          &huge,
+                                          1,
+                                          nullptr,
+                                          0,
+                                          nullptr);
   budget_error(pending ? 0 : -1);
   budget_error(infinity_torch_decide(handle,
-                          ids,
-                          types,
-                          positions,
-                          cumulative,
-                          2,
-                          2,
-                          nullptr,
-                          nullptr,
-                          0,
-                          nullptr,
-                          nullptr,
-                          &huge,
-                          1,
-                          nullptr,
-                          0));
+                                     ids,
+                                     types,
+                                     positions,
+                                     cumulative,
+                                     2,
+                                     2,
+                                     nullptr,
+                                     nullptr,
+                                     0,
+                                     nullptr,
+                                     nullptr,
+                                     &huge,
+                                     1,
+                                     nullptr,
+                                     0));
   InfinityTorchAudio huge_audio{fake_float, fake_mask, 1, (512LL << 20) / sizeof(float) + 1, 0, 1};
   budget_error(infinity_torch_forward(handle,
-                           ids,
-                           types,
-                           positions,
-                           cumulative,
-                           2,
-                           2,
-                           0,
-                           &pooled,
-                           1,
-                           nullptr,
-                           0,
-                           output,
-                           20,
-                           nullptr,
-                           nullptr,
-                           0,
-                           &huge_audio,
-                           1));
-  TORCH_CHECK(infinity_torch_option(handle, "_input_upload_max_bytes", "108") == 0, infinity_torch_error());
+                                      ids,
+                                      types,
+                                      positions,
+                                      cumulative,
+                                      2,
+                                      2,
+                                      0,
+                                      &pooled,
+                                      1,
+                                      nullptr,
+                                      0,
+                                      output,
+                                      20,
+                                      nullptr,
+                                      nullptr,
+                                      0,
+                                      &huge_audio,
+                                      1));
+  TORCH_CHECK(infinity_torch_option(handle, "_input_upload_max_bytes", "108") == 0,
+              infinity_torch_error());
   auto fake_indices = reinterpret_cast<const int64_t*>(uintptr_t(1));
-  InfinityTorchRadix fake_radix{fake_indices, fake_indices, fake_indices, fake_indices, fake_indices, 4};
+  InfinityTorchRadix fake_radix{
+      fake_indices, fake_indices, fake_indices, fake_indices, fake_indices, 4};
   budget_error(infinity_torch_forward_radix(handle,
-                                 ids,
-                                 types,
-                                 positions,
-                                 cumulative,
-                                 2,
-                                 2,
-                                 0,
-                                 &pooled,
-                                 1,
-                                 nullptr,
-                                 0,
-                                 output,
-                                 20,
-                                 nullptr,
-                                 nullptr,
-                                 0,
-                                 nullptr,
-                                 0,
-                                 &fake_radix));
+                                            ids,
+                                            types,
+                                            positions,
+                                            cumulative,
+                                            2,
+                                            2,
+                                            0,
+                                            &pooled,
+                                            1,
+                                            nullptr,
+                                            0,
+                                            output,
+                                            20,
+                                            nullptr,
+                                            nullptr,
+                                            0,
+                                            nullptr,
+                                            0,
+                                            &fake_radix));
   budget_error(infinity_torch_forward(handle,
-                           ids,
-                           types,
-                           positions,
-                           cumulative,
-                           2,
-                           2,
-                           0,
-                           &pooled,
-                           1,
-                           nullptr,
-                           0,
-                           output,
-                           20,
-                           fake_indices,
-                           nullptr,
-                           0,
-                           nullptr,
-                           0));
+                                      ids,
+                                      types,
+                                      positions,
+                                      cumulative,
+                                      2,
+                                      2,
+                                      0,
+                                      &pooled,
+                                      1,
+                                      nullptr,
+                                      0,
+                                      output,
+                                      20,
+                                      fake_indices,
+                                      nullptr,
+                                      0,
+                                      nullptr,
+                                      0));
   std::fill_n(output, 20, std::numeric_limits<float>::quiet_NaN());
   TORCH_CHECK(infinity_torch_forward(handle,
-                          ids,
-                          types,
-                          positions,
-                          cumulative,
-                          2,
-                          2,
-                          0,
-                          &pooled,
-                          1,
-                          nullptr,
-                          0,
-                          output,
-                          20,
-                          nullptr,
-                          nullptr,
-                          0,
-                          nullptr,
-                          0) == 0,
+                                     ids,
+                                     types,
+                                     positions,
+                                     cumulative,
+                                     2,
+                                     2,
+                                     0,
+                                     &pooled,
+                                     1,
+                                     nullptr,
+                                     0,
+                                     output,
+                                     20,
+                                     nullptr,
+                                     nullptr,
+                                     0,
+                                     nullptr,
+                                     0) == 0,
               infinity_torch_error());
   TORCH_CHECK(infinity_torch_last_error_kind() == 0 && std::string(infinity_torch_error()).empty(),
               "Successful inference retained an admission error kind");
   for (int i = 0; i < 16; ++i)
     TORCH_CHECK(std::isfinite(output[i]), "Valid response failed after input budget rejection");
   uint64_t disabled_stats[7]{};
-  TORCH_CHECK(infinity_torch_prefix_cache_stats(handle, disabled_stats, 7) == 0, infinity_torch_error());
+  TORCH_CHECK(infinity_torch_prefix_cache_stats(handle, disabled_stats, 7) == 0,
+              infinity_torch_error());
   for (auto value : disabled_stats)
     TORCH_CHECK(value == 0, "Default configuration enabled the experimental prefix cache");
   InfinityTorchDecision huge_metadata{};
@@ -655,26 +665,27 @@ void output_capacity_bridge_test() {
     metadata_rejected = true;
   }
   TORCH_CHECK(metadata_rejected, "Decision metadata overflow was copied before admission");
-  TORCH_CHECK(infinity_torch_option(handle, "_input_upload_max_bytes", "0") == 0, infinity_torch_error());
+  TORCH_CHECK(infinity_torch_option(handle, "_input_upload_max_bytes", "0") == 0,
+              infinity_torch_error());
   TORCH_CHECK(infinity_torch_forward(handle,
-                          ids,
-                          types,
-                          positions,
-                          cumulative,
-                          2,
-                          2,
-                          0,
-                          &pooled,
-                          1,
-                          nullptr,
-                          0,
-                          output,
-                          20,
-                          nullptr,
-                          nullptr,
-                          0,
-                          nullptr,
-                          0) != 0,
+                                     ids,
+                                     types,
+                                     positions,
+                                     cumulative,
+                                     2,
+                                     2,
+                                     0,
+                                     &pooled,
+                                     1,
+                                     nullptr,
+                                     0,
+                                     output,
+                                     20,
+                                     nullptr,
+                                     nullptr,
+                                     0,
+                                     nullptr,
+                                     0) != 0,
               "Zero input budget accepted");
   infinity_torch_destroy(handle);
 }
@@ -2060,20 +2071,23 @@ void native_engine_stream_test(const c10::Device& device) {
       } owner{handle};
 
       for (const auto& [key, value] : cfg.values)
-        TORCH_CHECK(infinity_torch_option(handle, key.c_str(), value.c_str()) == 0, infinity_torch_error());
-      TORCH_CHECK(infinity_torch_option(handle, "_cuda_graphs", "true") == 0, infinity_torch_error());
-      TORCH_CHECK(infinity_torch_option(handle, "_cuda_graph_reuse", "1") == 0, infinity_torch_error());
+        TORCH_CHECK(infinity_torch_option(handle, key.c_str(), value.c_str()) == 0,
+                    infinity_torch_error());
+      TORCH_CHECK(infinity_torch_option(handle, "_cuda_graphs", "true") == 0,
+                  infinity_torch_error());
+      TORCH_CHECK(infinity_torch_option(handle, "_cuda_graph_reuse", "1") == 0,
+                  infinity_torch_error());
       if (caching)
         TORCH_CHECK(infinity_torch_option(handle, "_prefix_cache_max_bytes", "1048576") == 0 &&
                         infinity_torch_option(handle, "_prefix_cache_entries", "1") == 0,
                     infinity_torch_error());
       for (const auto& [key, value] : tensors)
         TORCH_CHECK(infinity_torch_weight(handle,
-                               key.c_str(),
-                               reinterpret_cast<const uint8_t*>(value.const_data_ptr()),
-                               value.sizes().data(),
-                               value.dim(),
-                               0) == 0,
+                                          key.c_str(),
+                                          reinterpret_cast<const uint8_t*>(value.const_data_ptr()),
+                                          value.sizes().data(),
+                                          value.dim(),
+                                          0) == 0,
                     infinity_torch_error());
       TORCH_CHECK(infinity_torch_ready(handle) == 0, infinity_torch_error());
       std::array<int64_t, 4> a = {3, 4, 5, 6}, b = {7, 4, 5, 8}, types{}, positions = {0, 1, 2, 3};
@@ -2081,24 +2095,24 @@ void native_engine_stream_test(const c10::Device& device) {
       int64_t selected[] = {0};
       auto submit = [&](const auto& ids) {
         auto output = infinity_torch_forward_submit(handle,
-                                         ids.data(),
-                                         types.data(),
-                                         positions.data(),
-                                         ends,
-                                         1,
-                                         4,
-                                         pool,
-                                         selected,
-                                         1,
-                                         nullptr,
-                                         0,
-                                         width,
-                                         nullptr,
-                                         nullptr,
-                                         0,
-                                         nullptr,
-                                         0,
-                                         nullptr);
+                                                    ids.data(),
+                                                    types.data(),
+                                                    positions.data(),
+                                                    ends,
+                                                    1,
+                                                    4,
+                                                    pool,
+                                                    selected,
+                                                    1,
+                                                    nullptr,
+                                                    0,
+                                                    width,
+                                                    nullptr,
+                                                    nullptr,
+                                                    0,
+                                                    nullptr,
+                                                    0,
+                                                    nullptr);
         TORCH_CHECK(output, infinity_torch_error());
         return output;
       };
@@ -2231,24 +2245,24 @@ void native_engine_stream_test(const c10::Device& device) {
         {
           c10::cuda::CUDAStreamGuard guard(consumer);
           OutputOwner invalid{infinity_torch_forward_submit(handle,
-                                                 a.data(),
-                                                 types.data(),
-                                                 positions.data(),
-                                                 ends,
-                                                 1,
-                                                 4,
-                                                 pool,
-                                                 selected,
-                                                 1,
-                                                 nullptr,
-                                                 0,
-                                                 0,
-                                                 nullptr,
-                                                 nullptr,
-                                                 0,
-                                                 nullptr,
-                                                 0,
-                                                 nullptr)};
+                                                            a.data(),
+                                                            types.data(),
+                                                            positions.data(),
+                                                            ends,
+                                                            1,
+                                                            4,
+                                                            pool,
+                                                            selected,
+                                                            1,
+                                                            nullptr,
+                                                            0,
+                                                            0,
+                                                            nullptr,
+                                                            nullptr,
+                                                            0,
+                                                            nullptr,
+                                                            0,
+                                                            nullptr)};
           TORCH_CHECK(!invalid.value, "Undersized deferred output unexpectedly succeeded");
         }
         {
@@ -2290,7 +2304,8 @@ void native_engine_stream_test(const c10::Device& device) {
           c10::cuda::CUDAStreamGuard guard(consumer);
           resumed.value = submit(a);
         }
-        TORCH_CHECK(infinity_torch_prefix_cache_stats(handle, after, 7) == 0, infinity_torch_error());
+        TORCH_CHECK(infinity_torch_prefix_cache_stats(handle, after, 7) == 0,
+                    infinity_torch_error());
         const bool was_pending = !unpublished.query();
         gate.release();
         release_pending.join();
@@ -2307,11 +2322,11 @@ void native_engine_stream_test(const c10::Device& device) {
       // for an old-model submission, then publish initialization on its new stream.
       for (const auto& [key, value] : tensors)
         TORCH_CHECK(infinity_torch_weight(handle,
-                               key.c_str(),
-                               reinterpret_cast<const uint8_t*>(value.const_data_ptr()),
-                               value.sizes().data(),
-                               value.dim(),
-                               0) == 0,
+                                          key.c_str(),
+                                          reinterpret_cast<const uint8_t*>(value.const_data_ptr()),
+                                          value.sizes().data(),
+                                          value.dim(),
+                                          0) == 0,
                     infinity_torch_error());
       TORCH_CHECK(infinity_torch_option(handle, "_cuda_graphs", "false") == 0 &&
                       infinity_torch_option(handle, "_prefix_cache_max_bytes", "0") == 0,
@@ -2334,7 +2349,8 @@ void native_engine_stream_test(const c10::Device& device) {
         previous.value = submit(a);
       }
       const bool reload_pending = !reloading.query();
-      auto reload = std::async(std::launch::async, [handle] { return infinity_torch_ready(handle); });
+      auto reload =
+          std::async(std::launch::async, [handle] { return infinity_torch_ready(handle); });
       const auto reload_status = reload.wait_for(std::chrono::milliseconds(10));
       gate.release();
       reload_watchdog.join();
@@ -2519,21 +2535,24 @@ void native_reconfigure_test(const c10::Device& device) {
   } owner{handle};
 
   for (const auto& [key, value] : cfg.values)
-    TORCH_CHECK(infinity_torch_option(handle, key.c_str(), value.c_str()) == 0, infinity_torch_error());
+    TORCH_CHECK(infinity_torch_option(handle, key.c_str(), value.c_str()) == 0,
+                infinity_torch_error());
   auto upload = [&] {
     for (const auto& [name, value] : tensors)
       TORCH_CHECK(infinity_torch_weight(handle,
-                             name.c_str(),
-                             reinterpret_cast<const uint8_t*>(value.const_data_ptr()),
-                             value.sizes().data(),
-                             value.dim(),
-                             0) == 0,
+                                        name.c_str(),
+                                        reinterpret_cast<const uint8_t*>(value.const_data_ptr()),
+                                        value.sizes().data(),
+                                        value.dim(),
+                                        0) == 0,
                   infinity_torch_error());
   };
-  TORCH_CHECK(infinity_torch_option(handle, "_prefix_cache_max_bytes", "1048576") == 0, infinity_torch_error());
+  TORCH_CHECK(infinity_torch_option(handle, "_prefix_cache_max_bytes", "1048576") == 0,
+              infinity_torch_error());
   TORCH_CHECK(infinity_torch_option(handle, "_cuda_graphs", "true") == 0, infinity_torch_error());
   TORCH_CHECK(infinity_torch_option(handle, "_cuda_graph_reuse", "1") == 0, infinity_torch_error());
-  TORCH_CHECK(infinity_torch_option(handle, "_decision.kind", "option_tokens") == 0, infinity_torch_error());
+  TORCH_CHECK(infinity_torch_option(handle, "_decision.kind", "option_tokens") == 0,
+              infinity_torch_error());
   upload();
   TORCH_CHECK(infinity_torch_ready(handle) == 0, infinity_torch_error());
   int64_t ids[] = {3, 4, 5, 6}, types[] = {0, 0, 0, 0}, positions[] = {0, 1, 2, 3},
@@ -2542,24 +2561,24 @@ void native_reconfigure_test(const c10::Device& device) {
   float output[16];
   auto forward = [&] {
     TORCH_CHECK(infinity_torch_forward(handle,
-                            ids,
-                            types,
-                            positions,
-                            ends,
-                            1,
-                            4,
-                            2,
-                            selected,
-                            1,
-                            nullptr,
-                            0,
-                            output,
-                            16,
-                            nullptr,
-                            nullptr,
-                            0,
-                            nullptr,
-                            0) == 0,
+                                       ids,
+                                       types,
+                                       positions,
+                                       ends,
+                                       1,
+                                       4,
+                                       2,
+                                       selected,
+                                       1,
+                                       nullptr,
+                                       0,
+                                       output,
+                                       16,
+                                       nullptr,
+                                       nullptr,
+                                       0,
+                                       nullptr,
+                                       0) == 0,
                 infinity_torch_error());
   };
   forward();
@@ -2568,10 +2587,12 @@ void native_reconfigure_test(const c10::Device& device) {
   std::array<float, 16> expected;
   std::copy(std::begin(output), std::end(output), expected.begin());
   uint64_t stats[7];
-  TORCH_CHECK(infinity_torch_prefix_cache_stats(handle, stats, 7) == 0 && stats[3] > 0 && stats[6] > 0,
+  TORCH_CHECK(infinity_torch_prefix_cache_stats(handle, stats, 7) == 0 && stats[3] > 0 &&
+                  stats[6] > 0,
               "Reconfiguration fixture did not fill cache");
   if (device.is_cuda())
-    TORCH_CHECK(infinity_torch_graph_count(handle) > 0, "Reconfiguration fixture did not capture a graph");
+    TORCH_CHECK(infinity_torch_graph_count(handle) > 0,
+                "Reconfiguration fixture did not capture a graph");
   InfinityTorchDecision decision{};
   decision.kind = 1;
   decision.token_ids = selected;
@@ -2579,7 +2600,8 @@ void native_reconfigure_test(const c10::Device& device) {
   int64_t count;
   TORCH_CHECK(infinity_torch_decision_counts(handle, &decision, 1, &count) == 0 && count == 1,
               "Reconfiguration fixture did not load a decision head");
-  TORCH_CHECK(infinity_torch_option(handle, "_prefix_cache_max_bytes", "0") == 0, infinity_torch_error());
+  TORCH_CHECK(infinity_torch_option(handle, "_prefix_cache_max_bytes", "0") == 0,
+              infinity_torch_error());
   TORCH_CHECK(infinity_torch_option(handle, "_cuda_graphs", "false") == 0, infinity_torch_error());
   TORCH_CHECK(infinity_torch_option(handle, "_decision.kind", "") == 0, infinity_torch_error());
   upload();
@@ -2618,15 +2640,17 @@ void probe_cache_test() {
   } cleanup{handle};
 
   for (const auto& [key, value] : cfg.values)
-    TORCH_CHECK(infinity_torch_option(handle, key.c_str(), value.c_str()) == 0, infinity_torch_error());
-  TORCH_CHECK(infinity_torch_option(handle, "_prefix_cache_max_bytes", "1048576") == 0, infinity_torch_error());
+    TORCH_CHECK(infinity_torch_option(handle, key.c_str(), value.c_str()) == 0,
+                infinity_torch_error());
+  TORCH_CHECK(infinity_torch_option(handle, "_prefix_cache_max_bytes", "1048576") == 0,
+              infinity_torch_error());
   for (const auto& [name, tensor] : source)
     TORCH_CHECK(infinity_torch_weight(handle,
-                           name.c_str(),
-                           reinterpret_cast<const uint8_t*>(tensor.const_data_ptr()),
-                           tensor.sizes().data(),
-                           tensor.dim(),
-                           0) == 0,
+                                      name.c_str(),
+                                      reinterpret_cast<const uint8_t*>(tensor.const_data_ptr()),
+                                      tensor.sizes().data(),
+                                      tensor.dim(),
+                                      0) == 0,
                 infinity_torch_error());
   TORCH_CHECK(infinity_torch_ready(handle) == 0, infinity_torch_error());
   int64_t ids[] = {1, 2, 3}, types[] = {0, 0, 0}, positions[] = {0, 1, 2}, selection[] = {0};
@@ -2634,24 +2658,24 @@ void probe_cache_test() {
   float result[16];
   auto forward = [&] {
     TORCH_CHECK(infinity_torch_forward(handle,
-                            ids,
-                            types,
-                            positions,
-                            cumulative,
-                            1,
-                            3,
-                            2,
-                            selection,
-                            1,
-                            nullptr,
-                            0,
-                            result,
-                            16,
-                            nullptr,
-                            nullptr,
-                            0,
-                            nullptr,
-                            0) == 0,
+                                       ids,
+                                       types,
+                                       positions,
+                                       cumulative,
+                                       1,
+                                       3,
+                                       2,
+                                       selection,
+                                       1,
+                                       nullptr,
+                                       0,
+                                       result,
+                                       16,
+                                       nullptr,
+                                       nullptr,
+                                       0,
+                                       nullptr,
+                                       0) == 0,
                 infinity_torch_error());
   };
   uint64_t before[7], after[7];
@@ -2661,12 +2685,14 @@ void probe_cache_test() {
   forward();
   TORCH_CHECK(infinity_torch_prefix_cache_stats(handle, before, 7) == 0 && before[3] == 1,
               "User request did not fill prefix cache");
-  TORCH_CHECK(infinity_torch_prefix_cache_set_probe(handle, 1) == 0, "Probe begin did not return prior flag");
+  TORCH_CHECK(infinity_torch_prefix_cache_set_probe(handle, 1) == 0,
+              "Probe begin did not return prior flag");
   forward();
   TORCH_CHECK(infinity_torch_prefix_cache_stats(handle, after, 7) == 0, infinity_torch_error());
   TORCH_CHECK(std::equal(std::begin(before), std::end(before), std::begin(after)),
               "Probe consumed or populated user cache state");
-  TORCH_CHECK(infinity_torch_prefix_cache_set_probe(handle, 0) == 1, "Probe end did not restore prior flag");
+  TORCH_CHECK(infinity_torch_prefix_cache_set_probe(handle, 0) == 1,
+              "Probe end did not restore prior flag");
   forward();
   TORCH_CHECK(infinity_torch_prefix_cache_stats(handle, after, 7) == 0 && after[0] == before[0] + 1,
               "Probe bypass leaked into next user request");
@@ -2684,24 +2710,24 @@ void probe_cache_test() {
       for (int i = 0; i < 100; ++i) {
         float owned[16];
         TORCH_CHECK(infinity_torch_forward(handle,
-                                ids,
-                                types,
-                                positions,
-                                cumulative,
-                                1,
-                                3,
-                                2,
-                                selection,
-                                1,
-                                nullptr,
-                                0,
-                                owned,
-                                16,
-                                nullptr,
-                                nullptr,
-                                0,
-                                nullptr,
-                                0) == 0,
+                                           ids,
+                                           types,
+                                           positions,
+                                           cumulative,
+                                           1,
+                                           3,
+                                           2,
+                                           selection,
+                                           1,
+                                           nullptr,
+                                           0,
+                                           owned,
+                                           16,
+                                           nullptr,
+                                           nullptr,
+                                           0,
+                                           nullptr,
+                                           0) == 0,
                     infinity_torch_error());
         TORCH_CHECK(std::equal(std::begin(owned), std::end(owned), std::begin(result)),
                     "Concurrent native probe changed user output");
@@ -2714,9 +2740,11 @@ void probe_cache_test() {
     start.arrive_and_wait();
     try {
       for (int i = 0; i < 600; ++i) {
-        TORCH_CHECK(infinity_torch_prefix_cache_set_probe(handle, i % 2) >= 0, infinity_torch_error());
+        TORCH_CHECK(infinity_torch_prefix_cache_set_probe(handle, i % 2) >= 0,
+                    infinity_torch_error());
         uint64_t current[7];
-        TORCH_CHECK(infinity_torch_prefix_cache_stats(handle, current, 7) == 0, infinity_torch_error());
+        TORCH_CHECK(infinity_torch_prefix_cache_stats(handle, current, 7) == 0,
+                    infinity_torch_error());
         if (i % 7 == 0)
           TORCH_CHECK(infinity_torch_prefix_cache_clear(handle) == 0, infinity_torch_error());
       }

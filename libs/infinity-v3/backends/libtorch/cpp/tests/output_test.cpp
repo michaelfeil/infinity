@@ -17,8 +17,8 @@
 void native_allocator_error_test(const at::Device& device, int pressure = 0) {
   const bool bounded_staging = pressure == 1;
   InfinityTorchConfig cfg{16, 2, 2, 24, 32, 32, 1, 1e-6, 0};
-  std::unique_ptr<void, decltype(&infinity_torch_destroy)> engine(infinity_torch_create(&cfg, device.str().c_str(), 1),
-                                                       infinity_torch_destroy);
+  std::unique_ptr<void, decltype(&infinity_torch_destroy)> engine(
+      infinity_torch_create(&cfg, device.str().c_str(), 1), infinity_torch_destroy);
   TORCH_CHECK(engine, infinity_torch_error());
   for (const auto& [key, value] :
        std::initializer_list<std::pair<const char*, const char*>>{{"model_type", "qwen3"},
@@ -34,10 +34,10 @@ void native_allocator_error_test(const at::Device& device, int pressure = 0) {
                                                                   {"rms_norm_eps", "0.000001"}})
     TORCH_CHECK(infinity_torch_option(engine.get(), key, value) == 0, infinity_torch_error());
   // Removed estimate options must not affect sync or deferred execution.
-  TORCH_CHECK(
-      infinity_torch_option(engine.get(), "_transient_max_bytes", "1") == 0 &&
-          infinity_torch_option(engine.get(), "_device_memory_headroom_bytes", "9223372036854775807") == 0,
-      infinity_torch_error());
+  TORCH_CHECK(infinity_torch_option(engine.get(), "_transient_max_bytes", "1") == 0 &&
+                  infinity_torch_option(
+                      engine.get(), "_device_memory_headroom_bytes", "9223372036854775807") == 0,
+              infinity_torch_error());
   auto weight = [&](const std::string& key,
                     std::initializer_list<int64_t> shape,
                     bool norm = false) {
@@ -54,11 +54,11 @@ void native_allocator_error_test(const at::Device& device, int pressure = 0) {
     if (norm)
       value += 1;
     TORCH_CHECK(infinity_torch_weight(engine.get(),
-                           key.c_str(),
-                           reinterpret_cast<const uint8_t*>(value.const_data_ptr()),
-                           value.sizes().data(),
-                           value.dim(),
-                           0) == 0,
+                                      key.c_str(),
+                                      reinterpret_cast<const uint8_t*>(value.const_data_ptr()),
+                                      value.sizes().data(),
+                                      value.dim(),
+                                      0) == 0,
                 infinity_torch_error());
   };
   weight("model.embed_tokens.weight", {32, 16});
@@ -78,60 +78,64 @@ void native_allocator_error_test(const at::Device& device, int pressure = 0) {
     weight(root + "mlp.down_proj.weight", {16, 24});
   }
   if (bounded_staging)
-    TORCH_CHECK(infinity_torch_option(engine.get(), "_output_staging_max_bytes", "256") == 0, infinity_torch_error());
+    TORCH_CHECK(infinity_torch_option(engine.get(), "_output_staging_max_bytes", "256") == 0,
+                infinity_torch_error());
   TORCH_CHECK(infinity_torch_ready(engine.get()) == 0, infinity_torch_error());
   int64_t ids[] = {3, 4, 5, 6}, types[4]{}, positions[] = {0, 1, 2, 3}, row = 0;
   int32_t offsets[] = {0, 4};
   auto valid = [&] {
-    std::unique_ptr<void, decltype(&infinity_torch_output_destroy)> output(infinity_torch_forward_submit(engine.get(),
-                                                                                   ids,
-                                                                                   types,
-                                                                                   positions,
-                                                                                   offsets,
-                                                                                   1,
-                                                                                   4,
-                                                                                   0,
-                                                                                   &row,
-                                                                                   1,
-                                                                                   nullptr,
-                                                                                   0,
-                                                                                   16,
-                                                                                   nullptr,
-                                                                                   nullptr,
-                                                                                   0,
-                                                                                   nullptr,
-                                                                                   0,
-                                                                                   nullptr),
-                                                                infinity_torch_output_destroy);
+    std::unique_ptr<void, decltype(&infinity_torch_output_destroy)> output(
+        infinity_torch_forward_submit(engine.get(),
+                                      ids,
+                                      types,
+                                      positions,
+                                      offsets,
+                                      1,
+                                      4,
+                                      0,
+                                      &row,
+                                      1,
+                                      nullptr,
+                                      0,
+                                      16,
+                                      nullptr,
+                                      nullptr,
+                                      0,
+                                      nullptr,
+                                      0,
+                                      nullptr),
+        infinity_torch_output_destroy);
     TORCH_CHECK(output, infinity_torch_error());
     const auto* values = infinity_torch_output_wait(output.get());
     TORCH_CHECK(values, infinity_torch_error());
     for (int i = 0; i < 16; ++i)
       TORCH_CHECK(std::isfinite(values[i]), "Allocator failure corrupted valid response");
-    TORCH_CHECK(infinity_torch_last_error_kind() == 0, "Valid result retained allocator error kind");
+    TORCH_CHECK(infinity_torch_last_error_kind() == 0,
+                "Valid result retained allocator error kind");
   };
   valid();
   if (pressure == 2) {
-    std::unique_ptr<void, decltype(&infinity_torch_output_destroy)> held(infinity_torch_forward_submit(engine.get(),
-                                                                                 ids,
-                                                                                 types,
-                                                                                 positions,
-                                                                                 offsets,
-                                                                                 1,
-                                                                                 4,
-                                                                                 0,
-                                                                                 &row,
-                                                                                 1,
-                                                                                 nullptr,
-                                                                                 0,
-                                                                                 16,
-                                                                                 nullptr,
-                                                                                 nullptr,
-                                                                                 0,
-                                                                                 nullptr,
-                                                                                 0,
-                                                                                 nullptr),
-                                                              infinity_torch_output_destroy);
+    std::unique_ptr<void, decltype(&infinity_torch_output_destroy)> held(
+        infinity_torch_forward_submit(engine.get(),
+                                      ids,
+                                      types,
+                                      positions,
+                                      offsets,
+                                      1,
+                                      4,
+                                      0,
+                                      &row,
+                                      1,
+                                      nullptr,
+                                      0,
+                                      16,
+                                      nullptr,
+                                      nullptr,
+                                      0,
+                                      nullptr,
+                                      0,
+                                      nullptr),
+        infinity_torch_output_destroy);
     TORCH_CHECK(held, infinity_torch_error());
     const auto* before = infinity_torch_output_wait(held.get());
     TORCH_CHECK(before, infinity_torch_error());
@@ -161,24 +165,24 @@ void native_allocator_error_test(const at::Device& device, int pressure = 0) {
     try {
       std::unique_ptr<void, decltype(&infinity_torch_output_destroy)> rejected(
           infinity_torch_forward_submit(engine.get(),
-                             packed_ids.data(),
-                             packed_types.data(),
-                             packed_positions.data(),
-                             packed_offsets.data(),
-                             sequences,
-                             4,
-                             0,
-                             nullptr,
-                             0,
-                             raw_rows.data(),
-                             raw_rows.size(),
-                             sequences * 4 * 16,
-                             nullptr,
-                             nullptr,
-                             0,
-                             nullptr,
-                             0,
-                             nullptr),
+                                        packed_ids.data(),
+                                        packed_types.data(),
+                                        packed_positions.data(),
+                                        packed_offsets.data(),
+                                        sequences,
+                                        4,
+                                        0,
+                                        nullptr,
+                                        0,
+                                        raw_rows.data(),
+                                        raw_rows.size(),
+                                        sequences * 4 * 16,
+                                        nullptr,
+                                        nullptr,
+                                        0,
+                                        nullptr,
+                                        0,
+                                        nullptr),
           infinity_torch_output_destroy);
       TORCH_CHECK(!rejected && infinity_torch_last_error_kind() == 2 &&
                       std::string(infinity_torch_error()).find("Process native pinned staging") !=
@@ -198,26 +202,27 @@ void native_allocator_error_test(const at::Device& device, int pressure = 0) {
     return;
   }
   if (bounded_staging) {
-    std::unique_ptr<void, decltype(&infinity_torch_output_destroy)> held(infinity_torch_forward_submit(engine.get(),
-                                                                                 ids,
-                                                                                 types,
-                                                                                 positions,
-                                                                                 offsets,
-                                                                                 1,
-                                                                                 4,
-                                                                                 0,
-                                                                                 &row,
-                                                                                 1,
-                                                                                 nullptr,
-                                                                                 0,
-                                                                                 16,
-                                                                                 nullptr,
-                                                                                 nullptr,
-                                                                                 0,
-                                                                                 nullptr,
-                                                                                 0,
-                                                                                 nullptr),
-                                                              infinity_torch_output_destroy);
+    std::unique_ptr<void, decltype(&infinity_torch_output_destroy)> held(
+        infinity_torch_forward_submit(engine.get(),
+                                      ids,
+                                      types,
+                                      positions,
+                                      offsets,
+                                      1,
+                                      4,
+                                      0,
+                                      &row,
+                                      1,
+                                      nullptr,
+                                      0,
+                                      16,
+                                      nullptr,
+                                      nullptr,
+                                      0,
+                                      nullptr,
+                                      0,
+                                      nullptr),
+        infinity_torch_output_destroy);
     TORCH_CHECK(held, infinity_torch_error());
     const auto* before = infinity_torch_output_wait(held.get());
     TORCH_CHECK(before, infinity_torch_error());
@@ -226,26 +231,27 @@ void native_allocator_error_test(const at::Device& device, int pressure = 0) {
     // A retains128 output+112 input bytes. B's empty result needs8 bytes;
     // its first32-byte input pin cannot fit until the held result is released.
     auto rejected = infinity_torch_forward_submit(engine.get(),
-                                       ids,
-                                       types,
-                                       positions,
-                                       offsets,
-                                       1,
-                                       4,
-                                       0,
-                                       nullptr,
-                                       0,
-                                       nullptr,
-                                       0,
-                                       0,
-                                       nullptr,
-                                       nullptr,
-                                       0,
-                                       nullptr,
-                                       0,
-                                       nullptr);
+                                                  ids,
+                                                  types,
+                                                  positions,
+                                                  offsets,
+                                                  1,
+                                                  4,
+                                                  0,
+                                                  nullptr,
+                                                  0,
+                                                  nullptr,
+                                                  0,
+                                                  0,
+                                                  nullptr,
+                                                  nullptr,
+                                                  0,
+                                                  nullptr,
+                                                  0,
+                                                  nullptr);
     TORCH_CHECK(!rejected && infinity_torch_last_error_kind() == 2 &&
-                    std::string(infinity_torch_error()).find("pending results") != std::string::npos,
+                    std::string(infinity_torch_error()).find("pending results") !=
+                        std::string::npos,
                 "Nested input staging saturation lost its admission classification or diagnostic");
     const auto* after = infinity_torch_output_wait(held.get());
     TORCH_CHECK(after, infinity_torch_error());
@@ -269,48 +275,48 @@ void native_allocator_error_test(const at::Device& device, int pressure = 0) {
     std::vector<int64_t> real_input(4000000, 0);
     std::unique_ptr<void, decltype(&infinity_torch_output_destroy)> rejected(
         infinity_torch_forward_submit(engine.get(),
-                           real_input.data(),
-                           real_input.data(),
-                           real_input.data(),
-                           huge,
-                           1,
-                           4000000,
-                           0,
-                           nullptr,
-                           0,
-                           &row,
-                           1,
-                           64000000,
-                           nullptr,
-                           nullptr,
-                           0,
-                           nullptr,
-                           0,
-                           nullptr),
+                                      real_input.data(),
+                                      real_input.data(),
+                                      real_input.data(),
+                                      huge,
+                                      1,
+                                      4000000,
+                                      0,
+                                      nullptr,
+                                      0,
+                                      &row,
+                                      1,
+                                      64000000,
+                                      nullptr,
+                                      nullptr,
+                                      0,
+                                      nullptr,
+                                      0,
+                                      nullptr),
         infinity_torch_output_destroy);
     TORCH_CHECK(!rejected && infinity_torch_last_error_kind() == 3,
                 "Actual output allocator OOM lost its recoverable classification: ",
                 infinity_torch_error());
     std::unique_ptr<void, decltype(&infinity_torch_output_destroy)> upload_rejected(
         infinity_torch_forward_submit(engine.get(),
-                           real_input.data(),
-                           real_input.data(),
-                           real_input.data(),
-                           huge,
-                           1,
-                           4000000,
-                           0,
-                           nullptr,
-                           0,
-                           nullptr,
-                           0,
-                           0,
-                           nullptr,
-                           nullptr,
-                           0,
-                           nullptr,
-                           0,
-                           nullptr),
+                                      real_input.data(),
+                                      real_input.data(),
+                                      real_input.data(),
+                                      huge,
+                                      1,
+                                      4000000,
+                                      0,
+                                      nullptr,
+                                      0,
+                                      nullptr,
+                                      0,
+                                      0,
+                                      nullptr,
+                                      nullptr,
+                                      0,
+                                      nullptr,
+                                      0,
+                                      nullptr),
         infinity_torch_output_destroy);
     TORCH_CHECK(!upload_rejected && infinity_torch_last_error_kind() == 3,
                 "Actual input allocator OOM lost its recoverable classification: ",
@@ -344,14 +350,16 @@ void native_allocator_error_test(const at::Device& device, int pressure = 0) {
               << " driver_free=" << current_free << "\n";
     c10::cuda::CUDACachingAllocator::setMemoryFraction(double(startup_quota) / current_total,
                                                        device.index());
-    const auto weight_status = infinity_torch_weight(engine.get(),
-                                          "__quota_recovery_probe",
-                                          reinterpret_cast<const uint8_t*>(startup_input.data()),
-                                          shape,
-                                          1,
-                                          0);
+    const auto weight_status =
+        infinity_torch_weight(engine.get(),
+                              "__quota_recovery_probe",
+                              reinterpret_cast<const uint8_t*>(startup_input.data()),
+                              shape,
+                              1,
+                              0);
     const auto oom_after = c10::cuda::CUDACachingAllocator::getDeviceStats(device.index()).num_ooms;
-    TORCH_CHECK(weight_status != 0 && infinity_torch_last_error_kind() == 3 && oom_after > stats.num_ooms,
+    TORCH_CHECK(weight_status != 0 && infinity_torch_last_error_kind() == 3 &&
+                    oom_after > stats.num_ooms,
                 "Actual startup allocator OOM lost its recoverable classification: status=",
                 weight_status,
                 " kind=",

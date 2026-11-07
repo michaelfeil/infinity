@@ -77,15 +77,16 @@ void dynamic_fp8_test(Options cfg, Weights weights, const c10::Device& device) {
           infinity_torch_create(&shape, device.str().c_str(), 2), infinity_torch_destroy);
       TORCH_CHECK(engine, infinity_torch_error());
       for (const auto& [name, value] : enabled.values)
-        TORCH_CHECK(infinity_torch_option(engine.get(), name.c_str(), value.c_str()) == 0, infinity_torch_error());
+        TORCH_CHECK(infinity_torch_option(engine.get(), name.c_str(), value.c_str()) == 0,
+                    infinity_torch_error());
       for (const auto& [name, value] : weights) {
         auto host = value.cpu().contiguous();
         TORCH_CHECK(infinity_torch_weight(engine.get(),
-                               name.c_str(),
-                               static_cast<const uint8_t*>(host.const_data_ptr()),
-                               host.sizes().data(),
-                               host.dim(),
-                               2) == 0,
+                                          name.c_str(),
+                                          static_cast<const uint8_t*>(host.const_data_ptr()),
+                                          host.sizes().data(),
+                                          host.dim(),
+                                          2) == 0,
                     infinity_torch_error());
       }
       TORCH_CHECK(infinity_torch_ready(engine.get()) == 0, infinity_torch_error());
