@@ -153,8 +153,8 @@ exact_norm(const at::Tensor& x, const at::Tensor& residual, const at::Tensor& w,
   p.rowscale_const = 1.f;
   p.round_residual = false;
   p.is_rms_norm = true;
-  using Traits =
-      infinity_decoder_exact_norm::Kernel_traits<T, T, T, T, float, int, Width, 1, WarpsM, WarpsN, 16>;
+  using Traits = infinity_decoder_exact_norm::
+      Kernel_traits<T, T, T, T, float, int, Width, 1, WarpsM, WarpsN, 16>;
   auto kernel = infinity_decoder_exact_norm::ln_fwd_kernel<Traits, false, false, false, Even>;
   // Each registered width uses its original Candle warp geometry. Cache
   // occupancy separately per specialization and device, before graph capture.

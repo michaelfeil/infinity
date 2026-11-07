@@ -379,7 +379,7 @@ int main(int argc, char** argv) {
   rejects(quantized, device, at::kBFloat16);
   auto properties = at::cuda::getDeviceProperties(device.index());
   auto capability = properties->major * 10 + properties->minor;
-  if (capability != 89 && capability != 90 && capability != 100 && capability != 120) {
+  if (!infinity::fp8_device_supported(device)) {
     std::cout << "FP8 CUDA fixture skipped unsupported capability " << capability << "\n";
     return 0;
   }

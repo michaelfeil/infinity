@@ -449,7 +449,7 @@ void run_rms(const at::Tensor& x,
     }
   }
 
-#define INFINITY_RMS_COLUMNS(C)                                                                         \
+#define INFINITY_RMS_COLUMNS(C)                                                                    \
   launch_dependent<add_rms_kernel<T, C>>(rows, 256, stream, xp, rp, wp, op, sp, width, epsilon)
   if (width <= 256) {
     INFINITY_RMS_COLUMNS(1);
@@ -824,7 +824,7 @@ void run_norm(const at::Tensor& x,
     return t.defined() ? reinterpret_cast<const T*>(t.const_data_ptr()) : nullptr;
   };
   auto width = x.size(-1), rows = x.numel() / width;
-#define INFINITY_REGISTER_LN(N)                                                                         \
+#define INFINITY_REGISTER_LN(N)                                                                    \
   add_norm_register_kernel<T, N>                                                                   \
       <<<rows, 256, 0, stream>>>(p(x),                                                             \
                                  p(residual),                                                      \
@@ -1025,7 +1025,7 @@ at::Tensor fused_gated_activation(const at::Tensor& x, int32_t activation, bool 
   auto stream = at::cuda::getCurrentCUDAStream(x.device().index());
   if (activation == 5 && gate_first && x.scalar_type() == at::kBFloat16 && shape.back() % 8 == 0 &&
       reinterpret_cast<uintptr_t>(x.const_data_ptr()) % 16 == 0) {
-#define INFINITY_SILU_PAIRS(I)                                                                          \
+#define INFINITY_SILU_PAIRS(I)                                                                     \
   launch_dependent<gated_silu_bf16_pairs_kernel<I>>(                                               \
       (output.numel() / 8 + 255) / 256,                                                            \
       256,                                                                                         \
@@ -1045,7 +1045,7 @@ at::Tensor fused_gated_activation(const at::Tensor& x, int32_t activation, bool 
   }
   if (activation == 4 && (x.scalar_type() == at::kHalf || x.scalar_type() == at::kBFloat16) &&
       shape.back() % 8 == 0 && reinterpret_cast<uintptr_t>(x.const_data_ptr()) % 16 == 0) {
-#define INFINITY_GATE_PAIRS(T, I)                                                                       \
+#define INFINITY_GATE_PAIRS(T, I)                                                                  \
   launch_dependent<gated_gelu_pairs_kernel<T, I>>((output.numel() / 8 + 255) / 256,                \
                                                   256,                                             \
                                                   stream,                                          \
@@ -1071,7 +1071,7 @@ at::Tensor fused_gated_activation(const at::Tensor& x, int32_t activation, bool 
     C10_CUDA_KERNEL_LAUNCH_CHECK();
     return output;
   }
-#define INFINITY_GATE(T)                                                                                \
+#define INFINITY_GATE(T)                                                                           \
   do {                                                                                             \
     if (x.element_size() == 2 && shape.back() % 8 == 0 &&                                          \
         reinterpret_cast<uintptr_t>(x.const_data_ptr()) % 16 == 0) {                               \
@@ -1172,7 +1172,7 @@ std::pair<at::Tensor, at::Tensor> fused_rotary(const at::Tensor& q,
                       output.numel() <= UINT32_MAX && q.size(0) * q.stride(0) <= UINT32_MAX &&
                       k.size(0) * k.stride(0) <= UINT32_MAX;
   if (output.numel() > 0) {
-#define INFINITY_ROPE(T)                                                                                \
+#define INFINITY_ROPE(T)                                                                           \
   if (paired)                                                                                      \
     paired_rotary_kernel<T><<<(output.numel() / 2 + 255) / 256, 256, 0, stream>>>(                 \
         reinterpret_cast<const T*>(q.const_data_ptr()),                                            \
@@ -1262,7 +1262,7 @@ static void encoder_rotary_dispatch(const at::Tensor& q,
                      q.size(2) % 2 == 0 && cosine.size(-1) % 2 == 0 && q.stride(0) % 2 == 0 &&
                      k.stride(0) % 2 == 0 && aligned(q) && aligned(k) && aligned(cosine) &&
                      aligned(sine);
-#define INFINITY_ENCODER_PAIRS(T, I, P)                                                                 \
+#define INFINITY_ENCODER_PAIRS(T, I, P)                                                            \
   encoder_rotary_pairs_kernel<T, I, P><<<(count / 2 + 255) / 256, 256, 0, stream>>>(               \
       reinterpret_cast<T*>(q.mutable_data_ptr()),                                                  \
       reinterpret_cast<T*>(k.mutable_data_ptr()),                                                  \
@@ -1277,18 +1277,18 @@ static void encoder_rotary_dispatch(const at::Tensor& q,
       I(cosine.size(-1) / 2),                                                                      \
       indexed ? positions.const_data_ptr<int64_t>() : nullptr,                                     \
       I(cosine.size(0)))
-#define INFINITY_ENCODER_PAIRS_WIDTH(T)                                                                 \
+#define INFINITY_ENCODER_PAIRS_WIDTH(T)                                                            \
   if (indexed) {                                                                                   \
     if (narrow) {                                                                                  \
-      INFINITY_ENCODER_PAIRS(T, uint32_t, true);                                                        \
+      INFINITY_ENCODER_PAIRS(T, uint32_t, true);                                                   \
     } else {                                                                                       \
-      INFINITY_ENCODER_PAIRS(T, uint64_t, true);                                                        \
+      INFINITY_ENCODER_PAIRS(T, uint64_t, true);                                                   \
     }                                                                                              \
   } else {                                                                                         \
     if (narrow) {                                                                                  \
-      INFINITY_ENCODER_PAIRS(T, uint32_t, false);                                                       \
+      INFINITY_ENCODER_PAIRS(T, uint32_t, false);                                                  \
     } else {                                                                                       \
-      INFINITY_ENCODER_PAIRS(T, uint64_t, false);                                                       \
+      INFINITY_ENCODER_PAIRS(T, uint64_t, false);                                                  \
     }                                                                                              \
   }
   if (pairs) {
@@ -1302,7 +1302,7 @@ static void encoder_rotary_dispatch(const at::Tensor& q,
   }
 #undef INFINITY_ENCODER_PAIRS_WIDTH
 #undef INFINITY_ENCODER_PAIRS
-#define INFINITY_ENCODER_ROPE(T, I, P)                                                                  \
+#define INFINITY_ENCODER_ROPE(T, I, P)                                                             \
   encoder_rotary_inplace_kernel<T, I, P><<<(count + 255) / 256, 256, 0, stream>>>(                 \
       reinterpret_cast<T*>(q.mutable_data_ptr()),                                                  \
       reinterpret_cast<T*>(k.mutable_data_ptr()),                                                  \
@@ -1317,18 +1317,18 @@ static void encoder_rotary_dispatch(const at::Tensor& q,
       I(cosine.size(-1)),                                                                          \
       indexed ? positions.const_data_ptr<int64_t>() : nullptr,                                     \
       I(cosine.size(0)))
-#define INFINITY_ENCODER_ROPE_WIDTH(T)                                                                  \
+#define INFINITY_ENCODER_ROPE_WIDTH(T)                                                             \
   if (indexed) {                                                                                   \
     if (narrow) {                                                                                  \
-      INFINITY_ENCODER_ROPE(T, uint32_t, true);                                                         \
+      INFINITY_ENCODER_ROPE(T, uint32_t, true);                                                    \
     } else {                                                                                       \
-      INFINITY_ENCODER_ROPE(T, uint64_t, true);                                                         \
+      INFINITY_ENCODER_ROPE(T, uint64_t, true);                                                    \
     }                                                                                              \
   } else {                                                                                         \
     if (narrow) {                                                                                  \
-      INFINITY_ENCODER_ROPE(T, uint32_t, false);                                                        \
+      INFINITY_ENCODER_ROPE(T, uint32_t, false);                                                   \
     } else {                                                                                       \
-      INFINITY_ENCODER_ROPE(T, uint64_t, false);                                                        \
+      INFINITY_ENCODER_ROPE(T, uint64_t, false);                                                   \
     }                                                                                              \
   }
   if (q.scalar_type() == at::kHalf) {

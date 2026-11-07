@@ -165,15 +165,15 @@ at::Tensor gemma_rotary_cuda(const at::Tensor& x,
 template <bool VIRTUAL_LANES, bool PAIRED = false, bool RESIDUAL = false>
 __device__ __forceinline__ void
 infinity_gemma_rms_norm_reference_impl(const __nv_bfloat16* x,
-                                  const float* scale,
-                                  __nv_bfloat16* out,
-                                  unsigned int width,
-                                  unsigned int heads,
-                                  unsigned long long token_stride,
-                                  float eps,
-                                  const __nv_bfloat16* router_scale = nullptr,
-                                  __nv_bfloat16 root = {},
-                                  const __nv_bfloat16* residual = nullptr) {
+                                       const float* scale,
+                                       __nv_bfloat16* out,
+                                       unsigned int width,
+                                       unsigned int heads,
+                                       unsigned long long token_stride,
+                                       float eps,
+                                       const __nv_bfloat16* router_scale = nullptr,
+                                       __nv_bfloat16 root = {},
+                                       const __nv_bfloat16* residual = nullptr) {
   const size_t base = static_cast<size_t>(blockIdx.x / heads) * token_stride +
                       static_cast<size_t>(blockIdx.x % heads) * width;
   const size_t out_base = static_cast<size_t>(blockIdx.x) * width;
@@ -241,12 +241,12 @@ infinity_gemma_rms_norm_reference_impl(const __nv_bfloat16* x,
 }
 
 static __global__ void infinity_gemma_rms_norm_reference_bf16(const __nv_bfloat16* x,
-                                                         const float* scale,
-                                                         __nv_bfloat16* out,
-                                                         unsigned int width,
-                                                         unsigned int heads,
-                                                         unsigned long long token_stride,
-                                                         float eps) {
+                                                              const float* scale,
+                                                              __nv_bfloat16* out,
+                                                              unsigned int width,
+                                                              unsigned int heads,
+                                                              unsigned long long token_stride,
+                                                              float eps) {
   infinity_gemma_rms_norm_reference_impl<false>(x, scale, out, width, heads, token_stride, eps);
 }
 

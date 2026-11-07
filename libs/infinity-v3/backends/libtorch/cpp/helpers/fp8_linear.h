@@ -53,6 +53,7 @@ class Fp8Linear {
   at::Tensor matrix_, scales_, unit_;
   at::ScalarType dtype_;
   bool rowwise_;
+  bool fast_accum_;
   at::Tensor unscaled_product(const at::Tensor& input) const;
   std::pair<at::Tensor, at::Tensor> forward_gated_quantized_impl(const at::Tensor& input,
                                                                  const at::Tensor& row_scales,

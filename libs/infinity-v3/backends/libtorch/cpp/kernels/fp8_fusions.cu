@@ -948,9 +948,9 @@ std::pair<at::Tensor, at::Tensor> fp8_gated_quantize_impl(const at::Tensor& inpu
   if (input.size(0)) {
     const auto dtype = input.scalar_type();
     const auto width = input.size(1) / 2;
-    // The original wrapper selects the native aligned pair recipe only for a 16-byte aligned
-    // input pointer and an activation width divisible by eight. Scalar and unaligned rows retain
-    // the separate scalar staging. Legacy SwiGLU callers explicitly keep their frozen scalar path.
+    // The native aligned pair recipe requires a 16-byte aligned input pointer and an activation
+    // width divisible by eight. Scalar and unaligned rows retain the separate scalar staging;
+    // callers that pin the frozen staging pass preserve_legacy_scalar.
     const bool pair_math =
         !preserve_legacy_scalar && width % 8 == 0 &&
         reinterpret_cast<uintptr_t>(input.const_data_ptr()) % alignof(Packed<__half, 8>) == 0 &&
@@ -1053,7 +1053,7 @@ std::pair<at::Tensor, at::Tensor> fp8_scaled_gated_quantize(const at::Tensor& va
 }
 
 std::pair<at::Tensor, at::Tensor> fp8_swiglu_quantize(const at::Tensor& gate_up) {
-  return detail::fp8_gated_quantize_impl(gate_up, Fp8GatedActivation::RoundedSilu, true, true);
+  return detail::fp8_gated_quantize_impl(gate_up, Fp8GatedActivation::RoundedSilu, true, false);
 }
 
 std::pair<at::Tensor, at::Tensor> fp8_scaled_swiglu_quantize(const at::Tensor& values,
@@ -1061,7 +1061,7 @@ std::pair<at::Tensor, at::Tensor> fp8_scaled_swiglu_quantize(const at::Tensor& v
                                                              const at::Tensor& column_scales,
                                                              at::ScalarType dtype) {
   return detail::fp8_scaled_gated_quantize_impl(
-      values, row_scales, column_scales, dtype, Fp8GatedActivation::RoundedSilu, true, true);
+      values, row_scales, column_scales, dtype, Fp8GatedActivation::RoundedSilu, true, false);
 }
 
 std::pair<at::Tensor, at::Tensor>

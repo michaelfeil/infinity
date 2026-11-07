@@ -5,6 +5,7 @@
 #include "models/decision_models.h"
 #include "batching/radix.h"
 #include "helpers/workspace_admission.h"
+#include "helpers/fp8_linear.h"
 #include "batching/cuda_graph.h"
 #include <ATen/ops/_flash_attention_forward.h>
 #ifdef INFINITY_TORCH_CUDA_KERNELS
@@ -16,10 +17,8 @@ using namespace infinity;
 
 void dynamic_fp8_test(Options cfg, Weights weights, const c10::Device& device) {
 #ifdef INFINITY_TORCH_CUDA_KERNELS
-  const auto* properties = at::cuda::getDeviceProperties(device.index());
-  const auto capability = properties->major * 10 + properties->minor;
-  if (capability != 89 && capability != 90 && capability != 100 && capability != 120) {
-    std::cout << "Qwen3.5 FP8 fixture skipped: requires SM89/90/100/120\n";
+  if (!fp8_device_supported(device)) {
+    std::cout << "Qwen3.5 FP8 fixture skipped: unsupported device or CUDA build\n";
     return;
   }
 #endif
@@ -78,15 +77,16 @@ void dynamic_fp8_test(Options cfg, Weights weights, const c10::Device& device) {
           infinity_torch_create(&shape, device.str().c_str(), 2), infinity_torch_destroy);
       TORCH_CHECK(engine, infinity_torch_error());
       for (const auto& [name, value] : enabled.values)
-        TORCH_CHECK(infinity_torch_option(engine.get(), name.c_str(), value.c_str()) == 0, infinity_torch_error());
+        TORCH_CHECK(infinity_torch_option(engine.get(), name.c_str(), value.c_str()) == 0,
+                    infinity_torch_error());
       for (const auto& [name, value] : weights) {
         auto host = value.cpu().contiguous();
         TORCH_CHECK(infinity_torch_weight(engine.get(),
-                               name.c_str(),
-                               static_cast<const uint8_t*>(host.const_data_ptr()),
-                               host.sizes().data(),
-                               host.dim(),
-                               2) == 0,
+                                          name.c_str(),
+                                          static_cast<const uint8_t*>(host.const_data_ptr()),
+                                          host.sizes().data(),
+                                          host.dim(),
+                                          2) == 0,
                     infinity_torch_error());
       }
       TORCH_CHECK(infinity_torch_ready(engine.get()) == 0, infinity_torch_error());
