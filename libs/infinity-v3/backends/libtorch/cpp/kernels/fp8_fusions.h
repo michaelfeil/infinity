@@ -43,8 +43,8 @@ std::pair<at::Tensor, at::Tensor> fp8_scaled_swiglu_quantize(const at::Tensor& v
                                                              at::ScalarType dtype);
 
 namespace detail {
-// Internal byte-preservation entry points. `preserve_legacy_scalar` keeps the pre-existing SwiGLU
-// path on its frozen scalar staging instead of selecting the original aligned-pair recipe.
+// Internal entry points shared by the gated wrappers. Aligned eligible rows select the native
+// aligned-pair recipe; `preserve_legacy_scalar` pins the frozen scalar staging when required.
 std::pair<at::Tensor, at::Tensor> fp8_gated_quantize_impl(const at::Tensor& gate_up,
                                                           Fp8GatedActivation kind,
                                                           bool gate_first,

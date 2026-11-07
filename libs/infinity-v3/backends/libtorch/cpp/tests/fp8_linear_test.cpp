@@ -6,6 +6,8 @@
 #include "helpers/workspace_admission.h"
 #include <ATen/cuda/CUDAContext.h>
 #include <ATen/Parallel.h>
+#include <ATen/Context.h>
+#include <torch/version.h>
 #include <c10/cuda/CUDAGuard.h>
 #include <c10/cuda/CUDAException.h>
 #include <c10/cuda/driver_api.h>
@@ -47,6 +49,45 @@ void check_same_or_nan(const at::Tensor& expected, const at::Tensor& actual, con
   TORCH_CHECK(at::equal(expected_cpu.masked_select(non_nan), actual_cpu.masked_select(non_nan)),
               label,
               " changed non-NaN bytes");
+}
+
+bool sm100_bf16(at::ScalarType dtype) {
+#if ((TORCH_VERSION_MAJOR > 2) || (TORCH_VERSION_MAJOR == 2 && TORCH_VERSION_MINOR >= 9)) &&       \
+    defined(CUDA_VERSION) && CUDA_VERSION >= 12080
+  return dtype == at::kBFloat16 && at::cuda::getCurrentDeviceProperties()->major == 10 &&
+         at::Context::versionCUDART() >= 12080;
+#else
+  return false;
+#endif
+}
+
+void check_projection_close(const at::Tensor& expected,
+                            const at::Tensor& actual,
+                            const char* label) {
+  TORCH_CHECK(expected.sizes() == actual.sizes() && expected.scalar_type() == actual.scalar_type(),
+              label,
+              " changed shape or dtype");
+  if (!sm100_bf16(expected.scalar_type())) {
+    TORCH_CHECK(at::equal(expected, actual), label, " differs from reference");
+    return;
+  }
+  auto expected_f32 = expected.to(at::kFloat);
+  auto positive = at::full_like(expected, std::numeric_limits<float>::infinity());
+  auto negative = at::full_like(expected, -std::numeric_limits<float>::infinity());
+  auto step_up = (at::nextafter(expected, positive).to(at::kFloat) - expected_f32).abs();
+  auto step_down = (expected_f32 - at::nextafter(expected, negative).to(at::kFloat)).abs();
+  auto error = (actual.to(at::kFloat) - expected_f32).abs();
+  TORCH_CHECK((error <= at::maximum(step_up, step_down)).all().item<bool>(),
+              label,
+              " exceeded one BF16 ULP: max_error=",
+              error.max().item<float>());
+}
+
+at::Tensor projection_reference(const at::Tensor& xq,
+                                const at::Tensor& sx,
+                                const infinity::Fp8Linear& linear,
+                                at::ScalarType dtype) {
+  return fp8_original_recipe(xq, linear.matrix(), sx, linear.scales(), dtype);
 }
 
 constexpr std::array<infinity::Fp8Activation, 3> activation_kinds{
@@ -102,8 +143,8 @@ void check_linear_activation(const at::Tensor& input,
                              const infinity::Fp8Linear& linear,
                              const char* label) {
   auto quantized = infinity::fp8_quantize_rows(input);
-  auto projected = fp8_original_recipe(
-      quantized.first, linear.matrix(), quantized.second, linear.scales(), input.scalar_type());
+  auto projected =
+      projection_reference(quantized.first, quantized.second, linear, input.scalar_type());
   auto expected = infinity::fp8_quantize_rows(reference_activation(projected, bias, kind));
   auto actual = linear.forward_activation_quantized(input, {}, bias, kind);
   check_same_or_nan(expected.first, actual.first, label);
@@ -162,8 +203,8 @@ void check_linear_gated_quantize(const at::Tensor& input,
                                  bool gate_first,
                                  const char* label) {
   auto quantized = infinity::fp8_quantize_rows(input);
-  auto projected = fp8_original_recipe(
-      quantized.first, linear.matrix(), quantized.second, linear.scales(), input.scalar_type());
+  auto projected =
+      projection_reference(quantized.first, quantized.second, linear, input.scalar_type());
   auto expected = infinity::fp8_quantize_rows(
       infinity::fused_gated_activation(projected, gated_activation_code(kind), gate_first));
   auto actual = linear.forward_gated_quantized(input, {}, kind, gate_first);
@@ -368,11 +409,8 @@ int main() {
                   "Prequantized input changed FP8 GEMM bytes");
       auto expected = fp8_original_recipe(
           quantized.first, linear.matrix(), quantized.second, linear.scales(), dtype);
-      TORCH_CHECK(at::equal(output, expected),
-                  "Native Torch FP8 GEMM differs from original independent cuBLASLt recipe: rows=",
-                  rows,
-                  " dtype=",
-                  dtype);
+      check_projection_close(
+          expected, output, "Native Torch FP8 GEMM differs from portable reference");
       TORCH_CHECK(output.sizes() == at::IntArrayRef({rows, 512}) && output.scalar_type() == dtype,
                   "FP8 GEMM changed actual row count or model dtype");
       auto bias = at::randn({512}, options) * .01;
@@ -386,8 +424,9 @@ int main() {
       auto quantized = infinity::fp8_quantize_rows(values);
       auto expected = fp8_original_recipe(
           quantized.first, projection->matrix(), quantized.second, projection->scales(), dtype);
-      TORCH_CHECK(at::equal(projection->forward(values), expected),
-                  "Reused FP8 geometry retained another projection's scale pointers");
+      check_projection_close(expected,
+                             projection->forward(values),
+                             "Reused FP8 geometry retained another projection's scale pointers");
     }
     auto empty = linear.forward(at::empty({0, 256}, options));
     TORCH_CHECK(empty.sizes() == at::IntArrayRef({0, 512}), "FP8 empty rows not preserved");
@@ -595,7 +634,7 @@ int main() {
             "Vector quantization or misaligned fallback changed CPU reference bytes/scales");
       }
     for (int64_t width :
-         {256, 2048, 4096, 6144, 8192, 12288, 14336, 17408, 18432, 24576, 28672, 32768})
+         {256, 2048, 4096, 6144, 8192, 9728, 12288, 14336, 17408, 18432, 24576, 28672, 32768})
       for (bool aligned : {false, true}) {
         // A contiguous storage offset exercises the scalar fallback as well as vector PDL.
         auto storage = at::randn({17 * 2 * width + 1}, options) * 8;
@@ -634,7 +673,7 @@ int main() {
                   aligned);
     };
     const float subnormal = dtype == at::kHalf ? std::ldexp(1.f, -24) : std::ldexp(1.f, -133);
-    for (int64_t width : {6144, 12288, 17408})
+    for (int64_t width : {6144, 9728, 12288, 17408})
       for (bool aligned : {false, true}) {
         check_swiglu_pattern(width, 80.f, 100.f, aligned);
         check_swiglu_pattern(width, subnormal, 2.f, aligned);
@@ -643,14 +682,17 @@ int main() {
     auto check_scaled_swiglu = [&](const at::Tensor& values,
                                    const at::Tensor& row_scales,
                                    const at::Tensor& column_scales) {
-      auto expected = infinity::fp8_swiglu_quantize(
-          infinity::fp8_scale_output(values, row_scales, column_scales, dtype));
+      // Independent scalar composition: round the scaled FP32 rows once to model dtype, apply the
+      // original gated activation, then run row quantization. This covers the aligned-pair staging
+      // selected for the production wrappers as well as the unaligned/FP16 scalar fallback.
+      auto scaled = infinity::fp8_scale_output(values, row_scales, column_scales, dtype);
+      auto expected = infinity::fp8_quantize_rows(infinity::fused_gated_activation(scaled, 5));
       auto actual = infinity::fp8_scaled_swiglu_quantize(values, row_scales, column_scales, dtype);
       TORCH_CHECK(actual.first.sizes() == expected.first.sizes() &&
                       actual.second.sizes() == expected.second.sizes() &&
                       at::equal(actual.first.view(at::kByte), expected.first.view(at::kByte)) &&
                       at::equal(actual.second, expected.second),
-                  "Scaled fused SwiGLU differs from scale_output + swiglu: rows=",
+                  "Scaled fused SwiGLU differs from scalar scale/activation/quantize: rows=",
                   values.size(0),
                   " width=",
                   values.size(1) / 2,
@@ -658,7 +700,7 @@ int main() {
                   dtype);
     };
     const auto f32 = at::TensorOptions().device(at::kCUDA, 0).dtype(at::kFloat);
-    for (int64_t width : {2048, 2056, 4096, 6144, 12288, 17408, 20480, 20481})
+    for (int64_t width : {2048, 2056, 4096, 6144, 9728, 12288, 17408, 20480, 20481})
       for (int64_t rows : {1, 17, 257}) {
         // Bound rows for the max-shared and wide-fallback widths.
         if (width >= 20480 && rows > 17)
@@ -1085,9 +1127,21 @@ int main() {
                         legacy_prequantized.second,
                         "Legacy prequantized linear SwiGLU changed FP8 scales");
     }
+    if (sm100_bf16(dtype)) {
+      // Exceed the fused gate-width limit with signed, exactly representable projections.
+      auto columns = (at::arange(49152, options).remainder(5) - 2) * .0625;
+      infinity::Fp8Linear wide(columns.unsqueeze(1).expand({49152, 64}).contiguous());
+      auto input = at::full({3, 64}, .125, options);
+      input.select(0, 1).neg_();
+      check_linear_gated_quantize(input,
+                                  wide,
+                                  infinity::Fp8GatedActivation::RoundedSilu,
+                                  true,
+                                  "Wide gated qualified projection changed its activation recipe");
+    }
     if (at::cuda::getCurrentDeviceProperties()->major != 9) {
-      // Portable output scaling: ragged rows and varied scales must match the
-      // reference's separate FP32 products and final model-dtype rounding.
+      // Ragged rows and varied scales must match the per-architecture qualified
+      // reference, while the direct helper coverage below stays portable.
       for (auto [rows, width] : {std::pair<int64_t, int64_t>{1, 1024},
                                  {17, 2560},
                                  {257, 8192},
@@ -1116,14 +1170,8 @@ int main() {
         auto expected = fp8_original_recipe(
             quantized.first, projection.matrix(), row_scales, projection.scales(), dtype);
         auto actual = projection.forward_quantized(quantized.first, row_scales);
-        TORCH_CHECK(actual.sizes() == expected.sizes() &&
-                        at::equal(actual.view(at::kByte), expected.view(at::kByte)),
-                    "Portable FP8 output scaling differs from reference: rows=",
-                    rows,
-                    " width=",
-                    width,
-                    " dtype=",
-                    dtype);
+        check_projection_close(
+            expected, actual, "Qualified FP8 projection differs from portable reference");
       }
       // Direct helper coverage: vector, ragged-width scalar and unaligned borrowed storage.
       for (auto shape : {std::array<int64_t, 4>{7, 256, 0, 0},
@@ -1152,6 +1200,72 @@ int main() {
                     scale_offset,
                     " dtype=",
                     dtype);
+      }
+    }
+    if (at::cuda::getCurrentDeviceProperties()->major == 10) {
+      // The SM100 BF16 provider rounds once to BF16; the portable recipe keeps
+      // an FP32 product until that same rounding. FP16 stays portable, so its
+      // bytes must match the portable recipe exactly.
+      for (const auto& shape : {std::array<int64_t, 3>{0, 2560, 512},
+                                std::array<int64_t, 3>{8, 64, 48},
+                                std::array<int64_t, 3>{17, 2560, 512},
+                                std::array<int64_t, 3>{257, 8192, 256},
+                                std::array<int64_t, 3>{1025, 9728, 512},
+                                std::array<int64_t, 3>{4097, 256, 512},
+                                std::array<int64_t, 3>{16384, 2560, 6144}}) {
+        const auto [rows, width, out_width] = shape;
+        auto weight = at::randn({out_width, width}, options) * .05;
+        infinity::Fp8Linear projection(weight);
+        if (rows == 0) {
+          auto empty = projection.forward(at::empty({0, width}, options));
+          TORCH_CHECK(empty.sizes() == at::IntArrayRef({0, out_width}) &&
+                          empty.scalar_type() == dtype,
+                      "SM100 empty rows changed shape or dtype");
+          continue;
+        }
+        auto input = at::randn({rows, width}, options) * .3;
+        auto quantized = infinity::fp8_quantize_rows(input);
+        auto actual = projection.forward_quantized(quantized.first, quantized.second);
+        auto portable = fp8_portable_recipe(
+            quantized.first, projection.matrix(), quantized.second, projection.scales(), dtype);
+        if (dtype == at::kHalf) {
+          TORCH_CHECK(at::equal(actual, portable),
+                      "SM100 FP16 left the portable recipe: rows=",
+                      rows,
+                      " width=",
+                      width,
+                      " out_width=",
+                      out_width);
+          continue;
+        }
+        check_projection_close(
+            portable, actual, "SM100 BF16 row-scaled drift exceeded one BF16 ULP");
+      }
+      if (sm100_bf16(dtype)) {
+        // Borrowed FP8 storage must be 16-byte aligned for the SM100 TMA path.
+        constexpr int64_t rows = 17, width = 2560, out_width = 512;
+        auto weight = at::randn({out_width, width}, options) * .05;
+        infinity::Fp8Linear projection(weight);
+        auto input = at::randn({rows, width}, options) * .3;
+        auto quantized = infinity::fp8_quantize_rows(input);
+        auto expected = projection.forward_quantized(quantized.first, quantized.second);
+        auto aligned_storage = at::empty({quantized.first.numel() + 16}, quantized.first.options());
+        auto aligned = aligned_storage.narrow(0, 16, quantized.first.numel()).view({rows, width});
+        aligned.copy_(quantized.first);
+        TORCH_CHECK(at::equal(projection.forward_quantized(aligned, quantized.second), expected),
+                    "SM100 aligned borrowed FP8 storage failed");
+        auto unaligned_storage =
+            at::empty({quantized.first.numel() + 1}, quantized.first.options());
+        auto unaligned =
+            unaligned_storage.narrow(0, 1, quantized.first.numel()).view({rows, width});
+        unaligned.copy_(quantized.first);
+        bool rejected = false;
+        try {
+          projection.forward_quantized(unaligned, quantized.second);
+        } catch (const c10::Error&) {
+          rejected = true;
+        }
+        TORCH_CHECK(rejected, "SM100 unaligned FP8 activation was not rejected");
       }
     }
     std::cout << "FP8 row-scale/bytes, odd real rows, model-dtype GEMM and bias: " << dtype

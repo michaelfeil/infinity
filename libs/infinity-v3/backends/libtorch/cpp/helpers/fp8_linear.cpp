@@ -7,6 +7,7 @@
 #include "helpers/vendor_error.h"
 #include "kernels/fp8_fusions.h"
 #include <ATen/ops/_scaled_mm.h>
+#include <torch/version.h>
 #include <string>
 #include <mutex>
 #include <thread>
@@ -25,6 +26,20 @@
 #endif
 
 namespace infinity {
+namespace {
+// The provider has shipped the SM100 BF16 row-scaled kernel since Torch 2.9;
+// FP16 output remains portable here. CUDA 12.8 is the Blackwell build floor.
+bool sm100_rowwise_qualified() {
+#if defined(INFINITY_TORCH_CUDA_KERNELS) &&                                                        \
+    ((TORCH_VERSION_MAJOR > 2) || (TORCH_VERSION_MAJOR == 2 && TORCH_VERSION_MINOR >= 9)) &&       \
+    defined(CUDA_VERSION) && CUDA_VERSION >= 12080
+  return at::Context::versionCUDART() >= 12080;
+#else
+  return false;
+#endif
+}
+}
+
 /*
 From PyTorch:
 
@@ -589,7 +604,8 @@ bool fp8_device_supported(const c10::Device& device) {
   return false;
 }
 
-Fp8Linear::Fp8Linear(const at::Tensor& weight) : dtype_(weight.scalar_type()), rowwise_(false) {
+Fp8Linear::Fp8Linear(const at::Tensor& weight)
+    : dtype_(weight.scalar_type()), rowwise_(false), fast_accum_(false) {
   TORCH_CHECK(weight.is_cuda() && weight.dim() == 2 && weight.size(0) > 0 && weight.size(1) > 0,
               "Dynamic FP8 requires nonempty CUDA matrix weights");
   TORCH_CHECK(dtype_ == at::kHalf || dtype_ == at::kBFloat16,
@@ -603,7 +619,11 @@ Fp8Linear::Fp8Linear(const at::Tensor& weight) : dtype_(weight.scalar_type()), r
   const auto* props = at::cuda::getDeviceProperties(weight.device().index());
   const int capability = props->major * 10 + props->minor;
   TORCH_CHECK(fp8_device_supported(weight.device()), "Dynamic FP8 requires SM89/90/100/120");
-  rowwise_ = capability == 90;
+  // Blackwell (SM100) uses Torch's BF16 row-scaled CUTLASS projection with full
+  // accumulation; its FP16 path stays portable. Hopper keeps fast accumulation.
+  rowwise_ = capability == 90 ||
+             (capability == 100 && dtype_ == at::kBFloat16 && sm100_rowwise_qualified());
+  fast_accum_ = capability == 90;
 #else
   TORCH_CHECK(false, "Dynamic FP8 requires a CUDA LibTorch build");
 #endif
@@ -635,9 +655,9 @@ at::Tensor Fp8Linear::unscaled_product(const at::Tensor& input) const {
   return at::_scaled_mm(input, matrix_.t(), unit_, unit_, {}, {}, at::kFloat, false);
 }
 
-/// Consume E4M3 [rows, input_width] activations and F32 [rows, 1] scales. Hopper uses rowwise
-/// scaled GEMM; other qualified devices scale FP32 output before model-dtype rounding. Bias is
-/// added after GEMM rounding, matching the unfused checkpoint recipe.
+/// Consume E4M3 [rows, input_width] activations and F32 [rows, 1] scales. Hopper and Blackwell
+/// BF16 use rowwise scaled GEMM; other qualified combinations scale FP32 output before
+/// model-dtype rounding. Bias is added after GEMM rounding, matching the unfused checkpoint recipe.
 at::Tensor Fp8Linear::forward_quantized(const at::Tensor& input,
                                         const at::Tensor& row_scales,
                                         const at::Tensor& bias) const {
@@ -657,22 +677,34 @@ at::Tensor Fp8Linear::forward_quantized(const at::Tensor& input,
 #ifdef INFINITY_TORCH_CUDA_KERNELS
   c10::cuda::CUDAGuard guard(input.device());
 #endif
+  // The SM100 provider's TMA path faults on borrowed FP8 storage that is not
+  // 16-byte aligned; reject it before dispatch instead of risking the context.
+  if (rowwise_ && !fast_accum_ && reinterpret_cast<uintptr_t>(input.const_data_ptr()) % 16 != 0)
+    TORCH_CHECK(false, "SM100 row-scaled FP8 projections require 16-byte aligned activations");
   at::Tensor output;
   if (rowwise_) {
+    if (fast_accum_) {
 #if defined(INFINITY_TORCH_CUDA_KERNELS) && CUDA_VERSION >= 12090
-    output = scaled_mm_cached(input, matrix_, row_scales, scales_, dtype_);
+      output = scaled_mm_cached(input, matrix_, row_scales, scales_, dtype_);
 #endif
-    if (!output.defined()) {
-      try {
-        // Candle's Hopper recipe prefers fast accumulation. Some CUDA versions
-        // lack fast tactics for short, wide-K shapes; preserve its full fallback.
-        output = at::_scaled_mm(input, matrix_.t(), row_scales, scales_.t(), {}, {}, dtype_, true);
-      } catch (const c10::Error& error) {
-        if (std::string(error.what_without_backtrace()).find("CUBLAS_STATUS_NOT_SUPPORTED") ==
-            std::string::npos)
-          throw;
-        output = at::_scaled_mm(input, matrix_.t(), row_scales, scales_.t(), {}, {}, dtype_, false);
+      if (!output.defined()) {
+        try {
+          // Candle's Hopper recipe prefers fast accumulation. Some CUDA versions
+          // lack fast tactics for short, wide-K shapes; preserve its full fallback.
+          output =
+              at::_scaled_mm(input, matrix_.t(), row_scales, scales_.t(), {}, {}, dtype_, true);
+        } catch (const c10::Error& error) {
+          if (std::string(error.what_without_backtrace()).find("CUBLAS_STATUS_NOT_SUPPORTED") ==
+              std::string::npos)
+            throw;
+          output =
+              at::_scaled_mm(input, matrix_.t(), row_scales, scales_.t(), {}, {}, dtype_, false);
+        }
       }
+    } else {
+      // SM100 uses Torch's CUTLASS rowwise provider with full accumulation and
+      // no cached plan shared with the Hopper fast path.
+      output = at::_scaled_mm(input, matrix_.t(), row_scales, scales_.t(), {}, {}, dtype_, false);
     }
   } else {
     // Match the portable recipe: scale full FP32 accumulation before the
@@ -724,7 +756,7 @@ Fp8Linear::forward_gated_quantized_impl(const at::Tensor& input,
     rows = std::move(quantized.first);
     scales = std::move(quantized.second);
   }
-  if (rowwise_ || output_width() / 2 > fp8_scaled_swiglu_max_width)
+  if (fast_accum_ || output_width() / 2 > fp8_scaled_swiglu_max_width)
     return detail::fp8_gated_quantize_impl(
         forward_quantized(rows, scales), kind, gate_first, preserve_legacy_scalar);
   // Preserve the portable recipe: full FP32 accumulation, then the two separate FP32 scale
@@ -747,7 +779,7 @@ std::pair<at::Tensor, at::Tensor> Fp8Linear::forward_gated_quantized(const at::T
 std::pair<at::Tensor, at::Tensor>
 Fp8Linear::forward_swiglu_quantized(const at::Tensor& input, const at::Tensor& row_scales) const {
   return forward_gated_quantized_impl(
-      input, row_scales, Fp8GatedActivation::RoundedSilu, true, true);
+      input, row_scales, Fp8GatedActivation::RoundedSilu, true, false);
 }
 
 /// Fuse the projection with an optional separate bias, one rounded unary activation and row FP8
@@ -787,7 +819,7 @@ Fp8Linear::forward_activation_quantized(const at::Tensor& input,
     rows = std::move(quantized.first);
     scales = std::move(quantized.second);
   }
-  if (rowwise_)
+  if (fast_accum_)
     return fp8_activation_quantize(forward_quantized(rows, scales), bias, kind);
   return fp8_scaled_activation_quantize(
       unscaled_product(rows), scales, scales_, dtype_, bias, kind);

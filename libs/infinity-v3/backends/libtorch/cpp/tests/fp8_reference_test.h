@@ -36,12 +36,13 @@ inline void fp8_reference_check(cublasStatus_t s) {
   TORCH_CHECK(s == CUBLAS_STATUS_SUCCESS, "Reference cuBLASLt status=", int(s));
 }
 
-inline at::Tensor fp8_original_recipe(const at::Tensor& x,
-                                      const at::Tensor& w,
-                                      const at::Tensor& sx,
-                                      const at::Tensor& sw,
-                                      at::ScalarType dtype) {
-  const bool rowwise = at::cuda::getCurrentDeviceProperties()->major == 9;
+inline at::Tensor fp8_recipe(const at::Tensor& x,
+                             const at::Tensor& w,
+                             const at::Tensor& sx,
+                             const at::Tensor& sw,
+                             at::ScalarType dtype,
+                             bool rowwise,
+                             bool fast_accum) {
   const auto gemm_dtype = rowwise ? dtype : at::kFloat;
   cublasLtHandle_t handle;
   fp8_reference_check(cublasLtCreate(&handle));
@@ -50,7 +51,7 @@ inline at::Tensor fp8_original_recipe(const at::Tensor& x,
   auto trans = CUBLAS_OP_T;
   fp8_reference_check(
       cublasLtMatmulDescSetAttribute(desc, CUBLASLT_MATMUL_DESC_TRANSA, &trans, sizeof(trans)));
-  int8_t fast = rowwise ? 1 : 0;
+  int8_t fast = fast_accum ? 1 : 0;
   fp8_reference_check(
       cublasLtMatmulDescSetAttribute(desc, CUBLASLT_MATMUL_DESC_FAST_ACCUM, &fast, sizeof(fast)));
   if (rowwise) {
@@ -119,5 +120,28 @@ inline at::Tensor fp8_original_recipe(const at::Tensor& x,
   fp8_reference_check(cublasLtMatmulDescDestroy(desc));
   fp8_reference_check(cublasLtDestroy(handle));
   return rowwise ? y : (y * sx * sw.t()).to(dtype);
+}
+
+// Hopper's original fast-accumulation cuBLASLt recipe. Blackwell's rowwise
+// provider is CUTLASS and its direct cuBLASLt outer-vector layout is
+// unsupported, so Blackwell uses the portable recipe as the independent
+// reference and bounds the provider drift by one output ULP.
+inline at::Tensor fp8_original_recipe(const at::Tensor& x,
+                                      const at::Tensor& w,
+                                      const at::Tensor& sx,
+                                      const at::Tensor& sw,
+                                      at::ScalarType dtype) {
+  const int major = at::cuda::getCurrentDeviceProperties()->major;
+  return fp8_recipe(x, w, sx, sw, dtype, major == 9, major == 9);
+}
+
+// The previous portable recipe, retained to bound numerical drift on devices
+// that now use the vendor row-scaled projection.
+inline at::Tensor fp8_portable_recipe(const at::Tensor& x,
+                                      const at::Tensor& w,
+                                      const at::Tensor& sx,
+                                      const at::Tensor& sw,
+                                      at::ScalarType dtype) {
+  return fp8_recipe(x, w, sx, sw, dtype, false, false);
 }
 }
