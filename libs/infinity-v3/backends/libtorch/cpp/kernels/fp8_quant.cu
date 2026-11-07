@@ -62,9 +62,17 @@ __device__ void infinity_fp8_quant_row(const T* x, __nv_fp8_e4m3* y, float* scal
   }
   __syncthreads();
   float s = partial[0];
+  const float reciprocal = __frcp_rn(s);
+  const bool fast = isfinite(s);
 
   if (threadIdx.x == 0)
     scales[row] = s;
+  if (fast) {
+    for (int i = threadIdx.x; i < k; i += 128)
+      y[size_t(row) * k + i] =
+          fp8_quantize_value_recip(float(x[size_t(row) * k + i]), s, reciprocal);
+    return;
+  }
   for (int i = threadIdx.x; i < k; i += 128)
     y[size_t(row) * k + i] = __nv_fp8_e4m3(__fdiv_rn(float(x[size_t(row) * k + i]), s));
 }
@@ -114,9 +122,26 @@ __global__ void quant_vector(const T* x, __nv_fp8_e4m3* y, float* scales, int wi
   }
   __syncthreads();
   const float scale = partial[0];
+  const float reciprocal = __frcp_rn(scale);
+  const bool fast = isfinite(scale);
 
   if (!threadIdx.x)
     scales[row] = scale;
+  if (fast) {
+#pragma unroll
+    for (int group = 0; group < 3; ++group) {
+      if (threadIdx.x + group * 256 >= packs)
+        continue;
+      QuantPack<__nv_fp8x2_e4m3, 4> pack;
+#pragma unroll
+      for (int j = 0; j < 4; ++j)
+        pack.value[j] = fp8_quantize_pair_recip(
+            values[group][2 * j], values[group][2 * j + 1], scale, reciprocal);
+      reinterpret_cast<QuantPack<__nv_fp8x2_e4m3, 4>*>(y)[row * packs + threadIdx.x + group * 256] =
+          pack;
+    }
+    return;
+  }
 #pragma unroll
   for (int group = 0; group < 3; ++group) {
     if (threadIdx.x + group * 256 >= packs)
