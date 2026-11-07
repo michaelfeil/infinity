@@ -7,6 +7,7 @@
 #include "kernels/decoder_norm.h"
 #include "kernels/torch_flash_fma.h"
 #include "helpers/fp8_linear.h"
+#include "helpers/mxfp8_linear.h"
 #include "tests/fp8_reference_test.h"
 #include <cmath>
 #include <cstdlib>
@@ -37,6 +38,7 @@ infinity::Weights
 weights(const infinity::Options& options, c10::Device device, at::ScalarType dtype) {
   infinity::Weights tensors;
   const auto hidden = options.integer("hidden_size", 32);
+  const auto intermediate = options.integer("intermediate_size", 64);
   auto add = [&](const std::string& name, std::initializer_list<int64_t> shape, bool norm = false) {
     int64_t count = 1;
     float offset = 0;
@@ -68,9 +70,9 @@ weights(const infinity::Options& options, c10::Device device, at::ScalarType dty
       add(p + "self_attn.q_norm.weight", {8}, true);
       add(p + "self_attn.k_norm.weight", {8}, true);
     }
-    add(p + "mlp.gate_proj.weight", {64, hidden});
-    add(p + "mlp.up_proj.weight", {64, hidden});
-    add(p + "mlp.down_proj.weight", {hidden, 64});
+    add(p + "mlp.gate_proj.weight", {intermediate, hidden});
+    add(p + "mlp.up_proj.weight", {intermediate, hidden});
+    add(p + "mlp.down_proj.weight", {hidden, intermediate});
   }
   return tensors;
 }
@@ -160,9 +162,11 @@ void check_family(const std::string& family,
                   at::ScalarType dtype,
                   bool all = false,
                   int64_t hidden = 32,
-                  bool default_scope = false) {
+                  bool default_scope = false,
+                  int64_t intermediate = 64) {
   auto options = config(family);
   options.values["hidden_size"] = std::to_string(hidden);
+  options.values["intermediate_size"] = std::to_string(intermediate);
   auto enabled = options;
   enabled.values["_fp8_dynamic"] = "true";
   if (!default_scope)
@@ -240,14 +244,15 @@ void check_family(const std::string& family,
 // reproducing a particular checkpoint's layer count, vocabulary or MLP width.
 // The FP8 projection oracle translates the original Candle cuBLASLt recipe;
 // norm/rotary/attention primitives have independent exact-reference tests.
-void check_registered_causal_contract(c10::Device device) {
-  constexpr int64_t hidden = 2048, heads = 32, kvheads = 4, head = 64, intermediate = 64;
+void check_registered_causal_contract(c10::Device device, bool mxfp8 = false) {
+  constexpr int64_t hidden = 2048, heads = 32, kvheads = 4, head = 64;
+  const int64_t intermediate = mxfp8 ? 128 : 64;
   infinity::Options options = config("llama");
   options.values["hidden_size"] = "2048";
   options.values["num_attention_heads"] = "32";
   options.values["num_key_value_heads"] = "4";
   options.values["head_dim"] = "64";
-  options.values["intermediate_size"] = "64";
+  options.values["intermediate_size"] = std::to_string(intermediate);
   options.values["num_hidden_layers"] = "1";
   options.values["rms_norm_eps"] = "0.00001";
   infinity::Weights checkpoint;
@@ -331,6 +336,8 @@ void check_registered_causal_contract(c10::Device device) {
     auto original = [&](const at::Tensor& x, const at::Tensor& weight) {
       if (!fp8)
         return at::linear(x, weight);
+      if (mxfp8)
+        return infinity::Mxfp8Linear(weight).forward(x);
       auto activations = infinity::fp8_quantize_rows(x),
            weights = infinity::fp8_quantize_rows(weight);
       return fp8_original_recipe(
@@ -379,8 +386,21 @@ int main(int argc, char** argv) {
   rejects(quantized, device, at::kBFloat16);
   auto properties = at::cuda::getDeviceProperties(device.index());
   auto capability = properties->major * 10 + properties->minor;
+  const bool mxfp8 = argc > 2 && std::string(argv[2]) == "--mxfp8";
+  if (mxfp8 && !infinity::mxfp8_provider_supported(device)) {
+    std::cout << "MXFP8 decoder fixture skipped unsupported provider\n";
+    return 77;
+  }
   if (!infinity::fp8_device_supported(device)) {
     std::cout << "FP8 CUDA fixture skipped unsupported capability " << capability << "\n";
+    return 0;
+  }
+  if (mxfp8) {
+    check_registered_causal_contract(device, true);
+    // Qualified MLPs exercise the decoder RMS input, ragged-row folding,
+    // causal isolation and weight ownership with the native block format.
+    for (auto family : {"llama", "qwen2", "qwen3"})
+      check_family(family, device, at::kBFloat16, false, 4096, false, 128);
     return 0;
   }
   check_registered_causal_contract(device);

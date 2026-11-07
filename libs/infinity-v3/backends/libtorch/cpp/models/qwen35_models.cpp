@@ -1065,8 +1065,9 @@ class Qwen35 final : public Model {
         attended = prefix_projection(attended, output_name, input);
       }
       QuantizedRows mlp_rows;
-      const bool quantize_mlp = mlps[layer].dense_mlp.fp8();
-      // Dense FP8 consumes the rounded norm through mlp_rows; no BF16 copy is needed.
+      const bool quantize_mlp =
+          mlps[layer].dense_mlp.fp8() && mlps[layer].dense_mlp.supports_rowwise_rms_input();
+      // Rowwise FP8 consumes the rounded norm through mlp_rows; no BF16 copy is needed.
       auto post = residual_norm(hidden,
                                 attended,
                                 p + "post_attention_layernorm",
