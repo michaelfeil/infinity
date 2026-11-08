@@ -165,6 +165,12 @@ void dense_mlp_forward_and_guards() {
   TORCH_CHECK(at::equal(fused, code5) && at::equal(fused, gemma),
               "Fused NVFP4 MLP changed exact code-5/Gemma quantized output");
 
+  auto bias = at::randn({32}, opts).slice(0, 0, 32, 2);
+  infinity::DenseMlp biased({gate_up}, {down, bias}, recipe);
+  biased.prepare(infinity::MlpPrecision::Fp8);
+  TORCH_CHECK(at::equal(biased.forward(x), code5 + bias),
+              "NVFP4 MLP did not preserve a strided down-projection bias");
+
   // NVFP4 tiles wide activations; the rowwise FP8 fusion's width limit does not apply.
   constexpr int64_t intermediate = 32896;
   auto wide_gate = at::randn({2 * intermediate, 128}, opts) * .02f;

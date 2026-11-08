@@ -24,8 +24,7 @@ at::Tensor add_bias(at::Tensor output, const at::Tensor& bias, int64_t width) {
   if (!bias.defined())
     return output;
   TORCH_CHECK(bias.dim() == 1 && bias.size(0) == width && bias.is_cuda() &&
-                  bias.device() == output.device() && bias.scalar_type() == at::kBFloat16 &&
-                  bias.is_contiguous(),
+                  bias.device() == output.device() && bias.scalar_type() == at::kBFloat16,
               "Invalid NVFP4 MLP bias");
   return output + bias;
 }
