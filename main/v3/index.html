@@ -1598,8 +1598,12 @@ GPUs as replicas; each GPU loads a complete model, rather than a shard.</p>
 <td>Select CUDA replicas, such as <code>0,1</code>, or <code>auto</code>.</td>
 </tr>
 <tr>
-<td><code>--enable-fp8-dynamic</code></td>
-<td>Enable experimental dynamic FP8 for supported models and GPUs. Off by default; validate task accuracy before enabling.</td>
+<td><code>--dynamic-quantization</code></td>
+<td><code>none</code> (default), <code>fp8</code>, <code>mxfp8</code> or <code>nvfp4</code>. Select per model; requires a supported CUDA model and GPU.</td>
+</tr>
+<tr>
+<td><code>--dynamic-quantization-scope</code></td>
+<td><code>auto</code> (default), <code>mlp</code> or <code>all</code>. <code>auto</code> uses all-linear scope for eligible dense decoders and MLP-only scope otherwise.</td>
 </tr>
 </tbody>
 </table>

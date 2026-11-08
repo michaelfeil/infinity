@@ -1434,8 +1434,11 @@ image. UltraBERT’s vLLM run failed its numerical check.</p>
 </tr>
 </tbody>
 </table>
-<p>FP8 uses <code>--enable-fp8-dynamic</code>. Its numerical check is a two-document smoke
-test, not a ranking-quality evaluation.</p>
+<p>These measurements used the 3.0.1 flag <code>--enable-fp8-dynamic</code>. On current
+releases, use <code>--dynamic-quantization fp8</code>; see the
+<a href="../cli/#migrating-existing-deployments">migration table</a>. The numerical check is
+a two-document smoke test, not a ranking-quality evaluation. Recorded commands
+in the measurement JSON retain the original flags.</p>
 <h2 id="image-embeddings">Image embeddings</h2>
 <p>Qwen3-VL-Embedding-8B, one square PNG per request. Images are sent inline,
 so timings exclude external downloads. Token counts include vision placeholders

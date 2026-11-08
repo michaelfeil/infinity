@@ -698,10 +698,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#optional-dynamic-fp8" class="md-nav__link">
+  <a href="#optional-quantization" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Optional dynamic FP8
+        Optional quantization
       
     </span>
   </a>
@@ -1282,10 +1282,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#optional-dynamic-fp8" class="md-nav__link">
+  <a href="#optional-quantization" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Optional dynamic FP8
+        Optional quantization
       
     </span>
   </a>
@@ -1386,14 +1386,20 @@ Use <code>--device-id 0</code> for one GPU; otherwise each visible GPU runs a co
 For native LibTorch CPU builds, use <code>--torch-device cpu --dtype float32</code>.
 CPU builds from current <code>main</code> use LibTorch. Dynamic FP8 and CUDA-only kernels
 require the NVIDIA image.</p>
-<h2 id="optional-dynamic-fp8">Optional dynamic FP8</h2>
-<p>Add <code>--enable-fp8-dynamic</code> to enable FP8 projections on supported models and GPUs:</p>
+<h2 id="optional-quantization">Optional quantization</h2>
+<p>Use <code>--dynamic-quantization</code> to select a format for each model:</p>
 <div class="language-bash highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>infinity_v3<span class="w"> </span>--model-id<span class="w"> </span>/path/to/model<span class="w"> </span><span class="se">\</span>
-</span><span id="__span-1-2"><a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="w">  </span>--torch-device<span class="w"> </span>cuda<span class="w"> </span>--dtype<span class="w"> </span>bfloat16<span class="w"> </span>--enable-fp8-dynamic
+</span><span id="__span-1-2"><a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="w">  </span>--torch-device<span class="w"> </span>cuda<span class="w"> </span>--dtype<span class="w"> </span>bfloat16<span class="w"> </span>--dynamic-quantization<span class="w"> </span>fp8
 </span></code></pre></div>
-<p>FP8 is opt-in and can change outputs; check accuracy on your task before enabling
-it. Model and hardware support varies. Use <code>INFINITY_TORCH_FP8_SCOPE=mlp</code> to
-restrict eligible models to MLP projections. See <a href="../libtorch-model-coverage/">model coverage</a>.</p>
+<p><code>none</code> preserves the model dtype. <code>fp8</code> selects rowwise FP8; <code>mxfp8</code> and <code>nvfp4</code>
+select the corresponding block-scaled MLP format on eligible Blackwell BF16
+models. In all-linear scope, attention projections still use FP8. Unsupported
+format/model combinations fail during initialization rather than selecting a
+different format. Quantization can change outputs; check accuracy on your task.</p>
+<p>Use <code>--dynamic-quantization-scope mlp</code> to restrict quantization to MLP projections.
+The default <code>auto</code> uses all-linear scope for eligible dense decoders and MLP-only
+scope otherwise. See <a href="../libtorch-model-coverage/">model coverage</a> and
+<a href="../cli/#quantization">per-model configuration</a>.</p>
 <p>Portable FP8 projections fuse output scaling and conversion into one kernel.
 They retain the two separately rounded FP32 scale products and the final
 model-dtype rounding, including subnormal values. Aligned matrices use vector
@@ -1408,7 +1414,7 @@ set <code>INFINITY_TORCH_FA4=0</code> before starting the server.</p>
 <code>--dtype bfloat16</code>. The checkpoint configuration selects block attention;
 shared prefixes are reused within a backend batch. This is not a persistent
 cross-request cache.</p>
-<p>For dense Qwen3.5, <code>--enable-fp8-dynamic</code> uses all-linear dynamic FP8 by
+<p>For dense Qwen3.5, <code>--dynamic-quantization fp8</code> uses all-linear dynamic FP8 by
 default and enables the FP8 optimizations automatically. GDN activations remain
 BF16 and stored recurrent states remain FP32.</p>
 <p>Dense FP8 MLPs combine portable projection scaling, rounded SwiGLU and row
