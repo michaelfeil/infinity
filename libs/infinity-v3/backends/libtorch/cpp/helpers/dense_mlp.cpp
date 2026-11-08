@@ -2,6 +2,7 @@
 #include "helpers/dense_mlp.h"
 #include "env_config.h"
 #include "helpers/mxfp8_linear.h"
+#include "helpers/nvfp4_linear.h"
 #include <cstdlib>
 #include <cstring>
 #include <ATen/ops/_addmm_activation.h>
@@ -220,6 +221,106 @@ public:
     return output;
   }
 };
+
+// W4A4 packed E2M1 with E4M3 block scales. Native quantized rows carry both
+// block and tensor scales; they use a separate contract from FP8 row scales.
+class Nvfp4LinearMethod final : public MlpLinearMethod {
+  Nvfp4Linear linear_;
+  at::Tensor ordinary_weight_;
+
+public:
+  explicit Nvfp4LinearMethod(const at::Tensor& weight) : linear_(weight) {}
+
+  MlpPrecision precision() const override {
+    return MlpPrecision::Fp8;
+  }
+
+  const at::Tensor& weight() const override {
+    return ordinary_weight_;
+  }
+
+  bool accepts_fp8_rows() const override {
+    return false;
+  }
+
+  bool supports_epilogue() const override {
+    return false;
+  }
+
+  bool supports_rowwise_rms_input() const override {
+    return false;
+  }
+
+  at::Tensor apply(const MlpProjection& projection,
+                   const at::Tensor& x,
+                   const at::Tensor& bias,
+                   const MlpContext&,
+                   MlpEpilogue epilogue,
+                   const at::Tensor& scales) const override {
+    TORCH_CHECK(!scales.defined(), "NVFP4 MLP cannot consume FP8 rows");
+    TORCH_CHECK(epilogue == MlpEpilogue::None, "NVFP4 MLP has no GEMM activation epilogue");
+    auto rows = x.dim() == 2
+                    ? x
+                    : x.reshape({x.numel() / projection.input_width(), projection.input_width()});
+    auto output = linear_.forward(rows, bias);
+    if (x.dim() != 2) {
+      auto shape = x.sizes().vec();
+      shape.back() = projection.output_width();
+      output = output.reshape(shape);
+    }
+    return output;
+  }
+
+  bool supports_native_swiglu_quantized() const override {
+    return true;
+  }
+
+  MlpNativeQuantized apply_native_swiglu_quantized(const at::Tensor& gate_up,
+                                                   const MlpContext&) const override {
+    const auto quantized = linear_.swiglu_quantize(gate_up);
+    return {MlpNativeQuantized::Format::Nvfp4,
+            quantized.values,
+            quantized.block_scales,
+            quantized.global_scale,
+            quantized.rows,
+            quantized.cols};
+  }
+
+  bool accepts_native_quantized_rows() const override {
+    return true;
+  }
+
+  at::Tensor apply_native_quantized(const MlpProjection& projection,
+                                    const MlpNativeQuantized& rows,
+                                    const at::Tensor& bias,
+                                    const MlpContext&) const override {
+    TORCH_CHECK(rows.format == MlpNativeQuantized::Format::Nvfp4,
+                "NVFP4 method received unsupported native rows");
+    TORCH_CHECK(rows.cols == projection.input_width(),
+                "NVFP4 native rows width does not match projection");
+    const Nvfp4Quantized quantized{
+        rows.values, rows.block_scales, rows.global_scale, rows.rows, rows.cols};
+    return linear_.forward_quantized(quantized, bias);
+  }
+};
+
+// NVFP4 is a single explicit opt-in mode for both MLP projections. Unknown
+// values fail loudly instead of silently changing the default MXFP8 policy.
+bool nvfp4_mlp_enabled() {
+  const char* value = std::getenv(INFINITY_ENV("TORCH_NVFP4_MLP"));
+  if (!value || std::strcmp(value, "0") == 0 || std::strcmp(value, "false") == 0 ||
+      std::strcmp(value, "off") == 0)
+    return false;
+  if (std::strcmp(value, "1") == 0 || std::strcmp(value, "true") == 0 ||
+      std::strcmp(value, "on") == 0)
+    return true;
+  TORCH_CHECK(false,
+              "Invalid ",
+              INFINITY_ENV("TORCH_NVFP4_MLP"),
+              "='",
+              value,
+              "'; expected 1/true/on or 0/false/off");
+}
 }
 
 MlpProjection::MlpProjection(at::Tensor weight,
@@ -279,6 +380,23 @@ at::Tensor MlpProjection::forward(const at::Tensor& x, const MlpContext& context
   return execute(x, context, {});
 }
 
+at::Tensor MlpProjection::execute_native(const MlpNativeQuantized& rows,
+                                         const MlpContext& context) const {
+  TORCH_CHECK(input_width_ && rows.cols == input_width_,
+              "Native quantized MLP rows width does not match projection: ",
+              name_);
+  TORCH_CHECK(!recipe_.input_clip && !recipe_.cast_input,
+              "Native quantized MLP rows bypass a projection transform: ",
+              name_);
+  auto bias = recipe_.separate_bias ? at::Tensor() : bias_;
+  auto output = method_->apply_native_quantized(*this, rows, bias, context);
+  if (recipe_.separate_bias && bias_.defined())
+    output = output + bias_;
+  if (recipe_.output_clip)
+    output = output.clamp((*recipe_.output_clip)[0], (*recipe_.output_clip)[1]);
+  return output;
+}
+
 MlpActivationRecipe MlpActivationRecipe::gated(MlpActivation kind, bool gate_first) {
   MlpActivationRecipe recipe(kind);
   recipe.packed = true;
@@ -330,6 +448,16 @@ DenseMlp::DenseMlp(MlpProjection gate,
 }
 
 void DenseMlp::prepare(MlpPrecision precision) {
+  // Explicit NVFP4 opt-in; default policy remains MXFP8. Shipping NVFP4 is
+  // both-projections only, so a successful qualification uses it for both.
+  if (precision == MlpPrecision::Fp8 && nvfp4_mlp_enabled()) {
+    TORCH_CHECK(supports_nvfp4(),
+                "NVFP4 MLP requested but the projection geometry or provider is unsupported");
+    prepare([](const MlpProjection& projection) -> std::shared_ptr<const MlpLinearMethod> {
+      return std::make_shared<Nvfp4LinearMethod>(projection.weight());
+    });
+    return;
+  }
   // Select the FP8 format once for every model using this shared MLP policy.
   // The provider probe qualifies native block scaling; other providers keep rowwise FP8.
   if (precision == MlpPrecision::Fp8 && supports_mxfp8()) {
@@ -378,6 +506,18 @@ bool DenseMlp::supports_mxfp8() const {
   return mxfp8_mlp_supported(input_.weight(), output_.weight());
 }
 
+bool DenseMlp::supports_nvfp4() const {
+  if (up_ || !activation_.packed || !activation_.gate_first ||
+      activation_.fusion != MlpFusion::RoundedSwiGlu || activation_.quantized_custom ||
+      input_.recipe_.input_clip || input_.recipe_.cast_input || input_.recipe_.output_clip ||
+      output_.recipe_.input_clip || output_.recipe_.cast_input || output_.recipe_.output_clip ||
+      input_.bias_.defined() || !input_.weight().defined() || !output_.weight().defined())
+    return false;
+  if (input_.output_width() % 2 != 0 || input_.output_width() / 2 > fp8_scaled_swiglu_max_width)
+    return false;
+  return nvfp4_mlp_supported(input_.weight(), output_.weight());
+}
+
 at::Tensor DenseMlp::forward(const at::Tensor& x,
                              const MlpContext& context,
                              const at::Tensor& input_scales) const {
@@ -414,14 +554,16 @@ at::Tensor DenseMlp::forward(const at::Tensor& x,
   }
 #endif
 #ifdef INFINITY_TORCH_CUDA_KERNELS
-  // One eligibility rule for both fused forms below: the packed rounded SwiGLU output must be
-  // consumable as FP8 rows without output transforms.
+  // One eligibility rule for both fused forms below: the input projection must be able to produce
+  // the packed activation rows and the output projection must consume FP8 rows without transforms.
   const bool rounded_swiglu =
-      output_.method().accepts_fp8_rows() && activation_.fusion == MlpFusion::RoundedSwiGlu &&
-      activation_.packed && !up_ && !output_.recipe_.input_clip && !output_.recipe_.cast_input;
+      input_.method().accepts_fp8_rows() && output_.method().accepts_fp8_rows() &&
+      activation_.fusion == MlpFusion::RoundedSwiGlu && activation_.packed && !up_ &&
+      !output_.recipe_.input_clip && !output_.recipe_.cast_input;
   // Explicit gated recipes cover the native rounded GELU form and reversed gate/up layouts while
   // the legacy RoundedSwiGlu tag above keeps using its original hook.
   const bool explicit_gated = activation_.fp8_gated_activation.has_value() && input_.fp8() &&
+                              input_.method().accepts_fp8_rows() &&
                               output_.method().accepts_fp8_rows() && activation_.packed && !up_ &&
                               !input_.bias().defined() && !input_.recipe_.input_clip &&
                               !input_.recipe_.cast_input && !input_.recipe_.output_clip &&
@@ -452,6 +594,22 @@ at::Tensor DenseMlp::forward(const at::Tensor& x,
 #endif
   auto middle = input_.execute(x, context, input_scales, epilogue);
 #ifdef INFINITY_TORCH_CUDA_KERNELS
+  // Native block-scaled hook: the format method owns both the activation
+  // arithmetic and its own scale metadata, so this does not reuse the FP8-row
+  // contract. The fusion is limited to the shared rounded-SwiGLU geometry.
+  const bool native_swiglu = activation_.fusion == MlpFusion::RoundedSwiGlu && activation_.packed &&
+                             activation_.gate_first && !up_ && !activation_.quantized_custom &&
+                             input_.method().supports_native_swiglu_quantized() &&
+                             output_.method().accepts_native_quantized_rows() &&
+                             !input_.recipe_.output_clip && !output_.recipe_.input_clip &&
+                             !output_.recipe_.cast_input;
+  if (native_swiglu && middle.is_cuda() && middle.dim() == 2 && middle.is_contiguous() &&
+      middle.size(1) % 2 == 0 && (middle.size(1) / 2) % 16 == 0 &&
+      middle.size(1) / 2 <= fp8_scaled_swiglu_max_width) {
+    auto quantized = input_.method().apply_native_swiglu_quantized(middle, context);
+    if (quantized.defined())
+      return output_.execute_native(quantized, context);
+  }
   if (rounded_swiglu && middle.is_cuda() && middle.dim() == 2 && middle.is_contiguous() &&
       middle.size(1) / 2 <= 32768) {
     auto quantized = fp8_swiglu_quantize(middle);
@@ -488,6 +646,21 @@ bool mxfp8_mlp_supported(const at::Tensor& gate_up, const at::Tensor& down) {
          mxfp8_geometry_supported(device, 128, gate_up.size(0), gate_up.size(1)) &&
          mxfp8_geometry_supported(device, 1, down.size(0), down.size(1)) &&
          mxfp8_geometry_supported(device, 128, down.size(0), down.size(1));
+}
+
+bool nvfp4_mlp_supported(const at::Tensor& gate_up, const at::Tensor& down) {
+  if (!gate_up.is_cuda() || !down.is_cuda() || gate_up.device() != down.device() ||
+      gate_up.dim() != 2 || down.dim() != 2 || gate_up.scalar_type() != at::kBFloat16 ||
+      down.scalar_type() != at::kBFloat16 || gate_up.size(0) <= 0 || down.size(0) <= 0 ||
+      gate_up.size(1) % 16 != 0 || down.size(1) % 16 != 0 || down.size(1) * 2 != gate_up.size(0))
+    return false;
+  const auto device = gate_up.device();
+  if (!nvfp4_provider_supported(device))
+    return false;
+  return nvfp4_geometry_supported(device, 1, gate_up.size(0), gate_up.size(1)) &&
+         nvfp4_geometry_supported(device, 128, gate_up.size(0), gate_up.size(1)) &&
+         nvfp4_geometry_supported(device, 1, down.size(0), down.size(1)) &&
+         nvfp4_geometry_supported(device, 128, down.size(0), down.size(1));
 }
 
 }

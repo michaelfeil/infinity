@@ -46,7 +46,7 @@ if(TARGET torch_cuda AND INFINITY_REQUESTED_CUDA_ARCHITECTURES)
   string(REPLACE " ${INFINITY_TORCH_ARCH_FLAGS_JOINED}" "" CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS}")
   set(CMAKE_CUDA_ARCHITECTURES "${INFINITY_REQUESTED_CUDA_ARCHITECTURES}")
 endif()
-add_library(infinity_torch SHARED bridge.cpp batching/radix.cpp helpers/fp8_linear.cpp helpers/dense_mlp.cpp helpers/mxfp8_linear.cpp helpers/modern_cpu_math.cpp models/decoder_models.cpp models/decision_models.cpp models/dense_models.cpp models/encoder_models.cpp models/gemma_models.cpp models/qwen3_vl_models.cpp models/mistral3_models.cpp models/qwen35_models.cpp batching/cuda_graph.cpp kernels/moe_kernels.cpp)
+add_library(infinity_torch SHARED bridge.cpp batching/radix.cpp helpers/fp8_linear.cpp helpers/dense_mlp.cpp helpers/mxfp8_linear.cpp helpers/nvfp4_linear.cpp helpers/modern_cpu_math.cpp models/decoder_models.cpp models/decision_models.cpp models/dense_models.cpp models/encoder_models.cpp models/gemma_models.cpp models/qwen3_vl_models.cpp models/mistral3_models.cpp models/qwen35_models.cpp batching/cuda_graph.cpp kernels/moe_kernels.cpp)
 target_sources(infinity_torch PRIVATE kernels/block_paged.cpp)
 # Keep separately rounded adapted CPU products and sums.
 if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
@@ -159,7 +159,7 @@ if(TARGET torch_cuda)
   set_source_files_properties(kernels/transformers_norm.cu PROPERTIES
     COMPILE_OPTIONS "--fmad=false;--prec-div=true;--prec-sqrt=true")
   target_sources(infinity_torch PRIVATE kernels/fp8_fusions.cu kernels/mxfp8_fusions.cu)
-  set_source_files_properties(kernels/fp8_fusions.cu kernels/mxfp8_fusions.cu PROPERTIES
+  set_source_files_properties(kernels/fp8_fusions.cu kernels/mxfp8_fusions.cu kernels/nvfp4_quant.cu PROPERTIES
     COMPILE_OPTIONS "--prec-div=true;--prec-sqrt=true")
   target_sources(infinity_torch PRIVATE kernels/laya_features.cu kernels/qwen35_chunk.cu)
   install(DIRECTORY vendor/transformers_gdn DESTINATION share/licenses/infinity_torch)
@@ -225,6 +225,50 @@ if(TARGET torch_cuda)
   target_compile_definitions(infinity_torch PRIVATE INFINITY_TORCH_CUDA_KERNELS)
   set_target_properties(infinity_torch PROPERTIES CUDA_STANDARD 20 CUDA_STANDARD_REQUIRED ON)
   target_link_libraries(infinity_torch PRIVATE torch_cuda c10_cuda CUDA::cublasLt CUDA::cudart)
+  # FP4 short-type conversion is family-specific on Blackwell/Thor (10.x/12.x),
+  # not on Hopper. CUDA 12.9+ understands the -f targets. Do not emit a generic
+  # sm_100/sm_120 SASS image alongside the family image: the driver could prefer
+  # the generic exact-major cubin and silently use the software FP4 fallback.
+  # Keep family SASS plus generic-major PTX forward fallback; older non-family
+  # targets keep generic SASS. Preserve explicit -real/-virtual suffixes.
+  set(INFINITY_NVFP4_ARCHITECTURES "")
+  set(INFINITY_NVFP4_HAS_FAMILY_TARGETS FALSE)
+  if(CMAKE_CUDA_COMPILER_VERSION VERSION_GREATER_EQUAL 12.9)
+    set(INFINITY_NVFP4_HAS_FAMILY_TARGETS TRUE)
+  endif()
+  foreach(arch IN LISTS CMAKE_CUDA_ARCHITECTURES)
+    set(arch_base "${arch}")
+    set(arch_suffix "")
+    if(arch MATCHES "^(.+)-(real|virtual)$")
+      set(arch_base "${CMAKE_MATCH_1}")
+      set(arch_suffix "${CMAKE_MATCH_2}")
+    endif()
+    string(REGEX MATCH "^([0-9]+)" arch_number "${arch_base}")
+    if(INFINITY_NVFP4_HAS_FAMILY_TARGETS AND arch_number MATCHES "^(100|103|110|120|121)$")
+      list(APPEND INFINITY_NVFP4_ARCHITECTURES "${arch_number}-virtual" "${arch_number}f-real")
+    elseif(arch_suffix)
+      list(APPEND INFINITY_NVFP4_ARCHITECTURES "${arch_base}-${arch_suffix}")
+    else()
+      list(APPEND INFINITY_NVFP4_ARCHITECTURES "${arch_base}-real")
+    endif()
+  endforeach()
+  list(REMOVE_DUPLICATES INFINITY_NVFP4_ARCHITECTURES)
+  message(STATUS "NVFP4 quantizer CUDA architectures: ${INFINITY_NVFP4_ARCHITECTURES} (family targets: ${INFINITY_NVFP4_HAS_FAMILY_TARGETS})")
+  add_library(infinity_nvfp4_quant OBJECT kernels/nvfp4_quant.cu)
+  set_target_properties(infinity_nvfp4_quant PROPERTIES
+    POSITION_INDEPENDENT_CODE ON
+    CUDA_STANDARD 20
+    CUDA_STANDARD_REQUIRED ON
+    CUDA_ARCHITECTURES "${INFINITY_NVFP4_ARCHITECTURES}")
+  target_include_directories(infinity_nvfp4_quant PRIVATE
+    "${CMAKE_CURRENT_SOURCE_DIR}"
+    "${CMAKE_CURRENT_BINARY_DIR}"
+    "${TORCH_INSTALL_PREFIX}/include"
+    "${TORCH_INSTALL_PREFIX}/include/torch/csrc/api/include"
+    ${CUDAToolkit_INCLUDE_DIRS})
+  target_compile_definitions(infinity_nvfp4_quant PRIVATE INFINITY_TORCH_CUDA_KERNELS)
+  target_compile_options(infinity_nvfp4_quant PRIVATE -DNDEBUG)
+  target_sources(infinity_torch PRIVATE $<TARGET_OBJECTS:infinity_nvfp4_quant>)
   # Same pinned CUTLASS revision as Candle. Reuse its local checkout when
   # available; CUTLASS_ROOT supports offline native builds elsewhere.
   set(CUTLASS_ROOT "$ENV{CUTLASS_ROOT}" CACHE PATH "Pinned CUTLASS source root")
@@ -353,7 +397,7 @@ if(INFINITY_BUILD_NATIVE_TESTS)
       set_tests_properties(infinity_fa4_disabled PROPERTIES
         ENVIRONMENT "${ENV_VAR_BASE}_TORCH_FA4=0")
     endif()
-    foreach(test output bert_private_flash qwen35_reference qwen35_chunk fp8_linear decoder_fp8 mxfp8_linear fast_kernels encoder_activation encoder_norm decoder_norm cuda_graph gemma_vision_kernels gemma_rotary packed_pool packed_alibi packed_relative_bias moe_kernels moe_cuda_graph torch_flash_fma laya_features)
+    foreach(test output bert_private_flash qwen35_reference qwen35_chunk fp8_linear decoder_fp8 mxfp8_linear nvfp4_mlp fast_kernels encoder_activation encoder_norm decoder_norm cuda_graph gemma_vision_kernels gemma_rotary packed_pool packed_alibi packed_relative_bias moe_kernels moe_cuda_graph torch_flash_fma laya_features)
       add_executable(${test}_test tests/${test}_test.cpp)
       target_compile_features(${test}_test PRIVATE cxx_std_20)
       target_link_libraries(${test}_test PRIVATE infinity_torch "${TORCH_LIBRARIES}")
@@ -378,6 +422,9 @@ if(INFINITY_BUILD_NATIVE_TESTS)
     target_link_libraries(mxfp8_linear_test PRIVATE CUDA::cublasLt)
     target_compile_definitions(mxfp8_linear_test PRIVATE INFINITY_TORCH_CUDA_KERNELS)
     set_tests_properties(mxfp8_linear_cuda PROPERTIES SKIP_RETURN_CODE 77)
+    target_compile_definitions(nvfp4_mlp_test PRIVATE INFINITY_TORCH_CUDA_KERNELS)
+    target_link_libraries(nvfp4_mlp_test PRIVATE CUDA::cublasLt)
+    set_tests_properties(nvfp4_mlp_cuda PROPERTIES SKIP_RETURN_CODE 77)
     target_link_libraries(fast_kernels_test PRIVATE CUDA::cublasLt)
     set_tests_properties(cuda_graph_cuda PROPERTIES
       ENVIRONMENT "TORCH_CUBLAS_WORKSPACE_CACHE=1")
