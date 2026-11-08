@@ -225,6 +225,29 @@ void swiglu_fused_equivalence() {
                        "Empty NVFP4 SwiGLU");
 }
 
+// Exercise both ends of the reciprocal range and the reachable fallback for
+// subnormal denominators. Build tiny BF16 values on CPU before copying them.
+void row_scale_range_golden() {
+  const auto opts = at::TensorOptions().device(at::kCUDA).dtype(at::kBFloat16);
+  auto x = at::zeros({3, 64}, opts.device(at::kCPU));
+  x[0].narrow(0, 0, 16).fill_(std::ldexp(255.f, 120));
+  x[0].narrow(0, 16, 16).fill_(std::ldexp(.09326171875f, 117));
+  x[0].narrow(0, 32, 16).fill_(std::ldexp(.03125f, 117));
+  x[1].narrow(0, 0, 16).fill_(std::ldexp(2688.f, -128));
+  x[2].narrow(0, 0, 16).fill_(std::ldexp(1.f, -133));
+  auto q = infinity::nvfp4_quantize_rows(x.to(opts), true);
+  auto rows = q.row_scales.cpu();
+  auto scales = q.block_scales.view(at::kByte).cpu();
+  TORCH_CHECK(rows[0].item<float>() == std::ldexp(1.f, 117) &&
+                  rows[1].item<float>() == std::ldexp(1.f, -128) &&
+                  rows[2].item<float>() == std::ldexp(1.f, -144),
+              "NVFP4 extreme row scales changed");
+  TORCH_CHECK(scales[0].item<int>() == 123 && scales[1].item<int>() == 8 &&
+                  scales[2].item<int>() == 3 && scales[16].item<int>() == 126 &&
+                  scales[32].item<int>() == 123,
+              "NVFP4 extreme or subnormal block scales changed");
+}
+
 // The last fused width and the first fallback width. The fallback keeps the
 // original two-pass activation/amax/quantize path byte-identical.
 void swiglu_shared_memory_boundary() {
@@ -359,6 +382,7 @@ int main() {
   subnormal_cobatch_invariance();
   subnormal_scale_golden();
   swiglu_fused_equivalence();
+  row_scale_range_golden();
   swiglu_shared_memory_boundary();
   dense_mlp_forward_and_guards();
   return 0;

@@ -70,25 +70,6 @@ __device__ inline void block_atomic_max(int local, int* out) {
   }
 }
 
-// Block-wide max that publishes the result to every thread. The trailing
-// barrier also makes preceding shared-row writes visible to the whole block.
-__device__ inline int block_reduce_max(int local) {
-  local = warp_max(local);
-  __shared__ int partial[kThreads / 32];
-  const int lane = threadIdx.x & 31, warp = threadIdx.x >> 5;
-  if (lane == 0)
-    partial[warp] = local;
-  __syncthreads();
-  if (warp == 0) {
-    int block_max = lane < (blockDim.x >> 5) ? partial[lane] : 0;
-    block_max = warp_max(block_max);
-    if (lane == 0)
-      partial[0] = block_max;
-  }
-  __syncthreads();
-  return partial[0];
-}
-
 __device__ inline float global_scale_from_amax(float amax, bool power2) {
   const float scale = __fdiv_rn(amax, kFp4Max * kE4M3Max);
   if (!(scale > 0.0f))
@@ -100,6 +81,38 @@ __device__ inline float global_scale_from_amax(float amax, bool power2) {
   if (mantissa == 0.5f)
     --exponent;
   return ldexpf(1.0f, exponent);
+}
+
+struct RowGlobalScale {
+  float scale;
+  float reciprocal;
+};
+
+// Block-wide max that publishes the derived power-of-two global scale, and the
+// checked reciprocal of its quantization denominator, to every thread. Only one
+// lane runs the exact division/frexp/ldexp and reciprocal; the trailing barrier
+// (the same second barrier as the previous max publication) broadcasts the
+// shared values and makes preceding shared-row writes visible to the block.
+__device__ inline RowGlobalScale block_reduce_global_scale(int local) {
+  local = warp_max(local);
+  __shared__ int partial[kThreads / 32];
+  __shared__ RowGlobalScale published;
+  const int lane = threadIdx.x & 31, warp = threadIdx.x >> 5;
+  if (lane == 0)
+    partial[warp] = local;
+  __syncthreads();
+  if (warp == 0) {
+    int block_max = lane < (blockDim.x >> 5) ? partial[lane] : 0;
+    block_max = warp_max(block_max);
+    if (lane == 0) {
+      published.scale = global_scale_from_amax(__int_as_float(block_max), true);
+      const float denominator = kFp4Max * published.scale;
+      published.reciprocal =
+          denominator >= 0x1p-126f && denominator <= 0x1p126f ? __frcp_rn(denominator) : 0.0f;
+    }
+  }
+  __syncthreads();
+  return published;
 }
 
 __device__ inline float global_scale_from_bits(const int* amax_bits, bool power2) {
@@ -183,20 +196,41 @@ nvfp4_encode_with_scale(const float* values, float gs, uint8_t scale_byte) {
   return packed;
 }
 
-__device__ inline uint8_t nvfp4_standard_scale(const float* values, float gs) {
+__device__ inline float nvfp4_block_amax(const float* values) {
   float amax = 0.0f;
 #pragma unroll
   for (int i = 0; i < kBlock; ++i)
     if (isfinite(values[i]))
       amax = fmaxf(amax, fabsf(values[i]));
+  return amax;
+}
+
+__device__ inline uint8_t nvfp4_standard_scale(const float* values, float gs) {
+  const float amax = nvfp4_block_amax(values);
   if (!(amax > 0.0f))
     return 0;
   const float target = __fdiv_rn(amax, kFp4Max * gs);
   return static_cast<uint8_t>(__nv_cvt_float_to_fp8(target, __NV_SATFINITE, __NV_E4M3));
 }
 
-__device__ inline uint8_t nvfp4_quantize_block(const float* values, float gs, uint64_t& packed) {
-  const uint8_t scale_byte = nvfp4_standard_scale(values, gs);
+// Rowwise activation global scales are powers of two, so the per-row target
+// denominator is 6*2^e. On the reachable domain (every finite BF16 amax, with a
+// denominator in the checked normal range) the correctly-rounded reciprocal
+// times amax rounds to the same E4M3 byte as the exact quotient. Out-of-range
+// denominators keep the exact division path. Weights use arbitrary global
+// scales and never take this path.
+__device__ inline uint8_t nvfp4_standard_scale_reciprocal(const float* values, float reciprocal) {
+  const float amax = nvfp4_block_amax(values);
+  if (!(amax > 0.0f))
+    return 0;
+  const float target = __fmul_rn(amax, reciprocal);
+  return static_cast<uint8_t>(__nv_cvt_float_to_fp8(target, __NV_SATFINITE, __NV_E4M3));
+}
+
+__device__ inline uint8_t
+nvfp4_quantize_block(const float* values, float gs, uint64_t& packed, float reciprocal = 0.0f) {
+  const uint8_t scale_byte = reciprocal > 0.0f ? nvfp4_standard_scale_reciprocal(values, reciprocal)
+                                               : nvfp4_standard_scale(values, gs);
   packed = nvfp4_encode_with_scale(values, gs, scale_byte);
   return scale_byte;
 }
@@ -293,7 +327,8 @@ __global__ void fused_row_quantize_kernel(const __nv_bfloat16* __restrict__ x,
       }
     }
   }
-  const float gs = global_scale_from_amax(__int_as_float(block_reduce_max(local)), true);
+  const RowGlobalScale row_global = block_reduce_global_scale(local);
+  const float gs = row_global.scale;
   if (threadIdx.x == 0) {
     row_scales[row] = gs;
     if (row == 0)
@@ -311,7 +346,7 @@ __global__ void fused_row_quantize_kernel(const __nv_bfloat16* __restrict__ x,
       values[8 + lane] = __bfloat162float(hi_pack.value[lane]);
     }
     uint64_t packed = 0;
-    const uint8_t scale_byte = nvfp4_quantize_block(values, gs, packed);
+    const uint8_t scale_byte = nvfp4_quantize_block(values, gs, packed, row_global.reciprocal);
     scales[scale_offset(row, block, inner_dim)] = scale_byte;
     *reinterpret_cast<uint64_t*>(q + row * (width / 2) + block * (kBlock / 2)) = packed;
   }
