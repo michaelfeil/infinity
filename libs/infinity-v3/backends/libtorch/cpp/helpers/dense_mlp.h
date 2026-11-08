@@ -15,6 +15,21 @@ enum class MlpProjectionRole { Input, Output, Up };
 enum class MlpFusion { None, RoundedSwiGlu, RoundedBiasGelu };
 at::Tensor mlp_activation(const at::Tensor&, MlpActivation);
 
+/// Native block-scaled activation rows, including block and tensor scales.
+struct MlpNativeQuantized {
+  enum class Format { None, Nvfp4 };
+  Format format = Format::None;
+  at::Tensor values;
+  at::Tensor block_scales;
+  at::Tensor global_scale;
+  int64_t rows = 0, cols = 0;
+  at::Tensor row_scales;
+
+  bool defined() const {
+    return format != Format::None;
+  }
+};
+
 struct ProjectionRecipe {
   // Separate bias preserves a model-dtype GEMM rounding before addition.
   bool separate_bias = false;
@@ -95,6 +110,31 @@ public:
                                                                        Fp8Activation) const {
     return {};
   }
+
+  /// Optional native block-scaled activation hook. Only methods that know how
+  /// to produce a concrete native format return true; this is intentionally
+  /// separate from the FP8-row hook above.
+  virtual bool supports_native_swiglu_quantized() const {
+    return false;
+  }
+
+  virtual MlpNativeQuantized
+  apply_native_swiglu_quantized(const MlpProjection&, const at::Tensor&, const MlpContext&) const {
+    return {};
+  }
+
+  /// Whether this projection can consume the native block-scaled rows emitted
+  /// by another method of the same format.
+  virtual bool accepts_native_quantized_rows() const {
+    return false;
+  }
+
+  virtual at::Tensor apply_native_quantized(const MlpProjection&,
+                                            const MlpNativeQuantized&,
+                                            const at::Tensor&,
+                                            const MlpContext&) const {
+    TORCH_CHECK(false, "MLP method does not accept native block-scaled rows");
+  }
 };
 
 // A loader selects a method using projection metadata, without changing forward.
@@ -115,6 +155,7 @@ class MlpProjection {
                      const at::Tensor& scales,
                      MlpEpilogue = MlpEpilogue::None,
                      bool omit_bias = false) const;
+  at::Tensor execute_native(const MlpNativeQuantized&, const MlpContext&) const;
   void prepare(const MlpMethodFactory&);
 
 public:
@@ -215,6 +256,10 @@ public:
   /// projection, casts/clipping, or wide projections keep the rowwise method.
   bool supports_mxfp8() const;
 
+  /// Load-time qualification for NVFP4 MLP. Only the
+  /// existing packed gate-first rounded SwiGLU geometry is eligible.
+  bool supports_nvfp4() const;
+
   const MlpProjection& input() const {
     return input_;
   }
@@ -234,4 +279,7 @@ public:
 
 /// Load-time qualification for the experimental native MXFP8 MLP method.
 bool mxfp8_mlp_supported(const at::Tensor& gate_up, const at::Tensor& down);
+
+/// Load-time qualification for the native NVFP4 MLP method.
+bool nvfp4_mlp_supported(const at::Tensor& gate_up, const at::Tensor& down);
 }
