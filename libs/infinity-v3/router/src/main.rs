@@ -627,6 +627,7 @@ async fn main() -> Result<()> {
 mod tests {
     use super::*;
     #[test]
+    #[serial_test::serial]
     fn queue_tier_options_default_broadcast_and_validate() {
         let args = Args::try_parse_from(["infinity_v3", "--model-id", "a"]).unwrap();
         assert_eq!(args.models().unwrap()[0].priority_queue_bonus_ms, 1000);
