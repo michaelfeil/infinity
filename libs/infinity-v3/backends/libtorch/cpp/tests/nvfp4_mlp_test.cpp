@@ -188,6 +188,7 @@ void dense_mlp_forward_and_guards() {
   set_nvfp4_flag("1");
   auto nv_mlp = make();
   nv_mlp.prepare(infinity::MlpPrecision::Fp8);
+  nv_mlp.prepare(infinity::MlpPrecision::Fp8); // Released native weights remain prepared.
   TORCH_CHECK(nv_mlp.input().method().accepts_native_quantized_rows() &&
                   nv_mlp.output().method().accepts_native_quantized_rows() &&
                   nv_mlp.input().method().supports_native_swiglu_quantized(),

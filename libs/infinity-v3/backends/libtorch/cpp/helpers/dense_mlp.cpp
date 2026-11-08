@@ -452,6 +452,9 @@ DenseMlp::DenseMlp(MlpProjection gate,
 }
 
 void DenseMlp::prepare(MlpPrecision precision) {
+  // Prepared FP8 methods own released weights; repeated preparation keeps their format.
+  if (precision == MlpPrecision::Fp8 && input_.fp8() && output_.fp8() && (!up_ || up_->fp8()))
+    return;
   // Explicit NVFP4 opt-in; default policy remains MXFP8. Shipping NVFP4 is
   // both-projections only, so a successful qualification uses it for both.
   if (precision == MlpPrecision::Fp8 && nvfp4_mlp_enabled()) {
