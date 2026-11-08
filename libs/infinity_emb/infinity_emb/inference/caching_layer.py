@@ -18,7 +18,7 @@ from infinity_emb.log_handler import logger
 from infinity_emb.primitives import EmbeddingReturnType, QueueItemInner
 
 if CHECK_DISKCACHE.is_available:
-    import diskcache as dc  # type: ignore[import-untyped]
+    import diskcache_community as dc
 
 
 class Cache:
@@ -38,7 +38,9 @@ class Cache:
         self._add_q: queue.Queue = queue.Queue()
         dir = MANAGER.cache_dir / "cache_vectors" f"cache_{cache_name}"
         logger.info(f"caching vectors under: {dir}")
-        self._cache = dc.Cache(dir, size_limit=2**28)
+        self._cache = dc.Cache(
+            dir, size_limit=2**28, disk=dc.SafeDisk.with_numpy().with_options(on_error="miss")
+        )
         self.is_running = False
         self.startup()
 
