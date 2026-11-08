@@ -31,7 +31,8 @@ posthog = {version = "*", optional=true}
 # backend
 # CPU/ROCm containers install matching vendor wheels before the locked dependencies.
 torch = {version = ">=2.8,<3", optional=true}
-sentence-transformers = {version = ">=5.3,<5.4", optional=true}
+# ST 5 changes model-type detection for subclasses and falls back to mean pooling.
+sentence-transformers = {version = ">=4.1,<5", optional=true}
 # Optimum ONNX and ColPali share this Transformers 4 compatibility range.
 transformers = {version = ">=4.57.6,<4.58", optional=true, extras=["sentencepiece"]}
 ctranslate2 = {version = ">=4.8,<5", optional=true}

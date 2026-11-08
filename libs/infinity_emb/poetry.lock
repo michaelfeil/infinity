@@ -3617,7 +3617,7 @@ description = "Python Imaging Library (fork)"
 optional = true
 python-versions = ">=3.11"
 groups = ["main"]
-markers = "extra == \"vision\" or extra == \"all\""
+markers = "extra == \"ct2\" or extra == \"torch\" or extra == \"all\" or extra == \"vision\""
 files = [
     {file = "pillow-13.0.0-cp311-cp311-macosx_10_10_x86_64.whl", hash = "sha256:6f38f3f885a09cafc93fd667b1173a92f379e43785d635e7983c893f0da319fb"},
     {file = "pillow-13.0.0-cp311-cp311-macosx_11_0_arm64.whl", hash = "sha256:37290fbef0c73e2d51d594eb78fded7dc7170d1c3ad0a890269e6fd8c8c4e061"},
@@ -4948,33 +4948,32 @@ test = ["Cython", "array-api-strict (>=2.3.1)", "asv", "gmpy2", "hypothesis (>=6
 
 [[package]]
 name = "sentence-transformers"
-version = "5.3.0"
+version = "4.1.0"
 description = "Embeddings, Retrieval, and Reranking"
 optional = true
-python-versions = ">=3.10"
+python-versions = ">=3.9"
 groups = ["main"]
 markers = "extra == \"ct2\" or extra == \"torch\" or extra == \"all\""
 files = [
-    {file = "sentence_transformers-5.3.0-py3-none-any.whl", hash = "sha256:dca6b98db790274a68185d27a65801b58b4caf653a4e556b5f62827509347c7d"},
-    {file = "sentence_transformers-5.3.0.tar.gz", hash = "sha256:414a0a881f53a4df0e6cbace75f823bfcb6b94d674c42a384b498959b7c065e2"},
+    {file = "sentence_transformers-4.1.0-py3-none-any.whl", hash = "sha256:382a7f6be1244a100ce40495fb7523dbe8d71b3c10b299f81e6b735092b3b8ca"},
+    {file = "sentence_transformers-4.1.0.tar.gz", hash = "sha256:f125ffd1c727533e0eca5d4567de72f84728de8f7482834de442fd90c2c3d50b"},
 ]
 
 [package.dependencies]
 huggingface-hub = ">=0.20.0"
-numpy = "*"
+Pillow = "*"
 scikit-learn = "*"
 scipy = "*"
 torch = ">=1.11.0"
 tqdm = "*"
-transformers = ">=4.41.0,<6.0.0"
+transformers = ">=4.41.0,<5.0.0"
 typing_extensions = ">=4.5.0"
 
 [package.extras]
-dev = ["Pillow", "accelerate (>=0.20.3)", "datasets", "peft", "pre-commit", "pytest", "pytest-cov", "pytest-env"]
-image = ["Pillow"]
-onnx = ["optimum-onnx[onnxruntime]"]
-onnx-gpu = ["optimum-onnx[onnxruntime-gpu]"]
-openvino = ["optimum-intel[openvino]"]
+dev = ["accelerate (>=0.20.3)", "datasets", "peft", "pre-commit", "pytest", "pytest-cov"]
+onnx = ["optimum[onnxruntime] (>=1.23.1)"]
+onnx-gpu = ["optimum[onnxruntime-gpu] (>=1.23.1)"]
+openvino = ["optimum-intel[openvino] (>=1.20.0)"]
 train = ["accelerate (>=0.20.3)", "datasets"]
 
 [[package]]
@@ -6361,4 +6360,4 @@ vision = ["colpali-engine", "pillow", "timm", "torchvision"]
 [metadata]
 lock-version = "2.1"
 python-versions = ">=3.11,<3.14"
-content-hash = "d1d4b7d9f565ac7cbafb7608c5bdfcf7a9d01c879d42cb258f5323825dc185f0"
+content-hash = "f87e499ac31b663e9817e8c383acda6704ea932bb7a534a7d89efd15ab689fe8"
