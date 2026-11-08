@@ -12,7 +12,7 @@ readme = "README.md"
 homepage = "https://github.com/michaelfeil/infinity"
 repository = "https://github.com/michaelfeil/infinity"
 keywords = ["vector", "embedding", "neural", "search", "sentence-transformers","client"]
-{% if pdm %}requires-python = ">=3.8,<4.0"{% endif %}
+{% if pdm %}requires-python = ">=3.11,<4.0"{% endif %}
 {% if poetry %}
 packages = [
     {include = "{{ package_name }}"},
@@ -33,7 +33,7 @@ distribution = true
 {% if poetry %}
 
 [tool.poetry.dependencies]
-python = "^3.8"
+python = "^3.11"
 httpx = ">=0.20.0,<0.29.0"
 attrs = ">=21.3.0"
 python-dateutil = "^2.8.0"

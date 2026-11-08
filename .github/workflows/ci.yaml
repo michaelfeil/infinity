@@ -43,7 +43,7 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  POETRY_VERSION: "1.8.4"
+  POETRY_VERSION: "2.5.1"
   WORKDIR: "libs/infinity_emb"
 
 jobs:
@@ -82,3 +82,33 @@ jobs:
       upload_coverage: false
       extra_poetry: "--with test"
     secrets: inherit
+
+  build-python-containers:
+    if: github.event_name != 'release'
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        variant: [cpu, nvidia]
+    steps:
+      - uses: actions/checkout@v7
+      - name: Free disk space
+        uses: ./.github/actions/disk_cleanup
+        with:
+          tool-cache: false
+          android: true
+          dotnet: true
+          haskell: true
+          large-packages: true
+          docker-images: false
+          swap-storage: false
+      - uses: docker/setup-buildx-action@v4
+      - name: Build the Python container
+        uses: docker/build-push-action@v7
+        with:
+          context: libs/infinity_emb
+          file: libs/infinity_emb/Dockerfile.${{ matrix.variant }}_auto
+          platforms: linux/amd64
+          push: false
+          cache-from: type=gha,scope=python-${{ matrix.variant }}
+          cache-to: type=gha,mode=max,scope=python-${{ matrix.variant }}

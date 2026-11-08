@@ -7,7 +7,7 @@ import pytest
 import requests
 from asgi_lifespan import LifespanManager
 import time
-from httpx import AsyncClient
+from httpx import ASGITransport, AsyncClient
 from openai import APIConnectionError, AsyncOpenAI
 
 from infinity_emb import create_server
@@ -42,7 +42,7 @@ app = create_server(
 
 @pytest.fixture()
 async def client():
-    async with AsyncClient(app=app, base_url=baseurl, timeout=20) as client, LifespanManager(app):
+    async with AsyncClient(transport=ASGITransport(app=app), base_url=baseurl, timeout=20) as client, LifespanManager(app):
         yield client
 
 

@@ -10,7 +10,7 @@ from unittest import TestCase
 import numpy as np
 import pytest
 from asgi_lifespan import LifespanManager
-from httpx import AsyncClient
+from httpx import ASGITransport, AsyncClient
 
 from infinity_emb import create_server
 from infinity_emb.args import EngineArgs
@@ -44,7 +44,7 @@ app = create_server(
 
 @pytest.fixture()
 async def client():
-    async with AsyncClient(app=app, base_url="http://test") as client, LifespanManager(app):
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client, LifespanManager(app):
         yield client
 
 

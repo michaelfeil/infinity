@@ -4,7 +4,7 @@ import itertools
 import pytest
 import torch
 from asgi_lifespan import LifespanManager
-from httpx import AsyncClient
+from httpx import ASGITransport, AsyncClient
 from transformers import pipeline  # type: ignore[import-untyped]
 
 from infinity_emb import create_server
@@ -35,7 +35,7 @@ def model_base() -> pipeline:
 
 @pytest.fixture()
 async def client():
-    async with AsyncClient(app=app, base_url="http://test", timeout=20) as client, LifespanManager(
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test", timeout=20) as client, LifespanManager(
         app
     ):
         yield client

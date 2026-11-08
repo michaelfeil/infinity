@@ -207,7 +207,7 @@ class BatchHandler:
 
         if not raw_scores:
             # perform sigmoid on scores
-            scores = 1 / (1 + np.exp(-np.array(scores)))
+            scores = (1 / (1 + np.exp(-np.array(scores)))).tolist()
 
         results = [
             RerankReturnType(relevance_score=scores[i], index=i, document=docs[i])

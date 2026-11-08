@@ -11,7 +11,7 @@ include = ["CHANGELOG.md", "infinity_client/py.typed"]
 
 
 [tool.poetry.dependencies]
-python = "^3.8"
+python = "^3.11"
 httpx = ">=0.20.0,<0.29.0"
 attrs = ">=21.3.0"
 python-dateutil = "^2.8.0"

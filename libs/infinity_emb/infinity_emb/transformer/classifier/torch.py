@@ -1,6 +1,8 @@
 # SPDX-License-Identifier: MIT
 # Copyright (c) 2023-now michaelfeil
 
+from typing import Any, cast
+
 from infinity_emb._optional_imports import CHECK_TRANSFORMERS, CHECK_TORCH
 from infinity_emb.args import EngineArgs
 from infinity_emb.log_handler import logger
@@ -59,7 +61,7 @@ class SentenceClassifier(BaseClassifer):
 
         if engine_args.compile:
             logger.info("using torch.compile(dynamic=True)")
-            self._pipe.model = torch.compile(self._pipe.model, dynamic=True)
+            self._pipe.model = cast(Any, torch.compile(self._pipe.model, dynamic=True))
 
         self._infinity_tokenizer = AutoTokenizer.from_pretrained(
             engine_args.model_name_or_path,

@@ -2,7 +2,7 @@ from concurrent.futures import Future
 from typing import Collection, Literal, Union
 
 from infinity_emb import EngineArgs, SyncEngineArray  # type: ignore
-from infinity_emb.infinity_server import AutoPadding
+from infinity_emb.cli import AutoPadding
 
 __all__ = ["BatchedInference"]
 

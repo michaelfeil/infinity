@@ -15,6 +15,8 @@
 
 # Infinity Python / v2 ♾️
 
+Requires Python 3.11–3.13. CPU and NVIDIA containers use Ubuntu 24.04 and Python 3.12.
+
 Looking for the native Rust/LibTorch server? See [Infinity v3](https://github.com/michaelfeil/infinity) and its [quickstart](https://michaelfeil.eu/infinity/main/v3/quickstart/). This page documents the Python / v2 server.
 
 [![codecov][codecov-shield]][codecov-url]
