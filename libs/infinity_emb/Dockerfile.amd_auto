@@ -2,7 +2,7 @@
 # This file is generated from Dockerfile.jinja2. Do not edit the Dockerfile.cuda|cpu|amd file directly.
 # Only contribute to the Dockerfile.jinja2 and dockerfile_template.yaml and regenerate the Dockerfile.cuda|cpu|amd
 
-FROM rocm/pytorch:rocm7.0.2_ubuntu24.04_py3.12_pytorch_release_2.8.0 AS base
+FROM rocm/pytorch:rocm6.4.3_ubuntu24.04_py3.12_pytorch_release_2.6.0 AS base
 
 ENV PYTHONUNBUFFERED=1 \
     # pip
@@ -53,7 +53,7 @@ ENV GPU_ARCH=${GPU_ARCH}
 # GPU architecture specific installations
 RUN cd /opt/rocm/share/amd_smi && python -m pip wheel . --wheel-dir=/install
 RUN apt update -y && apt install migraphx -y
-RUN if [ "$GPU_ARCH" = "gfx90a" ] || [ "$GPU_ARCH" = "gfx942" ] || [ "$GPU_ARCH" = "gfx1100" ]; then \
+RUN if [ "$GPU_ARCH" = "gfx90a" ] || [ "$GPU_ARCH" = "gfx942" ]; then \
     # OPTION1: Follow the steps here to install onnxruntime-rocm 
     # https://huggingface.co/docs/optimum/onnxruntime/usage_guides/amdgpu
     . .venv/bin/activate && python -m pip uninstall onnxruntime -y \
@@ -71,6 +71,13 @@ RUN if [ "$GPU_ARCH" = "gfx90a" ] || [ "$GPU_ARCH" = "gfx942" ] || [ "$GPU_ARCH"
     && git clone https://github.com/huggingface/optimum-amd.git \
     && cd optimum-amd \
     && python -m pip install -e .; \
+elif [ "$GPU_ARCH" = "gfx1100" ]; then \
+    # OPTION2: Install onnxruntime-rocm from the wheel
+    . .venv/bin/activate && python -m pip uninstall onnxruntime onnxruntime-rocm -y && python -m pip install https://repo.radeon.com/rocm/manylinux/rocm-rel-6.4.3/onnxruntime_rocm-1.21.0-cp312-cp312-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl \
+    && python -m pip install /install/*.whl \
+    && git clone https://github.com/huggingface/optimum-amd.git /tmp-optimum \
+    && cd /tmp-optimum \
+    && python -m pip install .; \
 else \
     echo "NO GPU_ARCH, skip optium: ${GPU_ARCH}"; \
 fi

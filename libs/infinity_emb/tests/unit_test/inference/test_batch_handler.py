@@ -1,7 +1,6 @@
 import asyncio
 import copy
 import random
-import sys
 import time
 
 import numpy as np
@@ -22,8 +21,6 @@ MODEL_NAME: str = pytest.DEFAULT_BERT_MODEL  # type: ignore[assignment]
 
 @pytest.fixture
 async def load_patched_bh() -> tuple[SentenceTransformerPatched, BatchHandler]:
-    if sys.version_info >= (3, 12) and sys.platform in ["win32", "darwin"]:
-        pytest.skip("windows and macos are not stable with python3.12")
     model = SentenceTransformerPatched(
         engine_args=EngineArgs(
             model_name_or_path=MODEL_NAME,
