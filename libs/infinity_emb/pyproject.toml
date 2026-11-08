@@ -38,7 +38,8 @@ transformers = {version = ">=4.47,<4.48", optional=true, extras=["sentencepiece"
 # Declare tokenizer dependencies explicitly so Poetry keeps them in model extras.
 sentencepiece = {version = ">=0.2.1,<0.3", optional=true}
 protobuf = {version = ">=5,<8", optional=true}
-ctranslate2 = {version = ">=4.8,<5", optional=true}
+# Later converters require the newer Transformers dtype argument.
+ctranslate2 = {version = ">=4.6.2,<4.6.3", optional=true}
 optimum = {version = ">=2.1,<2.2", optional=true, extras=["onnxruntime"]}
 onnx = {version = ">=1.19.1,<2", optional=true}
 einops = {version = "*", optional=true}
