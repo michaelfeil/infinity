@@ -108,7 +108,7 @@ def optimize_model(
 
     onnx_path = Path(file_name)
     if onnx_path.is_absolute():
-        onnx_path = onnx_path.relative_to(Path(model_name_or_path).resolve())
+        onnx_path = onnx_path.relative_to(Path(model_name_or_path).absolute())
     elif Path(model_name_or_path).is_dir() and onnx_path.is_relative_to(model_name_or_path):
         onnx_path = onnx_path.relative_to(model_name_or_path)
     subfolder = onnx_path.parent.as_posix() if onnx_path.parent != Path(".") else ""
