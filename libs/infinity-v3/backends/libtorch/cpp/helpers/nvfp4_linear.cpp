@@ -45,7 +45,7 @@ bool nvfp4_provider_supported(const c10::Device& device) {
 }
 
 bool nvfp4_geometry_supported(const c10::Device& device, int64_t m, int64_t n, int64_t k) {
-  return nvfp4_provider_supported(device) && m > 0 && n > 0 && k > 0 && k % 16 == 0 && n % 16 == 0;
+  return nvfp4_provider_supported(device) && m > 0 && n > 0 && k > 0 && k % 32 == 0 && n % 16 == 0;
 }
 
 at::Tensor nvfp4_gemm(const Nvfp4Quantized& lhs, const Nvfp4Quantized& rhs) {
@@ -104,9 +104,9 @@ at::Tensor nvfp4_gemm(const Nvfp4Quantized& lhs, const Nvfp4Quantized& rhs) {
 Nvfp4Linear::Nvfp4Linear(const at::Tensor& weight) {
 #ifdef INFINITY_TORCH_CUDA_KERNELS
   TORCH_CHECK(weight.is_cuda() && weight.dim() == 2 && weight.size(0) > 0 &&
-                  weight.size(0) % 16 == 0 && weight.size(1) % 16 == 0 &&
+                  weight.size(0) % 16 == 0 && weight.size(1) % 32 == 0 &&
                   weight.scalar_type() == at::kBFloat16,
-              "NVFP4 MLP weights require BF16 [N,K] with N and K divisible by 16");
+              "NVFP4 MLP weights require BF16 [N,K] with N divisible by 16 and K by 32");
   TORCH_CHECK(nvfp4_provider_supported(weight.device()),
               "NVFP4 MLP requires a Blackwell device with native block-scaling support");
   c10::cuda::CUDAGuard guard(weight.device());

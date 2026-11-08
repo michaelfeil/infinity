@@ -513,8 +513,6 @@ bool DenseMlp::supports_nvfp4() const {
       output_.recipe_.input_clip || output_.recipe_.cast_input || output_.recipe_.output_clip ||
       input_.bias_.defined() || !input_.weight().defined() || !output_.weight().defined())
     return false;
-  if (input_.output_width() % 2 != 0 || input_.output_width() / 2 > fp8_scaled_swiglu_max_width)
-    return false;
   return nvfp4_mlp_supported(input_.weight(), output_.weight());
 }
 
@@ -604,8 +602,7 @@ at::Tensor DenseMlp::forward(const at::Tensor& x,
                              !input_.recipe_.output_clip && !output_.recipe_.input_clip &&
                              !output_.recipe_.cast_input;
   if (native_swiglu && middle.is_cuda() && middle.dim() == 2 && middle.is_contiguous() &&
-      middle.size(1) % 2 == 0 && (middle.size(1) / 2) % 16 == 0 &&
-      middle.size(1) / 2 <= fp8_scaled_swiglu_max_width) {
+      middle.size(1) % 2 == 0 && (middle.size(1) / 2) % 16 == 0) {
     auto quantized = input_.method().apply_native_swiglu_quantized(middle, context);
     if (quantized.defined())
       return output_.execute_native(quantized, context);
@@ -652,7 +649,7 @@ bool nvfp4_mlp_supported(const at::Tensor& gate_up, const at::Tensor& down) {
   if (!gate_up.is_cuda() || !down.is_cuda() || gate_up.device() != down.device() ||
       gate_up.dim() != 2 || down.dim() != 2 || gate_up.scalar_type() != at::kBFloat16 ||
       down.scalar_type() != at::kBFloat16 || gate_up.size(0) <= 0 || down.size(0) <= 0 ||
-      gate_up.size(1) % 16 != 0 || down.size(1) % 16 != 0 || down.size(1) * 2 != gate_up.size(0))
+      gate_up.size(1) % 32 != 0 || down.size(1) % 32 != 0 || down.size(1) * 2 != gate_up.size(0))
     return false;
   const auto device = gate_up.device();
   if (!nvfp4_provider_supported(device))

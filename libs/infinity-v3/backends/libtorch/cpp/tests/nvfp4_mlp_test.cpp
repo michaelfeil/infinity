@@ -164,6 +164,29 @@ void dense_mlp_forward_and_guards() {
   auto gemma = out.forward(infinity::gemma_gated_cuda(gu, false));
   TORCH_CHECK(at::equal(fused, code5) && at::equal(fused, gemma),
               "Fused NVFP4 MLP changed exact code-5/Gemma quantized output");
+
+  // NVFP4 tiles wide activations; the rowwise FP8 fusion's width limit does not apply.
+  constexpr int64_t intermediate = 32896;
+  auto wide_gate = at::randn({2 * intermediate, 128}, opts) * .02f;
+  auto wide_down = at::randn({128, intermediate}, opts) * .02f;
+  auto wide_x = at::randn({2, 128}, opts) * .5f;
+  infinity::DenseMlp wide({wide_gate}, {wide_down}, recipe);
+  TORCH_CHECK(wide.supports_nvfp4(), "Wide tiled NVFP4 MLP was rejected");
+  wide.prepare(infinity::MlpPrecision::Fp8);
+  infinity::Nvfp4Linear wide_in(wide_gate), wide_out(wide_down);
+  auto reference = wide_out.forward(infinity::fused_gated_activation(wide_in.forward(wide_x), 5));
+  TORCH_CHECK(at::equal(wide.forward(wide_x), reference),
+              "Wide NVFP4 MLP changed exact composed output");
+
+  // cuBLASLt cannot execute a packed K that is only 8-byte aligned. Reject it at preparation.
+  infinity::DenseMlp unaligned({at::randn({64, 48}, opts)}, {at::randn({48, 32}, opts)}, recipe);
+  rejected = false;
+  try {
+    unaligned.prepare(infinity::MlpPrecision::Fp8);
+  } catch (const c10::Error&) {
+    rejected = true;
+  }
+  TORCH_CHECK(rejected && !unaligned.fp8(), "Unsupported packed K was accepted at preparation");
   set_nvfp4_flag(nullptr);
 }
 } // namespace
