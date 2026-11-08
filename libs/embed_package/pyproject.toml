@@ -14,30 +14,26 @@ url = "https://download.pytorch.org/whl/cpu"
 priority = "explicit"
 
 [tool.poetry.dependencies]
-python = ">=3.11,<3.14"
-infinity_emb = {version = ">=0.0.79,<0.1", extras = ["optimum","vision","torch","audio"]}
+python = ">=3.9,<4"
+# infinity_emb = {path = "../infinity_emb", extras = ["optimum","vision","torch","audio"]}
+infinity_emb = {version = "0.0.58", extras = ["optimum","vision","torch","audio"]}
 [tool.poetry.group.test.dependencies]
-# Exercise the server from this checkout while retaining a published version constraint.
-infinity_emb = {path = "../infinity_emb", develop = true, extras = ["optimum","vision","torch","audio"]}
-pytest = ">=8.4,<10"
+pytest = "^8.0.0"
 coverage = {extras = ["toml"], version = "^7.6.3"}
-mypy = ">=1.19,<2"
+mypy = "^1.12.0"
 
 [tool.poetry.group.codespell.dependencies]
 codespell = "^2.2.0"
 
 [tool.poetry.group.lint.dependencies]
-ruff = ">=0.15,<0.18"
+ruff = "^0.2.0"
 types-toml = "^0.10.8.1"
 types-redis = "^4.3.21.6"
 types-pytz = "^2023.3.0.0"
-black = ">=26,<27"
+black = "^23.1.0"
 types-chardet = "^5.0.4.6"
 mypy-protobuf = "^3.0.0"
 
 [build-system]
 requires = ["poetry-core"]
 build-backend = "poetry.core.masonry.api"
-
-[tool.ruff.lint]
-select = ["E4", "E7", "E9", "F"]

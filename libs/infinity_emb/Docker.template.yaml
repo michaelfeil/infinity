@@ -6,7 +6,11 @@ nvidia:
   base_image: "nvidia/cuda:12.9.1-base-ubuntu24.04"
   main_install: 'RUN poetry install --no-interaction --no-ansi --no-root --extras "${EXTRAS}" --without lint,test && poetry cache clear pypi --all'
   python_version: python3.12
-  # Use PyTorch SDPA; the old FlashAttention wheel was tied to Python 3.10/x86.
+  extra_installs_main: |
+    # Match the optional wheel to Python 3.12 and Torch 2.8's C++ ABI.
+    RUN if [ "$(uname -m)" = "x86_64" ]; then \
+          poetry run $PYTHON -m pip install --no-cache-dir https://github.com/Dao-AILab/flash-attention/releases/download/v2.8.3/flash_attn-2.8.3+cu12torch2.8cxx11abiTRUE-cp312-cp312-linux_x86_64.whl; \
+        fi
   extra_env_variables: |
     RUN rm -rf /usr/local/cuda-12.9/compat
     ENV NVIDIA_DISABLE_REQUIRE=true

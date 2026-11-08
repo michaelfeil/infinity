@@ -40,7 +40,11 @@ RUN poetry install --no-interaction --no-ansi --no-root --extras "${EXTRAS}" --w
 COPY infinity_emb infinity_emb
 # Install dependency with infinity_emb package
 RUN poetry install --no-interaction --no-ansi  --extras "${EXTRAS}" --without lint,test && poetry cache clear pypi --all
-#
+# Match the optional wheel to Python 3.12 and Torch 2.8's C++ ABI.
+RUN if [ "$(uname -m)" = "x86_64" ]; then \
+      poetry run $PYTHON -m pip install --no-cache-dir https://github.com/Dao-AILab/flash-attention/releases/download/v2.8.3/flash_attn-2.8.3+cu12torch2.8cxx11abiTRUE-cp312-cp312-linux_x86_64.whl; \
+    fi
+
 
 
 FROM builder AS testing

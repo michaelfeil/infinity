@@ -509,7 +509,7 @@ After startup, the Swagger Ui will be available under `{url}:{port}/docs`, in th
 
 ## Contribute and Develop
 
-Install via Poetry 1.8.1, Python3.11 on Ubuntu 22.04
+Install via Poetry 2.5.1, Python 3.12 on Ubuntu 24.04
 ```bash
 cd libs/infinity_emb
 poetry install --extras all --with lint,test

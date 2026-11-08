@@ -30,8 +30,7 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-24.04, windows-latest] # macos-latest
-        python-version:
-          - "3.13"
+        python-version: ${{ fromJSON(inputs.working-directory == 'libs/embed_package' && '["3.12"]' || '["3.13"]') }}
         coverage_tests: ["unit_test", "end_to_end"]
 
     runs-on: ${{ matrix.os }}
@@ -75,7 +74,7 @@ jobs:
       - name: Run Pytest Coverage
         if: ${{ inputs.working-directory == 'libs/infinity_emb' }}
         run: |
-          poetry run coverage run -m --source ./infinity_emb pytest tests/${{ matrix.coverage_tests }} -m "not performance"
+          poetry run coverage run -m --source ./infinity_emb pytest tests/${{ matrix.coverage_tests }}
           poetry run coverage xml
         env:
           HF_TOKEN: ${{ secrets.HFTOKEN_NOPERMISSIONS }}
@@ -101,9 +100,7 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-24.04, windows-latest] # macos-latest
-        python-version:
-          - "3.11"
-          - "3.12"
+        python-version: ${{ fromJSON(inputs.working-directory == 'libs/embed_package' && '["3.11"]' || '["3.11", "3.12"]') }}
         coverage_tests: ["unit_test", "end_to_end"]
 
     runs-on: ${{ matrix.os }}
@@ -146,7 +143,7 @@ jobs:
       - name: Run Pytest Coverage
         if: ${{ inputs.working-directory == 'libs/infinity_emb' }}
         run: |
-          poetry run coverage run -m --source ./infinity_emb pytest tests/${{ matrix.coverage_tests }} -m "not performance"
+          poetry run coverage run -m --source ./infinity_emb pytest tests/${{ matrix.coverage_tests }}
           poetry run coverage xml
 
       - name: Run Pytest Coverage w/o infinity

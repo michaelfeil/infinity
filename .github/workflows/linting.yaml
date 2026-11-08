@@ -33,9 +33,7 @@ jobs:
         # GitHub rate-limits how many jobs can be running at any one time.
         # Starting new jobs is also relatively slow,
         # so linting on fewer versions makes CI faster.
-        python-version:
-          - "3.11"
-          - "3.13"
+        python-version: ${{ fromJSON(inputs.working-directory == 'libs/embed_package' && '["3.11", "3.12"]' || '["3.11", "3.13"]') }}
     steps:
       - name: Checkout
         uses: actions/checkout@v7

@@ -184,7 +184,7 @@ def optimize_model(
         )
         optimization_config = OptimizationConfig(
             optimization_level=99,
-            optimize_with_onnxruntime_only=False,
+            enable_transformers_specific_optimizations=True,
             optimize_for_gpu=is_gpu,
             fp16=is_gpu,
             # enable_gelu_approximation=True,
