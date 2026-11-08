@@ -23,7 +23,8 @@ env:
 jobs:
   build:
     name: "make lint #${{ matrix.python-version }}"
-    runs-on: ubuntu-latest
+    # Keep Python 3.9 available; Ubuntu 26.04 has no setup-python build.
+    runs-on: ubuntu-24.04
     strategy:
       matrix:
         # Only lint on the min and max supported Python versions.
