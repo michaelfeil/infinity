@@ -255,6 +255,14 @@ void row_scale_gemm_golden() {
   auto expected = at::cat({at::full({1, 16}, 33.f, opts), at::full({1, 16}, 66.f, opts)}, 0);
   TORCH_CHECK(at::equal(linear.forward(x), expected),
               "NVFP4 row-scale GEMM golden changed decoded output");
+  auto restore = at::full({2, 16}, std::ldexp(1.f, 120), opts);
+  auto factors = at::tensor({std::ldexp(1.f, -140), std::ldexp(1.f, -139)}, opts.dtype(at::kFloat));
+  infinity::nvfp4_apply_row_scales_(restore, factors);
+  auto expected_restore = at::cat({at::full({1, 16}, std::ldexp(1.f, -20), opts),
+                                   at::full({1, 16}, std::ldexp(1.f, -19), opts)},
+                                  0);
+  TORCH_CHECK(at::equal(restore, expected_restore),
+              "NVFP4 row-scale restore must keep F32 subnormal factors");
 }
 } // namespace
 

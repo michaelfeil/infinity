@@ -248,6 +248,23 @@ __global__ void swiglu_activation_amax_kernel(const __nv_bfloat16* __restrict__ 
   }
   block_atomic_max(local, row_amax + row);
 }
+
+// Vectorized restore for a contiguous BF16 [rows, cols] product: one CTA per row,
+// eight BF16 values per thread, one F32 multiply and one BF16 RNE per lane.
+__global__ void row_scale_vector_kernel(__nv_bfloat16* __restrict__ values,
+                                        const float* __restrict__ row_scales,
+                                        int64_t cols) {
+  const int64_t row = blockIdx.x;
+  auto* packs = reinterpret_cast<VectorPack<__nv_bfloat16, 8>*>(values + row * cols);
+  const float scale = __ldg(row_scales + row);
+  for (int64_t i = threadIdx.x; i < cols / 8; i += blockDim.x) {
+    auto pack = packs[i];
+#pragma unroll
+    for (int lane = 0; lane < 8; ++lane)
+      pack.value[lane] = __float2bfloat16_rn(__fmul_rn(__bfloat162float(pack.value[lane]), scale));
+    packs[i] = pack;
+  }
+}
 } // namespace
 
 int64_t nvfp4_scale_elements(int64_t rows, int64_t cols) {
@@ -413,6 +430,23 @@ Nvfp4Quantized nvfp4_swiglu_quantize(const at::Tensor& gate_up,
 }
 
 void nvfp4_apply_row_scales_(at::Tensor& output, const at::Tensor& row_scales) {
+  if (output.is_cuda() && output.dim() == 2 && output.scalar_type() == at::kBFloat16 &&
+      output.is_contiguous() && output.size(0) > 0 && output.size(0) <= 2147483647 &&
+      output.size(1) % 8 == 0 && reinterpret_cast<uintptr_t>(output.data_ptr()) % 16 == 0 &&
+      row_scales.is_cuda() && row_scales.dim() == 1 && row_scales.size(0) == output.size(0) &&
+      row_scales.scalar_type() == at::kFloat && row_scales.is_contiguous() &&
+      row_scales.device() == output.device()) {
+    c10::cuda::CUDAGuard guard(output.device());
+    row_scale_vector_kernel<<<static_cast<unsigned>(output.size(0)),
+                              kThreads,
+                              0,
+                              at::cuda::getCurrentCUDAStream()>>>(
+        reinterpret_cast<__nv_bfloat16*>(output.mutable_data_ptr()),
+        row_scales.const_data_ptr<float>(),
+        output.size(1));
+    C10_CUDA_KERNEL_LAUNCH_CHECK();
+    return;
+  }
   auto scales = row_scales.unsqueeze(1);
   auto iter = at::TensorIteratorConfig()
                   .check_all_same_dtype(false)
