@@ -22,6 +22,9 @@ constexpr int64_t kScaleTile = 128;
 constexpr int64_t kScaleK = 4;
 constexpr int64_t kBlock = 16;
 constexpr int kThreads = 256;
+// Portable default per-block shared memory is 48 KiB. Reserve a small static
+// reduction/alignment allowance so the fused row kernel needs no opt-in.
+constexpr int64_t kFusedRowBytesLimit = 48 * 1024 - 256;
 constexpr float kE4M3Max = 448.0f;
 constexpr float kFp4Max = 6.0f;
 
@@ -67,8 +70,26 @@ __device__ inline void block_atomic_max(int local, int* out) {
   }
 }
 
-__device__ inline float global_scale_from_bits(const int* amax_bits, bool power2) {
-  const float amax = __int_as_float(__ldg(amax_bits));
+// Block-wide max that publishes the result to every thread. The trailing
+// barrier also makes preceding shared-row writes visible to the whole block.
+__device__ inline int block_reduce_max(int local) {
+  local = warp_max(local);
+  __shared__ int partial[kThreads / 32];
+  const int lane = threadIdx.x & 31, warp = threadIdx.x >> 5;
+  if (lane == 0)
+    partial[warp] = local;
+  __syncthreads();
+  if (warp == 0) {
+    int block_max = lane < (blockDim.x >> 5) ? partial[lane] : 0;
+    block_max = warp_max(block_max);
+    if (lane == 0)
+      partial[0] = block_max;
+  }
+  __syncthreads();
+  return partial[0];
+}
+
+__device__ inline float global_scale_from_amax(float amax, bool power2) {
   const float scale = __fdiv_rn(amax, kFp4Max * kE4M3Max);
   if (!(scale > 0.0f))
     return 1.0f;
@@ -79,6 +100,10 @@ __device__ inline float global_scale_from_bits(const int* amax_bits, bool power2
   if (mantissa == 0.5f)
     --exponent;
   return ldexpf(1.0f, exponent);
+}
+
+__device__ inline float global_scale_from_bits(const int* amax_bits, bool power2) {
+  return global_scale_from_amax(__int_as_float(__ldg(amax_bits)), power2);
 }
 
 // Exact arithmetic used by the shared fused_gated_activation code-5 pair kernel.
@@ -210,6 +235,88 @@ __global__ void nvfp4_quantize_kernel(const __nv_bfloat16* __restrict__ x,
   }
 }
 
+// One CTA per row. Materialize the BF16 row once (either a plain rowwise copy or
+// the exact restored rounded-BF16 SwiGLU pair), reduce the row amax in-block,
+// then quantize the same shared row without a global BF16 intermediate or a
+// second global amax pass. The shared row is small enough to need no opt-in.
+template <bool kSwiGlu>
+__global__ void fused_row_quantize_kernel(const __nv_bfloat16* __restrict__ x,
+                                          uint8_t* __restrict__ q,
+                                          uint8_t* __restrict__ scales,
+                                          int64_t width,
+                                          int64_t inner_dim,
+                                          const float* __restrict__ gate_up_row_scales,
+                                          bool has_row_scales,
+                                          float* __restrict__ global_scale,
+                                          float* __restrict__ row_scales) {
+  extern __shared__ __align__(16) unsigned char shared_bytes[];
+  auto* shared_row = reinterpret_cast<__nv_bfloat16*>(shared_bytes);
+  const int64_t row = blockIdx.x;
+  const int64_t vectors_per_row = width / 8;
+  int local = 0;
+  if constexpr (kSwiGlu) {
+    const auto* base = reinterpret_cast<const VectorPack<__nv_bfloat162, 4>*>(x + row * 2 * width);
+    auto* output = reinterpret_cast<VectorPack<__nv_bfloat162, 4>*>(shared_row);
+    const float row_scale = has_row_scales ? __ldg(gate_up_row_scales + row) : 0.0f;
+    for (int64_t col = threadIdx.x; col < vectors_per_row; col += blockDim.x) {
+      const auto gate = base[col];
+      const auto up = base[vectors_per_row + col];
+      VectorPack<__nv_bfloat162, 4> result;
+#pragma unroll
+      for (int lane = 0; lane < 4; ++lane) {
+        const auto gate_value =
+            has_row_scales ? scale_bfloat162(gate.value[lane], row_scale) : gate.value[lane];
+        const auto up_value =
+            has_row_scales ? scale_bfloat162(up.value[lane], row_scale) : up.value[lane];
+        const auto value = gated_silu_pair(gate_value, up_value);
+        result.value[lane] = value;
+        const float lo = __bfloat162float(__low2bfloat16(value));
+        const float hi = __bfloat162float(__high2bfloat16(value));
+        if (isfinite(lo))
+          local = max(local, __float_as_int(fabsf(lo)));
+        if (isfinite(hi))
+          local = max(local, __float_as_int(fabsf(hi)));
+      }
+      output[col] = result;
+    }
+  } else {
+    const auto* input = reinterpret_cast<const VectorPack<__nv_bfloat16, 8>*>(x + row * width);
+    auto* output = reinterpret_cast<VectorPack<__nv_bfloat16, 8>*>(shared_row);
+    for (int64_t i = threadIdx.x; i < vectors_per_row; i += blockDim.x) {
+      const auto pack = input[i];
+      output[i] = pack;
+#pragma unroll
+      for (int lane = 0; lane < 8; ++lane) {
+        const float value = fabsf(__bfloat162float(pack.value[lane]));
+        if (isfinite(value))
+          local = max(local, __float_as_int(value));
+      }
+    }
+  }
+  const float gs = global_scale_from_amax(__int_as_float(block_reduce_max(local)), true);
+  if (threadIdx.x == 0) {
+    row_scales[row] = gs;
+    if (row == 0)
+      global_scale[0] = 1.0f;
+  }
+  const int64_t blocks = width / kBlock;
+  const auto* vectors = reinterpret_cast<const VectorPack<__nv_bfloat16, 8>*>(shared_row);
+  for (int64_t block = threadIdx.x; block < blocks; block += blockDim.x) {
+    const auto lo_pack = vectors[block * 2];
+    const auto hi_pack = vectors[block * 2 + 1];
+    float values[kBlock];
+#pragma unroll
+    for (int lane = 0; lane < 8; ++lane) {
+      values[lane] = __bfloat162float(lo_pack.value[lane]);
+      values[8 + lane] = __bfloat162float(hi_pack.value[lane]);
+    }
+    uint64_t packed = 0;
+    const uint8_t scale_byte = nvfp4_quantize_block(values, gs, packed);
+    scales[scale_offset(row, block, inner_dim)] = scale_byte;
+    *reinterpret_cast<uint64_t*>(q + row * (width / 2) + block * (kBlock / 2)) = packed;
+  }
+}
+
 __global__ void swiglu_activation_amax_kernel(const __nv_bfloat16* __restrict__ x,
                                               __nv_bfloat16* __restrict__ activated,
                                               int64_t width,
@@ -318,20 +425,35 @@ Nvfp4Quantized nvfp4_quantize_rows(const at::Tensor& input, bool rowwise) {
   auto* scales_data = reinterpret_cast<uint8_t*>(scales.mutable_data_ptr());
   if (rowwise) {
     TORCH_CHECK(rows <= 2147483647, "NVFP4 row-wise grid is too large");
-    auto row_amax_bits = at::zeros({rows}, input.options().dtype(at::kInt));
     auto row_scales = at::empty({rows}, input.options().dtype(at::kFloat));
     auto global_scale = at::empty({1}, input.options().dtype(at::kFloat));
-    row_amax_kernel<<<static_cast<unsigned>(rows), kThreads, 0, stream>>>(
-        x_data, cols, row_amax_bits.data_ptr<int>());
-    nvfp4_quantize_kernel<<<rows, kThreads, 0, stream>>>(x_data,
-                                                         values_data,
-                                                         scales_data,
-                                                         cols,
-                                                         inner,
-                                                         row_amax_bits.data_ptr<int>(),
-                                                         global_scale.data_ptr<float>(),
-                                                         row_scales.data_ptr<float>(),
-                                                         true);
+    const int64_t row_bytes = cols * int64_t(sizeof(__nv_bfloat16));
+    if (row_bytes <= kFusedRowBytesLimit) {
+      fused_row_quantize_kernel<false>
+          <<<static_cast<unsigned>(rows), kThreads, static_cast<size_t>(row_bytes), stream>>>(
+              x_data,
+              values_data,
+              scales_data,
+              cols,
+              inner,
+              nullptr,
+              false,
+              global_scale.data_ptr<float>(),
+              row_scales.data_ptr<float>());
+    } else {
+      auto row_amax_bits = at::zeros({rows}, input.options().dtype(at::kInt));
+      row_amax_kernel<<<static_cast<unsigned>(rows), kThreads, 0, stream>>>(
+          x_data, cols, row_amax_bits.data_ptr<int>());
+      nvfp4_quantize_kernel<<<rows, kThreads, 0, stream>>>(x_data,
+                                                           values_data,
+                                                           scales_data,
+                                                           cols,
+                                                           inner,
+                                                           row_amax_bits.data_ptr<int>(),
+                                                           global_scale.data_ptr<float>(),
+                                                           row_scales.data_ptr<float>(),
+                                                           true);
+    }
     C10_CUDA_KERNEL_LAUNCH_CHECK();
     out.values = values_bytes.view(at::kFloat4_e2m1fn_x2);
     out.block_scales = scales.view(at::kFloat8_e4m3fn);
@@ -390,37 +512,56 @@ Nvfp4Quantized nvfp4_swiglu_quantize(const at::Tensor& gate_up,
     return out;
   }
   auto x = nvfp4_aligned_tensor(gate_up, at::kBFloat16, 2, "NVFP4 SwiGLU input");
-  auto activated = at::empty({rows, width}, gate_up.options().dtype(at::kBFloat16));
   auto values_bytes = at::empty({rows, width / 2}, byte_options);
   const int64_t inner = scale_inner_dim(width);
   auto scales = at::zeros({nvfp4_scale_elements(rows, width)}, byte_options);
-  auto row_amax_bits = at::zeros({rows}, gate_up.options().dtype(at::kInt));
   auto row_scales = at::empty({rows}, gate_up.options().dtype(at::kFloat));
   auto global_scale = at::empty({1}, gate_up.options().dtype(at::kFloat));
   auto stream = at::cuda::getCurrentCUDAStream();
-  const int64_t vectors_per_row = width / 8;
-  const int64_t tiles_per_row = (vectors_per_row + kThreads - 1) / kThreads;
-  const int64_t total_tiles = rows * tiles_per_row;
-  TORCH_CHECK(total_tiles <= 2147483647, "NVFP4 SwiGLU grid is too large");
-  // Flatten to 1D: grid.y is limited to 65535, while model batches can exceed it.
-  swiglu_activation_amax_kernel<<<static_cast<unsigned>(total_tiles), kThreads, 0, stream>>>(
-      reinterpret_cast<const __nv_bfloat16*>(x.const_data_ptr()),
-      reinterpret_cast<__nv_bfloat16*>(activated.mutable_data_ptr()),
-      width,
-      tiles_per_row,
-      gate_up_row_scales.defined() ? gate_up_row_scales.const_data_ptr<float>() : nullptr,
-      gate_up_row_scales.defined(),
-      row_amax_bits.data_ptr<int>());
-  nvfp4_quantize_kernel<<<rows, kThreads, 0, stream>>>(
-      reinterpret_cast<const __nv_bfloat16*>(activated.const_data_ptr()),
-      reinterpret_cast<uint8_t*>(values_bytes.mutable_data_ptr()),
-      reinterpret_cast<uint8_t*>(scales.mutable_data_ptr()),
-      width,
-      inner,
-      row_amax_bits.data_ptr<int>(),
-      global_scale.data_ptr<float>(),
-      row_scales.data_ptr<float>(),
-      true);
+  const auto* x_data = reinterpret_cast<const __nv_bfloat16*>(x.const_data_ptr());
+  auto* values_data = reinterpret_cast<uint8_t*>(values_bytes.mutable_data_ptr());
+  auto* scales_data = reinterpret_cast<uint8_t*>(scales.mutable_data_ptr());
+  const int64_t row_bytes = width * int64_t(sizeof(__nv_bfloat16));
+  if (row_bytes <= kFusedRowBytesLimit) {
+    TORCH_CHECK(rows <= 2147483647, "NVFP4 SwiGLU row grid is too large");
+    fused_row_quantize_kernel<true>
+        <<<static_cast<unsigned>(rows), kThreads, static_cast<size_t>(row_bytes), stream>>>(
+            x_data,
+            values_data,
+            scales_data,
+            width,
+            inner,
+            gate_up_row_scales.defined() ? gate_up_row_scales.const_data_ptr<float>() : nullptr,
+            gate_up_row_scales.defined(),
+            global_scale.data_ptr<float>(),
+            row_scales.data_ptr<float>());
+  } else {
+    auto activated = at::empty({rows, width}, gate_up.options().dtype(at::kBFloat16));
+    auto row_amax_bits = at::zeros({rows}, gate_up.options().dtype(at::kInt));
+    const int64_t vectors_per_row = width / 8;
+    const int64_t tiles_per_row = (vectors_per_row + kThreads - 1) / kThreads;
+    const int64_t total_tiles = rows * tiles_per_row;
+    TORCH_CHECK(total_tiles <= 2147483647, "NVFP4 SwiGLU grid is too large");
+    // Flatten to 1D: grid.y is limited to 65535, while model batches can exceed it.
+    swiglu_activation_amax_kernel<<<static_cast<unsigned>(total_tiles), kThreads, 0, stream>>>(
+        x_data,
+        reinterpret_cast<__nv_bfloat16*>(activated.mutable_data_ptr()),
+        width,
+        tiles_per_row,
+        gate_up_row_scales.defined() ? gate_up_row_scales.const_data_ptr<float>() : nullptr,
+        gate_up_row_scales.defined(),
+        row_amax_bits.data_ptr<int>());
+    nvfp4_quantize_kernel<<<rows, kThreads, 0, stream>>>(
+        reinterpret_cast<const __nv_bfloat16*>(activated.const_data_ptr()),
+        values_data,
+        scales_data,
+        width,
+        inner,
+        row_amax_bits.data_ptr<int>(),
+        global_scale.data_ptr<float>(),
+        row_scales.data_ptr<float>(),
+        true);
+  }
   C10_CUDA_KERNEL_LAUNCH_CHECK();
   out.values = values_bytes.view(at::kFloat4_e2m1fn_x2);
   out.block_scales = scales.view(at::kFloat8_e4m3fn);

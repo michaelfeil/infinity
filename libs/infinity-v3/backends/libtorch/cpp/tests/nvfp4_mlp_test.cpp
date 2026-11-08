@@ -161,6 +161,86 @@ void subnormal_scale_golden() {
   }
 }
 
+void check_same_quantized(const infinity::Nvfp4Quantized& actual,
+                          const infinity::Nvfp4Quantized& expected,
+                          const char* label) {
+  TORCH_CHECK(actual.rows == expected.rows && actual.cols == expected.cols &&
+                  actual.values.sizes() == expected.values.sizes() &&
+                  actual.block_scales.sizes() == expected.block_scales.sizes(),
+              label,
+              ": NVFP4 geometry mismatch");
+  TORCH_CHECK(at::equal(actual.values.view(at::kByte), expected.values.view(at::kByte)),
+              label,
+              ": NVFP4 packed values differ");
+  TORCH_CHECK(at::equal(actual.block_scales.view(at::kByte), expected.block_scales.view(at::kByte)),
+              label,
+              ": NVFP4 block scales differ");
+  TORCH_CHECK(
+      at::equal(actual.global_scale, expected.global_scale), label, ": NVFP4 global scale differs");
+  TORCH_CHECK(actual.row_scales.defined() && expected.row_scales.defined() &&
+                  at::equal(actual.row_scales, expected.row_scales),
+              label,
+              ": NVFP4 row scales differ");
+}
+
+infinity::Nvfp4Quantized swiglu_rowwise_reference(const at::Tensor& gate_up,
+                                                  const at::Tensor& row_scales) {
+  const int64_t width = gate_up.size(1) / 2;
+  auto gate = gate_up.narrow(1, 0, width).contiguous();
+  auto up = gate_up.narrow(1, width, width).contiguous();
+  if (row_scales.defined()) {
+    infinity::nvfp4_apply_row_scales_(gate, row_scales);
+    infinity::nvfp4_apply_row_scales_(up, row_scales);
+  }
+  return infinity::nvfp4_quantize_rows(infinity::fused_gated_activation(at::cat({gate, up}, 1), 5),
+                                       true);
+}
+
+// Five rows exercise the 128-row padded scale tile, a zero row, non-finite
+// gate/up lanes, and very different restore scales. The fused SwiGLU staging
+// must be byte-identical to explicit restore -> rounded activation -> rowwise
+// quantization at the representative intermediate widths.
+void swiglu_fused_equivalence() {
+  const auto opts = at::TensorOptions().device(at::kCUDA).dtype(at::kBFloat16);
+  for (int64_t width : {9728, 12288, 17408}) {
+    auto gate_up = at::randn({5, 2 * width}, opts) * .03f;
+    gate_up[1].zero_();
+    gate_up[2][0].fill_(INFINITY);
+    gate_up[2][width + 1].fill_(-INFINITY);
+    gate_up[2][3].fill_(NAN);
+    auto scales = at::tensor(
+        {std::ldexp(1.f, -20), 1.f, std::ldexp(1.f, 7), std::ldexp(1.f, -3), std::ldexp(1.f, 12)},
+        opts.dtype(at::kFloat));
+    check_same_quantized(infinity::nvfp4_swiglu_quantize(gate_up, scales),
+                         swiglu_rowwise_reference(gate_up, scales),
+                         "Fused NVFP4 SwiGLU with mixed restore scales");
+    check_same_quantized(infinity::nvfp4_swiglu_quantize(gate_up),
+                         swiglu_rowwise_reference(gate_up, {}),
+                         "Fused NVFP4 SwiGLU without restore scales");
+  }
+  auto empty = at::empty({0, 32}, opts);
+  check_same_quantized(infinity::nvfp4_swiglu_quantize(empty),
+                       swiglu_rowwise_reference(empty, {}),
+                       "Empty NVFP4 SwiGLU");
+}
+
+// The last fused width and the first fallback width. The fallback keeps the
+// original two-pass activation/amax/quantize path byte-identical.
+void swiglu_shared_memory_boundary() {
+  const auto opts = at::TensorOptions().device(at::kCUDA).dtype(at::kBFloat16);
+  constexpr int64_t fused_width = (48 * 1024 - 256) / 2;
+  for (int64_t width : {fused_width, fused_width + 16}) {
+    auto gate_up = at::randn({3, 2 * width}, opts) * .02f;
+    gate_up[2][0].fill_(NAN);
+    auto scales =
+        at::tensor({std::ldexp(1.f, -9), 1.f, std::ldexp(1.f, 5)}, opts.dtype(at::kFloat));
+    check_same_quantized(infinity::nvfp4_swiglu_quantize(gate_up, scales),
+                         swiglu_rowwise_reference(gate_up, scales),
+                         width == fused_width ? "Boundary NVFP4 SwiGLU fused"
+                                              : "Boundary NVFP4 SwiGLU fallback");
+  }
+}
+
 void dense_mlp_forward_and_guards() {
   const auto opts = at::TensorOptions().device(at::kCUDA).dtype(at::kBFloat16);
   auto gate_up = at::randn({64, 32}, opts) * .03f;
@@ -277,6 +357,8 @@ int main() {
   batch_invariance();
   subnormal_cobatch_invariance();
   subnormal_scale_golden();
+  swiglu_fused_equivalence();
+  swiglu_shared_memory_boundary();
   dense_mlp_forward_and_guards();
   return 0;
 }
