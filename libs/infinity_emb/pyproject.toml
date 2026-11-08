@@ -33,8 +33,11 @@ posthog = {version = "*", optional=true}
 torch = {version = ">=2.8,<3", optional=true}
 # ST 5 changes model-type detection for subclasses and falls back to mean pooling.
 sentence-transformers = {version = ">=4.1,<5", optional=true}
-# Optimum ONNX and ColPali share this Transformers 4 compatibility range.
-transformers = {version = ">=4.57.6,<4.58", optional=true, extras=["sentencepiece"]}
+# ColPali 0.3.8 retains ColIdefics2 support and requires Transformers 4.47.
+transformers = {version = ">=4.47,<4.48", optional=true, extras=["sentencepiece"]}
+# Declare tokenizer dependencies explicitly so Poetry keeps them in model extras.
+sentencepiece = {version = ">=0.2.1,<0.3", optional=true}
+protobuf = {version = ">=5,<8", optional=true}
 ctranslate2 = {version = ">=4.8,<5", optional=true}
 optimum = {version = ">=2.1,<2.2", optional=true, extras=["onnxruntime"]}
 onnx = {version = ">=1.19.1,<2", optional=true}
@@ -42,7 +45,7 @@ einops = {version = "*", optional=true}
 # vision
 pillow = {version = "*", optional=true}
 timm = {version = "*", optional=true}
-colpali-engine = {version=">=0.3.13,<0.3.14", optional=true}
+colpali-engine = {version=">=0.3.8,<0.3.9", optional=true}
 # openvino
 # optimum-intel = {version=">=1.20.0", optional=true, extras=["openvino"]}
 # onnxruntime-openvino = {version=">=1.19.0", optional=true}
@@ -81,10 +84,9 @@ jinja2 = "*"
 jinja2-cli = "*"
 
 # preferred dev dependencies
-# ColPali 0.3.13 supports Torch 2.8; its newer releases require Transformers 5.
+# Preserve the Torch version used by the container FlashAttention wheel.
 torch = "2.8.0"
 prometheus-fastapi-instrumentator = ">=7,<9"
-transformers = ">=4.57.6,<4.58"
 fastapi = ">=0.115.2,<1"
 
 [tool.poetry.group.codespell.dependencies]
@@ -105,13 +107,13 @@ types-chardet = "^5.0.4.6"
 mypy-protobuf = "^3.0.0"
 
 [tool.poetry.extras]
-ct2=["ctranslate2","sentence-transformers","torch","transformers"]
+ct2=["ctranslate2","sentence-transformers","torch","transformers","sentencepiece","protobuf"]
 optimum=["optimum","onnx"]
-torch=["sentence-transformers","torch"]
+torch=["sentence-transformers","torch","sentencepiece","protobuf"]
 einops=["einops"]
 logging=["rich"]
 cache=["diskcache"]
-vision=["colpali-engine","pillow","timm","torchvision"]
+vision=["colpali-engine","pillow","timm","torchvision","sentencepiece","protobuf"]
 # openvino=["onnxruntime-openvino","openvino","openvino-tokenizers"]
 audio=["soundfile"]
 server=[
@@ -140,6 +142,8 @@ all=[
     "pydantic",
     "rich",
     "sentence-transformers",
+    "sentencepiece",
+    "protobuf",
     "timm",
     "torch",
     "torchvision",
