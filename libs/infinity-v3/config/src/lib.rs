@@ -69,6 +69,66 @@ impl fmt::Display for DynamicQuantizationScope {
     }
 }
 
+const RETIRED_DYNAMIC_QUANTIZATION_ENV: [(&str, &str, &str, &str); 4] = [
+    (
+        "ENABLE_FP8_DYNAMIC",
+        "DYNAMIC_QUANTIZATION",
+        "--dynamic-quantization",
+        "none disables quantization; fp8 is rowwise FP8; mxfp8 makes the formerly automatic eligible MLP path explicit",
+    ),
+    (
+        "TORCH_FP8_SCOPE",
+        "DYNAMIC_QUANTIZATION_SCOPE",
+        "--dynamic-quantization-scope",
+        "expected auto, mlp, or all",
+    ),
+    (
+        "TORCH_MXFP8_MLP",
+        "DYNAMIC_QUANTIZATION",
+        "--dynamic-quantization",
+        "none disables quantization; fp8 is rowwise FP8; mxfp8 makes the formerly automatic eligible MLP path explicit",
+    ),
+    (
+        "TORCH_NVFP4_MLP",
+        "DYNAMIC_QUANTIZATION",
+        "--dynamic-quantization",
+        "none disables quantization; nvfp4 is an explicit MLP format",
+    ),
+];
+
+/// Reject retired dynamic-quantization environment selectors.
+///
+/// The lookup is injectable so callers and tests do not depend on global
+/// process state. Presence alone is rejected, including empty, `0`, or `false`
+/// values; values are never printed.
+pub fn validate_retired_dynamic_quantization_env(
+    lookup: impl Fn(&str) -> Option<std::ffi::OsString>,
+) -> Result<(), String> {
+    validate_retired_dynamic_quantization_env_with_base(ENV_VAR_BASE, lookup)
+}
+
+fn validate_retired_dynamic_quantization_env_with_base(
+    base: &str,
+    lookup: impl Fn(&str) -> Option<std::ffi::OsString>,
+) -> Result<(), String> {
+    for (suffix, replacement, flag, detail) in RETIRED_DYNAMIC_QUANTIZATION_ENV {
+        let prefixed = format!("{base}_{suffix}");
+        for name in [prefixed.as_str(), suffix] {
+            if lookup(name).is_some() {
+                let choices = if replacement == "DYNAMIC_QUANTIZATION_SCOPE" {
+                    "auto, mlp, all"
+                } else {
+                    "none, fp8, mxfp8, nvfp4"
+                };
+                return Err(format!(
+                    "Remove {name}; it is retired. Set {base}_{replacement} or {flag} to one of {choices} ({detail})."
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
 /// Read the prefix-cache budget from TORCH_PREFIX_CACHE_SIZE in GB or GiB.
 pub fn prefix_cache_size_bytes() -> Result<i64, String> {
     prefix_cache_size_with(|name| std::env::var_os(name))
@@ -116,6 +176,61 @@ fn parse_byte_size(value: &str) -> Option<i64> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn retired_dynamic_quantization_environment_is_actionable_even_when_disabled() {
+        let retired = [
+            (
+                "ENABLE_FP8_DYNAMIC",
+                "ACME_DYNAMIC_QUANTIZATION",
+                "--dynamic-quantization",
+                "rowwise",
+            ),
+            (
+                "TORCH_FP8_SCOPE",
+                "ACME_DYNAMIC_QUANTIZATION_SCOPE",
+                "--dynamic-quantization-scope",
+                "auto",
+            ),
+            (
+                "TORCH_MXFP8_MLP",
+                "ACME_DYNAMIC_QUANTIZATION",
+                "--dynamic-quantization",
+                "formerly automatic",
+            ),
+            (
+                "TORCH_NVFP4_MLP",
+                "ACME_DYNAMIC_QUANTIZATION",
+                "--dynamic-quantization",
+                "explicit MLP format",
+            ),
+        ];
+        for (suffix, replacement, flag, detail) in retired {
+            for name in [format!("ACME_{suffix}"), suffix.to_owned()] {
+                for value in ["0", "false", ""] {
+                    let found = name.clone();
+                    let error = super::validate_retired_dynamic_quantization_env_with_base(
+                        "ACME",
+                        move |candidate| (candidate == found).then(|| value.into()),
+                    )
+                    .unwrap_err();
+                    assert!(error.contains(&name), "{error}");
+                    assert!(error.contains(replacement), "{error}");
+                    assert!(error.contains(flag), "{error}");
+                    assert!(error.contains(detail), "{error}");
+                }
+            }
+        }
+        assert!(
+            super::validate_retired_dynamic_quantization_env_with_base("ACME", |_| None).is_ok()
+        );
+        let compiled = infinity_env!("ENABLE_FP8_DYNAMIC");
+        let error = super::validate_retired_dynamic_quantization_env(|name| {
+            (name == compiled).then(|| "0".into())
+        })
+        .unwrap_err();
+        assert!(error.contains(compiled), "{error}");
+    }
+
     #[test]
     fn prefix_cache_size_reads_only_size_and_defaults_to_disabled() {
         for (size, expected) in [

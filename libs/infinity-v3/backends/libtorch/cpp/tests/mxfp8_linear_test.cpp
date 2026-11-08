@@ -293,7 +293,8 @@ void check_mxfp8_mlp_path() {
   infinity::DenseMlp mlp({gate_up_weight}, {down_weight}, qwen_gated_recipe());
   TORCH_CHECK(mlp.supports_mxfp8(), "qualified packed SwiGLU MLP was not MXFP8-qualified");
   mlp.prepare(infinity::Quantization::Mxfp8);
-  TORCH_CHECK(mlp.fp8() && !mlp.supports_rowwise_rms_input(), "MXFP8 DenseMlp capability contract");
+  TORCH_CHECK(mlp.is_quantized() && !mlp.supports_rowwise_rms_input(),
+              "MXFP8 DenseMlp capability contract");
   auto output = mlp.forward(x);
   TORCH_CHECK(output.sizes() == at::IntArrayRef({rows, hidden}) &&
                   output.scalar_type() == at::kBFloat16 && at::isfinite(output).all().item<bool>(),
@@ -325,7 +326,7 @@ void check_mxfp8_qualification_rejections() {
   auto rowwise = [](infinity::DenseMlp& mlp, const char* label) {
     TORCH_CHECK(!mlp.supports_mxfp8(), label, " must not select MXFP8");
     mlp.prepare(infinity::Quantization::Fp8);
-    TORCH_CHECK(mlp.fp8(), label, " must select rowwise FP8");
+    TORCH_CHECK(mlp.is_quantized(), label, " must select rowwise FP8");
   };
 
   auto gelu = infinity::MlpActivationRecipe::gated(infinity::MlpActivation::RoundedGelu);

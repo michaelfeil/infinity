@@ -361,6 +361,22 @@ fn resolve_dynamic_quantization_scope(
     })
 }
 
+fn resolve_device_with(
+    requested: &str,
+    cuda_available: impl FnOnce() -> bool,
+) -> Result<String, BackendError> {
+    match requested {
+        "auto" => Ok(if cuda_available() {
+            "cuda:0".into()
+        } else {
+            "cpu".into()
+        }),
+        "cpu" => Ok("cpu".into()),
+        device if device.starts_with("cuda:") => Ok(device.into()),
+        _ => Err(start("LibTorch 2.14.1 varlen attention requires CUDA; only CPU reference and CUDA are supported")),
+    }
+}
+
 fn validate_dynamic_quantization(
     dynamic_quantization: DynamicQuantization,
     dtype: &str,
@@ -602,13 +618,16 @@ impl LibtorchBackend {
         dynamic_quantization_scope: DynamicQuantizationScope,
         runtime_limits: text_embeddings_backend_core::ServingLimits,
     ) -> Result<Self, BackendError> {
-        if device != "cpu" && device != "auto" && !device.starts_with("cuda:") {
-            return Err(start("LibTorch 2.14.1 varlen attention requires CUDA; only CPU reference and CUDA are supported"));
-        }
+        infinity_v3_config::validate_retired_dynamic_quantization_env(|name| {
+            std::env::var_os(name)
+        })
+        .map_err(start)?;
+        let device =
+            resolve_device_with(device, || device_count("cuda").is_ok_and(|count| count > 0))?;
         if device.starts_with("cuda:") && !matches!(dtype, "float16" | "bfloat16") {
             return Err(start("CUDA varlen attention requires float16 or bfloat16"));
         }
-        validate_dynamic_quantization(dynamic_quantization, dtype, device)?;
+        validate_dynamic_quantization(dynamic_quantization, dtype, &device)?;
         let pool = match &model_type {
             ModelType::Embedding(pool) => pool.clone(),
             ModelType::Classifier => Pool::Cls,
@@ -1184,7 +1203,7 @@ impl LibtorchBackend {
             _ => return Err(start("Unsupported LibTorch dtype")),
         };
         if device != "cpu" {
-            let name = CString::new(device).map_err(start)?;
+            let name = CString::new(device.as_str()).map_err(start)?;
             let started = std::time::Instant::now();
             tracing::info!("Starting LibTorch device check");
             // SAFETY: the device string outlives this synchronous call; native
@@ -1223,8 +1242,7 @@ impl LibtorchBackend {
             classification_width: 0,
             supports_radix: false,
             prefix_cache: options["_prefix_cache_max_bytes"].as_i64().unwrap_or(0) > 0,
-            cuda: device.to_bytes().starts_with(b"cuda")
-                || (device.to_bytes() == b"auto" && device_count("cuda").unwrap_or(0) > 0),
+            cuda: device.to_bytes().starts_with(b"cuda"),
             decision,
             multi_vector,
             skip_tokens,
@@ -2860,6 +2878,32 @@ mod tests {
             "qwen3_5_moe_text"
         )
         .is_err());
+    }
+
+    #[test]
+    fn device_resolution_preserves_auto_and_explicit_errors_without_gpu_queries() {
+        let resolve = |requested, cuda_available| resolve_device_with(requested, || cuda_available);
+        assert_eq!(resolve("auto", true).unwrap(), "cuda:0");
+        assert_eq!(resolve("auto", false).unwrap(), "cpu");
+        assert_eq!(resolve("cuda:0", false).unwrap(), "cuda:0");
+        assert_eq!(resolve("cuda:3", true).unwrap(), "cuda:3");
+        assert_eq!(resolve("cpu", true).unwrap(), "cpu");
+        assert!(resolve("tpu", true)
+            .unwrap_err()
+            .to_string()
+            .contains("only CPU reference and CUDA are supported"));
+        assert!(validate_dynamic_quantization(
+            DynamicQuantization::Fp8,
+            "bfloat16",
+            &resolve("auto", false).unwrap()
+        )
+        .is_err());
+        assert!(validate_dynamic_quantization(
+            DynamicQuantization::Fp8,
+            "bfloat16",
+            &resolve("auto", true).unwrap()
+        )
+        .is_ok());
     }
 
     #[test]

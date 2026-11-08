@@ -1065,8 +1065,8 @@ class Qwen35 final : public Model {
         attended = prefix_projection(attended, output_name, input);
       }
       QuantizedRows mlp_rows;
-      const bool quantize_mlp =
-          mlps[layer].dense_mlp.fp8() && mlps[layer].dense_mlp.supports_rowwise_rms_input();
+      const bool quantize_mlp = mlps[layer].dense_mlp.is_quantized() &&
+                                mlps[layer].dense_mlp.supports_rowwise_rms_input();
       // Rowwise FP8 consumes the rounded norm through mlp_rows; no BF16 copy is needed.
       auto post = residual_norm(hidden,
                                 attended,
@@ -1168,10 +1168,10 @@ public:
     delta_prefill = device.is_cuda() && quantization == Quantization::None;
     const auto* suffix_policy = std::getenv(INFINITY_ENV("TORCH_GDN_SUFFIX_PREFILL"));
     delta_suffix_prefill = !suffix_policy || std::string_view(suffix_policy) == "1";
-    const bool fp8 = quantization != Quantization::None;
-    TORCH_CHECK(scope != QuantizationScope::All || fp8,
+    const bool quantized = quantization != Quantization::None;
+    TORCH_CHECK(scope != QuantizationScope::All || quantized,
                 "All-linear quantization requires a quantization format");
-    if (fp8) {
+    if (quantized) {
       TORCH_CHECK(device.is_cuda() && dtype == at::kBFloat16,
                   quantization_name(quantization),
                   " Qwen3.5 requires CUDA BF16");
@@ -1252,7 +1252,7 @@ public:
         recipe.fusion = MlpFusion::RoundedSwiGlu;
         m.dense_mlp = DenseMlp({m.gate_up}, {m.down}, std::move(recipe));
         consumed = {mp + "gate_proj.weight", mp + "up_proj.weight", mp + "down_proj.weight"};
-        if (fp8) {
+        if (quantized) {
           m.dense_mlp.prepare(quantization);
           m.gate_up = at::Tensor();
           m.down = at::Tensor();
@@ -1300,7 +1300,7 @@ public:
       // exclusively through mlps; keep all attention/embedding/vision/head keys.
       for (const auto& name : consumed)
         weights.erase(prefix + name);
-      if (fp8 && scope == QuantizationScope::All) {
+      if (quantized && scope == QuantizationScope::All) {
         // Keep the small DeltaNet decay/update gates, convolution and recurrent
         // state in their original precision, along with vision and output heads.
         const std::vector<std::string> projections =

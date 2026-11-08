@@ -55,8 +55,11 @@ Input tokens/s, counting the query, document and special tokens together.
 | Nemotron 3.5 Rerank 8B | BF16 | 40,912 | 41,851 |
 | Nemotron 3.5 Rerank 8B | BF16 + FP8 linears | 70,290 | 71,965 |
 
-FP8 uses `--enable-fp8-dynamic`. Its numerical check is a two-document smoke
-test, not a ranking-quality evaluation.
+These measurements used the 3.0.1 flag `--enable-fp8-dynamic`. On current
+releases, use `--dynamic-quantization fp8`; see the
+[migration table](cli.md#migrating-existing-deployments). The numerical check is
+a two-document smoke test, not a ranking-quality evaluation. Recorded commands
+in the measurement JSON retain the original flags.
 
 ## Image embeddings
 

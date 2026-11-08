@@ -46,8 +46,8 @@ class ModelLinearMethod final : public MlpLinearMethod {
 public:
   explicit ModelLinearMethod(at::Tensor weight) : weight_(std::move(weight)) {}
 
-  MlpPrecision precision() const override {
-    return MlpPrecision::Model;
+  Quantization format() const override {
+    return Quantization::None;
   }
 
   const at::Tensor& weight() const override {
@@ -86,8 +86,8 @@ class Fp8LinearMethod final : public MlpLinearMethod {
 public:
   explicit Fp8LinearMethod(const at::Tensor& weight) : linear_(weight) {}
 
-  MlpPrecision precision() const override {
-    return MlpPrecision::Fp8;
+  Quantization format() const override {
+    return Quantization::Fp8;
   }
 
   const at::Tensor& weight() const override {
@@ -155,10 +155,6 @@ class Mxfp8LinearMethod final : public MlpLinearMethod {
 
 public:
   explicit Mxfp8LinearMethod(const at::Tensor& weight) : linear_(weight) {}
-
-  MlpPrecision precision() const override {
-    return MlpPrecision::Fp8;
-  }
 
   Quantization format() const override {
     return Quantization::Mxfp8;
@@ -231,10 +227,6 @@ class Nvfp4LinearMethod final : public MlpLinearMethod {
 
 public:
   explicit Nvfp4LinearMethod(const at::Tensor& weight) : linear_(weight) {}
-
-  MlpPrecision precision() const override {
-    return MlpPrecision::Fp8;
-  }
 
   Quantization format() const override {
     return Quantization::Nvfp4;
@@ -404,8 +396,8 @@ MlpActivationRecipe::numerical(std::function<at::Tensor(const at::Tensor&)> appl
   return recipe;
 }
 
-at::Tensor MlpActivationRecipe::apply(const at::Tensor& x, bool fp8) const {
-  if (fp8 && quantized_custom)
+at::Tensor MlpActivationRecipe::apply(const at::Tensor& x, bool is_quantized) const {
+  if (is_quantized && quantized_custom)
     return quantized_custom(x);
   if (custom)
     return custom(x);
@@ -486,9 +478,9 @@ void DenseMlp::prepare(const MlpMethodFactory& factory) {
   output.prepare(factory);
   if (up)
     up->prepare(factory);
-  TORCH_CHECK(input.method().precision() == output.method().precision() &&
-                  (!up || input.method().precision() == up->method().precision()),
-              "MLP projections require the same numerical precision recipe");
+  TORCH_CHECK(input.method().format() == output.method().format() &&
+                  (!up || input.method().format() == up->method().format()),
+              "MLP projections require the same quantization format");
   input_ = std::move(input);
   output_ = std::move(output);
   up_ = std::move(up);
@@ -533,7 +525,7 @@ at::Tensor DenseMlp::forward(const at::Tensor& x,
   if (!fp8_activation && !activation_.custom && !activation_.quantized_custom &&
       activation_.kind == MlpActivation::Relu)
     fp8_activation = Fp8Activation::Relu;
-  if (fp8_activation && input_.fp8() && input_.output_width() <= 65536 &&
+  if (fp8_activation && input_.is_quantized() && input_.output_width() <= 65536 &&
       output_.method().accepts_fp8_rows() && !activation_.packed && !up_ &&
       !input_.recipe_.input_clip && !input_.recipe_.cast_input && !input_.recipe_.output_clip &&
       !output_.recipe_.input_clip && !output_.recipe_.cast_input && x.is_cuda() && x.dim() == 2 &&
@@ -543,9 +535,9 @@ at::Tensor DenseMlp::forward(const at::Tensor& x,
     if (fused.first.defined() && fused.second.defined())
       return output_.execute(fused.first, context, fused.second);
   }
-  if ((fp8() || input_.recipe_.separate_bias) && activation_.fusion == MlpFusion::RoundedBiasGelu &&
-      x.is_cuda() && x.dim() == 2 && input_.bias_.defined() && !input_.recipe_.output_clip &&
-      !activation_.packed && !up_) {
+  if ((is_quantized() || input_.recipe_.separate_bias) &&
+      activation_.fusion == MlpFusion::RoundedBiasGelu && x.is_cuda() && x.dim() == 2 &&
+      input_.bias_.defined() && !input_.recipe_.output_clip && !activation_.packed && !up_) {
     auto middle = input_.execute(x, context, input_scales, MlpEpilogue::None, true);
     return output_.forward(encoder_bias_gelu(middle.contiguous(), input_.bias_.contiguous()),
                            context);
@@ -560,8 +552,8 @@ at::Tensor DenseMlp::forward(const at::Tensor& x,
       !output_.recipe_.input_clip && !output_.recipe_.cast_input;
   // Explicit gated recipes cover the native rounded GELU form and reversed gate/up layouts while
   // the legacy RoundedSwiGlu tag above keeps using its original hook.
-  const bool explicit_gated = activation_.fp8_gated_activation.has_value() && input_.fp8() &&
-                              input_.method().accepts_fp8_rows() &&
+  const bool explicit_gated = activation_.fp8_gated_activation.has_value() &&
+                              input_.is_quantized() && input_.method().accepts_fp8_rows() &&
                               output_.method().accepts_fp8_rows() && activation_.packed && !up_ &&
                               !input_.bias().defined() && !input_.recipe_.input_clip &&
                               !input_.recipe_.cast_input && !input_.recipe_.output_clip &&
@@ -570,9 +562,9 @@ at::Tensor DenseMlp::forward(const at::Tensor& x,
   bool explicit_gated_hook_declined = false;
   // The fused hooks keep the input projection's exact GEMM and scales. They are used only when the
   // input projection needs no bias, cast, or clipping that the fused boundary cannot express.
-  if (rounded_swiglu && input_.fp8() && !input_.bias().defined() && !input_.recipe_.input_clip &&
-      !input_.recipe_.cast_input && !input_.recipe_.output_clip && x.is_cuda() && x.dim() == 2 &&
-      x.size(1) == input_.input_width() &&
+  if (rounded_swiglu && input_.is_quantized() && !input_.bias().defined() &&
+      !input_.recipe_.input_clip && !input_.recipe_.cast_input && !input_.recipe_.output_clip &&
+      x.is_cuda() && x.dim() == 2 && x.size(1) == input_.input_width() &&
       input_.output_width() / 2 <= fp8_scaled_swiglu_max_width) {
     auto fused = input_.method().apply_swiglu_quantized(input_, x, input_scales, context);
     if (fused.first.defined() && fused.second.defined())
@@ -625,7 +617,8 @@ at::Tensor DenseMlp::forward(const at::Tensor& x,
     return output_.execute(quantized.first, context, quantized.second);
   }
 #endif
-  auto activated = epilogue == MlpEpilogue::None ? activation_.apply(middle, fp8()) : middle;
+  auto activated =
+      epilogue == MlpEpilogue::None ? activation_.apply(middle, is_quantized()) : middle;
   if (up_)
     activated = activated * up_->execute(x, context, input_scales);
   return output_.forward(activated, context);

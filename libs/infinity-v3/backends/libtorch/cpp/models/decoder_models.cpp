@@ -1477,7 +1477,7 @@ public:
                                               output_rows);
 #ifdef INFINITY_TORCH_CUDA_KERNELS
         if (h.is_cuda() && (!transformers_math() || transformers_fused_norm)) {
-          if (layer.dense_mlp.fp8() && layer.dense_mlp.supports_rowwise_rms_input() &&
+          if (layer.dense_mlp.is_quantized() && layer.dense_mlp.supports_rowwise_rms_input() &&
               dtype == at::kBFloat16 && hidden <= 8192 && hidden % 256 == 0 &&
               !exact_decoder_math() && projected.is_contiguous() &&
               (!residual.defined() || residual.is_contiguous())) {

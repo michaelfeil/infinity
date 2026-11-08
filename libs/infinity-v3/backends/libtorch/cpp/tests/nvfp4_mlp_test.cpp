@@ -330,7 +330,8 @@ void dense_mlp_forward_and_guards() {
   } catch (const c10::Error&) {
     rejected = true;
   }
-  TORCH_CHECK(rejected && !unaligned.fp8(), "Unsupported packed K was accepted at preparation");
+  TORCH_CHECK(rejected && !unaligned.is_quantized(),
+              "Unsupported packed K was accepted at preparation");
 }
 
 // A 16x32 all-ones weight against one- and two-valued activation rows. Row 0

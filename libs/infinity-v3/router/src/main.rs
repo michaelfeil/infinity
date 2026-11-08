@@ -570,6 +570,8 @@ fn args_from_matches(matches: &clap::ArgMatches) -> Result<Args> {
 async fn main() -> Result<()> {
     // Pattern match configuration
     let args = args_from_matches(&command_with_environment().get_matches())?;
+    infinity_v3_config::validate_retired_dynamic_quantization_env(|name| std::env::var_os(name))
+        .map_err(anyhow::Error::msg)?;
 
     // Initialize logging and telemetry
     let global_tracer = infinity_v3_router::init_logging(
@@ -671,6 +673,7 @@ mod tests {
     }
 
     #[test]
+    #[serial_test::serial]
     fn model_options_broadcast_align_and_preserve_single_model_flags() {
         for (flags, truncate, hosts) in [
             (
@@ -762,10 +765,6 @@ mod tests {
             DynamicQuantizationScope::Auto
         );
         assert_eq!(truncated[0].max_sequence_length, None);
-        assert!(
-            Args::try_parse_from(["infinity_v3", "--model-id", "a", "--enable-fp8-dynamic",])
-                .is_err()
-        );
         assert!(Args::try_parse_from([
             "infinity_v3",
             "--model-id",
@@ -883,7 +882,7 @@ mod tests {
                 None => std::env::remove_var(key),
             }
         }
-        // This binary has one test, so environment changes do not race other tests.
+        // Serialized so temporary environment changes do not race other tests.
         let original_prompt = std::env::var_os(infinity_v3_config::infinity_env!("DEFAULT_PROMPT"));
         std::env::set_var(
             infinity_v3_config::infinity_env!("DEFAULT_PROMPT"),
@@ -917,6 +916,7 @@ mod tests {
     }
 
     #[test]
+    #[serial_test::serial]
     fn dynamic_quantization_flags_expand_per_model_and_reject_invalid_values() {
         let models = Args::try_parse_from(["infinity_v3", "--model-id", "a"])
             .unwrap()
@@ -1019,5 +1019,66 @@ mod tests {
         .unwrap()
         .models()
         .is_err());
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn dynamic_quantization_environment_precedence_and_mixed_models() {
+        let names = [
+            infinity_v3_config::infinity_env!("DYNAMIC_QUANTIZATION"),
+            "DYNAMIC_QUANTIZATION",
+            infinity_v3_config::infinity_env!("DYNAMIC_QUANTIZATION_SCOPE"),
+            "DYNAMIC_QUANTIZATION_SCOPE",
+        ];
+        let previous: Vec<_> = names
+            .iter()
+            .map(|name| (*name, std::env::var_os(name)))
+            .collect();
+        for name in names {
+            std::env::remove_var(name);
+        }
+        let parse = |models: &str| {
+            let matches = command_with_environment()
+                .try_get_matches_from(["infinity_v3", "--model-id", models])
+                .unwrap();
+            args_from_matches(&matches)
+                .unwrap()
+                .models()
+                .unwrap()
+                .into_iter()
+                .map(|model| (model.dynamic_quantization, model.dynamic_quantization_scope))
+                .collect::<Vec<_>>()
+        };
+
+        std::env::set_var("DYNAMIC_QUANTIZATION", "mxfp8");
+        std::env::set_var("DYNAMIC_QUANTIZATION_SCOPE", "mlp");
+        let fallback = parse("a");
+        std::env::set_var(
+            infinity_v3_config::infinity_env!("DYNAMIC_QUANTIZATION"),
+            "fp8;nvfp4",
+        );
+        std::env::set_var(
+            infinity_v3_config::infinity_env!("DYNAMIC_QUANTIZATION_SCOPE"),
+            "mlp;all",
+        );
+        let mixed = parse("a;b");
+        for (name, value) in previous {
+            match value {
+                Some(value) => std::env::set_var(name, value),
+                None => std::env::remove_var(name),
+            }
+        }
+
+        assert_eq!(
+            fallback,
+            vec![(DynamicQuantization::Mxfp8, DynamicQuantizationScope::Mlp)]
+        );
+        assert_eq!(
+            mixed,
+            vec![
+                (DynamicQuantization::Fp8, DynamicQuantizationScope::Mlp),
+                (DynamicQuantization::Nvfp4, DynamicQuantizationScope::All),
+            ]
+        );
     }
 }

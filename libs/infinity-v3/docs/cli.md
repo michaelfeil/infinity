@@ -64,11 +64,27 @@ The environment alternatives are `INFINITY_DYNAMIC_QUANTIZATION` and
 `INFINITY_DYNAMIC_QUANTIZATION_SCOPE` (with the configured environment prefix).
 Formats can change accuracy; validate on your task before deployment.
 
-This replaces `--enable-fp8-dynamic` and `ENABLE_FP8_DYNAMIC` as well as
-`TORCH_NVFP4_MLP`, `TORCH_MXFP8_MLP` and `TORCH_FP8_SCOPE` environment selectors.
-Use `--dynamic-quantization fp8` for rowwise FP8, `mxfp8` for previously automatic
-eligible MXFP8 MLPs, and `nvfp4` for the previous NVFP4 opt-in. Update deployments
-to the explicit per-model flags; the old options are no longer supported.
+### Migrating existing deployments
+
+Remove the old settings from launch commands, Docker/Kubernetes environment
+variables and service files. Retired flags are rejected; retired environment
+selectors report their replacements instead of being ignored. They are not
+translated automatically.
+
+| Previous setting | Replacement |
+| --- | --- |
+| `--enable-fp8-dynamic` / `ENABLE_FP8_DYNAMIC=true` | `--dynamic-quantization fp8` for rowwise FP8, or `mxfp8` for the previously automatic eligible MXFP8 MLP path. Choose the format explicitly. |
+| `TORCH_MXFP8_MLP=0` with dynamic FP8 enabled | `--dynamic-quantization fp8` |
+| `TORCH_MXFP8_MLP=1` on an eligible model | `--dynamic-quantization mxfp8` |
+| `TORCH_NVFP4_MLP=1` with dynamic FP8 enabled | `--dynamic-quantization nvfp4` |
+| `TORCH_FP8_SCOPE=mlp` or `all` | `--dynamic-quantization-scope mlp` or `all` |
+| Quantization disabled | Omit the format flag or set `--dynamic-quantization none`. Remove old selectors even when set to `0` or `false`. |
+
+The environment names above also apply with the configured prefix (for example,
+`INFINITY_TORCH_NVFP4_MLP`). The new equivalents are
+`INFINITY_DYNAMIC_QUANTIZATION` and `INFINITY_DYNAMIC_QUANTIZATION_SCOPE`.
+`/info` now returns `dynamic_quantization` and `dynamic_quantization_scope` in
+place of `enable_fp8_dynamic`; scope reports the requested value, including `auto`.
 
 ## Request service tiers
 

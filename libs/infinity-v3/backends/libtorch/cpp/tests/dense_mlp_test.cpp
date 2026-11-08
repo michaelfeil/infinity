@@ -23,8 +23,8 @@ public:
   TestLinearMethod(at::Tensor weight, std::shared_ptr<int> calls)
       : weight_(std::move(weight)), calls_(std::move(calls)) {}
 
-  infinity::MlpPrecision precision() const override {
-    return infinity::MlpPrecision::Model;
+  infinity::Quantization format() const override {
+    return infinity::Quantization::None;
   }
 
   const at::Tensor& weight() const override {
@@ -56,8 +56,8 @@ public:
                            std::shared_ptr<int> ordinary)
       : weight_(std::move(weight)), fused_(std::move(fused)), ordinary_(std::move(ordinary)) {}
 
-  infinity::MlpPrecision precision() const override {
-    return infinity::MlpPrecision::Fp8;
+  infinity::Quantization format() const override {
+    return infinity::Quantization::Fp8;
   }
 
   const at::Tensor& weight() const override {
@@ -148,18 +148,18 @@ void check(const c10::Device& device, at::ScalarType dtype) {
                     infinity::MlpActivation::GeluTanh,
                     infinity::MlpActivation::Tanh}) {
     infinity::DenseMlp mlp({wi, bi}, {wo, bo}, {kind});
-    for (auto precision : {infinity::Quantization::None, infinity::Quantization::Fp8}) {
-      if (precision == infinity::Quantization::Fp8 && !device.is_cuda())
+    for (auto format : {infinity::Quantization::None, infinity::Quantization::Fp8}) {
+      if (format == infinity::Quantization::Fp8 && !device.is_cuda())
         continue;
-      mlp.prepare(precision);
-      mlp.prepare(precision); // Preparation is idempotent, including released FP8 weights.
+      mlp.prepare(format);
+      mlp.prepare(format); // Preparation is idempotent, including released FP8 weights.
       for (const auto& shape : {std::vector<int64_t>{7, 32}, {2, 7, 32}, {0, 32}, {32}}) {
         auto doubled = shape;
         doubled.back() *= 2;
         auto x = at::randn(doubled, opts).slice(-1, 0, doubled.back(), 2);
         auto rows = x.reshape({x.numel() / 32, 32});
         auto projected = at::linear(x, wi, bi);
-        if (mlp.fp8())
+        if (mlp.is_quantized())
           projected = infinity::Fp8Linear(wi).forward(rows, bi);
         at::Tensor activated;
         switch (kind) {
@@ -182,15 +182,15 @@ void check(const c10::Device& device, at::ScalarType dtype) {
           activated = at::tanh(projected);
           break;
         }
-        auto expected = mlp.fp8() ? infinity::Fp8Linear(wo).forward(activated, bo)
-                                  : at::linear(activated, wo, bo);
+        auto expected = mlp.is_quantized() ? infinity::Fp8Linear(wo).forward(activated, bo)
+                                           : at::linear(activated, wo, bo);
         auto output_shape = shape;
         output_shape.back() = 16;
         check_equal(mlp.forward(x), expected.reshape(output_shape));
       }
       TORCH_CHECK(mlp.input().bias().defined() && mlp.output().bias().defined(),
-                  "Precision preparation discarded biases");
-      if (mlp.fp8()) {
+                  "Preparation discarded biases");
+      if (mlp.is_quantized()) {
         TORCH_CHECK(!mlp.input().weight().defined() && !mlp.output().weight().defined(),
                     "FP8 retained original matrix storage");
         auto x = at::randn({7, 32}, opts);
@@ -234,14 +234,14 @@ void check(const c10::Device& device, at::ScalarType dtype) {
   clipped.input_clip = std::array<double, 2>{-.4, .5};
   clipped.output_clip = std::array<double, 2>{-.1, .2};
   infinity::DenseMlp bounded({wi, bi, clipped}, {wo, bo, clipped}, {infinity::MlpActivation::Tanh});
-  for (auto precision : {infinity::Quantization::None, infinity::Quantization::Fp8}) {
-    if (precision == infinity::Quantization::Fp8 && !device.is_cuda())
+  for (auto format : {infinity::Quantization::None, infinity::Quantization::Fp8}) {
+    if (format == infinity::Quantization::Fp8 && !device.is_cuda())
       continue;
-    bounded.prepare(precision);
+    bounded.prepare(format);
     auto project = [&](const at::Tensor& value, const at::Tensor& weight, const at::Tensor& bias) {
       auto input = value.clamp(-.4, .5).to(dtype);
-      auto output =
-          bounded.fp8() ? infinity::Fp8Linear(weight).forward(input) : at::linear(input, weight);
+      auto output = bounded.is_quantized() ? infinity::Fp8Linear(weight).forward(input)
+                                           : at::linear(input, weight);
       return (output + bias).clamp(-.1, .2);
     };
     auto input = x.to(at::kFloat);
@@ -256,7 +256,8 @@ void check(const c10::Device& device, at::ScalarType dtype) {
       return at::linear(rows, projection.weight());
     };
     check_equal(bounded.forward(input, context), expected);
-    TORCH_CHECK(gemms == (bounded.fp8() ? 0 : 2), "Unexpected precision backend selection");
+    TORCH_CHECK(gemms == (bounded.is_quantized() ? 0 : 2),
+                "Unexpected quantization backend selection");
   }
   infinity::DenseMlp owned({wi, bi, clipped}, {wo, bo, clipped}, {infinity::MlpActivation::Tanh});
   auto calls = std::make_shared<int>(0);
@@ -594,7 +595,7 @@ void check(const c10::Device& device, at::ScalarType dtype) {
     } catch (const c10::Error&) {
       rejected = true;
     }
-    TORCH_CHECK(rejected && !invalid.fp8() && invalid.input().weight().defined(),
+    TORCH_CHECK(rejected && !invalid.is_quantized() && invalid.input().weight().defined(),
                 "Failed FP8 preparation left a partially quantized MLP");
   }
 #endif
@@ -611,7 +612,7 @@ int main(int argc, char**) {
       check(device, dtype);
     if (!device.is_cuda())
       check(device, at::kFloat);
-    std::cout << "Persistent MLP bias, clipping, layout, preparation and precision checks passed\n";
+    std::cout << "Persistent MLP bias, clipping, layout and quantization checks passed\n";
   } catch (const std::exception& error) {
     std::cerr << error.what() << '\n';
     return 1;

@@ -41,7 +41,7 @@ def flatten(value, prefix=''):
 
 
 class Native:
-    def __init__(self, library, model, graphs, fp8=False):
+    def __init__(self, library, model, graphs, dynamic_quantization='none'):
         self.lib = lib = C.CDLL(str(library.resolve()))
         lib.infinity_torch_error.restype = C.c_char_p
         lib.infinity_torch_create.argtypes = [C.POINTER(Config), C.c_char_p, C.c_int32]
@@ -67,7 +67,7 @@ class Native:
         cfg.update(_decision={'kind': 'laya', 'config': json.loads((model / 'rl_agent_config.json').read_text())},
                    _cuda_graphs=graphs, _cuda_graph_max_tokens=32768, _cuda_graph_entries=8,
                    _cuda_graph_max_bytes=2 << 30, _pooling='decision', _dense_count=0,
-                   _cudnn_varlen=False, _dynamic_quantization='fp8' if fp8 else 'none',
+                   _cudnn_varlen=False, _dynamic_quantization=dynamic_quantization,
                    _dynamic_quantization_scope='mlp')
         for key, value in flatten(cfg):
             self.check(lib.infinity_torch_option(self.handle, key.encode(), value.encode()))
@@ -180,7 +180,8 @@ def main():
     p.add_argument('--extended-only', action='store_true', help='Measure only added larger batches and exact targets')
     p.add_argument('--tune-gemm', type=int, default=0,
                    help='Experimentally tune this many cuBLASLt heuristic candidates before measuring')
-    p.add_argument('--fp8', action='store_true', help='Evaluate existing dynamic FP8 encoder MLP; changes precision')
+    p.add_argument('--dynamic-quantization', choices=['none', 'fp8', 'mxfp8', 'nvfp4'], default='none',
+                   help='Select the runtime MLP format; unsupported model/format combinations fail during loading')
     args = p.parse_args()
     assert args.iterations >= 20 and args.repeats >= 1
     args.output.mkdir(parents=True, exist_ok=True)
@@ -208,10 +209,10 @@ def main():
                     model_metadata=json.loads((args.model / 'checkpoint_metadata.json').read_text()),
                     graphs=args.graphs, iterations=args.iterations, repeats=args.repeats,
                     gemm_heuristic_candidates=args.tune_gemm,
-                    fp8_mlp=args.fp8,
+                    dynamic_quantization=args.dynamic_quantization, dynamic_quantization_scope='mlp',
                     measurement='synchronous native C ABI; includes input upload, encoder, head and host outputs; excludes HTTP/tokenization; BF16; exact packed tokens')
     (args.output / 'manifest.json').write_text(json.dumps(manifest, indent=2))
-    engine = Native(args.library, args.model, args.graphs, args.fp8)
+    engine = Native(args.library, args.model, args.graphs, args.dynamic_quantization)
     rows = []
     try:
         for repeat in range(args.repeats):
