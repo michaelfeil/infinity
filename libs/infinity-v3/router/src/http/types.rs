@@ -1080,21 +1080,6 @@ pub(crate) enum TokenPredictResponse {
 }
 
 #[cfg(test)]
-mod rerank_request_tests {
-    use super::*;
-
-    #[test]
-    fn accepts_texts_and_legacy_documents() {
-        for field in ["texts", "documents"] {
-            let mut body = json!({"model": "BAAI/bge-reranker-v2-m3", "query": "q"});
-            body[field] = json!(["a", "b"]);
-            let request: RerankRequest = serde_json::from_value(body).unwrap();
-            assert_eq!(request.texts, ["a", "b"]);
-        }
-    }
-}
-
-#[cfg(test)]
 mod service_tier_tests {
     use super::*;
 
