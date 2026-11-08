@@ -503,6 +503,7 @@ pub(crate) struct RerankRequest {
     #[schema(example = "What is Deep Learning?")]
     pub query: String,
     #[schema(example = json!(["Deep Learning is ..."]))]
+    #[serde(alias = "documents")]
     pub texts: Vec<String>,
     #[serde(default)]
     #[schema(default = "false", example = "false", nullable = true)]
@@ -1076,6 +1077,21 @@ fn serialize_token_scores<S: serde::Serializer>(
 #[serde(untagged)]
 pub(crate) enum TokenPredictResponse {
     Batch(Vec<Vec<TokenPrediction>>),
+}
+
+#[cfg(test)]
+mod rerank_request_tests {
+    use super::*;
+
+    #[test]
+    fn accepts_texts_and_legacy_documents() {
+        for field in ["texts", "documents"] {
+            let mut body = json!({"model": "BAAI/bge-reranker-v2-m3", "query": "q"});
+            body[field] = json!(["a", "b"]);
+            let request: RerankRequest = serde_json::from_value(body).unwrap();
+            assert_eq!(request.texts, ["a", "b"]);
+        }
+    }
 }
 
 #[cfg(test)]
