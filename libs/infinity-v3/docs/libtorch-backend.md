@@ -30,18 +30,25 @@ For native LibTorch CPU builds, use `--torch-device cpu --dtype float32`.
 CPU builds from current `main` use LibTorch. Dynamic FP8 and CUDA-only kernels
 require the NVIDIA image.
 
-## Optional dynamic FP8
+## Optional quantization
 
-Add `--enable-fp8-dynamic` to enable FP8 projections on supported models and GPUs:
+Use `--dynamic-quantization` to select a format for each model:
 
 ```bash
 infinity_v3 --model-id /path/to/model \
-  --torch-device cuda --dtype bfloat16 --enable-fp8-dynamic
+  --torch-device cuda --dtype bfloat16 --dynamic-quantization fp8
 ```
 
-FP8 is opt-in and can change outputs; check accuracy on your task before enabling
-it. Model and hardware support varies. Use `INFINITY_TORCH_FP8_SCOPE=mlp` to
-restrict eligible models to MLP projections. See [model coverage](libtorch-model-coverage.md).
+`none` preserves the model dtype. `fp8` selects rowwise FP8; `mxfp8` and `nvfp4`
+select the corresponding block-scaled MLP format on eligible Blackwell BF16
+models. In all-linear scope, attention projections still use FP8. Unsupported
+format/model combinations fail during initialization rather than selecting a
+different format. Quantization can change outputs; check accuracy on your task.
+
+Use `--dynamic-quantization-scope mlp` to restrict quantization to MLP projections.
+The default `auto` uses all-linear scope for eligible dense decoders and MLP-only
+scope otherwise. See [model coverage](libtorch-model-coverage.md) and
+[per-model configuration](cli.md#quantization).
 
 Portable FP8 projections fuse output scaling and conversion into one kernel.
 They retain the two separately rounded FP32 scale products and the final
@@ -62,7 +69,7 @@ For compatible decision checkpoints, use `--decision-protocol onejev` with
 shared prefixes are reused within a backend batch. This is not a persistent
 cross-request cache.
 
-For dense Qwen3.5, `--enable-fp8-dynamic` uses all-linear dynamic FP8 by
+For dense Qwen3.5, `--dynamic-quantization fp8` uses all-linear dynamic FP8 by
 default and enables the FP8 optimizations automatically. GDN activations remain
 BF16 and stored recurrent states remain FP32.
 

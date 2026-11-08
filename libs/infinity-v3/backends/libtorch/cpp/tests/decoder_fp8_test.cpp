@@ -163,14 +163,15 @@ void check_family(const std::string& family,
                   bool all = false,
                   int64_t hidden = 32,
                   bool default_scope = false,
-                  int64_t intermediate = 64) {
+                  int64_t intermediate = 64,
+                  bool mxfp8 = false) {
   auto options = config(family);
   options.values["hidden_size"] = std::to_string(hidden);
   options.values["intermediate_size"] = std::to_string(intermediate);
   auto enabled = options;
-  enabled.values["_fp8_dynamic"] = "true";
+  enabled.values["_dynamic_quantization"] = mxfp8 ? "mxfp8" : "fp8";
   if (!default_scope)
-    enabled.values["_fp8_scope"] = all ? "all" : "mlp";
+    enabled.values["_dynamic_quantization_scope"] = all ? "all" : "mlp";
   auto quantized_weights = weights(options, device, dtype);
   auto original_down =
       quantized_weights.at("model.layers.0.mlp.down_proj.weight").storage().getWeakStorageImpl();
@@ -328,8 +329,8 @@ void check_registered_causal_contract(c10::Device device, bool mxfp8 = false) {
       {checkpoint.at(p + "mlp.gate_proj.weight"), checkpoint.at(p + "mlp.up_proj.weight")}, 0);
   for (bool fp8 : {false, true}) {
     auto enabled = options;
-    enabled.values["_fp8_dynamic"] = fp8 ? "true" : "false";
-    enabled.values["_fp8_scope"] = "mlp"; // Original Candle projection recipe.
+    enabled.values["_dynamic_quantization"] = fp8 ? (mxfp8 ? "mxfp8" : "fp8") : "none";
+    enabled.values["_dynamic_quantization_scope"] = "mlp"; // Original Candle projection recipe.
     auto owned = checkpoint;
     auto model = infinity::create_decoder(enabled, owned, device, at::kBFloat16);
     model->ready();
@@ -359,7 +360,7 @@ void check_registered_causal_contract(c10::Device device, bool mxfp8 = false) {
 }
 
 void rejects(infinity::Options options, c10::Device device, at::ScalarType dtype) {
-  options.values["_fp8_dynamic"] = "true";
+  options.values["_dynamic_quantization"] = "fp8";
   infinity::Weights empty;
   auto model = infinity::create_decoder(options, empty, device, dtype);
   bool rejected = false;
@@ -400,7 +401,7 @@ int main(int argc, char** argv) {
     // Qualified MLPs exercise the decoder RMS input, ragged-row folding,
     // causal isolation and weight ownership with the native block format.
     for (auto family : {"llama", "qwen2", "qwen3"})
-      check_family(family, device, at::kBFloat16, false, 4096, false, 128);
+      check_family(family, device, at::kBFloat16, false, 4096, false, 128, true);
     return 0;
   }
   check_registered_causal_contract(device);
@@ -419,14 +420,15 @@ int main(int argc, char** argv) {
   check_family("qwen3", device, at::kBFloat16, true, 4096);
   for (auto scope : {"unknown", "all"}) {
     auto options = config("qwen3");
-    options.values["_fp8_scope"] = scope;
+    options.values["_dynamic_quantization_scope"] = scope;
     auto original = weights(options, device, at::kBFloat16);
     auto model = infinity::create_decoder(options, original, device, at::kBFloat16);
     bool rejected = false;
     try {
       model->ready();
     } catch (const c10::Error& error) {
-      rejected = std::string(error.what_without_backtrace()).find("FP8") != std::string::npos;
+      rejected =
+          std::string(error.what_without_backtrace()).find("uantization") != std::string::npos;
     }
     TORCH_CHECK(rejected,
                 "Invalid scope or all-linear FP8 without enabling quantization was accepted");

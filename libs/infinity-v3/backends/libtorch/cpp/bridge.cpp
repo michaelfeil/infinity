@@ -183,10 +183,10 @@ struct Engine {
     outputs->max_bytes = static_cast<size_t>(staging_bytes);
     dense = std::make_unique<infinity::DenseChain>(options, weights);
     auto family = options.string("model_type", "bert");
-    if (options.boolean("_fp8_dynamic", false)) {
+    if (options.dynamic_quantization() != infinity::Quantization::None) {
       TORCH_CHECK(!options.values.count("quantization_config") &&
                       !options.values.count("quantization_config.quant_method"),
-                  "Dynamic FP8 requires an unquantized checkpoint");
+                  "Quantization requires an unquantized checkpoint");
     }
     auto decision_kind = options.string("_decision.kind");
     if (!decision_kind.empty()) {
@@ -959,6 +959,11 @@ int32_t infinity_torch_load_safetensors(void* handle,
 int32_t infinity_torch_option(void* handle, const char* key, const char* value) {
   return checked([&] {
     EngineCall access(handle);
+    TORCH_CHECK(key && value, "Missing native option name or value");
+    TORCH_CHECK(std::strcmp(key, "_fp8_dynamic") != 0,
+                "Option _fp8_dynamic was removed; use _dynamic_quantization");
+    TORCH_CHECK(std::strcmp(key, "_fp8_scope") != 0,
+                "Option _fp8_scope was removed; use _dynamic_quantization_scope");
     static_cast<Engine*>(handle)->options.values[key] = value;
   });
 }

@@ -1065,8 +1065,8 @@ class Qwen35 final : public Model {
         attended = prefix_projection(attended, output_name, input);
       }
       QuantizedRows mlp_rows;
-      const bool quantize_mlp =
-          mlps[layer].dense_mlp.fp8() && mlps[layer].dense_mlp.supports_rowwise_rms_input();
+      const bool quantize_mlp = mlps[layer].dense_mlp.is_quantized() &&
+                                mlps[layer].dense_mlp.supports_rowwise_rms_input();
       // Rowwise FP8 consumes the rounded norm through mlp_rows; no BF16 copy is needed.
       auto post = residual_norm(hidden,
                                 attended,
@@ -1161,26 +1161,30 @@ public:
   }
 
   void ready() override {
+    const auto quantization = cfg.dynamic_quantization();
+    const auto scope = cfg.dynamic_quantization_scope(
+        quantization == Quantization::None ? QuantizationScope::Mlp : QuantizationScope::All);
     // Let the native provider select supported GPU families and GDN layouts.
-    delta_prefill = device.is_cuda() && !cfg.boolean("_fp8_dynamic", false);
+    delta_prefill = device.is_cuda() && quantization == Quantization::None;
     const auto* suffix_policy = std::getenv(INFINITY_ENV("TORCH_GDN_SUFFIX_PREFILL"));
     delta_suffix_prefill = !suffix_policy || std::string_view(suffix_policy) == "1";
-    const auto fp8 = cfg.boolean("_fp8_dynamic", false);
-    const auto scope = cfg.string("_fp8_scope", fp8 ? "all" : "mlp");
-    TORCH_CHECK(scope == "mlp" || scope == "all", "FP8 scope must be mlp or all");
-    TORCH_CHECK(scope != "all" || fp8, "All-linear FP8 requires dynamic FP8 enabled");
-    if (fp8) {
+    const bool quantized = quantization != Quantization::None;
+    TORCH_CHECK(scope != QuantizationScope::All || quantized,
+                "All-linear quantization requires a quantization format");
+    if (quantized) {
       TORCH_CHECK(device.is_cuda() && dtype == at::kBFloat16,
-                  "Dynamic FP8 Qwen3.5 requires CUDA BF16");
+                  quantization_name(quantization),
+                  " Qwen3.5 requires CUDA BF16");
       TORCH_CHECK(integer("num_experts", 0) == 0 && (cfg.string("model_type") == "qwen3_5" ||
                                                      cfg.string("model_type") == "qwen3_5_text"),
-                  "Dynamic FP8 Qwen3.5 supports dense models only");
+                  quantization_name(quantization),
+                  " Qwen3.5 supports dense models only");
       for (const auto& [name, value] : cfg.values)
         TORCH_CHECK(
             name != "quantization_config" && name.rfind("quantization_config.", 0) != 0 &&
                 name != "text_config.quantization_config" &&
                 name.rfind("text_config.quantization_config.", 0) != 0,
-            "Dynamic FP8 requires an unquantized checkpoint without supplied quantization scales");
+            "Quantized Qwen3.5 requires an unquantized checkpoint without supplied quantization scales");
     }
     TORCH_CHECK(!block_attention() || integer("num_experts", 0) == 0,
                 "OneJev block attention currently requires a dense Qwen3.5 model");
@@ -1248,8 +1252,8 @@ public:
         recipe.fusion = MlpFusion::RoundedSwiGlu;
         m.dense_mlp = DenseMlp({m.gate_up}, {m.down}, std::move(recipe));
         consumed = {mp + "gate_proj.weight", mp + "up_proj.weight", mp + "down_proj.weight"};
-        if (fp8) {
-          m.dense_mlp.prepare(MlpPrecision::Fp8);
+        if (quantized) {
+          m.dense_mlp.prepare(quantization);
           m.gate_up = at::Tensor();
           m.down = at::Tensor();
         }
@@ -1296,7 +1300,7 @@ public:
       // exclusively through mlps; keep all attention/embedding/vision/head keys.
       for (const auto& name : consumed)
         weights.erase(prefix + name);
-      if (fp8 && scope == "all") {
+      if (quantized && scope == QuantizationScope::All) {
         // Keep the small DeltaNet decay/update gates, convolution and recurrent
         // state in their original precision, along with vision and output heads.
         const std::vector<std::string> projections =

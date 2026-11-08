@@ -37,13 +37,15 @@ enum class Family { Distil, Modern, Nomic, Gte, Jina, JinaCode };
 
 void prepare_mlp(DenseMlp& mlp,
                  const Options& options,
+                 Quantization quantization,
                  Weights& weights,
                  const std::string& prefix,
                  std::initializer_list<std::string> projections) {
-  if (!options.boolean("_fp8_dynamic", false))
+  TORCH_CHECK(options.dynamic_quantization_scope() == QuantizationScope::Mlp,
+              "Encoder quantization supports MLP scope only");
+  if (quantization == Quantization::None)
     return;
-  TORCH_CHECK(options.string("_fp8_scope", "mlp") == "mlp", "Encoder FP8 supports MLP scope only");
-  mlp.prepare(MlpPrecision::Fp8);
+  mlp.prepare(quantization);
   for (const auto& name : projections)
     weights.erase(prefix + name + ".weight");
 }
@@ -100,7 +102,7 @@ struct Encoder final : Model {
   bool device_routing_ready() const {
 #ifdef INFINITY_TORCH_CUDA_KERNELS
     return family == Family::Nomic && exact_moe && nomic_split_policy.defined() &&
-           !o.boolean("_fp8_dynamic", false) &&
+           o.dynamic_quantization() == Quantization::None &&
            at::globalContext().blasPreferredBackend() == at::BlasBackend::Cublaslt &&
            at::globalContext().allowBF16ReductionCuBLAS() ==
                at::CuBLASReductionOption::AllowReducedPrecisionWithSplitK &&
@@ -153,7 +155,7 @@ struct Encoder final : Model {
     // An explicit zero opts into the ATen diagnostic path.
     exact_norm = f == Family::Modern &&
                  (!norm_mode || std::string(norm_mode) == "1" || std::string(norm_mode) == "true");
-    if (o.boolean("_fp8_dynamic", false))
+    if (o.dynamic_quantization() != Quantization::None)
       for (int64_t layer = 0; layer < layers; ++layer)
         TORCH_CHECK(
             !routed_layer(layer),
@@ -396,7 +398,8 @@ struct Encoder final : Model {
     // The outer ModernBERT geometry gate and the executor's inner (K,N) allowlist jointly bound
     // this optimization. Broadening only model construction leaves other projections on ATen.
     if (family == Family::Modern && device.is_cuda() &&
-        (dtype == at::kHalf || dtype == at::kBFloat16) && !o.boolean("_fp8_dynamic", false))
+        (dtype == at::kHalf || dtype == at::kBFloat16) &&
+        o.dynamic_quantization() == Quantization::None)
       ordinary_executor = std::make_shared<OrdinaryLinearExecutor>();
     TORCH_CHECK(hidden > 0 && heads > 0 && hidden % heads == 0 && layers > 0,
                 "Invalid encoder dimensions");
@@ -590,8 +593,9 @@ struct Encoder final : Model {
                                  up},
                                 {w(down + ".weight"), bias(down), {}, down},
                                 std::move(recipe));
-        prepare_mlp(fused[i].mlp, o, weights, prefix, {up, down});
-        if (fused_gate && o.boolean("_fp8_dynamic", false)) {
+        const auto quantization = o.dynamic_quantization();
+        prepare_mlp(fused[i].mlp, o, quantization, weights, prefix, {up, down});
+        if (fused_gate && quantization != Quantization::None) {
           fused[i].gate_weight = at::Tensor();
           weights.erase(prefix + p + "mlp.fc11.weight");
           weights.erase(prefix + p + "mlp.fc12.weight");
@@ -1174,8 +1178,12 @@ struct Mpnet final : Model {
                               : act == "silu" ? MlpActivation::Silu
                               : act == "gelu" ? MlpActivation::Gelu
                                               : MlpActivation::GeluTanh});
-      prepare_mlp(
-          mlps.back(), o, weights, prefix, {block + "intermediate.dense", block + "output.dense"});
+      prepare_mlp(mlps.back(),
+                  o,
+                  o.dynamic_quantization(),
+                  weights,
+                  prefix,
+                  {block + "intermediate.dense", block + "output.dense"});
     }
   }
 
@@ -1383,7 +1391,7 @@ struct Deberta final : Model {
           MlpActivationRecipe::numerical([this](const at::Tensor& rows) {
             return activation(rows, o.string("hidden_act", "gelu"));
           }));
-      prepare_mlp(mlps.back(), o, weights, prefix, {in, out});
+      prepare_mlp(mlps.back(), o, o.dynamic_quantization(), weights, prefix, {in, out});
       const auto p = block + "attention.self.";
       qkv_weight.push_back(at::cat(
           {w(p + "query_proj.weight"), w(p + "key_proj.weight"), w(p + "value_proj.weight")}, 0));

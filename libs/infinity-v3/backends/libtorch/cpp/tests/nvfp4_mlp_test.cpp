@@ -1,5 +1,4 @@
 // Copyright Infinity Core Contributors. Licensed under the repository LICENSE.
-#include "env_config.h"
 #include "helpers/dense_mlp.h"
 #include "helpers/nvfp4_linear.h"
 #include "kernels/fast_kernels.h"
@@ -7,17 +6,9 @@
 #include <ATen/cuda/CUDAContext.h>
 #include <c10/util/Exception.h>
 #include <cmath>
-#include <cstdlib>
 #include <vector>
 
 namespace {
-void set_nvfp4_flag(const char* value) {
-  if (value)
-    setenv(INFINITY_ENV("TORCH_NVFP4_MLP"), value, 1);
-  else
-    unsetenv(INFINITY_ENV("TORCH_NVFP4_MLP"));
-}
-
 uint8_t e4m3_byte(float value) {
   return at::tensor({value}, at::TensorOptions().dtype(at::kFloat))
       .to(at::kFloat8_e4m3fn)
@@ -274,29 +265,25 @@ void dense_mlp_forward_and_guards() {
   recipe.fusion = infinity::MlpFusion::RoundedSwiGlu;
   auto make = [&] { return infinity::DenseMlp({gate_up}, {down}, recipe); };
   auto x = at::randn({4, 32}, opts) * .5f;
-  set_nvfp4_flag("0");
-  auto off_mlp = make();
-  off_mlp.prepare(infinity::MlpPrecision::Fp8);
-  TORCH_CHECK(!off_mlp.input().method().accepts_native_quantized_rows() &&
-                  at::isfinite(off_mlp.forward(x)).all().item<bool>(),
-              "Default MXFP8 path changed after NVFP4 opt-in was disabled");
-  set_nvfp4_flag("gate");
-  bool rejected = false;
-  try {
-    auto bad_mlp = make();
-    bad_mlp.prepare(infinity::MlpPrecision::Fp8);
-  } catch (const c10::Error&) {
-    rejected = true;
-  }
-  TORCH_CHECK(rejected, "Unknown NVFP4 flag value was silently accepted");
-  set_nvfp4_flag("1");
+  auto rowwise_mlp = make();
+  rowwise_mlp.prepare(infinity::Quantization::Fp8);
+  TORCH_CHECK(!rowwise_mlp.input().method().accepts_native_quantized_rows() &&
+                  at::isfinite(rowwise_mlp.forward(x)).all().item<bool>(),
+              "Explicit FP8 did not retain the rowwise path");
   auto nv_mlp = make();
-  nv_mlp.prepare(infinity::MlpPrecision::Fp8);
-  nv_mlp.prepare(infinity::MlpPrecision::Fp8); // Released native weights remain prepared.
+  nv_mlp.prepare(infinity::Quantization::Nvfp4);
+  nv_mlp.prepare(infinity::Quantization::Nvfp4); // Released native weights remain prepared.
   TORCH_CHECK(nv_mlp.input().method().accepts_native_quantized_rows() &&
                   nv_mlp.output().method().accepts_native_quantized_rows() &&
                   nv_mlp.input().method().supports_native_swiglu_quantized(),
               "NVFP4 did not select the fused both-projections method");
+  bool rejected = false;
+  try {
+    nv_mlp.prepare(infinity::Quantization::Fp8);
+  } catch (const c10::Error&) {
+    rejected = true;
+  }
+  TORCH_CHECK(rejected, "NVFP4 preparation was silently changed to another format");
   infinity::Nvfp4Linear in(gate_up), out(down);
   auto gu = in.forward(x);
   auto fused_stage = infinity::nvfp4_swiglu_quantize(gu);
@@ -318,7 +305,7 @@ void dense_mlp_forward_and_guards() {
 
   auto bias = at::randn({32}, opts).slice(0, 0, 32, 2);
   infinity::DenseMlp biased({gate_up}, {down, bias}, recipe);
-  biased.prepare(infinity::MlpPrecision::Fp8);
+  biased.prepare(infinity::Quantization::Nvfp4);
   TORCH_CHECK(at::equal(biased.forward(x), code5 + bias),
               "NVFP4 MLP did not preserve a strided down-projection bias");
 
@@ -329,7 +316,7 @@ void dense_mlp_forward_and_guards() {
   auto wide_x = at::randn({2, 128}, opts) * .5f;
   infinity::DenseMlp wide({wide_gate}, {wide_down}, recipe);
   TORCH_CHECK(wide.supports_nvfp4(), "Wide tiled NVFP4 MLP was rejected");
-  wide.prepare(infinity::MlpPrecision::Fp8);
+  wide.prepare(infinity::Quantization::Nvfp4);
   infinity::Nvfp4Linear wide_in(wide_gate), wide_out(wide_down);
   auto reference = wide_out.forward(infinity::fused_gated_activation(wide_in.forward(wide_x), 5));
   TORCH_CHECK(at::equal(wide.forward(wide_x), reference),
@@ -339,12 +326,12 @@ void dense_mlp_forward_and_guards() {
   infinity::DenseMlp unaligned({at::randn({64, 48}, opts)}, {at::randn({48, 32}, opts)}, recipe);
   rejected = false;
   try {
-    unaligned.prepare(infinity::MlpPrecision::Fp8);
+    unaligned.prepare(infinity::Quantization::Nvfp4);
   } catch (const c10::Error&) {
     rejected = true;
   }
-  TORCH_CHECK(rejected && !unaligned.fp8(), "Unsupported packed K was accepted at preparation");
-  set_nvfp4_flag(nullptr);
+  TORCH_CHECK(rejected && !unaligned.is_quantized(),
+              "Unsupported packed K was accepted at preparation");
 }
 
 // A 16x32 all-ones weight against one- and two-valued activation rows. Row 0

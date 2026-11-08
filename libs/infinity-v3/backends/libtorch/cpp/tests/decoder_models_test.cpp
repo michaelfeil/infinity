@@ -733,8 +733,8 @@ void selected_classifier_rows_test(c10::Device device, at::ScalarType dtype) {
                                                  : "Qwen3ForSequenceClassification";
           cfg.values["is_causal"] = causal ? "true" : "false";
           cfg.values["intermediate_size"] = "32";
-          cfg.values["_fp8_dynamic"] = fp8 ? "true" : "false";
-          cfg.values["_fp8_scope"] = fp8 ? scope : "mlp";
+          cfg.values["_dynamic_quantization"] = fp8 ? "fp8" : "none";
+          cfg.values["_dynamic_quantization_scope"] = fp8 ? scope : "mlp";
           cfg.values["num_labels"] = "3";
           cfg.values["num_attention_heads"] = "2";
           cfg.values["num_key_value_heads"] = "1";
@@ -2843,8 +2843,8 @@ void ultrabert_fp8_test(const c10::Device& device) {
                     4};
   auto expected = reference->forward(input).to(at::kFloat);
   for (const auto* scope : {"mlp", "all"}) {
-    cfg.values["_fp8_dynamic"] = "true";
-    cfg.values["_fp8_scope"] = scope;
+    cfg.values["_dynamic_quantization"] = "fp8";
+    cfg.values["_dynamic_quantization_scope"] = scope;
     auto quantized = build(cfg);
     auto actual = quantized->forward(input).to(at::kFloat);
     TORCH_CHECK(at::isfinite(actual).all().item<bool>() &&

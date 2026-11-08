@@ -39,7 +39,7 @@ exact-length biased attention without padded token activations.
 
 ## Dynamic FP8
 
-Use `--enable-fp8-dynamic` with CUDA and `--dtype float16` or `--dtype bfloat16`.
+Use `--dynamic-quantization fp8` with CUDA and `--dtype float16` or `--dtype bfloat16`.
 Dense floating-point checkpoints are quantized during initialization. The native
 FP8 kernels require SM89, SM90, SM100 or SM120 and projection widths divisible
 by 16. CPU inference and already-quantized checkpoints are not supported by this
@@ -57,8 +57,16 @@ option. FP8 remains opt-in and can change model outputs.
 
 Attention calculations, normalization, embedding/output heads and media towers
 retain their existing precision. Routed-expert/MoE variants are excluded. Set
-`INFINITY_TORCH_FP8_SCOPE=mlp` to limit eligible decoders to feed-forward
+`--dynamic-quantization-scope mlp` to limit eligible decoders to feed-forward
 projections; `all` is accepted only for the listed dense decoder families.
+
+`--dynamic-quantization mxfp8` and `--dynamic-quantization nvfp4` select block-scaled MLPs
+for eligible packed, gate-first BF16 rounded SwiGLU models on Blackwell.
+These explicit formats require compatible projection geometry and activation
+recipes; the broader FP8 coverage table does not imply MXFP8/NVFP4 support.
+Other projections in all-linear scope remain FP8. Each model selects its format
+independently, including when serving embedding, reranking and decision models
+together. The default `none` preserves model dtype.
 
 Classifier and SPLADE heads are architecture-specific. Typed decisions support
 Laya, Clef, Pplx and option-token contracts, with checkpoint sidecar loading.

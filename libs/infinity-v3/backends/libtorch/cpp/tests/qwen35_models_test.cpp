@@ -68,9 +68,9 @@ void dynamic_fp8_test(Options cfg, Weights weights, const c10::Device& device) {
     for (const auto* scope : {"mlp", "all", "default"}) {
       cfg.values["model_type"] = family;
       auto enabled = cfg;
-      enabled.values["_fp8_dynamic"] = "true";
+      enabled.values["_dynamic_quantization"] = "fp8";
       if (std::string(scope) != "default")
-        enabled.values["_fp8_scope"] = scope;
+        enabled.values["_dynamic_quantization_scope"] = scope;
       // Exercise the serving bridge's family gate, not only model construction.
       InfinityTorchConfig shape{16, 2, 2, 32, 32, 32, 1, 1e-6, 5};
       std::unique_ptr<void, decltype(&infinity_torch_destroy)> engine(
@@ -148,7 +148,7 @@ void dynamic_fp8_test(Options cfg, Weights weights, const c10::Device& device) {
     }
   for (const auto* invalid : {"cpu", "float16", "moe", "quantized", "qkv_shape"}) {
     auto enabled = cfg;
-    enabled.values["_fp8_dynamic"] = "true";
+    enabled.values["_dynamic_quantization"] = "fp8";
     if (std::string(invalid) == "moe")
       enabled.values["num_experts"] = "2";
     if (std::string(invalid) == "quantized")

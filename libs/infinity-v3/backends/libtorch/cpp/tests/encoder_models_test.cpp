@@ -182,7 +182,7 @@ void fp8_encoder(const infinity::Options& options,
     auto reference = infinity::create_encoder(options, reference_weights, device, dtype);
     reference->ready();
     auto quantized_options = options;
-    quantized_options.values["_fp8_dynamic"] = "true";
+    quantized_options.values["_dynamic_quantization"] = "fp8";
     auto quantized = infinity::create_encoder(quantized_options, quantized_weights, device, dtype);
     quantized->ready();
     TORCH_CHECK(quantized_weights.size() < reference_weights.size(),
@@ -384,6 +384,18 @@ int main(int argc, char** argv) {
                     "deberta-v2"}) {
     auto o = config(type);
     auto w = weights(type, device, dtype);
+    auto invalid_scope = o;
+    invalid_scope.values["_dynamic_quantization_scope"] = "all";
+    auto invalid_weights = w;
+    bool scope_rejected = false;
+    try {
+      auto invalid = infinity::create_encoder(invalid_scope, invalid_weights, device, dtype);
+      invalid->ready();
+    } catch (const c10::Error& error) {
+      scope_rejected =
+          std::string(error.what_without_backtrace()).find("MLP scope only") != std::string::npos;
+    }
+    TORCH_CHECK(scope_rejected, "Encoder accepted all-linear scope with quantization disabled");
     auto model = infinity::create_encoder(o, w, device, dtype);
     model->ready();
     auto packed = model->forward({ids, types, positions, cu, offsets, 2, 5});
@@ -428,7 +440,7 @@ int main(int argc, char** argv) {
       }
       fp8_encoder(gated_options, gated_weights, {ids, types, positions, cu, offsets, 2, 5});
       auto routed_options = o;
-      routed_options.values["_fp8_dynamic"] = "true";
+      routed_options.values["_dynamic_quantization"] = "fp8";
       routed_options.values["num_experts"] = "8";
       routed_options.values["moe_every_n_layers"] = "2";
       bool fp8_rejected = false;

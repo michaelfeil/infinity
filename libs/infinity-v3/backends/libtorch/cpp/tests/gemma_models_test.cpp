@@ -443,7 +443,7 @@ void dynamic_fp8(const c10::Device& device, const std::string& family) {
     reference_weights[name] = quantized_weights[name] = value.to(device, at::kBFloat16);
   auto reference = create_gemma(f.cfg, reference_weights, device, at::kBFloat16);
   reference->ready();
-  f.cfg.values["_fp8_dynamic"] = "true";
+  f.cfg.values["_dynamic_quantization"] = "fp8";
   auto quantized = create_gemma(f.cfg, quantized_weights, device, at::kBFloat16);
   quantized->ready();
   TORCH_CHECK(!quantized_weights.count("layers.0.mlp.down_proj.weight"),

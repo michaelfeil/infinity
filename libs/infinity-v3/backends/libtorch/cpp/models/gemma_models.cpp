@@ -1257,19 +1257,22 @@ public:
   /// Validate the selected Gemma family and prepare layer metadata,
   /// norms, towers, and optional score heads.
   void ready() override {
-    const auto fp8 = cfg.boolean("_fp8_dynamic", false);
-    TORCH_CHECK(cfg.string("_fp8_scope", "mlp") == "mlp", "Gemma FP8 supports MLP scope only");
-    if (fp8) {
+    const auto quantization = cfg.dynamic_quantization();
+    TORCH_CHECK(cfg.dynamic_quantization_scope() == QuantizationScope::Mlp,
+                "Gemma quantization supports MLP scope only");
+    if (quantization != Quantization::None) {
       TORCH_CHECK(!boolean("enable_moe_block", false),
-                  "Dynamic FP8 Gemma requires a dense checkpoint; routed experts are unsupported");
+                  quantization_name(quantization),
+                  " Gemma requires a dense checkpoint; routed experts are unsupported");
       TORCH_CHECK(device.is_cuda() && (dtype == at::kHalf || dtype == at::kBFloat16),
-                  "Dynamic FP8 Gemma requires CUDA float16/bfloat16");
+                  quantization_name(quantization),
+                  " Gemma requires CUDA float16/bfloat16");
       for (const auto& [name, value] : cfg.values)
         TORCH_CHECK(
             name != "quantization_config" && name.rfind("quantization_config.", 0) != 0 &&
                 name != "text_config.quantization_config" &&
                 name.rfind("text_config.quantization_config.", 0) != 0,
-            "Dynamic FP8 requires an unquantized checkpoint without supplied quantization scales");
+            "Quantized Gemma requires an unquantized checkpoint without supplied quantization scales");
     }
     if (supports_audio()) {
       const auto chunk = cfg.integer("audio_config.attention_chunk_size", 12),
@@ -1490,8 +1493,8 @@ public:
           {w(layer.p + "mlp.down_proj.weight"),
            has(layer.p + "mlp.down_proj.bias") ? w(layer.p + "mlp.down_proj.bias") : at::Tensor()},
           std::move(activation));
-      if (fp8) {
-        layer.dense_mlp.prepare(MlpPrecision::Fp8);
+      if (quantization != Quantization::None) {
+        layer.dense_mlp.prepare(quantization);
         layer.gate_up = at::Tensor();
         for (const auto* projection : {"gate_proj", "up_proj", "down_proj"})
           weights.erase(prefix + layer.p + "mlp." + projection + ".weight");

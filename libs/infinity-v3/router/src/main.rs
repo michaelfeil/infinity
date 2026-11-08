@@ -1,6 +1,7 @@
 use anyhow::{Context, Result};
 use clap::{CommandFactory, FromArgMatches, Parser};
 use infinity_v3_backend::DType;
+use infinity_v3_config::{DynamicQuantization, DynamicQuantizationScope};
 use opentelemetry::global;
 use veil::Redact;
 
@@ -249,11 +250,17 @@ struct Args {
     #[clap(long, env = infinity_v3_config::infinity_env!("MAX_BATCH_REQUESTS"), value_parser = optional_usize, value_delimiter = ';')]
     max_batch_requests: Vec<Optional<usize>>,
 
-    /// Experimental calibration-free FP8 projections (Ada/Hopper/Blackwell FP16/BF16 dense decoder and BERT/ModernBERT encoders).
-    /// LibTorch dense decoders default to all-linear FP8; set TORCH_FP8_SCOPE=mlp with the configured environment prefix for MLP-only. Encoders remain MLP-only.
-    /// Bundled in official SM89/90/100/120 images; disabled by default. May change embedding, reranking, and decision accuracy.
-    #[clap(long, env = infinity_v3_config::infinity_env!("ENABLE_FP8_DYNAMIC"), action = clap::ArgAction::Append, num_args = 0..=1, default_missing_value = "true", default_value = "false", value_delimiter = ';')]
-    enable_fp8_dynamic: Vec<bool>,
+    /// Dynamic projection quantization for LibTorch models: none, fp8, mxfp8, or nvfp4.
+    /// This is independent of --dtype. MXFP8 and NVFP4 require bfloat16; FP8 accepts float16 or bfloat16.
+    /// Per-model values may be separated by ';' or passed repeatedly. Defaults to none.
+    #[clap(long, env = infinity_v3_config::infinity_env!("DYNAMIC_QUANTIZATION"), value_enum, default_value = "none", value_delimiter = ';')]
+    dynamic_quantization: Vec<DynamicQuantization>,
+
+    /// Dynamic quantization scope: auto, mlp, or all.
+    /// Auto uses all-linear dynamic quantization for eligible dense decoders and MLP-only for encoders.
+    /// Per-model values may be separated by ';' or passed repeatedly. Defaults to auto.
+    #[clap(long, env = infinity_v3_config::infinity_env!("DYNAMIC_QUANTIZATION_SCOPE"), value_enum, default_value = "auto", value_delimiter = ';')]
+    dynamic_quantization_scope: Vec<DynamicQuantizationScope>,
 
     /// RadixMLP threshold.
     ///
@@ -463,7 +470,13 @@ impl Args {
         let device_id = expand_optional(&self.device_id, count, "device-id")?;
         let backend_device_ids =
             expand_optional(&self.backend_device_ids, count, "backend-device-ids")?;
-        let enable_fp8_dynamic = expand(&self.enable_fp8_dynamic, count, "enable-fp8-dynamic")?;
+        let dynamic_quantization =
+            expand(&self.dynamic_quantization, count, "dynamic-quantization")?;
+        let dynamic_quantization_scope = expand(
+            &self.dynamic_quantization_scope,
+            count,
+            "dynamic-quantization-scope",
+        )?;
         let auto_truncate = expand(&self.auto_truncate, count, "auto-truncate")?;
         (0..count)
             .map(|i| {
@@ -484,7 +497,8 @@ impl Args {
                     max_sequence_length: max_sequence_length[i],
                     max_batch_requests: max_batch_requests[i],
                     radix_mlp_threshold: radix_mlp_threshold[i],
-                    enable_fp8_dynamic: enable_fp8_dynamic[i],
+                    dynamic_quantization: dynamic_quantization[i],
+                    dynamic_quantization_scope: dynamic_quantization_scope[i],
                     max_client_batch_size: max_client_batch_size[i],
                     max_decision_questions: max_decision_questions[i].get(),
                     auto_truncate: auto_truncate[i],
@@ -556,6 +570,8 @@ fn args_from_matches(matches: &clap::ArgMatches) -> Result<Args> {
 async fn main() -> Result<()> {
     // Pattern match configuration
     let args = args_from_matches(&command_with_environment().get_matches())?;
+    infinity_v3_config::validate_retired_dynamic_quantization_env(|name| std::env::var_os(name))
+        .map_err(anyhow::Error::msg)?;
 
     // Initialize logging and telemetry
     let global_tracer = infinity_v3_router::init_logging(
@@ -611,6 +627,7 @@ async fn main() -> Result<()> {
 mod tests {
     use super::*;
     #[test]
+    #[serial_test::serial]
     fn queue_tier_options_default_broadcast_and_validate() {
         let args = Args::try_parse_from(["infinity_v3", "--model-id", "a"]).unwrap();
         assert_eq!(args.models().unwrap()[0].priority_queue_bonus_ms, 1000);
@@ -657,6 +674,7 @@ mod tests {
     }
 
     #[test]
+    #[serial_test::serial]
     fn model_options_broadcast_align_and_preserve_single_model_flags() {
         for (flags, truncate, hosts) in [
             (
@@ -737,18 +755,17 @@ mod tests {
         assert_eq!(models[1].revision.as_deref(), Some("main"));
         assert!(models[0].auto_truncate && !models[1].auto_truncate);
         assert_eq!(models[0].backend_kind, models[1].backend_kind);
-        let legacy = Args::try_parse_from([
-            "infinity_v3",
-            "--model-id",
-            "a",
-            "--auto-truncate",
-            "--enable-fp8-dynamic",
-        ])
-        .unwrap()
-        .models()
-        .unwrap();
-        assert!(legacy[0].auto_truncate && legacy[0].enable_fp8_dynamic);
-        assert_eq!(legacy[0].max_sequence_length, None);
+        let truncated = Args::try_parse_from(["infinity_v3", "--model-id", "a", "--auto-truncate"])
+            .unwrap()
+            .models()
+            .unwrap();
+        assert!(truncated[0].auto_truncate);
+        assert_eq!(truncated[0].dynamic_quantization, DynamicQuantization::None);
+        assert_eq!(
+            truncated[0].dynamic_quantization_scope,
+            DynamicQuantizationScope::Auto
+        );
+        assert_eq!(truncated[0].max_sequence_length, None);
         assert!(Args::try_parse_from([
             "infinity_v3",
             "--model-id",
@@ -866,7 +883,7 @@ mod tests {
                 None => std::env::remove_var(key),
             }
         }
-        // This binary has one test, so environment changes do not race other tests.
+        // Serialized so temporary environment changes do not race other tests.
         let original_prompt = std::env::var_os(infinity_v3_config::infinity_env!("DEFAULT_PROMPT"));
         std::env::set_var(
             infinity_v3_config::infinity_env!("DEFAULT_PROMPT"),
@@ -897,5 +914,172 @@ mod tests {
             }
             None => std::env::remove_var(infinity_v3_config::infinity_env!("DEFAULT_PROMPT")),
         }
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn dynamic_quantization_flags_expand_per_model_and_reject_invalid_values() {
+        let models = Args::try_parse_from(["infinity_v3", "--model-id", "a"])
+            .unwrap()
+            .models()
+            .unwrap();
+        assert_eq!(models[0].dynamic_quantization, DynamicQuantization::None);
+        assert_eq!(
+            models[0].dynamic_quantization_scope,
+            DynamicQuantizationScope::Auto
+        );
+
+        for (value, expected) in [
+            ("none", DynamicQuantization::None),
+            ("fp8", DynamicQuantization::Fp8),
+            ("mxfp8", DynamicQuantization::Mxfp8),
+            ("nvfp4", DynamicQuantization::Nvfp4),
+        ] {
+            let models = Args::try_parse_from([
+                "infinity_v3",
+                "--model-id",
+                "a",
+                "--dynamic-quantization",
+                value,
+            ])
+            .unwrap()
+            .models()
+            .unwrap();
+            assert_eq!(models[0].dynamic_quantization, expected);
+        }
+
+        let models = Args::try_parse_from([
+            "infinity_v3",
+            "--model-id",
+            "a;b",
+            "--dynamic-quantization",
+            "fp8;nvfp4",
+            "--dynamic-quantization-scope",
+            "mlp;all",
+        ])
+        .unwrap()
+        .models()
+        .unwrap();
+        assert_eq!(models[0].dynamic_quantization, DynamicQuantization::Fp8);
+        assert_eq!(
+            models[0].dynamic_quantization_scope,
+            DynamicQuantizationScope::Mlp
+        );
+        assert_eq!(models[1].dynamic_quantization, DynamicQuantization::Nvfp4);
+        assert_eq!(
+            models[1].dynamic_quantization_scope,
+            DynamicQuantizationScope::All
+        );
+
+        let models = Args::try_parse_from([
+            "infinity_v3",
+            "--model-id",
+            "a;b",
+            "--dynamic-quantization",
+            "mxfp8",
+            "--dynamic-quantization",
+            "fp8",
+        ])
+        .unwrap()
+        .models()
+        .unwrap();
+        assert_eq!(models[0].dynamic_quantization, DynamicQuantization::Mxfp8);
+        assert_eq!(models[1].dynamic_quantization, DynamicQuantization::Fp8);
+
+        assert!(Args::try_parse_from([
+            "infinity_v3",
+            "--model-id",
+            "a",
+            "--dynamic-quantization",
+            "int8",
+        ])
+        .is_err());
+        assert!(Args::try_parse_from([
+            "infinity_v3",
+            "--model-id",
+            "a",
+            "--dynamic-quantization-scope",
+            "layers",
+        ])
+        .is_err());
+        assert!(
+            Args::try_parse_from(["infinity_v3", "--model-id", "a", "--enable-fp8-dynamic",])
+                .is_err()
+        );
+        assert!(
+            Args::try_parse_from(["infinity_v3", "--model-id", "a", "--quantization", "fp8",])
+                .is_err()
+        );
+        assert!(Args::try_parse_from([
+            "infinity_v3",
+            "--model-id",
+            "a",
+            "--dynamic-quantization",
+            "fp8;mxfp8",
+        ])
+        .unwrap()
+        .models()
+        .is_err());
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn dynamic_quantization_environment_precedence_and_mixed_models() {
+        let names = [
+            infinity_v3_config::infinity_env!("DYNAMIC_QUANTIZATION"),
+            "DYNAMIC_QUANTIZATION",
+            infinity_v3_config::infinity_env!("DYNAMIC_QUANTIZATION_SCOPE"),
+            "DYNAMIC_QUANTIZATION_SCOPE",
+        ];
+        let previous: Vec<_> = names
+            .iter()
+            .map(|name| (*name, std::env::var_os(name)))
+            .collect();
+        for name in names {
+            std::env::remove_var(name);
+        }
+        let parse = |models: &str| {
+            let matches = command_with_environment()
+                .try_get_matches_from(["infinity_v3", "--model-id", models])
+                .unwrap();
+            args_from_matches(&matches)
+                .unwrap()
+                .models()
+                .unwrap()
+                .into_iter()
+                .map(|model| (model.dynamic_quantization, model.dynamic_quantization_scope))
+                .collect::<Vec<_>>()
+        };
+
+        std::env::set_var("DYNAMIC_QUANTIZATION", "mxfp8");
+        std::env::set_var("DYNAMIC_QUANTIZATION_SCOPE", "mlp");
+        let fallback = parse("a");
+        std::env::set_var(
+            infinity_v3_config::infinity_env!("DYNAMIC_QUANTIZATION"),
+            "fp8;nvfp4",
+        );
+        std::env::set_var(
+            infinity_v3_config::infinity_env!("DYNAMIC_QUANTIZATION_SCOPE"),
+            "mlp;all",
+        );
+        let mixed = parse("a;b");
+        for (name, value) in previous {
+            match value {
+                Some(value) => std::env::set_var(name, value),
+                None => std::env::remove_var(name),
+            }
+        }
+
+        assert_eq!(
+            fallback,
+            vec![(DynamicQuantization::Mxfp8, DynamicQuantizationScope::Mlp)]
+        );
+        assert_eq!(
+            mixed,
+            vec![
+                (DynamicQuantization::Fp8, DynamicQuantizationScope::Mlp),
+                (DynamicQuantization::Nvfp4, DynamicQuantizationScope::All),
+            ]
+        );
     }
 }

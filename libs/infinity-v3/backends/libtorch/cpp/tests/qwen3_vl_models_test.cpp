@@ -460,7 +460,7 @@ int main(int argc, char** argv) {
       auto reference_weights = checkpoint;
       auto baseline = create_qwen3_vl(fp8_config, reference_weights, device, at::kHalf);
       baseline->ready();
-      fp8_config.values["_fp8_dynamic"] = "true";
+      fp8_config.values["_dynamic_quantization"] = "fp8";
       auto quantized = create_qwen3_vl(fp8_config, checkpoint, device, at::kHalf);
       quantized->ready();
       TORCH_CHECK(checkpoint.empty(), "Qwen3-VL retained redundant text checkpoint weights");

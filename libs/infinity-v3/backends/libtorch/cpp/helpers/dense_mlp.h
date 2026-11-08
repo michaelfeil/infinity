@@ -1,6 +1,7 @@
 // Copyright Infinity Core Contributors. Licensed under the repository LICENSE.
 #pragma once
 #include "helpers/fp8_linear.h"
+#include "helpers/options.h"
 #include <array>
 #include <functional>
 #include <optional>
@@ -8,7 +9,6 @@
 #include <utility>
 
 namespace infinity {
-enum class MlpPrecision { Model, Fp8 };
 enum class MlpActivation { Identity, Relu, Silu, Gelu, GeluTanh, Tanh, RoundedSilu, RoundedGelu };
 enum class MlpEpilogue { None, Relu, Gelu };
 enum class MlpProjectionRole { Input, Output, Up };
@@ -53,7 +53,8 @@ struct MlpContext {
 class MlpLinearMethod {
 public:
   virtual ~MlpLinearMethod() = default;
-  virtual MlpPrecision precision() const = 0;
+  /// Immutable quantization representation selected during preparation.
+  virtual Quantization format() const = 0;
   virtual const at::Tensor& weight() const = 0;
 
   virtual bool accepts_fp8_rows() const {
@@ -185,8 +186,8 @@ public:
     return role_;
   }
 
-  bool fp8() const {
-    return method_ && method_->precision() == MlpPrecision::Fp8;
+  bool is_quantized() const {
+    return method_ && method_->format() != Quantization::None;
   }
 
   const MlpLinearMethod& method() const {
@@ -205,7 +206,7 @@ public:
   at::Tensor forward(const at::Tensor& x, const MlpContext& context = {}) const;
 };
 
-// The mathematical recipe is prepared once and applied in either precision.
+// The mathematical recipe is prepared once and applied in either representation.
 // Custom recipes describe numerical contracts, never projection dispatch.
 struct MlpActivationRecipe {
   MlpActivation kind = MlpActivation::Identity;
@@ -225,7 +226,7 @@ struct MlpActivationRecipe {
   static MlpActivationRecipe gated(MlpActivation kind, bool gate_first = true);
   static MlpActivationRecipe numerical(std::function<at::Tensor(const at::Tensor&)> apply,
                                        bool packed = false);
-  at::Tensor apply(const at::Tensor&, bool fp8) const;
+  at::Tensor apply(const at::Tensor&, bool is_quantized) const;
 };
 
 class DenseMlp {
@@ -240,11 +241,13 @@ public:
            MlpProjection up,
            MlpProjection output,
            MlpActivationRecipe activation);
-  void prepare(MlpPrecision precision);
+  /// Select one explicit projection format. Native formats must qualify, and
+  /// an already prepared method cannot change representation.
+  void prepare(Quantization format);
   void prepare(const MlpMethodFactory& factory);
 
-  bool fp8() const {
-    return input_.fp8();
+  bool is_quantized() const {
+    return input_.is_quantized();
   }
 
   bool supports_rowwise_rms_input() const {

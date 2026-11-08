@@ -1813,6 +1813,10 @@ dependencies = [
 [[package]]
 name = "infinity-v3-config"
 version = "3.0.2-beta.2"
+dependencies = [
+ "clap",
+ "serde",
+]
 
 [[package]]
 name = "infinity_v3-backend"
@@ -1822,6 +1826,7 @@ dependencies = [
  "hf-hub",
  "infinity-backend-libtorch",
  "infinity-v3-backend-python",
+ "infinity-v3-config",
  "infinity_v3-backend-core",
  "serde",
  "serde_json",
