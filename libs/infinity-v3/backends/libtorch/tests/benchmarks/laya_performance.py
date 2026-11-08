@@ -67,7 +67,8 @@ class Native:
         cfg.update(_decision={'kind': 'laya', 'config': json.loads((model / 'rl_agent_config.json').read_text())},
                    _cuda_graphs=graphs, _cuda_graph_max_tokens=32768, _cuda_graph_entries=8,
                    _cuda_graph_max_bytes=2 << 30, _pooling='decision', _dense_count=0,
-                   _cudnn_varlen=False, _fp8_dynamic=fp8)
+                   _cudnn_varlen=False, _dynamic_quantization='fp8' if fp8 else 'none',
+                   _dynamic_quantization_scope='mlp')
         for key, value in flatten(cfg):
             self.check(lib.infinity_torch_option(self.handle, key.encode(), value.encode()))
         file = model / 'model.safetensors'

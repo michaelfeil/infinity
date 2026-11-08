@@ -24,8 +24,13 @@ rebuild against these names; the former `tei_*` symbols are not exported.
 Build definitions and local kernel helpers use the `INFINITY_` and `infinity_`
 prefixes. Runtime settings retain the configured `ENV_VAR_BASE` (default `INFINITY`).
 
-For packed, gate-first BF16 SwiGLU MLPs on Blackwell, set
-`INFINITY_TORCH_NVFP4_MLP=1` with `--enable-fp8-dynamic` to select NVFP4.
+Projection quantization is selected per model through the `_dynamic_quantization`
+(`none`, `fp8`, `mxfp8`, `nvfp4`) and `_dynamic_quantization_scope` (`mlp`, `all`)
+options, exposed by the CLI as `--dynamic-quantization` and
+`--dynamic-quantization-scope` (and the compiled-prefix
+`DYNAMIC_QUANTIZATION`/`DYNAMIC_QUANTIZATION_SCOPE` environment variables).
+`fp8` is rowwise, while `mxfp8`/`nvfp4` select those eligible MLP formats and
+keep all-scope non-MLP projections on rowwise FP8.
 
 ## Where to start
 

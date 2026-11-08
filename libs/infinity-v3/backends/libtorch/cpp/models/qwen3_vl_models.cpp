@@ -320,7 +320,7 @@ Qwen3VL::Qwen3VL(const Options& options,
       text_weights[name.substr(15)] = value;
   TORCH_CHECK(!text_weights.empty(), "Qwen3-VL language model weights missing");
   text = create_decoder(tc, text_weights, device, dtype);
-  if (cfg.boolean("_fp8_dynamic", false))
+  if (tc.dynamic_quantization() != Quantization::None)
     weights.clear();
 }
 

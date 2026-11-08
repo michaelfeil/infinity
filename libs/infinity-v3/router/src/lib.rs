@@ -16,6 +16,7 @@ use bigdecimal::{BigDecimal, RoundingMode};
 use hf_hub::api::tokio::ApiBuilder;
 use hf_hub::{Repo, RepoType};
 use infinity_v3_backend::{DType, Pool};
+use infinity_v3_config::{DynamicQuantization, DynamicQuantizationScope};
 use infinity_v3_core::download::{download_artifacts, ST_CONFIG_NAMES};
 use infinity_v3_core::infer::Infer;
 use infinity_v3_core::queue_actor::{Queue, ServiceTier, ServiceTier as QueueTier};
@@ -69,7 +70,8 @@ pub struct ModelSettings {
     pub max_sequence_length: Option<std::num::NonZeroUsize>,
     pub max_batch_requests: Option<usize>,
     pub radix_mlp_threshold: f32,
-    pub enable_fp8_dynamic: bool,
+    pub dynamic_quantization: DynamicQuantization,
+    pub dynamic_quantization_scope: DynamicQuantizationScope,
     pub max_client_batch_size: usize,
     pub max_decision_questions: usize,
     pub auto_truncate: bool,
@@ -115,7 +117,8 @@ pub async fn run(
     max_batch_tokens: usize,
     max_batch_requests: Option<usize>,
     radix_mlp_threshold: f32,
-    enable_fp8_dynamic: bool,
+    dynamic_quantization: DynamicQuantization,
+    dynamic_quantization_scope: DynamicQuantizationScope,
     max_client_batch_size: usize,
     max_decision_questions: usize,
     auto_truncate: bool,
@@ -155,7 +158,8 @@ pub async fn run(
             max_sequence_length: None,
             max_batch_requests,
             radix_mlp_threshold,
-            enable_fp8_dynamic,
+            dynamic_quantization,
+            dynamic_quantization_scope,
             max_client_batch_size,
             max_decision_questions,
             auto_truncate,
@@ -254,7 +258,8 @@ async fn initialize_model(
         max_sequence_length,
         max_batch_requests,
         radix_mlp_threshold,
-        enable_fp8_dynamic,
+        dynamic_quantization,
+        dynamic_quantization_scope,
         max_client_batch_size,
         max_decision_questions,
         auto_truncate,
@@ -820,7 +825,8 @@ async fn initialize_model(
                 backend_model_type,
                 dense_path,
                 device,
-                enable_fp8_dynamic,
+                dynamic_quantization,
+                dynamic_quantization_scope,
                 backend_kind,
                 torch_device,
                 python_backend_config,
@@ -930,7 +936,8 @@ async fn initialize_model(
         max_decision_questions,
         auto_truncate,
         radix_mlp_threshold,
-        enable_fp8_dynamic,
+        dynamic_quantization,
+        dynamic_quantization_scope,
         version: env!("CARGO_PKG_VERSION"),
         sha: option_env!("VERGEN_GIT_SHA"),
         docker_label: option_env!("DOCKER_LABEL"),
@@ -1394,8 +1401,12 @@ pub struct Info {
     pub tokenization_queue_capacity: usize,
     #[cfg_attr(feature = "http", schema(example = "0.5"))]
     pub radix_mlp_threshold: f32,
-    /// Experimental per-token activation and per-row weight FP8 projection quantization.
-    pub enable_fp8_dynamic: bool,
+    /// Requested dynamic quantization format.
+    #[cfg_attr(feature = "http", schema(value_type = String, example = "none"))]
+    pub dynamic_quantization: DynamicQuantization,
+    /// Requested dynamic quantization scope.
+    #[cfg_attr(feature = "http", schema(value_type = String, example = "auto"))]
+    pub dynamic_quantization_scope: DynamicQuantizationScope,
     /// Router Info
     #[cfg_attr(feature = "http", schema(example = "0.5.0"))]
     pub version: &'static str,
@@ -1973,6 +1984,42 @@ mod auto_dtype_tests {
         .unwrap();
         assert_eq!(config.max_position_embeddings, 0);
         assert_eq!(config.text_config.unwrap().max_position_embeddings, 131072);
+    }
+}
+
+#[cfg(test)]
+mod info_dynamic_quantization_tests {
+    use super::*;
+
+    #[test]
+    fn info_serializes_dynamic_quantization_names_without_the_legacy_flag() {
+        let info = Info {
+            model_id: "model".into(),
+            model_sha: None,
+            model_dtype: "bfloat16".into(),
+            model_type: ModelType::Embedding(EmbeddingModel {
+                pooling: "mean".into(),
+            }),
+            max_concurrent_requests: 1,
+            max_input_length: 128,
+            max_batch_tokens: 128,
+            max_batch_requests: None,
+            max_client_batch_size: 1,
+            max_decision_questions: 1,
+            auto_truncate: true,
+            tokenization_workers: 1,
+            tokenization_queue_capacity: 1,
+            radix_mlp_threshold: 0.0,
+            dynamic_quantization: DynamicQuantization::Mxfp8,
+            dynamic_quantization_scope: DynamicQuantizationScope::All,
+            version: "test",
+            sha: None,
+            docker_label: None,
+        };
+        let value = serde_json::to_value(info).unwrap();
+        assert_eq!(value["dynamic_quantization"], "mxfp8");
+        assert_eq!(value["dynamic_quantization_scope"], "all");
+        assert!(value.get("enable_fp8_dynamic").is_none());
     }
 }
 

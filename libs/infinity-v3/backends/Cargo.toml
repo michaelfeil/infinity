@@ -13,6 +13,7 @@ clap = { workspace = true, optional = true }
 hf-hub = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
+infinity-v3-config = { workspace = true }
 infinity_v3-backend-core = { path = "core" }
 infinity-backend-libtorch = { path = "libtorch", optional = true }
 infinity-v3-backend-python = { path = "python", optional = true }

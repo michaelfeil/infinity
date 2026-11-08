@@ -1,10 +1,7 @@
 // Copyright Infinity Core Contributors. Licensed under the repository LICENSE.
 #include "helpers/dense_mlp.h"
-#include "env_config.h"
 #include "helpers/mxfp8_linear.h"
 #include "helpers/nvfp4_linear.h"
-#include <cstdlib>
-#include <cstring>
 #include <ATen/ops/_addmm_activation.h>
 #include "kernels/fp8_fusions.h"
 #ifdef INFINITY_TORCH_CUDA_KERNELS
@@ -163,6 +160,10 @@ public:
     return MlpPrecision::Fp8;
   }
 
+  Quantization format() const override {
+    return Quantization::Mxfp8;
+  }
+
   const at::Tensor& weight() const override {
     return ordinary_weight_;
   }
@@ -233,6 +234,10 @@ public:
 
   MlpPrecision precision() const override {
     return MlpPrecision::Fp8;
+  }
+
+  Quantization format() const override {
+    return Quantization::Nvfp4;
   }
 
   const at::Tensor& weight() const override {
@@ -307,24 +312,6 @@ public:
     return linear_.forward_quantized(quantized, bias);
   }
 };
-
-// NVFP4 is a single explicit opt-in mode for both MLP projections. Unknown
-// values fail loudly instead of silently changing the default MXFP8 policy.
-bool nvfp4_mlp_enabled() {
-  const char* value = std::getenv(INFINITY_ENV("TORCH_NVFP4_MLP"));
-  if (!value || std::strcmp(value, "0") == 0 || std::strcmp(value, "false") == 0 ||
-      std::strcmp(value, "off") == 0)
-    return false;
-  if (std::strcmp(value, "1") == 0 || std::strcmp(value, "true") == 0 ||
-      std::strcmp(value, "on") == 0)
-    return true;
-  TORCH_CHECK(false,
-              "Invalid ",
-              INFINITY_ENV("TORCH_NVFP4_MLP"),
-              "='",
-              value,
-              "'; expected 1/true/on or 0/false/off");
-}
 }
 
 MlpProjection::MlpProjection(at::Tensor weight,
@@ -451,13 +438,35 @@ DenseMlp::DenseMlp(MlpProjection gate,
   up_ = std::move(up);
 }
 
-void DenseMlp::prepare(MlpPrecision precision) {
-  // Prepared FP8 methods own released weights; repeated preparation keeps their format.
-  if (precision == MlpPrecision::Fp8 && input_.fp8() && output_.fp8() && (!up_ || up_->fp8()))
+void DenseMlp::prepare(Quantization format) {
+  const bool same = input_.method().format() == format && output_.method().format() == format &&
+                    (!up_ || up_->method().format() == format);
+  // Prepared methods own their representation; repeated preparation is a no-op.
+  if (same)
     return;
-  // Explicit NVFP4 opt-in; default policy remains MXFP8. Shipping NVFP4 is
-  // both-projections only, so a successful qualification uses it for both.
-  if (precision == MlpPrecision::Fp8 && nvfp4_mlp_enabled()) {
+  TORCH_CHECK(input_.method().format() == Quantization::None &&
+                  output_.method().format() == Quantization::None &&
+                  (!up_ || up_->method().format() == Quantization::None),
+              "Cannot change an already prepared MLP quantization format from ",
+              quantization_name(input_.method().format()),
+              " to ",
+              quantization_name(format));
+  switch (format) {
+  case Quantization::None:
+    return;
+  case Quantization::Fp8:
+    prepare([](const MlpProjection& projection) -> std::shared_ptr<const MlpLinearMethod> {
+      return std::make_shared<Fp8LinearMethod>(projection.weight());
+    });
+    return;
+  case Quantization::Mxfp8:
+    TORCH_CHECK(supports_mxfp8(),
+                "MXFP8 MLP requested but the projection geometry or provider is unsupported");
+    prepare([](const MlpProjection& projection) -> std::shared_ptr<const MlpLinearMethod> {
+      return std::make_shared<Mxfp8LinearMethod>(projection.weight());
+    });
+    return;
+  case Quantization::Nvfp4:
     TORCH_CHECK(supports_nvfp4(),
                 "NVFP4 MLP requested but the projection geometry or provider is unsupported");
     prepare([](const MlpProjection& projection) -> std::shared_ptr<const MlpLinearMethod> {
@@ -465,23 +474,7 @@ void DenseMlp::prepare(MlpPrecision precision) {
     });
     return;
   }
-  // Select the FP8 format once for every model using this shared MLP policy.
-  // The provider probe qualifies native block scaling; other providers keep rowwise FP8.
-  if (precision == MlpPrecision::Fp8 && supports_mxfp8()) {
-    prepare([](const MlpProjection& projection) -> std::shared_ptr<const MlpLinearMethod> {
-      return std::make_shared<Mxfp8LinearMethod>(projection.weight());
-    });
-    return;
-  }
-  prepare([precision](const MlpProjection& projection) -> std::shared_ptr<const MlpLinearMethod> {
-    if (precision == projection.method().precision())
-      return projection.method_;
-    TORCH_CHECK(precision == MlpPrecision::Fp8 || !projection.fp8(),
-                "Cannot restore released model-dtype MLP weights");
-    if (precision == MlpPrecision::Fp8)
-      return std::make_shared<Fp8LinearMethod>(projection.weight());
-    return std::make_shared<ModelLinearMethod>(projection.weight());
-  });
+  TORCH_CHECK(false, "Unsupported MLP quantization format");
 }
 
 void DenseMlp::prepare(const MlpMethodFactory& factory) {
@@ -639,10 +632,6 @@ at::Tensor DenseMlp::forward(const at::Tensor& x,
 }
 
 bool mxfp8_mlp_supported(const at::Tensor& gate_up, const at::Tensor& down) {
-  if (const char* override = std::getenv(INFINITY_ENV("TORCH_MXFP8_MLP"));
-      override && (std::strcmp(override, "0") == 0 || std::strcmp(override, "false") == 0 ||
-                   std::strcmp(override, "off") == 0))
-    return false;
   if (!gate_up.is_cuda() || !down.is_cuda() || gate_up.device() != down.device() ||
       gate_up.dim() != 2 || down.dim() != 2 || gate_up.scalar_type() != at::kBFloat16 ||
       down.scalar_type() != at::kBFloat16 || gate_up.size(0) <= 0 || down.size(0) <= 0 ||

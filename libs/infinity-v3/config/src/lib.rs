@@ -1,5 +1,73 @@
 //! Configuration shared by the router and inference backends.
+use std::fmt;
+
 include!(concat!(env!("OUT_DIR"), "/env_base.rs"));
+
+/// Projection quantization requested for a LibTorch model.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[cfg_attr(feature = "clap", derive(clap::ValueEnum))]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", serde(rename_all = "lowercase"))]
+pub enum DynamicQuantization {
+    #[default]
+    None,
+    Fp8,
+    Mxfp8,
+    Nvfp4,
+}
+
+impl DynamicQuantization {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::None => "none",
+            Self::Fp8 => "fp8",
+            Self::Mxfp8 => "mxfp8",
+            Self::Nvfp4 => "nvfp4",
+        }
+    }
+
+    pub const fn is_enabled(self) -> bool {
+        !matches!(self, Self::None)
+    }
+
+    pub const fn requires_bfloat16(self) -> bool {
+        matches!(self, Self::Mxfp8 | Self::Nvfp4)
+    }
+}
+
+impl fmt::Display for DynamicQuantization {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+/// Scope of the requested projection quantization.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[cfg_attr(feature = "clap", derive(clap::ValueEnum))]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", serde(rename_all = "lowercase"))]
+pub enum DynamicQuantizationScope {
+    #[default]
+    Auto,
+    Mlp,
+    All,
+}
+
+impl DynamicQuantizationScope {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Auto => "auto",
+            Self::Mlp => "mlp",
+            Self::All => "all",
+        }
+    }
+}
+
+impl fmt::Display for DynamicQuantizationScope {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
 
 /// Read the prefix-cache budget from TORCH_PREFIX_CACHE_SIZE in GB or GiB.
 pub fn prefix_cache_size_bytes() -> Result<i64, String> {

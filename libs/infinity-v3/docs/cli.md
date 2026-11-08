@@ -36,6 +36,40 @@ schema is available at `/api-doc/openapi.json`.
 CUDA inference requires SM80 (Ampere) or newer. SM75/Turing
 is unsupported; use a CPU build on hosts without a supported GPU.
 
+## Quantization
+
+`--dynamic-quantization none|fp8|mxfp8|nvfp4` selects a format independently of
+`--dtype`. It defaults to `none`. `fp8` uses rowwise FP8 projections; `mxfp8`
+and `nvfp4` select block-scaled MLP formats for compatible Blackwell BF16 models.
+All quantized modes require the LibTorch CUDA backend and an unquantized
+checkpoint. Explicit unsupported formats fail during initialization.
+
+`--dynamic-quantization-scope auto|mlp|all` controls projection coverage. `auto` (default)
+uses all-linear scope for eligible dense decoders and MLP-only scope otherwise.
+`mlp` limits quantization to feed-forward projections. In `all` scope, non-MLP
+projections use FP8 even when MLPs use MXFP8 or NVFP4. Attention calculations,
+normalization, embedding/output heads and media towers keep their existing dtype.
+
+One value broadcasts to every model; semicolon-separated values or repeated
+flags align with `--model-id`. For example, serve an eligible NVFP4 reranker
+alongside a rowwise FP8 encoder:
+
+```sh
+infinity_v3 --model-id /models/qwen3-reranker --model-id /models/bert-encoder \
+  --torch-device cuda --dtype bfloat16 --dynamic-quantization 'nvfp4;fp8'
+```
+
+Use `none` for a companion model that should keep its floating-point dtype.
+The environment alternatives are `INFINITY_DYNAMIC_QUANTIZATION` and
+`INFINITY_DYNAMIC_QUANTIZATION_SCOPE` (with the configured environment prefix).
+Formats can change accuracy; validate on your task before deployment.
+
+This replaces `--enable-fp8-dynamic` and `ENABLE_FP8_DYNAMIC` as well as
+`TORCH_NVFP4_MLP`, `TORCH_MXFP8_MLP` and `TORCH_FP8_SCOPE` environment selectors.
+Use `--dynamic-quantization fp8` for rowwise FP8, `mxfp8` for previously automatic
+eligible MXFP8 MLPs, and `nvfp4` for the previous NVFP4 opt-in. Update deployments
+to the explicit per-model flags; the old options are no longer supported.
+
 ## Request service tiers
 
 `--priority-queue-bonus-ms` sets the virtual queue age bonus for requests carrying

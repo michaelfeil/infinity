@@ -1,6 +1,7 @@
 // Copyright Infinity Core Contributors. Licensed under the repository LICENSE.
 #pragma once
 #include "helpers/fp8_linear.h"
+#include "helpers/options.h"
 #include <array>
 #include <functional>
 #include <optional>
@@ -54,6 +55,13 @@ class MlpLinearMethod {
 public:
   virtual ~MlpLinearMethod() = default;
   virtual MlpPrecision precision() const = 0;
+
+  /// Concrete quantization representation. The default classifies generic
+  /// model/quantized methods; native block formats override it explicitly.
+  virtual Quantization format() const {
+    return precision() == MlpPrecision::Model ? Quantization::None : Quantization::Fp8;
+  }
+
   virtual const at::Tensor& weight() const = 0;
 
   virtual bool accepts_fp8_rows() const {
@@ -240,7 +248,9 @@ public:
            MlpProjection up,
            MlpProjection output,
            MlpActivationRecipe activation);
-  void prepare(MlpPrecision precision);
+  /// Select one explicit projection format. Native formats must qualify, and
+  /// an already prepared method cannot change representation.
+  void prepare(Quantization format);
   void prepare(const MlpMethodFactory& factory);
 
   bool fp8() const {

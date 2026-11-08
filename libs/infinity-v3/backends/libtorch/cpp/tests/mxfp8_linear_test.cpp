@@ -265,7 +265,7 @@ void check_empty_rows() {
   recipe.fusion = infinity::MlpFusion::RoundedSwiGlu;
   infinity::DenseMlp mlp({gate_weight}, {down_weight}, recipe);
   TORCH_CHECK(mlp.supports_mxfp8(), "empty-row test MLP should qualify");
-  mlp.prepare(infinity::MlpPrecision::Fp8);
+  mlp.prepare(infinity::Quantization::Mxfp8);
   auto mlp_output = mlp.forward(at::empty({0, 256}, options));
   TORCH_CHECK(mlp_output.sizes() == at::IntArrayRef({0, 256}), "empty MXFP8 DenseMlp output");
   std::printf("MXFP8 empty rows: quantize/gated/linear/DenseMlp return empties\n");
@@ -292,7 +292,7 @@ void check_mxfp8_mlp_path() {
   auto down_weight = (at::randn({hidden, intermediate}, options) * 0.05).to(at::kBFloat16);
   infinity::DenseMlp mlp({gate_up_weight}, {down_weight}, qwen_gated_recipe());
   TORCH_CHECK(mlp.supports_mxfp8(), "qualified packed SwiGLU MLP was not MXFP8-qualified");
-  mlp.prepare(infinity::MlpPrecision::Fp8);
+  mlp.prepare(infinity::Quantization::Mxfp8);
   TORCH_CHECK(mlp.fp8() && !mlp.supports_rowwise_rms_input(), "MXFP8 DenseMlp capability contract");
   auto output = mlp.forward(x);
   TORCH_CHECK(output.sizes() == at::IntArrayRef({rows, hidden}) &&
@@ -324,7 +324,7 @@ void check_mxfp8_qualification_rejections() {
 
   auto rowwise = [](infinity::DenseMlp& mlp, const char* label) {
     TORCH_CHECK(!mlp.supports_mxfp8(), label, " must not select MXFP8");
-    mlp.prepare(infinity::MlpPrecision::Fp8);
+    mlp.prepare(infinity::Quantization::Fp8);
     TORCH_CHECK(mlp.fp8(), label, " must select rowwise FP8");
   };
 
@@ -414,7 +414,7 @@ void check_k_padding() {
     auto down_weight = (at::randn({256, 128}, options) * 0.05).to(at::kBFloat16);
     infinity::DenseMlp mlp({gate_up_weight}, {down_weight}, qwen_gated_recipe());
     TORCH_CHECK(mlp.supports_mxfp8(), "K divisible by 32 must qualify with padded metadata");
-    mlp.prepare(infinity::MlpPrecision::Fp8);
+    mlp.prepare(infinity::Quantization::Mxfp8);
     auto padded_output = mlp.forward(x);
     TORCH_CHECK(padded_output.sizes() == at::IntArrayRef({rows, 256}) &&
                     at::isfinite(padded_output).all().item<bool>(),

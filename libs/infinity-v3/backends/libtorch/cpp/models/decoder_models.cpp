@@ -65,15 +65,16 @@ class Decoder final : public Model {
     // These family/width checks select the validated alternate prefill recipe, rather than defining
     // which decoder shapes can execute. Widening this call site also requires widening and checking
     // CachedNoBiasLt's prefill guard.
-    if (!b.defined() && !fp8_dynamic && !transformers_math() && dtype == at::kBFloat16 &&
+    if (!b.defined() && quantization == Quantization::None && !transformers_math() &&
+        dtype == at::kBFloat16 &&
         ((hidden == 4096 && (family == "qwen3" || family == "llama") && w.size(1) == 4096 &&
           (w.size(0) == 24576 || w.size(0) == 28672)) ||
          (hidden == 2048 && family == "qwen3" && w.size(1) == 2048 && w.size(0) == 12288)))
       return no_bias_cache.forward(x, w, true);
     // This second profile uses ordinary heuristic caching, not the alternate prefill tactic. Other
     // decoder shapes retain ATen even when their matrix layout could be represented by the cache.
-    if (!b.defined() && !fp8_dynamic && dtype == at::kBFloat16 && family == "qwen2" &&
-        hidden == 896 && head_dim == 64)
+    if (!b.defined() && quantization == Quantization::None && dtype == at::kBFloat16 &&
+        family == "qwen2" && hidden == 896 && head_dim == 64)
       return no_bias_cache.forward(x, w);
 #endif
     return at::linear(x, w, b);
@@ -105,7 +106,7 @@ class Decoder final : public Model {
   std::vector<int64_t> rotary_indices, attention_windows;
   bool cudnn_varlen = false;
   bool transformers_fused_norm = false;
-  bool fp8_dynamic = false;
+  Quantization quantization = Quantization::None;
   bool fp8_all_linear = false;
   bool qwen_half_exact = false;
   int64_t left_window = -1, right_window = -1, top_k;
@@ -202,7 +203,8 @@ class Decoder final : public Model {
     // The explicit cuDNN option permits its different softmax reduction for
     // BF16 Llama-8B as well as all-linear FP8. Normalization stays unchanged.
     return fp8_all_linear || !exact_decoder_math() ||
-           (!fp8_dynamic && dtype == at::kBFloat16 && family == "llama" && hidden == 4096);
+           (quantization == Quantization::None && dtype == at::kBFloat16 && family == "llama" &&
+            hidden == 4096);
   }
 
   /// Return normalized rows and the residual stream used by the next sublayer. Select the
@@ -870,29 +872,33 @@ public:
   /// Validate layer/head geometry and cache loaded projections, norms,
   /// rotary tables, and optional task heads.
   void ready() override {
-    fp8_dynamic = options.boolean("_fp8_dynamic", false);
+    quantization = options.dynamic_quantization();
     // Scope controls which original floating-point checkpoint matrices are quantized during
     // preparation. It is separate from loading an already quantized checkpoint,
     // which this adapter rejects.
-    const auto fp8_scope = options.string("_fp8_scope", fp8_dynamic ? "all" : "mlp");
-    TORCH_CHECK(fp8_scope == "mlp" || fp8_scope == "all", "FP8 scope must be mlp or all");
-    fp8_all_linear = fp8_scope == "all";
-    TORCH_CHECK(!fp8_all_linear || fp8_dynamic, "All-linear FP8 requires dynamic FP8 enabled");
-    if (fp8_dynamic) {
-      TORCH_CHECK(!transformers_math(), "Dynamic FP8 requires native decoder arithmetic");
+    const auto scope = options.dynamic_quantization_scope(
+        quantization == Quantization::None ? QuantizationScope::Mlp : QuantizationScope::All);
+    fp8_all_linear = scope == QuantizationScope::All;
+    TORCH_CHECK(!fp8_all_linear || quantization != Quantization::None,
+                "All-linear quantization requires a quantization format");
+    if (quantization != Quantization::None) {
+      TORCH_CHECK(!transformers_math(), "Quantized decoder requires native decoder arithmetic");
       TORCH_CHECK(device.is_cuda() && (dtype == at::kHalf || dtype == at::kBFloat16),
-                  "Dynamic FP8 decoder MLPs require CUDA float16/bfloat16");
+                  quantization_name(quantization),
+                  " decoder MLPs require CUDA float16/bfloat16");
       TORCH_CHECK(
           (family == "llama" || family == "mistral" || family == "qwen2" || family == "qwen3" ||
            family == "ultrabert") &&
               options.integer("num_experts", 0) == 0,
-          "Dynamic FP8 decoder MLPs require a supported dense checkpoint; routed experts are unsupported");
+          quantization_name(quantization),
+          " decoder MLPs require a supported dense checkpoint; routed experts are unsupported");
       for (const auto& [key, value] : options.values)
         TORCH_CHECK(
             key != "quantization_config" && key.rfind("quantization_config.", 0) != 0,
-            "Dynamic FP8 requires an unquantized checkpoint without supplied quantization scales");
+            "Quantized decoders require an unquantized checkpoint without supplied quantization scales");
 #ifndef INFINITY_TORCH_CUDA_KERNELS
-      TORCH_CHECK(false, "Dynamic FP8 decoder MLPs require native CUDA kernels");
+      TORCH_CHECK(
+          false, quantization_name(quantization), " decoder MLPs require native CUDA kernels");
 #endif
     }
     TORCH_CHECK(activation == "silu" || activation == "swish" || activation == "relu" ||
@@ -922,7 +928,7 @@ public:
       const auto* properties = at::cuda::getDeviceProperties(device.index());
       auto major = properties->major;
       // These native half-precision operators support SM80 and newer.
-      qwen_half_exact = !fp8_dynamic && dtype == at::kHalf && major >= 8 &&
+      qwen_half_exact = quantization == Quantization::None && dtype == at::kHalf && major >= 8 &&
                         ((family == "qwen3" && hidden == 1024 && head_dim == 128) ||
                          (family == "qwen2" && hidden == 896 && head_dim == 64) ||
                          (family == "qwen3_moe" && hidden == 2048 && head_dim == 128 &&
@@ -1051,8 +1057,8 @@ public:
         layer.dense_mlp = DenseMlp(
             {layer.gate_up, layer.gate_up_bias}, {layer.down, layer.down_bias}, std::move(recipe));
 #ifdef INFINITY_TORCH_CUDA_KERNELS
-        if (fp8_dynamic) {
-          layer.dense_mlp.prepare(MlpPrecision::Fp8);
+        if (quantization != Quantization::None) {
+          layer.dense_mlp.prepare(quantization);
           if (fp8_all_linear) {
             layer.fp8_qkv = std::make_unique<Fp8Linear>(layer.qkv);
             layer.fp8_out = std::make_unique<Fp8Linear>(layer.out);

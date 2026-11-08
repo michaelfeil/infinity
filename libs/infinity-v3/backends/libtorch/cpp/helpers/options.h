@@ -11,6 +11,46 @@
 namespace infinity {
 using Weights = std::unordered_map<std::string, at::Tensor>;
 
+/// Per-model projection quantization selected by the serving layer.
+enum class Quantization { None, Fp8, Mxfp8, Nvfp4 };
+/// Which eligible projections a quantization format applies to.
+enum class QuantizationScope { Mlp, All };
+
+inline const char* quantization_name(Quantization format) {
+  switch (format) {
+  case Quantization::None:
+    return "none";
+  case Quantization::Fp8:
+    return "fp8";
+  case Quantization::Mxfp8:
+    return "mxfp8";
+  case Quantization::Nvfp4:
+    return "nvfp4";
+  }
+  return "unknown";
+}
+
+inline Quantization quantization_from_string(const std::string& value) {
+  if (value == "none")
+    return Quantization::None;
+  if (value == "fp8")
+    return Quantization::Fp8;
+  if (value == "mxfp8")
+    return Quantization::Mxfp8;
+  if (value == "nvfp4")
+    return Quantization::Nvfp4;
+  TORCH_CHECK(
+      false, "Unsupported quantization format '", value, "'; expected none, fp8, mxfp8, or nvfp4");
+}
+
+inline QuantizationScope quantization_scope_from_string(const std::string& value) {
+  if (value == "mlp")
+    return QuantizationScope::Mlp;
+  if (value == "all")
+    return QuantizationScope::All;
+  TORCH_CHECK(false, "Unsupported quantization scope '", value, "'; expected mlp or all");
+}
+
 /// String-valued model configuration with typed lookups and missing-key defaults.
 /// Present numeric values are parsed with the standard string conversion functions.
 struct Options {
@@ -37,6 +77,19 @@ struct Options {
   bool boolean(const std::string& key, bool fallback = false) const {
     auto it = values.find(key);
     return it == values.end() ? fallback : it->second == "true";
+  }
+
+  /// Projection quantization for this model; a missing key preserves model dtype.
+  Quantization dynamic_quantization() const {
+    auto it = values.find("_dynamic_quantization");
+    return it == values.end() ? Quantization::None : quantization_from_string(it->second);
+  }
+
+  /// Resolved projection scope; the caller supplies the family-specific default.
+  QuantizationScope
+  dynamic_quantization_scope(QuantizationScope fallback = QuantizationScope::Mlp) const {
+    auto it = values.find("_dynamic_quantization_scope");
+    return it == values.end() ? fallback : quantization_scope_from_string(it->second);
   }
 };
 

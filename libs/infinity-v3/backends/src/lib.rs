@@ -2,6 +2,7 @@ mod dtype;
 
 use hf_hub::api::tokio::{ApiError, ApiRepo};
 use infinity_v3_backend_core::{Backend as CoreBackend, Inference};
+use infinity_v3_config::{DynamicQuantization, DynamicQuantizationScope};
 use std::cmp::{max, min};
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -232,6 +233,54 @@ pub struct Backend {
     pub model_type: ModelType,
 }
 
+fn validate_dynamic_quantization_request(
+    dynamic_quantization: DynamicQuantization,
+    dynamic_quantization_scope: DynamicQuantizationScope,
+    kind: BackendKind,
+    dtype: &DType,
+    torch_device: TorchDevice,
+) -> Result<(), BackendError> {
+    if dynamic_quantization_scope == DynamicQuantizationScope::All
+        && !dynamic_quantization.is_enabled()
+    {
+        return Err(BackendError::Start(
+            "All-linear dynamic quantization requires a format other than none".into(),
+        ));
+    }
+    if !dynamic_quantization.is_enabled() {
+        return Ok(());
+    }
+    if kind != BackendKind::Libtorch {
+        return Err(BackendError::Start(format!(
+            "{} dynamic quantization is only supported by the LibTorch backend",
+            dynamic_quantization.as_str()
+        )));
+    }
+    if torch_device == TorchDevice::Cpu {
+        return Err(BackendError::Start(format!(
+            "{} dynamic quantization requires CUDA",
+            dynamic_quantization.as_str()
+        )));
+    }
+    let dtype_supported = if dynamic_quantization.requires_bfloat16() {
+        dtype == &DType::Bfloat16
+    } else {
+        matches!(dtype, DType::Float16 | DType::Bfloat16)
+    };
+    if !dtype_supported {
+        return Err(BackendError::Start(format!(
+            "{} dynamic quantization requires {}",
+            dynamic_quantization.as_str(),
+            if dynamic_quantization.requires_bfloat16() {
+                "bfloat16"
+            } else {
+                "float16 or bfloat16"
+            }
+        )));
+    }
+    Ok(())
+}
+
 impl Backend {
     #[allow(clippy::too_many_arguments)]
     pub async fn new(
@@ -265,28 +314,30 @@ impl Backend {
         device_id: usize,
         runtime_limits: ServingLimits,
     ) -> Result<Self, BackendError> {
-        Self::new_shared_with_fp8(
+        Self::new_shared_with_dynamic_quantization(
             model_path,
             api_repo,
             dtype,
             model_type,
             dense_path,
             device_id,
-            false,
+            DynamicQuantization::None,
+            DynamicQuantizationScope::Auto,
             runtime_limits,
         )
         .await
     }
 
     #[allow(clippy::too_many_arguments)]
-    pub async fn new_shared_with_fp8(
+    pub async fn new_shared_with_dynamic_quantization(
         model_path: PathBuf,
         api_repo: Option<Arc<ApiRepo>>,
         dtype: DType,
         model_type: ModelType,
         dense_path: Option<String>,
         device_id: usize,
-        enable_fp8_dynamic: bool,
+        dynamic_quantization: DynamicQuantization,
+        dynamic_quantization_scope: DynamicQuantizationScope,
         runtime_limits: ServingLimits,
     ) -> Result<Self, BackendError> {
         Self::new_selected(
@@ -296,7 +347,8 @@ impl Backend {
             model_type,
             dense_path,
             device_id,
-            enable_fp8_dynamic,
+            dynamic_quantization,
+            dynamic_quantization_scope,
             BackendKind::default(),
             TorchDevice::Auto,
             PythonBackendConfig::default(),
@@ -313,12 +365,20 @@ impl Backend {
         model_type: ModelType,
         dense_path: Option<String>,
         device_id: usize,
-        enable_fp8_dynamic: bool,
+        dynamic_quantization: DynamicQuantization,
+        dynamic_quantization_scope: DynamicQuantizationScope,
         kind: BackendKind,
         torch_device: TorchDevice,
         python: PythonBackendConfig,
         runtime_limits: ServingLimits,
     ) -> Result<Self, BackendError> {
+        validate_dynamic_quantization_request(
+            dynamic_quantization,
+            dynamic_quantization_scope,
+            kind,
+            &dtype,
+            torch_device,
+        )?;
         kind.ensure_compiled()?;
         let (backend_sender, backend_receiver) = mpsc::channel(8);
 
@@ -329,7 +389,8 @@ impl Backend {
             model_type.clone(),
             dense_path,
             device_id,
-            enable_fp8_dynamic,
+            dynamic_quantization,
+            dynamic_quantization_scope,
             kind,
             torch_device,
             python,
@@ -572,7 +633,8 @@ async fn init_backend(
     model_type: ModelType,
     dense_path: Option<String>,
     device_id: usize,
-    enable_fp8_dynamic: bool,
+    dynamic_quantization: DynamicQuantization,
+    dynamic_quantization_scope: DynamicQuantizationScope,
     kind: BackendKind,
     torch_device: TorchDevice,
     python: PythonBackendConfig,
@@ -674,13 +736,14 @@ async fn init_backend(
         let startup_span = Span::current();
         let model = tokio::task::spawn_blocking(move || {
             startup_span.in_scope(|| {
-                infinity_backend_libtorch::LibtorchBackend::new_with_dense_paths_and_fp8(
+                infinity_backend_libtorch::LibtorchBackend::new_with_dense_paths_and_dynamic_quantization(
                     &model_path,
                     &dtype.to_string(),
                     model_type,
                     &device,
                     dense_paths,
-                    enable_fp8_dynamic,
+                    dynamic_quantization,
+                    dynamic_quantization_scope,
                     runtime_limits,
                 )
             })
@@ -1473,7 +1536,8 @@ mod backend_selection_tests {
             ModelType::Embedding(Pool::Mean),
             None,
             0,
-            false,
+            DynamicQuantization::None,
+            DynamicQuantizationScope::Auto,
             BackendKind::PythonBackend,
             TorchDevice::Cpu,
             PythonBackendConfig {
@@ -1498,5 +1562,111 @@ mod backend_selection_tests {
                 assert!(error.contains(&format!("Requested backend '{}'", kind.as_str())));
             }
         }
+    }
+
+    #[test]
+    fn requested_dynamic_quantization_requires_libtorch_cuda_and_half_precision() {
+        for kind in [BackendKind::Libtorch, BackendKind::PythonBackend] {
+            assert!(validate_dynamic_quantization_request(
+                DynamicQuantization::None,
+                DynamicQuantizationScope::Auto,
+                kind,
+                &DType::Float32,
+                TorchDevice::Cpu,
+            )
+            .is_ok());
+            assert!(validate_dynamic_quantization_request(
+                DynamicQuantization::None,
+                DynamicQuantizationScope::Mlp,
+                kind,
+                &DType::Float32,
+                TorchDevice::Cpu,
+            )
+            .is_ok());
+            assert!(validate_dynamic_quantization_request(
+                DynamicQuantization::None,
+                DynamicQuantizationScope::All,
+                kind,
+                &DType::Bfloat16,
+                TorchDevice::Cuda,
+            )
+            .unwrap_err()
+            .to_string()
+            .contains("format other than none"));
+        }
+        for dynamic_quantization in [
+            DynamicQuantization::Fp8,
+            DynamicQuantization::Mxfp8,
+            DynamicQuantization::Nvfp4,
+        ] {
+            assert!(validate_dynamic_quantization_request(
+                dynamic_quantization,
+                DynamicQuantizationScope::Auto,
+                BackendKind::PythonBackend,
+                &DType::Bfloat16,
+                TorchDevice::Cuda,
+            )
+            .unwrap_err()
+            .to_string()
+            .contains("LibTorch"));
+            assert!(validate_dynamic_quantization_request(
+                dynamic_quantization,
+                DynamicQuantizationScope::Auto,
+                BackendKind::Libtorch,
+                &DType::Bfloat16,
+                TorchDevice::Cpu,
+            )
+            .unwrap_err()
+            .to_string()
+            .contains("CUDA"));
+            assert!(validate_dynamic_quantization_request(
+                dynamic_quantization,
+                DynamicQuantizationScope::Auto,
+                BackendKind::Libtorch,
+                &DType::Float32,
+                TorchDevice::Cuda,
+            )
+            .is_err());
+            assert!(validate_dynamic_quantization_request(
+                dynamic_quantization,
+                DynamicQuantizationScope::Auto,
+                BackendKind::Libtorch,
+                &DType::Auto,
+                TorchDevice::Cuda,
+            )
+            .is_err());
+        }
+        assert!(validate_dynamic_quantization_request(
+            DynamicQuantization::Fp8,
+            DynamicQuantizationScope::Auto,
+            BackendKind::Libtorch,
+            &DType::Float16,
+            TorchDevice::Cuda,
+        )
+        .is_ok());
+        assert!(validate_dynamic_quantization_request(
+            DynamicQuantization::Mxfp8,
+            DynamicQuantizationScope::Auto,
+            BackendKind::Libtorch,
+            &DType::Float16,
+            TorchDevice::Cuda,
+        )
+        .is_err());
+        assert!(validate_dynamic_quantization_request(
+            DynamicQuantization::Nvfp4,
+            DynamicQuantizationScope::Auto,
+            BackendKind::Libtorch,
+            &DType::Float16,
+            TorchDevice::Cuda,
+        )
+        .is_err());
+        assert!(validate_dynamic_quantization_request(
+            DynamicQuantization::Mxfp8,
+            DynamicQuantizationScope::Auto,
+            BackendKind::Libtorch,
+            &DType::Bfloat16,
+            TorchDevice::Cuda,
+        )
+        .is_ok());
     }
 }

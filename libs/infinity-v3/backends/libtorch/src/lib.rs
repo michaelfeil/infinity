@@ -8,6 +8,7 @@
 mod radix;
 #[cfg(unix)]
 mod weight_reader;
+use infinity_v3_config::{DynamicQuantization, DynamicQuantizationScope};
 use radix::{NativeRadix, OwnedRadix};
 #[cfg(any(not(unix), test))]
 use safetensors::{Dtype, SafeTensors};
@@ -316,11 +317,11 @@ fn start(error: impl ToString) -> BackendError {
     BackendError::Start(error.to_string())
 }
 
-fn resolve_fp8_scope(
-    requested: Option<&str>,
-    enabled: bool,
+fn resolve_dynamic_quantization_scope(
+    requested: DynamicQuantizationScope,
+    dynamic_quantization: DynamicQuantization,
     family: &str,
-) -> Result<String, BackendError> {
+) -> Result<&'static str, BackendError> {
     let dense_decoder = matches!(
         family,
         "llama"
@@ -336,20 +337,61 @@ fn resolve_fp8_scope(
             | "ultrabert"
             | "ultravbert"
     );
-    let scope = requested.unwrap_or(if enabled && dense_decoder {
+    let scope = match requested {
+        DynamicQuantizationScope::Auto if dynamic_quantization.is_enabled() && dense_decoder => {
+            DynamicQuantizationScope::All
+        }
+        DynamicQuantizationScope::Auto => DynamicQuantizationScope::Mlp,
+        scope => scope,
+    };
+    if scope == DynamicQuantizationScope::All && !dynamic_quantization.is_enabled() {
+        return Err(start(
+            "All-linear dynamic quantization requires a format other than none",
+        ));
+    }
+    if scope == DynamicQuantizationScope::All && !dense_decoder {
+        return Err(start(
+            "All-linear dynamic quantization requires a supported dense decoder",
+        ));
+    }
+    Ok(if scope == DynamicQuantizationScope::All {
         "all"
     } else {
         "mlp"
-    });
-    if !matches!(scope, "mlp" | "all") {
-        return Err(start("TORCH_FP8_SCOPE must be mlp or all"));
+    })
+}
+
+fn validate_dynamic_quantization(
+    dynamic_quantization: DynamicQuantization,
+    dtype: &str,
+    device: &str,
+) -> Result<(), BackendError> {
+    if !dynamic_quantization.is_enabled() {
+        return Ok(());
     }
-    if scope == "all" && (!enabled || !dense_decoder) {
-        return Err(start(
-            "All-linear FP8 requires dynamic FP8 and a supported dense decoder",
-        ));
+    if !device.starts_with("cuda:") {
+        return Err(start(format!(
+            "{} dynamic quantization requires CUDA",
+            dynamic_quantization.as_str()
+        )));
     }
-    Ok(scope.to_owned())
+    let dtype_supported = if dynamic_quantization.requires_bfloat16() {
+        dtype == "bfloat16"
+    } else {
+        matches!(dtype, "float16" | "bfloat16")
+    };
+    if !dtype_supported {
+        return Err(start(format!(
+            "{} dynamic quantization requires {}",
+            dynamic_quantization.as_str(),
+            if dynamic_quantization.requires_bfloat16() {
+                "bfloat16"
+            } else {
+                "float16 or bfloat16"
+            }
+        )));
+    }
+    Ok(())
 }
 
 fn upload_weight(
@@ -534,27 +576,30 @@ impl LibtorchBackend {
         dense_paths: Option<Vec<String>>,
         limits: text_embeddings_backend_core::ServingLimits,
     ) -> Result<Self, BackendError> {
-        Self::new_with_dense_paths_and_fp8(
+        Self::new_with_dense_paths_and_dynamic_quantization(
             path,
             dtype,
             model_type,
             device,
             dense_paths,
-            false,
+            DynamicQuantization::None,
+            DynamicQuantizationScope::Auto,
             limits,
         )
     }
+    #[allow(clippy::too_many_arguments)]
     #[tracing::instrument(
         name = "model_load", skip_all,
         fields(path = %path.display(), device = device, pid = std::process::id())
     )]
-    pub fn new_with_dense_paths_and_fp8(
+    pub fn new_with_dense_paths_and_dynamic_quantization(
         path: &Path,
         dtype: &str,
         model_type: ModelType,
         device: &str,
         dense_paths: Option<Vec<String>>,
-        enable_fp8_dynamic: bool,
+        dynamic_quantization: DynamicQuantization,
+        dynamic_quantization_scope: DynamicQuantizationScope,
         runtime_limits: text_embeddings_backend_core::ServingLimits,
     ) -> Result<Self, BackendError> {
         if device != "cpu" && device != "auto" && !device.starts_with("cuda:") {
@@ -563,6 +608,7 @@ impl LibtorchBackend {
         if device.starts_with("cuda:") && !matches!(dtype, "float16" | "bfloat16") {
             return Err(start("CUDA varlen attention requires float16 or bfloat16"));
         }
+        validate_dynamic_quantization(dynamic_quantization, dtype, device)?;
         let pool = match &model_type {
             ModelType::Embedding(pool) => pool.clone(),
             ModelType::Classifier => Pool::Cls,
@@ -718,14 +764,14 @@ impl LibtorchBackend {
         }
         .to_owned();
         options["model_type"] = normalized_family.clone().into();
-        if !enable_fp8_dynamic
+        if !dynamic_quantization.is_enabled()
             && (matches!(family.as_str(), "colqwen3" | "qwen3_vl_nemotron_embed")
                 || (family == "ministral3"
                     && options["is_causal"] == false
                     && options["pooling"] == "avg"))
         {
-            // Preserve reference rounding for frozen text encoders; dynamic
-            // FP8 uses the native decoder arithmetic contract.
+            // Preserve reference rounding for frozen text encoders; quantized
+            // models use the native decoder arithmetic contract.
             options["_transformers_math"] = true.into();
         }
         if family == "qwen3_vl_nemotron_embed" {
@@ -750,23 +796,20 @@ impl LibtorchBackend {
             }
             options["is_causal"] = false.into();
         }
-        if enable_fp8_dynamic {
-            if options
+        if dynamic_quantization.is_enabled()
+            && options
                 .get("quantization_config")
                 .is_some_and(|value| !value.is_null())
-            {
-                return Err(start("Dynamic FP8 requires an unquantized checkpoint"));
-            }
-            if !matches!(dtype, "float16" | "bfloat16") || device == "cpu" {
-                return Err(start("Dynamic FP8 requires CUDA float16/bfloat16"));
-            }
+        {
+            return Err(start(format!(
+                "{} dynamic quantization requires an unquantized checkpoint",
+                dynamic_quantization.as_str()
+            )));
         }
-        options["_fp8_dynamic"] = enable_fp8_dynamic.into();
-        let requested_scope =
-            std::env::var(infinity_v3_config::infinity_env!("TORCH_FP8_SCOPE")).ok();
-        options["_fp8_scope"] = resolve_fp8_scope(
-            requested_scope.as_deref(),
-            enable_fp8_dynamic,
+        options["_dynamic_quantization"] = dynamic_quantization.as_str().into();
+        options["_dynamic_quantization_scope"] = resolve_dynamic_quantization_scope(
+            dynamic_quantization_scope,
+            dynamic_quantization,
             &normalized_family,
         )?
         .into();
@@ -2027,19 +2070,28 @@ mod tests {
     fn limits() -> text_embeddings_backend_core::ServingLimits {
         text_embeddings_backend_core::ServingLimits::new(16_384, 8_192, None).unwrap()
     }
+    fn test_dynamic_quantization() -> DynamicQuantization {
+        match std::env::var("INFINITY_TEST_DYNAMIC_QUANTIZATION").as_deref() {
+            Ok("fp8") => DynamicQuantization::Fp8,
+            Ok("mxfp8") => DynamicQuantization::Mxfp8,
+            Ok("nvfp4") => DynamicQuantization::Nvfp4,
+            _ => DynamicQuantization::None,
+        }
+    }
 
     #[test]
     fn native_runtime_receives_the_resolved_limits() {
         let fixture = fixture("", false);
         let limits =
             text_embeddings_backend_core::ServingLimits::new(10_003, 2_301, Some(37)).unwrap();
-        let model = LibtorchBackend::new_with_dense_paths_and_fp8(
+        let model = LibtorchBackend::new_with_dense_paths_and_dynamic_quantization(
             &fixture.0,
             "float32",
             ModelType::Embedding(Pool::Mean),
             "cpu",
             None,
-            false,
+            DynamicQuantization::None,
+            DynamicQuantizationScope::Auto,
             limits,
         )
         .unwrap();
@@ -2520,13 +2572,14 @@ mod tests {
         let path = std::env::var("INFINITY_TEST_CHECKPOINT_PATH")
             .expect("Set INFINITY_TEST_CHECKPOINT_PATH to a supported local embedding checkpoint");
         let started = std::time::Instant::now();
-        let backend = LibtorchBackend::new_with_dense_paths_and_fp8(
+        let backend = LibtorchBackend::new_with_dense_paths_and_dynamic_quantization(
             Path::new(&path),
             "bfloat16",
             ModelType::Embedding(Pool::Mean),
             "cuda:0",
             None,
-            std::env::var("INFINITY_TEST_FP8_DYNAMIC").as_deref() == Ok("1"),
+            test_dynamic_quantization(),
+            DynamicQuantizationScope::Auto,
             limits(),
         )
         .unwrap();
@@ -2679,7 +2732,12 @@ mod tests {
     }
 
     #[test]
-    fn dynamic_fp8_scope_defaults_and_overrides() {
+    fn dynamic_quantization_scope_defaults_and_overrides() {
+        let formats = [
+            DynamicQuantization::Fp8,
+            DynamicQuantization::Mxfp8,
+            DynamicQuantization::Nvfp4,
+        ];
         for family in [
             "llama",
             "llama_bidirec",
@@ -2694,9 +2752,35 @@ mod tests {
             "ultrabert",
             "ultravbert",
         ] {
-            assert_eq!(resolve_fp8_scope(None, true, family).unwrap(), "all");
-            assert_eq!(resolve_fp8_scope(Some("all"), true, family).unwrap(), "all");
-            assert_eq!(resolve_fp8_scope(Some("mlp"), true, family).unwrap(), "mlp");
+            for dynamic_quantization in formats {
+                assert_eq!(
+                    resolve_dynamic_quantization_scope(
+                        DynamicQuantizationScope::Auto,
+                        dynamic_quantization,
+                        family
+                    )
+                    .unwrap(),
+                    "all"
+                );
+                assert_eq!(
+                    resolve_dynamic_quantization_scope(
+                        DynamicQuantizationScope::All,
+                        dynamic_quantization,
+                        family
+                    )
+                    .unwrap(),
+                    "all"
+                );
+                assert_eq!(
+                    resolve_dynamic_quantization_scope(
+                        DynamicQuantizationScope::Mlp,
+                        dynamic_quantization,
+                        family
+                    )
+                    .unwrap(),
+                    "mlp"
+                );
+            }
         }
         for family in [
             "bert",
@@ -2707,8 +2791,23 @@ mod tests {
             "gemma4",
             "gemma4_text",
         ] {
-            assert_eq!(resolve_fp8_scope(None, true, family).unwrap(), "mlp");
-            assert!(resolve_fp8_scope(Some("all"), true, family).is_err());
+            for dynamic_quantization in formats {
+                assert_eq!(
+                    resolve_dynamic_quantization_scope(
+                        DynamicQuantizationScope::Auto,
+                        dynamic_quantization,
+                        family
+                    )
+                    .unwrap(),
+                    "mlp"
+                );
+                assert!(resolve_dynamic_quantization_scope(
+                    DynamicQuantizationScope::All,
+                    dynamic_quantization,
+                    family
+                )
+                .is_err());
+            }
         }
         for family in [
             "qwen3",
@@ -2718,29 +2817,106 @@ mod tests {
             "qwen3_moe",
             "gemma4",
         ] {
-            assert_eq!(resolve_fp8_scope(None, false, family).unwrap(), "mlp");
             assert_eq!(
-                resolve_fp8_scope(Some("mlp"), false, family).unwrap(),
+                resolve_dynamic_quantization_scope(
+                    DynamicQuantizationScope::Auto,
+                    DynamicQuantization::None,
+                    family
+                )
+                .unwrap(),
                 "mlp"
             );
-            assert!(resolve_fp8_scope(Some("all"), false, family).is_err());
+            assert_eq!(
+                resolve_dynamic_quantization_scope(
+                    DynamicQuantizationScope::Mlp,
+                    DynamicQuantization::None,
+                    family
+                )
+                .unwrap(),
+                "mlp"
+            );
+            assert!(resolve_dynamic_quantization_scope(
+                DynamicQuantizationScope::All,
+                DynamicQuantization::None,
+                family
+            )
+            .is_err());
         }
-        assert!(resolve_fp8_scope(Some("unknown"), true, "qwen3").is_err());
-        assert!(resolve_fp8_scope(Some("all"), true, "qwen3_moe").is_err());
-        assert!(resolve_fp8_scope(Some("all"), true, "qwen3_5_moe").is_err());
-        assert!(resolve_fp8_scope(Some("all"), true, "qwen3_5_moe_text").is_err());
+        assert!(resolve_dynamic_quantization_scope(
+            DynamicQuantizationScope::All,
+            DynamicQuantization::Fp8,
+            "qwen3_moe"
+        )
+        .is_err());
+        assert!(resolve_dynamic_quantization_scope(
+            DynamicQuantizationScope::All,
+            DynamicQuantization::Fp8,
+            "qwen3_5_moe"
+        )
+        .is_err());
+        assert!(resolve_dynamic_quantization_scope(
+            DynamicQuantizationScope::All,
+            DynamicQuantization::Fp8,
+            "qwen3_5_moe_text"
+        )
+        .is_err());
     }
 
     #[test]
-    fn dynamic_fp8_rejects_cpu_and_requantized_checkpoints() {
+    fn requested_dynamic_quantization_rejects_cpu_and_unsupported_dtypes() {
+        assert!(validate_dynamic_quantization(DynamicQuantization::None, "float32", "cpu").is_ok());
+        for dynamic_quantization in [
+            DynamicQuantization::Fp8,
+            DynamicQuantization::Mxfp8,
+            DynamicQuantization::Nvfp4,
+        ] {
+            for (dtype, device) in [
+                ("float32", "cpu"),
+                ("float32", "cuda:0"),
+                ("auto", "cuda:0"),
+            ] {
+                assert!(
+                    validate_dynamic_quantization(dynamic_quantization, dtype, device).is_err()
+                );
+            }
+            assert!(
+                validate_dynamic_quantization(dynamic_quantization, "float32", "cpu")
+                    .unwrap_err()
+                    .to_string()
+                    .contains("requires CUDA")
+            );
+        }
+        assert!(
+            validate_dynamic_quantization(DynamicQuantization::Fp8, "float16", "cuda:0").is_ok()
+        );
+        assert!(
+            validate_dynamic_quantization(DynamicQuantization::Fp8, "bfloat16", "cuda:0").is_ok()
+        );
+        assert!(
+            validate_dynamic_quantization(DynamicQuantization::Mxfp8, "float16", "cuda:0").is_err()
+        );
+        assert!(
+            validate_dynamic_quantization(DynamicQuantization::Nvfp4, "float16", "cuda:0").is_err()
+        );
+        assert!(
+            validate_dynamic_quantization(DynamicQuantization::Mxfp8, "bfloat16", "cuda:0").is_ok()
+        );
+        assert!(
+            validate_dynamic_quantization(DynamicQuantization::Nvfp4, "bfloat16", "cuda:0").is_ok()
+        );
+    }
+
+    #[test]
+    fn requested_dynamic_quantization_rejects_cpu_and_requantized_checkpoints() {
         let fixture = fixture_with_intermediate("", false, 32);
-        let cpu = LibtorchBackend::new_with_dense_paths_and_fp8(
+        let cpu = LibtorchBackend::new_with_dense_paths_and_dynamic_quantization(
             &fixture.0,
             "float32",
             ModelType::Embedding(Pool::Mean),
             "cpu",
             None,
-            true,
+            DynamicQuantization::Fp8,
+            DynamicQuantizationScope::Auto,
             limits(),
         )
         .err()
@@ -2754,13 +2930,14 @@ mod tests {
             serde_json::to_vec(&config).unwrap(),
         )
         .unwrap();
-        let quantized = LibtorchBackend::new_with_dense_paths_and_fp8(
+        let quantized = LibtorchBackend::new_with_dense_paths_and_dynamic_quantization(
             &fixture.0,
             "float16",
             ModelType::Embedding(Pool::Mean),
             "cuda:0",
             None,
-            true,
+            DynamicQuantization::Fp8,
+            DynamicQuantizationScope::Auto,
             limits(),
         )
         .err()
@@ -2813,13 +2990,14 @@ mod tests {
                     .unwrap()
                     .embed(input.clone())
                     .unwrap();
-            let fp8 = LibtorchBackend::new_with_dense_paths_and_fp8(
+            let fp8 = LibtorchBackend::new_with_dense_paths_and_dynamic_quantization(
                 &path,
                 "bfloat16",
                 kind,
                 "cuda:0",
                 None,
-                true,
+                DynamicQuantization::Fp8,
+                DynamicQuantizationScope::Auto,
                 limits(),
             )
             .unwrap()
@@ -2876,13 +3054,14 @@ mod tests {
                 .unwrap()
                 .embed(batch())
                 .unwrap();
-        let fp8 = LibtorchBackend::new_with_dense_paths_and_fp8(
+        let fp8 = LibtorchBackend::new_with_dense_paths_and_dynamic_quantization(
             &fixture.0,
             "bfloat16",
             kind,
             "cuda:0",
             None,
-            true,
+            DynamicQuantization::Fp8,
+            DynamicQuantizationScope::Auto,
             limits(),
         )
         .unwrap()
@@ -2923,13 +3102,14 @@ mod tests {
                     limits(),
                 )
                 .unwrap();
-                let quantized = LibtorchBackend::new_with_dense_paths_and_fp8(
+                let quantized = LibtorchBackend::new_with_dense_paths_and_dynamic_quantization(
                     &fixture.0,
                     dtype,
                     ModelType::Embedding(pool),
                     "cuda:0",
                     None,
-                    true,
+                    DynamicQuantization::Fp8,
+                    DynamicQuantizationScope::Auto,
                     limits(),
                 )
                 .unwrap();
@@ -2952,13 +3132,14 @@ mod tests {
                 let replay = quantized.embed(different).unwrap();
                 assert_ne!(values(&actual[&0]), values(&replay[&0]));
             }
-            let classifier = LibtorchBackend::new_with_dense_paths_and_fp8(
+            let classifier = LibtorchBackend::new_with_dense_paths_and_dynamic_quantization(
                 &fixture.0,
                 dtype,
                 ModelType::Classifier,
                 "cuda:0",
                 None,
-                true,
+                DynamicQuantization::Fp8,
+                DynamicQuantizationScope::Auto,
                 limits(),
             )
             .unwrap();

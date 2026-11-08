@@ -5,6 +5,7 @@
 #endif
 #include <c10/core/InferenceMode.h>
 #include <iostream>
+#include <string>
 
 namespace {
 void check_equal(const at::Tensor& actual, const at::Tensor& expected) {
@@ -92,6 +93,50 @@ public:
   }
 };
 
+void check_quantization_policy() {
+  using infinity::Quantization;
+  using infinity::QuantizationScope;
+  infinity::Options defaults;
+  TORCH_CHECK(defaults.dynamic_quantization() == Quantization::None &&
+                  defaults.dynamic_quantization_scope() == QuantizationScope::Mlp,
+              "Missing dynamic quantization keys must preserve model dtype and MLP scope");
+  auto rejects = [](auto&& apply, const char* expected) {
+    try {
+      apply();
+    } catch (const c10::Error& error) {
+      return std::string(error.what_without_backtrace()).find(expected) != std::string::npos;
+    }
+    return false;
+  };
+  infinity::Options bad_format;
+  bad_format.values["_dynamic_quantization"] = "q8";
+  TORCH_CHECK(
+      rejects([&] { (void)bad_format.dynamic_quantization(); }, "Unsupported quantization format"),
+      "Unknown dynamic quantization format was accepted");
+  infinity::Options bad_scope;
+  bad_scope.values["_dynamic_quantization_scope"] = "auto";
+  TORCH_CHECK(rejects([&] { (void)bad_scope.dynamic_quantization_scope(); },
+                      "Unsupported quantization scope"),
+              "Unknown dynamic quantization scope was accepted");
+
+  const auto opts = at::TensorOptions().device(at::kCPU).dtype(at::kBFloat16);
+  auto wi = at::randn({64, 32}, opts), wo = at::randn({16, 64}, opts);
+  infinity::DenseMlp model({wi}, {wo}, {infinity::MlpActivation::Relu});
+  model.prepare(Quantization::None);
+  auto x = at::randn({3, 32}, opts);
+  TORCH_CHECK(at::isfinite(model.forward(x)).all().item<bool>(),
+              "Explicit model dtype changed a CPU MLP");
+  infinity::DenseMlp fp8({wi}, {wo}, {infinity::MlpActivation::Relu});
+  TORCH_CHECK(rejects([&] { fp8.prepare(Quantization::Fp8); }, "CUDA"),
+              "Explicit FP8 did not report its missing CUDA execution path");
+  infinity::DenseMlp mxfp8({wi}, {wo}, {infinity::MlpActivation::Relu});
+  TORCH_CHECK(rejects([&] { mxfp8.prepare(Quantization::Mxfp8); }, "MXFP8 MLP requested"),
+              "Explicit MXFP8 silently fell back to another format");
+  infinity::DenseMlp nvfp4({wi}, {wo}, {infinity::MlpActivation::Relu});
+  TORCH_CHECK(rejects([&] { nvfp4.prepare(Quantization::Nvfp4); }, "NVFP4 MLP requested"),
+              "Explicit NVFP4 silently fell back to another format");
+}
+
 void check(const c10::Device& device, at::ScalarType dtype) {
   const auto opts = at::TensorOptions().device(device).dtype(dtype);
   auto wi = at::randn({64, 32}, opts) * .03, wo = at::randn({16, 64}, opts) * .03;
@@ -103,8 +148,8 @@ void check(const c10::Device& device, at::ScalarType dtype) {
                     infinity::MlpActivation::GeluTanh,
                     infinity::MlpActivation::Tanh}) {
     infinity::DenseMlp mlp({wi, bi}, {wo, bo}, {kind});
-    for (auto precision : {infinity::MlpPrecision::Model, infinity::MlpPrecision::Fp8}) {
-      if (precision == infinity::MlpPrecision::Fp8 && !device.is_cuda())
+    for (auto precision : {infinity::Quantization::None, infinity::Quantization::Fp8}) {
+      if (precision == infinity::Quantization::Fp8 && !device.is_cuda())
         continue;
       mlp.prepare(precision);
       mlp.prepare(precision); // Preparation is idempotent, including released FP8 weights.
@@ -174,7 +219,7 @@ void check(const c10::Device& device, at::ScalarType dtype) {
   check_equal(separate.forward(x),
               at::linear(at::silu(at::linear(x, wi, bi)) * at::linear(x, up, bu), wo, bo));
   if (device.is_cuda()) {
-    separate.prepare(infinity::MlpPrecision::Fp8);
+    separate.prepare(infinity::Quantization::Fp8);
     auto q = infinity::fp8_quantize_rows(x);
     check_equal(separate.forward(q.first, {}, q.second), separate.forward(x));
     check_equal(separate.forward(x),
@@ -189,8 +234,8 @@ void check(const c10::Device& device, at::ScalarType dtype) {
   clipped.input_clip = std::array<double, 2>{-.4, .5};
   clipped.output_clip = std::array<double, 2>{-.1, .2};
   infinity::DenseMlp bounded({wi, bi, clipped}, {wo, bo, clipped}, {infinity::MlpActivation::Tanh});
-  for (auto precision : {infinity::MlpPrecision::Model, infinity::MlpPrecision::Fp8}) {
-    if (precision == infinity::MlpPrecision::Fp8 && !device.is_cuda())
+  for (auto precision : {infinity::Quantization::None, infinity::Quantization::Fp8}) {
+    if (precision == infinity::Quantization::Fp8 && !device.is_cuda())
       continue;
     bounded.prepare(precision);
     auto project = [&](const at::Tensor& value, const at::Tensor& weight, const at::Tensor& bias) {
@@ -270,7 +315,7 @@ void check(const c10::Device& device, at::ScalarType dtype) {
           auto output_bias = use_bias ? bo : at::Tensor();
           infinity::DenseMlp mlp(
               {wi, input_bias, input_recipe}, {wo, output_bias, output_recipe}, activation);
-          mlp.prepare(infinity::MlpPrecision::Fp8);
+          mlp.prepare(infinity::Quantization::Fp8);
           auto projected = project(x, wi, input_bias, input_recipe);
           auto activated = infinity::mlp_activation(projected, expected_activation);
           auto expected = project(activated, wo, output_bias, output_recipe);
@@ -309,7 +354,7 @@ void check(const c10::Device& device, at::ScalarType dtype) {
       else
         activation.custom = callback;
       infinity::DenseMlp mlp({wi, bi}, {wo, bo}, activation);
-      mlp.prepare(infinity::MlpPrecision::Fp8);
+      mlp.prepare(infinity::Quantization::Fp8);
       auto expected = infinity::Fp8Linear(wo).forward(
           at::relu(infinity::Fp8Linear(wi).forward(x, bi)) + at::ones({}, opts), bo);
       check_equal(mlp.forward(x), expected);
@@ -321,7 +366,7 @@ void check(const c10::Device& device, at::ScalarType dtype) {
       infinity::MlpActivationRecipe activation(infinity::MlpActivation::RoundedSilu);
       activation.fp8_activation = infinity::Fp8Activation::RoundedSilu;
       infinity::DenseMlp mlp({wi, bi, input_recipe}, {wo, bo, output_recipe}, activation);
-      mlp.prepare(infinity::MlpPrecision::Fp8);
+      mlp.prepare(infinity::Quantization::Fp8);
       auto projected = project(values, wi, bi, input_recipe);
       auto activated = infinity::mlp_activation(projected, infinity::MlpActivation::RoundedSilu);
       check_equal(mlp.forward(values), project(activated, wo, bo, output_recipe));
@@ -373,7 +418,7 @@ void check(const c10::Device& device, at::ScalarType dtype) {
         [](const at::Tensor& rows) { return infinity::fused_gated_activation(rows, 5); }, true);
     recipe.fusion = infinity::MlpFusion::RoundedSwiGlu;
     infinity::DenseMlp mlp({packed}, {wo, bo}, recipe);
-    mlp.prepare(infinity::MlpPrecision::Fp8);
+    mlp.prepare(infinity::Quantization::Fp8);
     check_equal(
         mlp.forward(x),
         infinity::Fp8Linear(wo).forward(
@@ -396,7 +441,7 @@ void check(const c10::Device& device, at::ScalarType dtype) {
       if (transform == 2)
         projection.output_clip = std::array<double, 2>{-.01, .02};
       infinity::DenseMlp guarded({packed, bias, projection}, {wo, bo}, recipe);
-      guarded.prepare(infinity::MlpPrecision::Fp8);
+      guarded.prepare(infinity::Quantization::Fp8);
       auto values = transform == 1 ? x.clamp(-.1, .2) : x;
       auto middle = infinity::Fp8Linear(packed).forward(values, bias);
       if (transform == 2)
@@ -426,7 +471,7 @@ void check(const c10::Device& device, at::ScalarType dtype) {
       for (bool gate_first : {false, true}) {
         const int code = gated_code(kind);
         infinity::DenseMlp gated_mlp({packed}, {wo, bo}, make_gated_recipe(kind, gate_first));
-        gated_mlp.prepare(infinity::MlpPrecision::Fp8);
+        gated_mlp.prepare(infinity::Quantization::Fp8);
         auto composed = [&](const at::Tensor& values) {
           auto projected = infinity::Fp8Linear(packed).forward(values);
           auto activated = infinity::fused_gated_activation(projected, code, gate_first);
@@ -442,7 +487,7 @@ void check(const c10::Device& device, at::ScalarType dtype) {
         output_recipe.output_clip = std::array<double, 2>{-.1, .2};
         infinity::DenseMlp clipped_mlp(
             {packed}, {wo, bo, output_recipe}, make_gated_recipe(kind, gate_first));
-        clipped_mlp.prepare(infinity::MlpPrecision::Fp8);
+        clipped_mlp.prepare(infinity::Quantization::Fp8);
         auto composed_clipped = [&](const at::Tensor& values) {
           auto projected = infinity::Fp8Linear(packed).forward(values);
           auto activated = infinity::fused_gated_activation(projected, code, gate_first);
@@ -466,7 +511,7 @@ void check(const c10::Device& device, at::ScalarType dtype) {
       infinity::DenseMlp gated_mlp({packed, bias, input_recipe},
                                    {wo, bo, output_recipe},
                                    make_gated_recipe(kind, gate_first));
-      gated_mlp.prepare(infinity::MlpPrecision::Fp8);
+      gated_mlp.prepare(infinity::Quantization::Fp8);
       auto projected = project(values, packed, bias, input_recipe);
       auto activated = infinity::fused_gated_activation(projected, code, gate_first);
       check_equal(gated_mlp.forward(values), project(activated, wo, bo, output_recipe));
@@ -504,7 +549,7 @@ void check(const c10::Device& device, at::ScalarType dtype) {
       });
       activation.fp8_gated_activation = infinity::Fp8GatedActivation::RoundedSilu;
       infinity::DenseMlp separate_mlp({wi, bi}, {up, bu}, {wo, bo}, activation);
-      separate_mlp.prepare(infinity::MlpPrecision::Fp8);
+      separate_mlp.prepare(infinity::Quantization::Fp8);
       auto expected = infinity::Fp8Linear(wo).forward(
           infinity::mlp_activation(infinity::Fp8Linear(wi).forward(x, bi),
                                    infinity::MlpActivation::RoundedSilu) *
@@ -522,7 +567,7 @@ void check(const c10::Device& device, at::ScalarType dtype) {
           true);
       activation.gate_first = false;
       infinity::DenseMlp custom_mlp({packed}, {wo, bo}, activation);
-      custom_mlp.prepare(infinity::MlpPrecision::Fp8);
+      custom_mlp.prepare(infinity::Quantization::Fp8);
       auto expected = infinity::Fp8Linear(wo).forward(
           infinity::fused_gated_activation(infinity::Fp8Linear(packed).forward(x), 4, false), bo);
       check_equal(custom_mlp.forward(x), expected);
@@ -536,7 +581,7 @@ void check(const c10::Device& device, at::ScalarType dtype) {
         return at::relu(rows);
       };
       infinity::DenseMlp marked_mlp({packed}, {wo, bo}, activation);
-      marked_mlp.prepare(infinity::MlpPrecision::Fp8);
+      marked_mlp.prepare(infinity::Quantization::Fp8);
       auto expected = infinity::Fp8Linear(wo).forward(
           infinity::fused_gated_activation(infinity::Fp8Linear(packed).forward(x), 4, true), bo);
       check_equal(marked_mlp.forward(x), expected);
@@ -545,7 +590,7 @@ void check(const c10::Device& device, at::ScalarType dtype) {
     infinity::DenseMlp invalid({wi}, {at::zeros({17, 64}, opts)}, {infinity::MlpActivation::Relu});
     bool rejected = false;
     try {
-      invalid.prepare(infinity::MlpPrecision::Fp8);
+      invalid.prepare(infinity::Quantization::Fp8);
     } catch (const c10::Error&) {
       rejected = true;
     }
@@ -560,6 +605,7 @@ int main(int argc, char**) {
   try {
     c10::InferenceMode inference;
     at::manual_seed(846);
+    check_quantization_policy();
     const auto device = c10::Device(argc > 1 ? "cuda:0" : "cpu");
     for (auto dtype : {at::kHalf, at::kBFloat16})
       check(device, dtype);
