@@ -503,6 +503,7 @@ pub(crate) struct RerankRequest {
     #[schema(example = "What is Deep Learning?")]
     pub query: String,
     #[schema(example = json!(["Deep Learning is ..."]))]
+    #[serde(alias = "documents")]
     pub texts: Vec<String>,
     #[serde(default)]
     #[schema(default = "false", example = "false", nullable = true)]
