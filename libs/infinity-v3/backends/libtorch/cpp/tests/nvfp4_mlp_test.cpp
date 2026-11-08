@@ -1,4 +1,5 @@
 // Copyright Infinity Core Contributors. Licensed under the repository LICENSE.
+#include "env_config.h"
 #include "helpers/dense_mlp.h"
 #include "helpers/nvfp4_linear.h"
 #include "kernels/fast_kernels.h"
@@ -12,9 +13,9 @@
 namespace {
 void set_nvfp4_flag(const char* value) {
   if (value)
-    setenv("INFINITY_TORCH_NVFP4_MLP", value, 1);
+    setenv(INFINITY_ENV("TORCH_NVFP4_MLP"), value, 1);
   else
-    unsetenv("INFINITY_TORCH_NVFP4_MLP");
+    unsetenv(INFINITY_ENV("TORCH_NVFP4_MLP"));
 }
 
 uint8_t e4m3_byte(float value) {
