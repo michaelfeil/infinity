@@ -275,15 +275,19 @@ public:
     return true;
   }
 
-  MlpNativeQuantized apply_native_swiglu_quantized(const at::Tensor& gate_up,
+  MlpNativeQuantized apply_native_swiglu_quantized(const MlpProjection& projection,
+                                                   const at::Tensor& x,
                                                    const MlpContext&) const override {
-    const auto quantized = linear_.swiglu_quantize(gate_up);
+    TORCH_CHECK(x.dim() == 2 && x.size(1) == projection.input_width(),
+                "Fused native SwiGLU requires 2D projection rows");
+    const auto quantized = linear_.forward_swiglu_quantized(x);
     return {MlpNativeQuantized::Format::Nvfp4,
             quantized.values,
             quantized.block_scales,
             quantized.global_scale,
             quantized.rows,
-            quantized.cols};
+            quantized.cols,
+            quantized.row_scales};
   }
 
   bool accepts_native_quantized_rows() const override {
@@ -299,7 +303,7 @@ public:
     TORCH_CHECK(rows.cols == projection.input_width(),
                 "NVFP4 native rows width does not match projection");
     const Nvfp4Quantized quantized{
-        rows.values, rows.block_scales, rows.global_scale, rows.rows, rows.cols};
+        rows.values, rows.block_scales, rows.global_scale, rows.rows, rows.cols, rows.row_scales};
     return linear_.forward_quantized(quantized, bias);
   }
 };
@@ -590,23 +594,29 @@ at::Tensor DenseMlp::forward(const at::Tensor& x,
     explicit_gated_hook_declined = true;
   }
 #endif
-  auto middle = input_.execute(x, context, input_scales, epilogue);
 #ifdef INFINITY_TORCH_CUDA_KERNELS
-  // Native block-scaled hook: the format method owns both the activation
-  // arithmetic and its own scale metadata, so this does not reuse the FP8-row
-  // contract. The fusion is limited to the shared rounded-SwiGLU geometry.
-  const bool native_swiglu = activation_.fusion == MlpFusion::RoundedSwiGlu && activation_.packed &&
-                             activation_.gate_first && !up_ && !activation_.quantized_custom &&
-                             input_.method().supports_native_swiglu_quantized() &&
-                             output_.method().accepts_native_quantized_rows() &&
-                             !input_.recipe_.output_clip && !output_.recipe_.input_clip &&
-                             !output_.recipe_.cast_input;
-  if (native_swiglu && middle.is_cuda() && middle.dim() == 2 && middle.is_contiguous() &&
-      middle.size(1) % 2 == 0 && (middle.size(1) / 2) % 16 == 0) {
-    auto quantized = input_.method().apply_native_swiglu_quantized(middle, context);
+  // Native block-scaled hook: the format method owns the whole input
+  // projection, activation arithmetic and scale metadata, so this does not
+  // reuse the FP8-row contract. The fusion is limited to the shared
+  // rounded-SwiGLU geometry and projections whose numerical transforms the
+  // fused boundary can express exactly.
+  const bool native_swiglu =
+      activation_.fusion == MlpFusion::RoundedSwiGlu && activation_.packed &&
+      activation_.gate_first && !up_ && !activation_.quantized_custom &&
+      input_.method().supports_native_swiglu_quantized() &&
+      output_.method().accepts_native_quantized_rows() && !input_.bias_.defined() &&
+      !input_scales.defined() && !input_.recipe_.input_clip && !input_.recipe_.cast_input &&
+      !input_.recipe_.output_clip && !output_.recipe_.input_clip && !output_.recipe_.cast_input &&
+      x.is_cuda() && x.dim() == 2 && x.size(1) == input_.input_width() &&
+      input_.output_width() % 2 == 0 && (input_.output_width() / 2) % 16 == 0;
+  if (native_swiglu) {
+    auto quantized = input_.method().apply_native_swiglu_quantized(input_, x, context);
     if (quantized.defined())
       return output_.execute_native(quantized, context);
   }
+#endif
+  auto middle = input_.execute(x, context, input_scales, epilogue);
+#ifdef INFINITY_TORCH_CUDA_KERNELS
   if (rounded_swiglu && middle.is_cuda() && middle.dim() == 2 && middle.is_contiguous() &&
       middle.size(1) / 2 <= 32768) {
     auto quantized = fp8_swiglu_quantize(middle);

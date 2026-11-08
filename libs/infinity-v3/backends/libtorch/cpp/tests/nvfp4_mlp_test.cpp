@@ -56,11 +56,16 @@ void native_quant_golden() {
                                 0x77,
                                 0x77,
                                 0x77};
-  for (bool power2 : {false, true}) {
-    auto q = infinity::nvfp4_quantize_rows(x, power2);
+  for (bool rowwise : {false, true}) {
+    auto q = infinity::nvfp4_quantize_rows(x, rowwise);
     TORCH_CHECK(q.rows == 129 && q.cols == 32 &&
                     std::abs(q.global_scale.item<float>() - 1.f) < 1e-9f,
                 "NVFP4 golden global scale/layout mismatch");
+    TORCH_CHECK(q.row_scales.defined() == rowwise,
+                "NVFP4 golden row-scale presence does not match the scale mode");
+    if (rowwise)
+      TORCH_CHECK(q.row_scales.numel() == 129 && (q.row_scales == 1.f).all().item<bool>(),
+                  "NVFP4 golden per-row scales are not all one");
     auto packed = q.values.view(at::kByte).to(at::kCPU).contiguous().narrow(0, 128, 1);
     auto scales = q.block_scales.view(at::kByte).to(at::kCPU).contiguous();
     TORCH_CHECK(scales.numel() == infinity::nvfp4_scale_elements(129, 32),
@@ -80,38 +85,78 @@ void batch_invariance() {
   auto batch = at::cat({row, at::full({3, 32}, 2688.f, opts)}, 0);
   auto alone = infinity::nvfp4_quantize_rows(row, true);
   auto cobatch = infinity::nvfp4_quantize_rows(batch, true);
+  TORCH_CHECK(alone.global_scale.item<float>() == 1.f && cobatch.global_scale.item<float>() == 1.f,
+              "Row-wise activation tensor scale must stay one");
   auto a_codes = alone.values.view(at::kByte).to(at::kCPU).contiguous();
   auto b_codes = cobatch.values.view(at::kByte).to(at::kCPU).contiguous().narrow(0, 0, 1);
-  TORCH_CHECK(at::equal(a_codes, b_codes), "Power-of-two S changed first-row FP4 codes");
+  TORCH_CHECK(at::equal(a_codes, b_codes), "Per-row S changed first-row FP4 codes");
+  TORCH_CHECK(alone.row_scales.defined() && cobatch.row_scales.defined(),
+              "Per-row activation scales were not retained");
+  const float a_row = alone.row_scales[0].item<float>();
+  const float b_row = cobatch.row_scales[0].item<float>();
+  TORCH_CHECK(a_row == b_row, "Per-row S depends on the co-batched rows");
   auto a_scales = alone.block_scales.view(at::kByte).to(at::kCPU).contiguous();
   auto b_scales = cobatch.block_scales.view(at::kByte).to(at::kCPU).contiguous();
-  const float a_global = alone.global_scale.item<float>();
-  const float b_global = cobatch.global_scale.item<float>();
   for (int block = 0; block < 2; ++block) {
-    const float a_effective = e4m3_value(a_scales[block].item<uint8_t>()) * a_global;
-    const float b_effective = e4m3_value(b_scales[block].item<uint8_t>()) * b_global;
+    const float a_effective = e4m3_value(a_scales[block].item<uint8_t>()) * a_row;
+    const float b_effective = e4m3_value(b_scales[block].item<uint8_t>()) * b_row;
     TORCH_CHECK(std::abs(a_effective - b_effective) <= 1e-6f * std::max(a_effective, b_effective),
-                "Power-of-two S changed decoded first-row block scale at ",
+                "Per-row S changed decoded first-row block scale at ",
                 block);
   }
 }
 
-// Include a subnormal scale and a value just below the minimum-normal scale:
-// the latter rounds up to a normal scale but still needs exact re-encoding.
+// Exact E4M3-subnormal co-batch counterexample: the target row [2^-7, 0, ...]
+// alone gets S=2^-18, block scale 123 (352) and E2M1 value 6 (nibble 7). Under
+// the old batch-global power-of-two S a co-row of 2048 chose value 4 while 4096
+// chose 0. Per-row S must make the target byte-for-byte independent of either
+// co-row.
+void subnormal_cobatch_invariance() {
+  const auto opts = at::TensorOptions().device(at::kCUDA).dtype(at::kBFloat16);
+  auto target = at::zeros({1, 16}, opts);
+  target[0][0].fill_(std::ldexp(1.f, -7));
+  auto make = [&](float high) {
+    auto co_row = at::zeros({1, 16}, opts);
+    co_row[0][0].fill_(high);
+    return infinity::nvfp4_quantize_rows(at::cat({target, co_row}, 0), true);
+  };
+  auto low = make(2048.f);
+  auto high = make(4096.f);
+  for (const auto* q : {&low, &high}) {
+    TORCH_CHECK(q->global_scale.item<float>() == 1.f &&
+                    q->row_scales[0].item<float>() == std::ldexp(1.f, -18),
+                "Subnormal row scale is not the row-local power of two");
+    TORCH_CHECK(q->block_scales.view(at::kByte)[0].item<uint8_t>() == 123,
+                "Subnormal row E4M3 block scale changed");
+    TORCH_CHECK(q->values.view(at::kByte)[0][0].item<uint8_t>() == 0x07,
+                "Subnormal row E2M1 code changed");
+  }
+  TORCH_CHECK(low.row_scales[0].item<float>() == high.row_scales[0].item<float>() &&
+                  low.block_scales.view(at::kByte)[0].item<uint8_t>() ==
+                      high.block_scales.view(at::kByte)[0].item<uint8_t>() &&
+                  at::equal(low.values.view(at::kByte).narrow(0, 0, 1),
+                            high.values.view(at::kByte).narrow(0, 0, 1)),
+              "Subnormal target row depends on its co-batched row");
+}
+
+// One row with four blocks keeps the E4M3 subnormal scale and the value just
+// below the minimum-normal scale inside a single row. With the row amax 2688
+// the row scale is one, so the block bytes match the previous per-row golden.
 void subnormal_scale_golden() {
-  auto x = at::tensor({.03125f, .09326171875f, 0.f, 2688.f}, at::TensorOptions().dtype(at::kFloat))
-               .to(at::Device(at::kCUDA), at::kBFloat16)
-               .unsqueeze(1)
-               .expand({4, 16})
-               .contiguous();
+  const auto opts = at::TensorOptions().device(at::kCUDA).dtype(at::kBFloat16);
+  auto x = at::zeros({1, 64}, opts);
+  x[0].narrow(0, 0, 16).fill_(.03125f);
+  x[0].narrow(0, 16, 16).fill_(.09326171875f);
+  x[0].narrow(0, 48, 16).fill_(2688.f);
   auto q = infinity::nvfp4_quantize_rows(x, true);
-  TORCH_CHECK(q.global_scale.item<float>() == 1.f, "Unexpected edge-case global scale");
+  TORCH_CHECK(q.global_scale.item<float>() == 1.f && q.row_scales[0].item<float>() == 1.f,
+              "Unexpected edge-case row scale");
   auto scales = q.block_scales.view(at::kByte).cpu();
   auto values = q.values.view(at::kByte).cpu();
   const int expected[] = {3, 8, 0, 126};
-  for (int row = 0; row < 4; ++row) {
-    TORCH_CHECK(scales[row * 16].item<int>() == expected[row], "Edge-case scale mismatch");
-    TORCH_CHECK(at::all(values[row] == (row == 2 ? 0 : 0x77)).item<bool>(),
+  for (int block = 0; block < 4; ++block) {
+    TORCH_CHECK(scales[block].item<int>() == expected[block], "Edge-case scale mismatch");
+    TORCH_CHECK(at::all(values[0].narrow(0, block * 8, 8) == (block == 2 ? 0 : 0x77)).item<bool>(),
                 "Edge-case FP4 code mismatch");
   }
 }
@@ -155,10 +200,11 @@ void dense_mlp_forward_and_guards() {
   auto same = [](const auto& a, const auto& b) {
     return at::equal(a.values.view(at::kByte), b.values.view(at::kByte)) &&
            at::equal(a.block_scales.view(at::kByte), b.block_scales.view(at::kByte)) &&
-           at::equal(a.global_scale, b.global_scale);
+           at::equal(a.global_scale, b.global_scale) && a.row_scales.defined() &&
+           b.row_scales.defined() && at::equal(a.row_scales, b.row_scales);
   };
   TORCH_CHECK(same(fused_stage, code5_stage) && same(fused_stage, gemma_stage),
-              "Fused NVFP4 SwiGLU changed exact quantized staging");
+              "Fused NVFP4 SwiGLU changed exact quantized staging or row scales");
   auto fused = nv_mlp.forward(x);
   auto code5 = out.forward(infinity::fused_gated_activation(gu, 5));
   auto gemma = out.forward(infinity::gemma_gated_cuda(gu, false));
@@ -195,6 +241,20 @@ void dense_mlp_forward_and_guards() {
   TORCH_CHECK(rejected && !unaligned.fp8(), "Unsupported packed K was accepted at preparation");
   set_nvfp4_flag(nullptr);
 }
+
+// A 16x32 all-ones weight against one- and two-valued activation rows. Row 0
+// decodes with S=2^-11 and row 1 with S=2^-10, both at block scale 352/code 6;
+// the weight uses its exact 1/2688 global scale at 448/code 6. The raw GEMM is
+// 67584 for both rows, so the per-row post-scale must produce 33 and 66. The
+// original K=32 ones/ones geometry probe measured 33, not an idealized 32.
+void row_scale_gemm_golden() {
+  const auto opts = at::TensorOptions().device(at::kCUDA).dtype(at::kBFloat16);
+  infinity::Nvfp4Linear linear(at::ones({16, 32}, opts));
+  auto x = at::cat({at::ones({1, 32}, opts), at::full({1, 32}, 2.f, opts)}, 0);
+  auto expected = at::cat({at::full({1, 16}, 33.f, opts), at::full({1, 16}, 66.f, opts)}, 0);
+  TORCH_CHECK(at::equal(linear.forward(x), expected),
+              "NVFP4 row-scale GEMM golden changed decoded output");
+}
 } // namespace
 
 int main() {
@@ -203,8 +263,10 @@ int main() {
   if (!infinity::nvfp4_provider_supported(at::Device(at::kCUDA, 0))) {
     return 77;
   }
+  row_scale_gemm_golden();
   native_quant_golden();
   batch_invariance();
+  subnormal_cobatch_invariance();
   subnormal_scale_golden();
   dense_mlp_forward_and_guards();
   return 0;

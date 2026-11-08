@@ -23,6 +23,7 @@ struct MlpNativeQuantized {
   at::Tensor block_scales;
   at::Tensor global_scale;
   int64_t rows = 0, cols = 0;
+  at::Tensor row_scales;
 
   bool defined() const {
     return format != Format::None;
@@ -117,8 +118,8 @@ public:
     return false;
   }
 
-  virtual MlpNativeQuantized apply_native_swiglu_quantized(const at::Tensor&,
-                                                           const MlpContext&) const {
+  virtual MlpNativeQuantized
+  apply_native_swiglu_quantized(const MlpProjection&, const at::Tensor&, const MlpContext&) const {
     return {};
   }
 

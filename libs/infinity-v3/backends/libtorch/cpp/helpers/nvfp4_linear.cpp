@@ -47,7 +47,7 @@ bool nvfp4_geometry_supported(const c10::Device& device, int64_t m, int64_t n, i
   return nvfp4_provider_supported(device) && m > 0 && n > 0 && k > 0 && k % 32 == 0 && n % 16 == 0;
 }
 
-at::Tensor nvfp4_gemm(const Nvfp4Quantized& lhs, const Nvfp4Quantized& rhs) {
+at::Tensor nvfp4_gemm(const Nvfp4Quantized& lhs, const Nvfp4Quantized& rhs, bool apply_row_scales) {
 #ifdef INFINITY_TORCH_CUDA_KERNELS
   TORCH_CHECK(lhs.values.is_cuda() && rhs.values.is_cuda() && lhs.cols == rhs.cols,
               "NVFP4 GEMM operand mismatch");
@@ -82,19 +82,29 @@ at::Tensor nvfp4_gemm(const Nvfp4Quantized& lhs, const Nvfp4Quantized& rhs) {
   TORCH_CHECK(lhs.block_scales.numel() == nvfp4_scale_elements(lhs.rows, lhs.cols) &&
                   rhs.block_scales.numel() == nvfp4_scale_elements(rhs.rows, rhs.cols),
               "NVFP4 GEMM block-scale metadata has the wrong size");
+  TORCH_CHECK(!rhs.row_scales.defined(),
+              "NVFP4 GEMM right operand is a weight and cannot carry row scales");
+  TORCH_CHECK(!lhs.row_scales.defined() ||
+                  (lhs.row_scales.dim() == 1 && lhs.row_scales.size(0) == lhs.rows &&
+                   lhs.row_scales.scalar_type() == at::kFloat && lhs.row_scales.is_contiguous() &&
+                   lhs.row_scales.device() == lhs.values.device()),
+              "NVFP4 GEMM requires contiguous F32 [rows] left-operand row scales");
   c10::cuda::CUDAGuard guard(lhs.values.device());
-  return at::_scaled_mm_v2(lhs.values,
-                           rhs.values.t(),
-                           {lhs.block_scales, lhs.global_scale},
-                           kNvfp4Recipe,
-                           kNvfp4Swizzle,
-                           {rhs.block_scales, rhs.global_scale},
-                           kNvfp4Recipe,
-                           kNvfp4Swizzle,
-                           std::nullopt,
-                           at::kBFloat16,
-                           {},
-                           false);
+  auto output = at::_scaled_mm_v2(lhs.values,
+                                  rhs.values.t(),
+                                  {lhs.block_scales, lhs.global_scale},
+                                  kNvfp4Recipe,
+                                  kNvfp4Swizzle,
+                                  {rhs.block_scales, rhs.global_scale},
+                                  kNvfp4Recipe,
+                                  kNvfp4Swizzle,
+                                  std::nullopt,
+                                  at::kBFloat16,
+                                  {},
+                                  false);
+  if (apply_row_scales && lhs.row_scales.defined())
+    nvfp4_apply_row_scales_(output, lhs.row_scales);
+  return output;
 #else
   TORCH_CHECK(false, "NVFP4 MLP requires a CUDA LibTorch build");
 #endif
@@ -146,6 +156,24 @@ at::Tensor Nvfp4Linear::forward_quantized(const Nvfp4Quantized& input,
   if (rows == 0)
     return at::empty({0, output_width()}, matrix_.values.options().dtype(at::kBFloat16));
   return add_bias(nvfp4_gemm(input, matrix_), bias, output_width());
+#else
+  TORCH_CHECK(false, "NVFP4 MLP requires a CUDA LibTorch build");
+#endif
+}
+
+Nvfp4Quantized Nvfp4Linear::forward_swiglu_quantized(const at::Tensor& input) const {
+#ifdef INFINITY_TORCH_CUDA_KERNELS
+  TORCH_CHECK(input.is_cuda() && input.dim() == 2 && input.size(1) == input_width() &&
+                  input.scalar_type() == dtype_,
+              "Invalid NVFP4 MLP input");
+  TORCH_CHECK(input.device() == matrix_.values.device(),
+              "NVFP4 MLP input and weights must be on the same device");
+  c10::cuda::CUDAGuard guard(input.device());
+  if (input.size(0) == 0)
+    return nvfp4_swiglu_quantize(at::empty({0, output_width()}, input.options()));
+  const auto quantized = nvfp4_quantize_rows(input, true);
+  const auto raw = nvfp4_gemm(quantized, matrix_, false);
+  return nvfp4_swiglu_quantize(raw, quantized.row_scales);
 #else
   TORCH_CHECK(false, "NVFP4 MLP requires a CUDA LibTorch build");
 #endif
