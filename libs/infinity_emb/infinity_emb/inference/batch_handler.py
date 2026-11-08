@@ -244,9 +244,14 @@ class BatchHandler:
         items = [PredictSingle(sentence=s) for s in sentences]
         classifications, usage = await self._schedule(items)
 
-        if raw_scores:
-            # perform softmax on scores
-            pass
+        if not raw_scores:
+            # the model returns raw logits; convert them to probabilities
+            for prediction in classifications:
+                logits = np.array([label["score"] for label in prediction])
+                exp = np.exp(logits - logits.max())
+                probs = exp / exp.sum()
+                for label, prob in zip(prediction, probs):
+                    label["score"] = float(prob)
 
         return classifications, usage
 

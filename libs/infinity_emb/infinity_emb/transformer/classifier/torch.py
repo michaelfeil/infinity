@@ -73,7 +73,13 @@ class SentenceClassifier(BaseClassifer):
 
     def encode_core(self, features):
         """runs plain inference, on cpu/gpu"""
-        return self._pipe(features, batch_size=256, truncation=True, padding=True)
+        return self._pipe(
+            features,
+            batch_size=256,
+            truncation=True,
+            padding=True,
+            function_to_apply="none",
+        )
 
     def encode_post(self, classes) -> dict[str, float]:
         """runs post encoding such as normalization"""
