@@ -10,7 +10,3 @@ git clone https://github.com/michaelfeil/infinity
 pip install modal==0.66.0
 modal deploy --env main infra.modal.webserver
 ```
-
-### Github Actions
-For automatic integration via Github Actions, follow this Pipeline:
-https://github.com/michaelfeil/infinity/blob/main/.github/workflows/release_modal_com.yaml

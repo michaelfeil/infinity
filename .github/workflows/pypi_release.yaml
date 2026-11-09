@@ -49,8 +49,3 @@ jobs:
           packages-dir: ${{ matrix.package.workdir }}/dist/
           verbose: true
           print-hash: true
-    
-  modal-deploy:
-    needs: publish-to-pypi
-    uses: ./.github/workflows/release_modal_com.yaml
-    secrets: inherit

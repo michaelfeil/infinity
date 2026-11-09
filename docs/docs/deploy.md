@@ -55,11 +55,11 @@ The cache path at inside the docker container is set by the environment variable
 
 ## Modal Labs
 
-A deployment example for usage within are located at repo, including a Github Actions Pipeline.
+A manual deployment example for Modal is available in the repository.
 
 The example is located at [michaelfeil/infinity/tree/main/infra/modal](https://github.com/michaelfeil/infinity/tree/c84b15acc35d02005e6f69080a5ed7b0e23d0019/infra/modal).
 
-The GPU and Modal-powered endpoint via this Github Pipeline is free to try out at  [infinity.modal.michaelfeil.eu](https://infinity.modal.michaelfeil.eu), which is available at no cost.
+The GPU and Modal-powered endpoint is free to try out at  [infinity.modal.michaelfeil.eu](https://infinity.modal.michaelfeil.eu), which is available at no cost.
 
 ## Runpod.io - Serverless
 There is a dedicated guide on how deploy via Runpod Serverless. 
