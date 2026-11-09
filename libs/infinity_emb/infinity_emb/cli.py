@@ -5,7 +5,6 @@ import asyncio
 import re
 import sys
 
-
 import infinity_emb
 from infinity_emb._optional_imports import CHECK_TYPER, CHECK_UVICORN
 from infinity_emb.args import EngineArgs
@@ -107,6 +106,7 @@ if CHECK_TYPER.is_available:
 
     tp = typer.Typer()
 
+
     @tp.command("v1")
     def v1(
         # v1 is deprecated. Please do no longer modify it.
@@ -176,6 +176,7 @@ if CHECK_TYPER.is_available:
             api_key=api_key,
             proxy_root_path="",  # set as empty string
         )
+
 
     @tp.command("v2")
     def v2(
@@ -380,6 +381,8 @@ if CHECK_TYPER.is_available:
             api_key=api_key,
             proxy_root_path=proxy_root_path,
         )
+        # Update logging configs
+        set_uvicorn_logging_configs()
 
         uvicorn.run(
             app,
@@ -389,6 +392,47 @@ if CHECK_TYPER.is_available:
             http="httptools",
             loop=loopname,  # type: ignore
         )
+
+
+def set_uvicorn_logging_configs():
+    """Configure Uvicorn logging with environment variable overrides.
+
+    Allows customization of log formats through environment variables:
+    - INFINITY_UVICORN_DEFAULT_FORMAT: Format for default logs
+    - INFINITY_UVICORN_ACCESS_FORMAT: Format for access logs
+    - INFINITY_UVICORN_DATE_FORMAT: Date format for all logs
+    """
+    from uvicorn.config import LOGGING_CONFIG
+    import os
+
+    # Define constants for environment variable names to improve maintainability
+    default_format_env = MANAGER.uvicorn_default_format
+    access_format_env = MANAGER.uvicorn_access_format
+    date_format_env = MANAGER.uvicorn_date_format
+
+    # Default log format (can be overridden by env var)
+    default_fmt = os.getenv(
+        default_format_env,
+        "%(asctime)s %(levelprefix)s %(message)s"
+    )
+
+    # Access log format (can be overridden by env var)
+    access_fmt = os.getenv(
+        access_format_env,
+        '%(asctime)s %(levelprefix)s %(client_addr)s - "%(request_line)s" %(status_code)s'
+    )
+
+    # Date format for all logs (can be overridden by env var)
+    date_fmt = os.getenv(
+        date_format_env,
+        "%Y-%m-%d %H:%M:%S"
+    )
+
+    # Apply the configurations
+    LOGGING_CONFIG["formatters"]["default"]["fmt"] = default_fmt
+    LOGGING_CONFIG["formatters"]["default"]["datefmt"] = date_fmt
+    LOGGING_CONFIG["formatters"]["access"]["fmt"] = access_fmt
+    LOGGING_CONFIG["formatters"]["access"]["datefmt"] = date_fmt
 
 
 def cli():

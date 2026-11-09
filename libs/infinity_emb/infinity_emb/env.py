@@ -271,4 +271,23 @@ class __Infinity_EnvManager:
         return self._to_bool_multiple(
             self._optional_infinity_var_multiple("onnx_do_not_prefer_quantized", default=["false"])
         )
+    @cached_property
+    def disable_rich_handler(self):
+        return self._to_bool(self._optional_infinity_var("disable_rich_handler", default="false"))
+
+    @cached_property
+    def log_format(self):
+        return self._optional_infinity_var("log_format", default="%(asctime)s %(name)s %(levelname)s: %(message)s")
+    @cached_property
+    def uvicorn_default_format(self):
+        return self._optional_infinity_var("uvicorn_default_format", default="[%(asctime)s] %(levelprefix)s %(message)s")
+
+    @cached_property
+    def uvicorn_access_format(self):
+        return self._optional_infinity_var("uvicorn_access_format", default='[%(asctime)s] %(levelprefix)s %(client_addr)s - "%(request_line)s" %(status_code)s')
+
+    @cached_property
+    def uvicorn_date_format(self):
+        return self._optional_infinity_var("uvicorn_date_format", default="%Y-%m-%d %H:%M:%S")
 MANAGER = __Infinity_EnvManager()
+
