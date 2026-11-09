@@ -1,0 +1,33 @@
+RESTRICTED PROVIDERS -- ALL PURPOSES
+
+This list is copied from Appendix A of ../../LICENSE; the complete license and
+its covered-rights scope control. No research, educational, nonprofit,
+government, personal-use, or cloud leasing exemptions are granted by the
+license. Nebius includes its hosting and compute services, including
+Token Factory. Voyage AI does not include unrelated MongoDB products.
+
+- Fireworks (fireworks)
+- FriendliAI (friendli)
+- Morph (morph)
+- Prime Intellect (primeintellect)
+- Nebius (nebius)
+- Arcee AI (arcee-ai)
+- AssemblyAI (assemblyai)
+- Cerebras (cerebras)
+- Cloudflare (cloudflare)
+- Crusoe (crusoe)
+- DigitalOcean (digitalocean)
+- NovitaAI (novita)
+- Modal (modal)
+- Sail Research (sail-research)
+- Sakana (sakana)
+- SambaNova (sambanova)
+- Together (together)
+- TypeSafe (typesafe)
+- Venice (venice)
+- Voyage AI (voyageai)
+- Wafer (wafer)
+- Parasail (parasail)
+- SiliconFlow (siliconflow)
+- Runware (runware)
+- DeepInfra (deepinfra)
