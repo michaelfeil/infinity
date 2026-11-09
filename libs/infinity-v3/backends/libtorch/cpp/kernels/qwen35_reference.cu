@@ -55,7 +55,15 @@ template <int V> struct alignas(V * 2) NormValues {
   __nv_bfloat16 values[V];
 };
 
-template <int V, bool Residual = false, bool Quantize = false>
+struct NormRotary {
+  const __nv_bfloat16* cos;
+  const __nv_bfloat16* sin;
+  const int64_t* positions;
+  int rotary;
+  int table_rows;
+};
+
+template <int V, bool Residual = false, bool Quantize = false, bool Rotary = false>
 __global__ void norm_tree(const __nv_bfloat16* x,
                           const __nv_bfloat16* gamma,
                           __nv_bfloat16* out,
@@ -65,10 +73,11 @@ __global__ void norm_tree(const __nv_bfloat16* x,
                           long stride0,
                           long stride1,
                           float eps,
-                          const __nv_bfloat16* addition = nullptr,
-                          __nv_bfloat16* updated = nullptr,
-                          __nv_fp8_e4m3* quantized = nullptr,
-                          float* scales = nullptr) {
+                          const __nv_bfloat16* addition,
+                          __nv_bfloat16* updated,
+                          __nv_fp8_e4m3* quantized,
+                          float* scales,
+                          NormRotary rope) {
   __shared__ float sums[1024];
   // Quantized launches stage the rounded source row in dynamic shared memory, then overwrite it
   // with the rounded norm row. Each element stays with the thread that produced it, so one
@@ -130,6 +139,12 @@ __global__ void norm_tree(const __nv_bfloat16* x,
   }
   __syncthreads();
   float inv = sums[0], amax = 0.f;
+  int half = rope.rotary / 2;
+  int64_t position = 0;
+  if constexpr (Rotary) {
+    position = rope.positions[row / heads];
+    CUDA_KERNEL_ASSERT(position >= 0 && position < rope.table_rows);
+  }
   for (int d = tid; d < width; d += threads) {
     NormValues<V> values;
     if constexpr (Quantize)
@@ -142,7 +157,28 @@ __global__ void norm_tree(const __nv_bfloat16* x,
     for (int j = 0; j < V; ++j) {
       float z = __bfloat162float(values.values[j]),
             weight = __fadd_rn(__bfloat162float(weights.values[j]), 1.f);
-      result.values[j] = __float2bfloat16_rn(__fmul_rn(__fmul_rn(z, inv), weight));
+      auto normalized = __float2bfloat16_rn(__fmul_rn(__fmul_rn(z, inv), weight));
+      result.values[j] = normalized;
+      if constexpr (Rotary) {
+        const int column = d + j;
+        if (column < rope.rotary) {
+          const int partner = column < half ? column + half : column - half;
+          const float partner_z = __bfloat162float(x[base + partner]);
+          const float partner_weight = __fadd_rn(__bfloat162float(gamma[partner]), 1.f);
+          const auto partner_normalized =
+              __float2bfloat16_rn(__fmul_rn(__fmul_rn(partner_z, inv), partner_weight));
+          const int64_t frequency = position * half + (column < half ? column : column - half);
+          const float c = __bfloat162float(rope.cos[frequency]),
+                      s = __bfloat162float(rope.sin[frequency]);
+          // Lower lane: rounded(a*c) - rounded(b*s). Upper: rounded(b*c) + rounded(a*s).
+          const float own_c =
+              __bfloat162float(__nv_bfloat16(__fmul_rn(__bfloat162float(normalized), c)));
+          const float partner_s =
+              __bfloat162float(__nv_bfloat16(__fmul_rn(__bfloat162float(partner_normalized), s)));
+          result.values[j] = column < half ? __nv_bfloat16(__fsub_rn(own_c, partner_s))
+                                           : __nv_bfloat16(__fadd_rn(own_c, partner_s));
+        }
+      }
       if constexpr (Quantize)
         amax = fmaxf(amax, fabsf(__bfloat162float(result.values[j])));
     }
@@ -228,7 +264,12 @@ at::Tensor qwen35_reference_norm_cuda(const at::Tensor& x, const at::Tensor& gam
         heads,
         x.stride(0),
         x.dim() == 3 ? x.stride(1) : 0,
-        static_cast<float>(eps));
+        static_cast<float>(eps),
+        nullptr,
+        nullptr,
+        nullptr,
+        nullptr,
+        NormRotary{});
   else
     norm_tree<1><<<rows, threads, 0, at::cuda::getCurrentCUDAStream()>>>(
         reinterpret_cast<const __nv_bfloat16*>(x.const_data_ptr()),
@@ -239,7 +280,76 @@ at::Tensor qwen35_reference_norm_cuda(const at::Tensor& x, const at::Tensor& gam
         heads,
         x.stride(0),
         x.dim() == 3 ? x.stride(1) : 0,
-        static_cast<float>(eps));
+        static_cast<float>(eps),
+        nullptr,
+        nullptr,
+        nullptr,
+        nullptr,
+        NormRotary{});
+  C10_CUDA_KERNEL_LAUNCH_CHECK();
+  return out;
+}
+
+at::Tensor qwen35_reference_norm_rope_cuda(const at::Tensor& x,
+                                           const at::Tensor& gamma,
+                                           const at::Tensor& cos,
+                                           const at::Tensor& sin,
+                                           const at::Tensor& positions,
+                                           int64_t rotary,
+                                           double eps) {
+  TORCH_CHECK(x.is_cuda() && gamma.device() == x.device() && x.scalar_type() == at::kBFloat16 &&
+                  gamma.scalar_type() == at::kBFloat16 && gamma.dim() == 1 && gamma.is_contiguous(),
+              "Invalid Qwen3.5 norm+rope operands");
+  TORCH_CHECK(x.dim() == 3 && x.stride(-1) == 1,
+              "Qwen3.5 norm+rope requires packed token/head rows");
+  const auto width = x.size(-1), heads = x.size(1), tokens = x.size(0), rows = tokens * heads;
+  TORCH_CHECK(width > 0 && width <= 8192 && gamma.numel() == width && heads > 0 && tokens > 0 &&
+                  rows <= INT32_MAX,
+              "Invalid Qwen3.5 norm+rope geometry");
+  TORCH_CHECK(rotary > 0 && rotary <= width && rotary % 2 == 0,
+              "Invalid Qwen3.5 norm+rope rotary width");
+  const auto half = rotary / 2;
+  TORCH_CHECK(cos.is_cuda() && sin.is_cuda() && positions.is_cuda() && cos.device() == x.device() &&
+                  sin.device() == x.device() && positions.device() == x.device() &&
+                  cos.scalar_type() == at::kBFloat16 && sin.scalar_type() == at::kBFloat16 &&
+                  positions.scalar_type() == at::kLong && cos.dim() == 2 && cos.size(1) == half &&
+                  cos.sizes() == sin.sizes() && cos.is_contiguous() && sin.is_contiguous() &&
+                  positions.is_contiguous() && positions.dim() == 1 &&
+                  positions.numel() == tokens && cos.size(0) > 0,
+              "Invalid Qwen3.5 norm+rope tables/positions");
+  int threads = 1;
+  while (threads < width && threads < 1024)
+    threads *= 2;
+  c10::cuda::CUDAGuard guard(x.device());
+  auto out = at::empty(x.sizes(), x.options());
+  const bool vector = width % 4 == 0 && x.stride(0) % 4 == 0 && x.stride(1) % 4 == 0 &&
+                      reinterpret_cast<uintptr_t>(x.const_data_ptr()) % 8 == 0 &&
+                      reinterpret_cast<uintptr_t>(gamma.const_data_ptr()) % 8 == 0;
+  auto launch = [&]<int V>() {
+    norm_tree<V, false, false, true><<<rows, threads / V, 0, at::cuda::getCurrentCUDAStream()>>>(
+        reinterpret_cast<const __nv_bfloat16*>(x.const_data_ptr()),
+        reinterpret_cast<const __nv_bfloat16*>(gamma.const_data_ptr()),
+        reinterpret_cast<__nv_bfloat16*>(out.mutable_data_ptr()),
+        rows,
+        width,
+        heads,
+        x.stride(0),
+        x.stride(1),
+        static_cast<float>(eps),
+        nullptr,
+        nullptr,
+        nullptr,
+        nullptr,
+        NormRotary{reinterpret_cast<const __nv_bfloat16*>(cos.const_data_ptr()),
+                   reinterpret_cast<const __nv_bfloat16*>(sin.const_data_ptr()),
+                   positions.const_data_ptr<int64_t>(),
+                   int(rotary),
+                   int(cos.size(0))});
+  };
+  if (vector)
+    launch.template operator()<4>();
+  else
+    launch.template operator()<1>();
   C10_CUDA_KERNEL_LAUNCH_CHECK();
   return out;
 }
@@ -290,7 +400,8 @@ qwen35_reference_residual_norm_cuda(const at::Tensor& x,
         reinterpret_cast<const __nv_bfloat16*>(addition.const_data_ptr()),
         reinterpret_cast<__nv_bfloat16*>(updated.mutable_data_ptr()),
         quantized ? reinterpret_cast<__nv_fp8_e4m3*>(quantized->first.mutable_data_ptr()) : nullptr,
-        quantized ? quantized->second.mutable_data_ptr<float>() : nullptr);
+        quantized ? quantized->second.mutable_data_ptr<float>() : nullptr,
+        NormRotary{});
   };
   const bool vector = width % 4 == 0 && reinterpret_cast<uintptr_t>(x.const_data_ptr()) % 8 == 0 &&
                       reinterpret_cast<uintptr_t>(addition.const_data_ptr()) % 8 == 0 &&

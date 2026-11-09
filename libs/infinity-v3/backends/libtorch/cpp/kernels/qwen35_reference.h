@@ -23,6 +23,16 @@ at::Tensor qwen35_reference_delta_cuda(const at::Tensor&,
                                        int64_t cache_layer = -1);
 /// Apply per-head RMS normalization while preserving reference intermediate rounding.
 at::Tensor qwen35_reference_norm_cuda(const at::Tensor&, const at::Tensor&, double);
+/// Apply the same RMS normalization, then the leading partial-RoPE in one launch.
+/// The normalized BF16 lanes and the staged rotary BF16 products/adds match the
+/// separate norm plus rotary route exactly; unrotated tail lanes are copied.
+at::Tensor qwen35_reference_norm_rope_cuda(const at::Tensor&,
+                                           const at::Tensor&,
+                                           const at::Tensor&,
+                                           const at::Tensor&,
+                                           const at::Tensor&,
+                                           int64_t,
+                                           double);
 /// Preserve BF16 residual addition and the original norm reduction in one launch. When FP8
 /// quantization is requested, materialize_norm=false returns an undefined normalized tensor and
 /// uses the quantized staging row for FP8 output; quantized must then be non-null.
