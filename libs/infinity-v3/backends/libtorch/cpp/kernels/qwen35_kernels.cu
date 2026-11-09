@@ -273,6 +273,10 @@ infinity_gemma_rms_norm_reference_impl(const __nv_bfloat16* x,
   }
 }
 
+// VIRTUAL_LANES folds the original logical lanes (up to 1024) into the smaller
+// block before the shared and warp reductions. Using it with a 256-thread
+// block keeps the exact FP32 add order, sqrt/divide and BF16 rounding while
+// admitting more resident rows than a block-sized launch.
 static __global__ void infinity_gemma_rms_norm_reference_bf16(const __nv_bfloat16* x,
                                                               const float* scale,
                                                               __nv_bfloat16* out,
@@ -280,7 +284,7 @@ static __global__ void infinity_gemma_rms_norm_reference_bf16(const __nv_bfloat1
                                                               unsigned int heads,
                                                               unsigned long long token_stride,
                                                               float eps) {
-  infinity_gemma_rms_norm_reference_impl<false>(x, scale, out, width, heads, token_stride, eps);
+  infinity_gemma_rms_norm_reference_impl<true>(x, scale, out, width, heads, token_stride, eps);
 }
 
 // SPDX-License-Identifier: MIT
@@ -531,14 +535,18 @@ template <bool Gelu, typename T> __device__ __forceinline__ T gemma_precise_acti
   }
 }
 
+// One block covers a 256-column tile of a single row. Deriving row and column
+// from the flat block index keeps the identical per-element expression while
+// removing a 64-bit divide and modulo from every element.
 template <bool Gelu, typename T>
-__global__ void gemma_precise_gate(const T* x, T* out, int64_t count, int64_t width) {
-  auto i = int64_t(blockIdx.x) * blockDim.x + threadIdx.x;
-  if (i >= count)
+__global__ void gemma_precise_gate(const T* x, T* out, int64_t width, unsigned int tiles) {
+  const int64_t row = blockIdx.x / tiles;
+  const int64_t column = int64_t(blockIdx.x % tiles) * blockDim.x + threadIdx.x;
+  if (column >= width)
     return;
-  auto row = i / width, column = i % width;
-  out[i] = gemma_precise_activation<Gelu, T>(x[row * 2 * width + column]) *
-           x[row * 2 * width + width + column];
+  const int64_t base = row * 2 * width;
+  out[row * width + column] =
+      gemma_precise_activation<Gelu, T>(x[base + column]) * x[base + width + column];
 }
 
 template <bool Gelu, typename T>
@@ -606,15 +614,15 @@ at::Tensor gemma_gated_cuda(const at::Tensor& x, bool gelu) {
     C10_CUDA_KERNEL_LAUNCH_CHECK();
     return out;
   }
+  const auto tiles = static_cast<unsigned int>((width + 255) / 256);
+  const auto blocks = static_cast<unsigned int>(out.size(0)) * tiles;
   AT_DISPATCH_REDUCED_FLOATING_TYPES(x.scalar_type(), "gemma_activation", [&] {
     auto input = reinterpret_cast<const scalar_t*>(x.const_data_ptr());
     auto output = reinterpret_cast<scalar_t*>(out.mutable_data_ptr());
     if (gelu)
-      gemma_precise_gate<true, scalar_t>
-          <<<(out.numel() + 255) / 256, 256, 0, stream>>>(input, output, out.numel(), width);
+      gemma_precise_gate<true, scalar_t><<<blocks, 256, 0, stream>>>(input, output, width, tiles);
     else
-      gemma_precise_gate<false, scalar_t>
-          <<<(out.numel() + 255) / 256, 256, 0, stream>>>(input, output, out.numel(), width);
+      gemma_precise_gate<false, scalar_t><<<blocks, 256, 0, stream>>>(input, output, width, tiles);
   });
   C10_CUDA_KERNEL_LAUNCH_CHECK();
   return out;
@@ -690,7 +698,9 @@ static at::Tensor gemma_norm_impl(const at::Tensor& x,
               "Invalid Gemma CUDA norm width");
   auto output = at::empty(x.sizes(), x.options());
   int threads = 1;
-  while (threads < width && threads < (reference ? 1024 : 256))
+  // Both reference and legacy reductions now use compact 256-thread blocks.
+  // The reference template's virtual lanes reproduce the wider logical tree.
+  while (threads < width && threads < 256)
     threads *= 2;
   // The optimized legacy reduction uses a full-warp shuffle mask.
   // Widths below32 still need32 participating lanes (extra lanes sum zero).
