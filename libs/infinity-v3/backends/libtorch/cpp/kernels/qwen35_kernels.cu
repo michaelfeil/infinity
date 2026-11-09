@@ -213,24 +213,43 @@ infinity_gemma_rms_norm_reference_impl(const __nv_bfloat16* x,
   __shared__ float sums[1024];
   float sum = 0.f;
   if constexpr (VIRTUAL_LANES) {
-    // Emulate the original logical lanes before reducing across this smaller
-    // block. Pairing lane 0+512, then 0+256 preserves the 1024-lane tree.
+    // Emulate the original logical lanes with four compile-time accumulators.
+    // The reference block has at most 256 threads and logical lanes are capped
+    // at 1024, so lanes is always 1, 2, or 4. Scalar accumulators remove the
+    // runtime local-array index while preserving lane assignment and fold order.
     unsigned int logical_threads = 1;
     while (logical_threads < width && logical_threads < 1024)
       logical_threads <<= 1;
     const unsigned int lanes = logical_threads / blockDim.x;
-    float partial[4] = {0.f, 0.f, 0.f, 0.f};
-    for (unsigned int lane = 0; lane < lanes; ++lane) {
-      for (unsigned int col = threadIdx.x + lane * blockDim.x; col < width;
-           col += logical_threads) {
+    float p0 = 0.f, p1 = 0.f, p2 = 0.f, p3 = 0.f;
+    for (unsigned int col = threadIdx.x; col < width; col += logical_threads) {
+      float v = __bfloat162float(x[base + col]);
+      p0 += v * v;
+    }
+    if (lanes > 1) {
+      for (unsigned int col = threadIdx.x + blockDim.x; col < width; col += logical_threads) {
         float v = __bfloat162float(x[base + col]);
-        partial[lane] += v * v;
+        p1 += v * v;
       }
     }
-    for (unsigned int stride = lanes / 2; stride; stride >>= 1)
-      for (unsigned int lane = 0; lane < stride; ++lane)
-        partial[lane] += partial[lane + stride];
-    sum = partial[0];
+    if (lanes > 2) {
+      for (unsigned int col = threadIdx.x + 2 * blockDim.x; col < width; col += logical_threads) {
+        float v = __bfloat162float(x[base + col]);
+        p2 += v * v;
+      }
+      for (unsigned int col = threadIdx.x + 3 * blockDim.x; col < width; col += logical_threads) {
+        float v = __bfloat162float(x[base + col]);
+        p3 += v * v;
+      }
+    }
+    if (lanes == 4) {
+      p0 += p2;
+      p1 += p3;
+      p0 += p1;
+    } else if (lanes == 2) {
+      p0 += p1;
+    }
+    sum = p0;
   } else {
     for (unsigned int col = threadIdx.x; col < width; col += blockDim.x) {
       float v = __bfloat162float(x[base + col]);
@@ -309,24 +328,43 @@ g2_candidate_reference_impl(const __nv_bfloat16* x,
   __shared__ float sums[1024];
   float sum = 0.f;
   if constexpr (VIRTUAL_LANES) {
-    // Emulate the original logical lanes before reducing across this smaller
-    // block. Pairing lane 0+512, then 0+256 preserves the 1024-lane tree.
+    // Emulate the original logical lanes with four compile-time accumulators.
+    // The reference block has at most 256 threads and logical lanes are capped
+    // at 1024, so lanes is always 1, 2, or 4. Scalar accumulators remove the
+    // runtime local-array index while preserving lane assignment and fold order.
     unsigned int logical_threads = 1;
     while (logical_threads < width && logical_threads < 1024)
       logical_threads <<= 1;
     const unsigned int lanes = logical_threads / blockDim.x;
-    float partial[4] = {0.f, 0.f, 0.f, 0.f};
-    for (unsigned int lane = 0; lane < lanes; ++lane) {
-      for (unsigned int col = threadIdx.x + lane * blockDim.x; col < width;
-           col += logical_threads) {
+    float p0 = 0.f, p1 = 0.f, p2 = 0.f, p3 = 0.f;
+    for (unsigned int col = threadIdx.x; col < width; col += logical_threads) {
+      float v = __bfloat162float(x[base + col]);
+      p0 = __fadd_rn(p0, __fmul_rn(v, v));
+    }
+    if (lanes > 1) {
+      for (unsigned int col = threadIdx.x + blockDim.x; col < width; col += logical_threads) {
         float v = __bfloat162float(x[base + col]);
-        partial[lane] = __fadd_rn(partial[lane], __fmul_rn(v, v));
+        p1 = __fadd_rn(p1, __fmul_rn(v, v));
       }
     }
-    for (unsigned int stride = lanes / 2; stride; stride >>= 1)
-      for (unsigned int lane = 0; lane < stride; ++lane)
-        partial[lane] = __fadd_rn(partial[lane], partial[lane + stride]);
-    sum = partial[0];
+    if (lanes > 2) {
+      for (unsigned int col = threadIdx.x + 2 * blockDim.x; col < width; col += logical_threads) {
+        float v = __bfloat162float(x[base + col]);
+        p2 = __fadd_rn(p2, __fmul_rn(v, v));
+      }
+      for (unsigned int col = threadIdx.x + 3 * blockDim.x; col < width; col += logical_threads) {
+        float v = __bfloat162float(x[base + col]);
+        p3 = __fadd_rn(p3, __fmul_rn(v, v));
+      }
+    }
+    if (lanes == 4) {
+      p0 = __fadd_rn(p0, p2);
+      p1 = __fadd_rn(p1, p3);
+      p0 = __fadd_rn(p0, p1);
+    } else if (lanes == 2) {
+      p0 = __fadd_rn(p0, p1);
+    }
+    sum = p0;
   } else {
     for (unsigned int col = threadIdx.x; col < width; col += blockDim.x) {
       float v = __bfloat162float(x[base + col]);
