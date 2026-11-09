@@ -401,7 +401,7 @@ void paged_block_test(const c10::Device& device) {
         TORCH_CHECK(direct.defined(), "FA4 paged export rejected a supported d256 profile");
         verify(direct, reference(), "FA4 paged block parity");
         auto fallback_pages = pages;
-        fallback_pages.subpage_table = {};
+        fallback_pages.subpage_table = at::Tensor{};
         auto fallback = block_paged_attention(q,
                                               k.narrow(0, prefixes.back(), suffixes.back()),
                                               v.narrow(0, prefixes.back(), suffixes.back()),
