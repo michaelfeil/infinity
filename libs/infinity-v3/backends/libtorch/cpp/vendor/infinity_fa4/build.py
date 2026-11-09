@@ -32,6 +32,7 @@ phase.add_argument("--export-only", action="store_true", help="Export kernels be
 phase.add_argument("--link-only", action="store_true", help="Link existing exports; no Python GPU packages required")
 p.add_argument("--deberta", action="store_true", help="Also export packed DeBERTa relative attention")
 p.add_argument("--compile-only", action="store_true", help="Export using fake tensors without a build GPU; runtime validation is still required")
+p.add_argument("--paged-only", action="store_true", help="Export only paged kernels into an existing bundle manifest; preserves unpaged objects")
 p.add_argument("--arch", choices=["sm_80", "sm_86", "sm_89", "sm_90a", "sm_100a", "sm_120"], default="sm_90a", help="Target architecture; one native bundle per architecture")
 a = p.parse_args()
 if a.compile_only and a.link_only:
@@ -60,17 +61,36 @@ if not a.link_only:
         raise RuntimeError("The private export API is validated with cutlass-dsl 4.7.1 only")
     a.output.mkdir(parents=True, exist_ok=True)
     objects, kernels = [], []
+    prior = {}
+    if a.paged_only:
+        # Prototype/update path: keep the existing unpaged objects and append only
+        # the paged exports to the manifest. The caller copies the bundle first.
+        existing = a.output / "manifest.json"
+        if not existing.exists():
+            raise RuntimeError("--paged-only requires an existing manifest.json to preserve unpaged exports")
+        prior = json.loads(existing.read_text())
+        if prior.get("architecture") != a.arch:
+            raise RuntimeError("--paged-only bundle architecture must match --arch")
+        kernels = [k for k in prior["kernels"] if not k.get("paged")]
+        objects = [str(a.output / (k["symbol"] + ".o")) for k in kernels]
+        missing = [obj for obj in objects if not pathlib.Path(obj).exists()]
+        if missing:
+            raise RuntimeError(f"--paged-only is missing existing objects: {missing[0]}")
     from torch._subclasses.fake_tensor import FakeTensorMode
     with FakeTensorMode() if a.compile_only else contextlib.nullcontext():
         cu = torch.tensor([0, 127, 256], device="cuda", dtype=torch.int32)
-        for dtype_name, dtype in [("fp16", torch.float16), ("bf16", torch.bfloat16)]:
+        def load_profiles(filename, macro):
             profiles = []
-            for line in pathlib.Path(__file__).with_name("profiles.inc").read_text().splitlines():
-                if line.startswith("FA4_PROFILE("):
-                    name, *fields = line.removeprefix("FA4_PROFILE(").removesuffix(")").split(",")
+            for line in pathlib.Path(__file__).with_name(filename).read_text().splitlines():
+                if line.startswith(macro + "("):
+                    name, *fields = line.removeprefix(macro + "(").removesuffix(")").split(",")
                     h, hk, d, causal, local = map(int, fields)
                     window = (64, 0) if causal and local else (64, 64) if local else (None, None)
                     profiles.append((name.strip(), h, hk, d, bool(causal), window))
+            return profiles
+
+        for dtype_name, dtype in [("fp16", torch.float16), ("bf16", torch.bfloat16)]:
+            profiles = [] if a.paged_only else load_profiles("profiles.inc", "FA4_PROFILE")
             for name, h, hk, d, causal, window in profiles:
                 q = torch.zeros((256, h, d), device="cuda", dtype=dtype)
                 k = torch.zeros((256, hk, d), device="cuda", dtype=dtype)
@@ -97,7 +117,40 @@ if not a.link_only:
                 objects.append(str(obj))
                 kernels.append(dict(symbol=symbol, heads=h, kv_heads=hk, d=d,
                                     causal=causal, window=window, dtype=dtype_name))
-        if a.deberta:
+            # Paged exports use the pinned page_table + seqused_k contract. The
+            # page size is the 128-row subpage of the 256-row block layout, so the
+            # runtime reuses one gathered K/V pool without copying. SM8x and SM120
+            # reject paged KV in the pinned provider and keep the existing fallback.
+            if capability in (90, 100):
+                page_size, num_pages, pages_per_seq = 128, 8, 3
+                for name, h, hk, d, causal, window in load_profiles("paged_profiles.inc",
+                                                                   "FA4_PAGED_PROFILE"):
+                    if causal or window != (None, None):
+                        raise RuntimeError(f"Paged export requires noncausal global {name}")
+                    q = torch.zeros((256, h, d), device="cuda", dtype=dtype)
+                    kv = torch.zeros((num_pages, page_size, hk, d), device="cuda", dtype=dtype)
+                    seqused = torch.tensor([200, 250], device="cuda", dtype=torch.int32)
+                    table = torch.zeros((2, pages_per_seq), device="cuda", dtype=torch.int32)
+                    previous = set(interface._flash_attn_fwd.compile_cache.cache)
+                    interface._flash_attn_fwd(q, kv, kv, cu_seqlens_q=cu,
+                                              seqused_k=seqused, page_table=table,
+                                              max_seqlen_q=129,
+                                              max_seqlen_k=pages_per_seq * page_size,
+                                              softmax_scale=1. / (d ** .5),
+                                              causal=False, disable_scheduler_metadata=True)
+                    fresh = set(interface._flash_attn_fwd.compile_cache.cache) - previous
+                    if len(fresh) != 1:
+                        raise RuntimeError(f"Unexpected paged compilation count for {name}: "
+                                           f"{len(fresh)}")
+                    compiled = interface._flash_attn_fwd.compile_cache.cache[fresh.pop()]
+                    symbol = f"fa4_{name}_paged_{dtype_name}"
+                    obj = a.output / f"{symbol}.o"
+                    export_portable(compiled, obj, symbol)
+                    objects.append(str(obj))
+                    kernels.append(dict(symbol=symbol, heads=h, kv_heads=hk, d=d,
+                                        causal=False, window=[None, None], dtype=dtype_name,
+                                        paged=True, page_size=page_size))
+        if a.deberta and not a.paged_only:
             # SM90 varlen scheduling derives its grid from runtime tensor sizes and
             # cumulative lengths. The 129 below is an export example, not a bound
             # baked into FlashAttentionForwardSm90.__call__. See the long-sequence
@@ -129,7 +182,7 @@ if not a.link_only:
         "architecture": a.arch,
         "executed_during_export": not a.compile_only,
         "target_sm_count": int(os.environ["FLASH_ATTENTION_NUM_SMS"]) if a.compile_only else torch.cuda.get_device_properties(torch.cuda.current_device()).multi_processor_count,
-        "deberta_score_sha256": digest(pathlib.Path(__file__).with_name("deberta_score.py")) if a.deberta else None,
+        "deberta_score_sha256": digest(pathlib.Path(__file__).with_name("deberta_score.py")) if a.deberta else prior.get("deberta_score_sha256"),
         "kernels": kernels,
         "fa4_python_sources": {str(f.relative_to(pathlib.Path(interface.__file__).parent)): digest(f)
                                for f in sorted(pathlib.Path(interface.__file__).parent.rglob("*.py"))},
@@ -166,6 +219,7 @@ subprocess.run([a.cxx, "-std=c++17", "-O2", "-fPIC", "-shared", str(bridge),
                 f"-L{a.ffi_root / 'lib'}", "-ltvm_ffi",
                 "-Wl,-rpath,$ORIGIN", "-Wl,-z,defs",
                 *(["-DFA4_DEBERTA"] if any(k["symbol"].startswith("fa4_deberta_") for k in manifest["kernels"]) else []),
+                *(["-DFA4_PAGED"] if any(k.get("paged") for k in manifest["kernels"]) else []),
                 "-o", str(a.output / "libinfinityfa4.so")], check=True)
 validate_host_object(a.output / "libinfinityfa4.so")
 for source in [a.runtime_dir / "libcute_dsl_runtime.so",
