@@ -28,17 +28,17 @@ jobs:
     if: github.event_name != 'release' || startsWith(github.event.release.tag_name, '0.') || startsWith(github.event.release.tag_name, 'v0.') || startsWith(github.event.release.tag_name, '3.') || startsWith(github.event.release.tag_name, 'v3.')
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4.4.0
         with:
           persist-credentials: false
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v5.6.0
         with:
           python-version: '3.11'
           cache: pip
           cache-dependency-path: docs/requirements.txt
       - run: pip install -r docs/requirements.txt
       - run: mkdocs build --strict --config-file docs/mkdocs.yml
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v4.6.2
         with:
           name: docs-preview
           path: docs/site/
@@ -50,10 +50,10 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4.4.0
         with:
           fetch-depth: 0
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v5.6.0
         with:
           python-version: '3.11'
           cache: pip

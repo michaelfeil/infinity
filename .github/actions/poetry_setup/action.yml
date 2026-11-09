@@ -26,14 +26,14 @@ inputs:
 runs:
   using: composite
   steps:
-    - uses: actions/setup-python@v7
+    - uses: actions/setup-python@v7.1.0
       name: Setup python ${{ inputs.python-version }}
       id: setup-python
       with:
         python-version: ${{ inputs.python-version }}
 
     - name: Restore pip and poetry cached dependencies
-      uses: actions/cache@v6
+      uses: actions/cache@v6.1.0
       env:
         SEGMENT_DOWNLOAD_TIMEOUT_MIN: "4"
         WORKDIR: ${{ inputs.working-directory == '' && '.' || inputs.working-directory }}

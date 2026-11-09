@@ -46,11 +46,11 @@ jobs:
     name: Py${{ matrix.python-version }}-${{ matrix.os }}-${{ matrix.coverage_tests }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@v7.0.1
         with:
           persist-credentials: false
       - name: Free Disk Space
-        uses: "./.github/actions/disk_cleanup"
+        uses: "$/.github/actions/disk_cleanup"
         if: runner.os == 'Linux'
         with:
           tool-cache: false
@@ -61,7 +61,7 @@ jobs:
           docker-images: false
           swap-storage: false
       - name: Set up Python ${{ matrix.python-version }} + Poetry ${{ env.POETRY_VERSION }}
-        uses: "./.github/actions/poetry_setup"
+        uses: "$/.github/actions/poetry_setup"
         with:
           python-version: ${{ matrix.python-version }}
           poetry-version: ${{ env.POETRY_VERSION }}
@@ -75,7 +75,7 @@ jobs:
 
       - name: Cache HuggingFace models
         id: cache-models
-        uses: actions/cache@v6
+        uses: actions/cache@v6.1.0
         with:
           path: |
             ~/.cache/huggingface/hub
@@ -97,7 +97,7 @@ jobs:
 
       - name: Upload coverage Report to Codecov for python 3.11
         if: ${{ matrix.python-version == '3.11' && inputs.upload_coverage == true && matrix.os == 'ubuntu-24.04'}}
-        uses: codecov/codecov-action@v4
+        uses: codecov/codecov-action@v4.6.0
         env:
           CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
 
@@ -118,11 +118,11 @@ jobs:
     name: Py${{ matrix.python-version }}-${{ matrix.os }}-${{ matrix.coverage_tests }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@v7.0.1
         with:
           persist-credentials: false
       - name: Free Disk Space
-        uses: "./.github/actions/disk_cleanup"
+        uses: "$/.github/actions/disk_cleanup"
         if: runner.os == 'Linux'
         with:
           tool-cache: false
@@ -133,7 +133,7 @@ jobs:
           docker-images: false
           swap-storage: false
       - name: Set up Python ${{ matrix.python-version }} + Poetry ${{ env.POETRY_VERSION }}
-        uses: "./.github/actions/poetry_setup"
+        uses: "$/.github/actions/poetry_setup"
         with:
           python-version: ${{ matrix.python-version }}
           poetry-version: ${{ env.POETRY_VERSION }}
@@ -147,7 +147,7 @@ jobs:
 
       - name: Cached HuggingFace models
         id: cache-models
-        uses: actions/cache@v6
+        uses: actions/cache@v6.1.0
         with:
           path: |
             ~/.cache/huggingface/hub
@@ -166,7 +166,7 @@ jobs:
 
       - name: Upload coverage Report to Codecov for python 3.11
         if: ${{ matrix.python-version == '3.11' && inputs.upload_coverage == true && matrix.os == 'ubuntu-24.04'}}
-        uses: codecov/codecov-action@v4
+        uses: codecov/codecov-action@v4.6.0
         env:
           CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
 

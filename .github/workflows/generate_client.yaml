@@ -21,12 +21,12 @@ jobs:
       
     steps:
       - name: Checkout code
-        uses: actions/checkout@v7
+        uses: actions/checkout@v7.0.1
         with:
           persist-credentials: false
 
       - name: Set up Python + Poetry ${{ env.POETRY_VERSION }}
-        uses: "./.github/actions/poetry_setup"
+        uses: "$/.github/actions/poetry_setup"
         with:
           python-version: "3.12"
           poetry-version: ${{ env.POETRY_VERSION }}
@@ -48,4 +48,4 @@ jobs:
           ./run_tests_with_hook.sh
 
       - name: Open a PR
-        uses: peter-evans/create-pull-request@v7
+        uses: peter-evans/create-pull-request@v7.0.11

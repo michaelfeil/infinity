@@ -25,12 +25,12 @@ jobs:
     permissions:
       id-token: write
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v7.0.1
         with:
           persist-credentials: false
 
       - name: Set up Python + Poetry ${{ env.POETRY_VERSION }}
-        uses: "./.github/actions/poetry_setup"
+        uses: "$/.github/actions/poetry_setup"
         with:
           python-version: "3.12"
           poetry-version: ${{ env.POETRY_VERSION }}
@@ -46,7 +46,7 @@ jobs:
           echo version=$(poetry version --short) >> $GITHUB_OUTPUT
 
       - name: Publish package distributions to PyPI
-        uses: pypa/gh-action-pypi-publish@release/v1
+        uses: pypa/gh-action-pypi-publish@v1.14.3
         with:
           packages-dir: ${{ matrix.package.workdir }}/dist/
           verbose: true
