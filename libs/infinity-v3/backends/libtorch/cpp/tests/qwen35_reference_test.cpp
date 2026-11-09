@@ -185,6 +185,31 @@ void resumed_delta(c10::Device device,
           at::allclose(resumed, expected.narrow(0, boundary, tokens - boundary), 1e-2, 2e-3) &&
               at::equal(state, immutable),
           "Block resume changed outputs or mutated shared state");
+      // Provider capture exposes native-logical K/V over provider V/K storage. Resuming from
+      // that stride layout must match the native-contiguous state bit-for-bit.
+      auto provider_state = state.transpose(2, 3).contiguous().transpose(2, 3);
+      auto provider_immutable = provider_state.clone();
+      at::Tensor provider_final;
+      auto provider_resumed =
+          infinity::qwen35_delta_cuda(qkv.narrow(0, boundary, tokens - boundary),
+                                      z.narrow(0, boundary, tokens - boundary),
+                                      ab.narrow(0, boundary, tokens - boundary),
+                                      conv,
+                                      alog,
+                                      dt,
+                                      norm,
+                                      suffix,
+                                      kh,
+                                      vh,
+                                      1e-6,
+                                      provider_state,
+                                      &provider_final,
+                                      history,
+                                      history_cu,
+                                      false);
+      TORCH_CHECK(at::equal(provider_resumed, resumed) && at::equal(provider_final, final_state) &&
+                      at::equal(provider_state, provider_immutable),
+                  "Provider-layout state view changed resumed output or mutated prefix state");
       auto batched = suffix;
       std::vector<int32_t> batch_offsets;
       for (int i = 0; i <= 8; ++i)

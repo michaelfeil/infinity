@@ -988,6 +988,7 @@ class Qwen35 final : public Model {
       // Host indices drive structural assembly; the device copy selects cached recurrent state.
       suffixes.block_prefix_sources = suffix_sources;
       suffixes.block_cache_sources = input.block_layout->cache_sources;
+      suffixes.block_cache_sources_identity = input.block_layout->cache_sources_identity;
     }
     // Count only images in the executed representative prefixes and suffixes.
     // One cache spans both passes, releasing features after their final use.
@@ -1378,6 +1379,7 @@ public:
     auto layout = std::make_shared<BlockLayout>();
     std::vector<int32_t> prefixes{0}, suffixes{0}, kv{0};
     std::vector<int64_t> indices(input.batch, -1), sources;
+    bool sources_identity = true;
     layout->history_offsets = {0};
     const auto history = integer("linear_conv_kernel_dim", 4) - 1;
     for (int64_t row = 0; row < input.batch; ++row) {
@@ -1397,8 +1399,10 @@ public:
         suffixes.push_back(suffixes.back() + length - prefix);
         kv.push_back(kv.back() + length);
         sources.push_back(indices[source]);
+        sources_identity = sources_identity && sources.back() == int64_t(sources.size() - 1);
       }
     }
+    layout->cache_sources_identity = sources_identity;
     layout->prefix_cumulative = at::tensor(prefixes, input.cumulative.options());
     layout->suffix_cumulative = at::tensor(suffixes, input.cumulative.options());
     layout->kv_cumulative = at::tensor(kv, input.cumulative.options());

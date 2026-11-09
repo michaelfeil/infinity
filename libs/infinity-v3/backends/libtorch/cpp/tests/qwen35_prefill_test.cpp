@@ -10,6 +10,7 @@
 #include <cuda_runtime.h>
 #include <c10/cuda/CUDAGuard.h>
 #include <cmath>
+#include <cstdint>
 #include <iostream>
 
 void check(const at::Tensor& actual, const at::Tensor& expected, double tolerance) {
@@ -177,12 +178,116 @@ int main() {
           }
           check(output, at::stack(outputs), .007);
           check(state, at::stack(states), .006);
+          if (resume) {
+            TORCH_CHECK(state.stride(2) == 1 && state.stride(3) == 128,
+                        "Provider capture did not retain the V/K state view");
+            // Provider capture returns native-logical K/V over provider V/K storage.
+            auto provider_initial = initial.transpose(2, 3).contiguous().transpose(2, 3);
+            auto provider_immutable = provider_initial.clone();
+            auto provider_output = at::empty_like(output);
+            at::Tensor provider_state;
+            TORCH_CHECK(infinity::flashinfer_gdn_resume(values,
+                                                        qk,
+                                                        gates,
+                                                        input,
+                                                        provider_output,
+                                                        kh,
+                                                        heads,
+                                                        &provider_state,
+                                                        provider_initial),
+                        "Provider-layout initial state was rejected");
+            TORCH_CHECK(at::equal(provider_output, output) && at::equal(provider_state, state) &&
+                            at::equal(provider_initial, provider_immutable),
+                        "Provider-layout state view changed resume output or prefix state");
+            // Native-contiguous state with a misaligned storage offset still takes the copy path.
+            auto storage = at::empty({initial.numel() + 1}, initial.options());
+            auto misaligned = storage.narrow(0, 1, initial.numel()).view(initial.sizes());
+            misaligned.copy_(initial);
+            auto misaligned_output = at::empty_like(output);
+            at::Tensor misaligned_state;
+            TORCH_CHECK(infinity::flashinfer_gdn_resume(values,
+                                                        qk,
+                                                        gates,
+                                                        input,
+                                                        misaligned_output,
+                                                        kh,
+                                                        heads,
+                                                        &misaligned_state,
+                                                        misaligned),
+                        "Misaligned native initial state was rejected");
+            TORCH_CHECK(at::equal(misaligned_output, output) &&
+                            at::equal(misaligned_state, state) && at::equal(misaligned, initial),
+                        "Misaligned native initial state changed resume output or prefix state");
+            // Provider view plus an identity source map must match the gathered reference
+            // bitwise and leave the shared prefix state untouched.
+            auto identity = input;
+            identity.block_cache_sources =
+                at::arange(input.batch, at::TensorOptions().dtype(at::kLong).device(at::kCUDA));
+            auto gathered_output = at::empty_like(output);
+            at::Tensor gathered_state;
+            TORCH_CHECK(infinity::flashinfer_gdn_resume(values,
+                                                        qk,
+                                                        gates,
+                                                        identity,
+                                                        gathered_output,
+                                                        kh,
+                                                        heads,
+                                                        &gathered_state,
+                                                        provider_initial),
+                        "Gathered provider-layout initial state was rejected");
+            identity.block_cache_sources_identity = true;
+            auto skipped_output = at::empty_like(output);
+            at::Tensor skipped_state;
+            TORCH_CHECK(infinity::flashinfer_gdn_resume(values,
+                                                        qk,
+                                                        gates,
+                                                        identity,
+                                                        skipped_output,
+                                                        kh,
+                                                        heads,
+                                                        &skipped_state,
+                                                        provider_initial),
+                        "Identity provider-layout initial state was rejected");
+            TORCH_CHECK(at::equal(skipped_output, gathered_output) &&
+                            at::equal(skipped_state, gathered_state) &&
+                            at::equal(provider_initial, provider_immutable),
+                        "Identity provider-layout fast path changed resume or prefix state");
+            // A misaligned provider view with the same identity map must use the gathered
+            // aligned-copy fallback and produce the same bits.
+            auto provider_payload = provider_initial.transpose(2, 3);
+            auto provider_storage = at::empty({provider_payload.numel() + 1}, initial.options());
+            auto misaligned_payload = provider_storage.narrow(0, 1, provider_payload.numel())
+                                          .view(provider_payload.sizes());
+            misaligned_payload.copy_(provider_payload);
+            auto misaligned_provider = misaligned_payload.transpose(2, 3);
+            auto misaligned_immutable = misaligned_provider.clone();
+            TORCH_CHECK(reinterpret_cast<uintptr_t>(misaligned_provider.const_data_ptr()) % 16 != 0,
+                        "Misaligned provider fixture is unexpectedly aligned");
+            auto misaligned_output = at::empty_like(output);
+            at::Tensor misaligned_state;
+            TORCH_CHECK(infinity::flashinfer_gdn_resume(values,
+                                                        qk,
+                                                        gates,
+                                                        identity,
+                                                        misaligned_output,
+                                                        kh,
+                                                        heads,
+                                                        &misaligned_state,
+                                                        misaligned_provider),
+                        "Misaligned identity provider-layout state was rejected");
+            TORCH_CHECK(at::equal(misaligned_output, gathered_output) &&
+                            at::equal(misaligned_state, gathered_state) &&
+                            at::equal(misaligned_provider, misaligned_immutable),
+                        "Misaligned identity provider-layout state changed resume or prefix state");
+          }
           if (resume && heads == 16 && mode == 2) {
             auto stream = c10::cuda::getStreamFromPool();
             c10::cuda::CUDAStreamGuard guard(stream);
+            // Replay from the provider-layout view that capture now returns.
+            auto graph_initial = initial.transpose(2, 3).contiguous().transpose(2, 3);
             auto forward = [&] {
               TORCH_CHECK(infinity::flashinfer_gdn_resume(
-                              values, qk, gates, input, output, kh, heads, nullptr, initial),
+                              values, qk, gates, input, output, kh, heads, nullptr, graph_initial),
                           "Initial-state graph lost its GDN export");
             };
             forward();
@@ -192,12 +297,31 @@ int main() {
             forward();
             graph.capture_end();
             qk.mul_(.8);
-            initial.mul_(.7);
+            graph_initial.mul_(.7);
             graph.replay();
             auto replayed = output.clone();
             forward();
             TORCH_CHECK(at::equal(replayed, output),
                         "Initial-state graph replay lost changing Q/K or prefix states");
+            // Retain native-contiguous initial graph coverage.
+            auto forward_native = [&] {
+              TORCH_CHECK(infinity::flashinfer_gdn_resume(
+                              values, qk, gates, input, output, kh, heads, nullptr, initial),
+                          "Native initial-state graph lost its GDN export");
+            };
+            forward_native();
+            stream.synchronize();
+            at::cuda::CUDAGraph native_graph;
+            native_graph.capture_begin();
+            forward_native();
+            native_graph.capture_end();
+            qk.mul_(.8);
+            initial.mul_(.7);
+            native_graph.replay();
+            auto native_replayed = output.clone();
+            forward_native();
+            TORCH_CHECK(at::equal(native_replayed, output),
+                        "Native initial-state graph replay lost changing Q/K or prefix states");
           }
         }
       }

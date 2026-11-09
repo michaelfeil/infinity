@@ -1805,13 +1805,20 @@ at::Tensor qwen35_delta_cuda(const at::Tensor& qkv,
     decay = prepared.second;
   }
   if (initial.defined()) {
-    TORCH_CHECK(history.defined() && initial.device() == qkv.device() &&
-                    initial.scalar_type() == at::kFloat && initial.is_contiguous() &&
-                    initial.dim() == 4 && initial.size(0) == history_cumulative.numel() - 1 &&
-                    initial.size(1) == value_heads && initial.size(2) == 128 &&
-                    initial.size(3) == 128,
-                "Invalid packed cached GDN state");
+    // Provider captures expose native-logical [B,H,K,V] as a transpose view of provider
+    // [B,H,V,K] storage; native fallbacks below materialize their own contiguous copy.
+    const bool provider_view =
+        initial.dim() == 4 && initial.stride(2) == 1 && initial.stride(3) == 128;
+    TORCH_CHECK(
+        history.defined() && initial.device() == qkv.device() &&
+            initial.scalar_type() == at::kFloat && (initial.is_contiguous() || provider_view) &&
+            initial.dim() == 4 && initial.size(0) == history_cumulative.numel() - 1 &&
+            initial.size(1) == value_heads && initial.size(2) == 128 && initial.size(3) == 128,
+        "Invalid packed cached GDN state");
   }
+  auto native_state = [&] {
+    return initial.defined() && !initial.is_contiguous() ? initial.contiguous() : initial;
+  };
   // Availability selects one producer; the packed provider call uses the same
   // device and BF16 buffers, so a false return would violate that contract.
   if (provider_prefix) {
@@ -1857,9 +1864,17 @@ at::Tensor qwen35_delta_cuda(const at::Tensor& qkv,
                                  cached.checkpoint_rows,
                                  cached.checkpoints);
   else if (chunk_prefill && input.max_sequence >= 256) {
-    qwen35_chunk_delta_cuda(
-        convolution, qk, decay, input, recurrence, key_heads, value_heads, initial, final_state);
+    qwen35_chunk_delta_cuda(convolution,
+                            qk,
+                            decay,
+                            input,
+                            recurrence,
+                            key_heads,
+                            value_heads,
+                            native_state(),
+                            final_state);
   } else if (initial.defined() || final_state) {
+    const auto native_initial = native_state();
     if (final_state)
       *final_state =
           at::empty({input.batch, value_heads, 128, 128}, qkv.options().dtype(at::kFloat));
@@ -1873,9 +1888,9 @@ at::Tensor qwen35_delta_cuda(const at::Tensor& qkv,
       mut(recurrence),                                                                             \
       key_heads,                                                                                   \
       value_heads,                                                                                 \
-      initial.defined() ? initial.const_data_ptr<float>() : nullptr,                               \
+      native_initial.defined() ? native_initial.const_data_ptr<float>() : nullptr,                 \
       final_state ? final_state->mutable_data_ptr<float>() : nullptr,                              \
-      initial.defined() ? input.block_cache_sources.const_data_ptr<int64_t>() : nullptr);
+      native_initial.defined() ? input.block_cache_sources.const_data_ptr<int64_t>() : nullptr);
     if (input.batch * value_heads >= 256) {
       CACHED(8);
     } else {
