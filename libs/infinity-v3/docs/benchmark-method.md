@@ -57,11 +57,21 @@ vLLM uses Torch `2.14.0`; Infinity
 and SGLang use `2.14.1`. Runtime versions and content hashes are included in
 the results.
 
+The measured SM100 FA4 provider and its loaded dependencies match the recorded
+native-library hashes; their load paths were verified with a live request.
+Current tools require complete `infinityfa4/sm_<arch>/` bundles beside the
+loaded `libinfinity_torch.so` for every selected GPU architecture. Preserve
+those directories and their runtime dependencies when relocating a build.
+Opaque build-time fallback paths are rejected before a new campaign starts.
+
 Each checkpoint runs the three runtimes sequentially on the same B200 and
 server CPU allocation. Six GPU lanes run concurrently. Each lane has eight
 physical server cores and eight separate client cores. GPUs 0, 1, 3, 4, 5 and 6
 are used; GPU 2 is outside the serving allocation. Reference inference
 uses GPU 7. Other host activity remains uncontrolled.
+The recorded server and client allocations use 96 distinct physical cores.
+Current tools also reject logical CPU allocations that share a physical core
+when the host supplies that topology.
 
 ## Workloads and units
 
@@ -135,6 +145,7 @@ so recorded run fingerprints can be independently recomputed.
 ## Reproduction
 
 Use separate environments for vLLM, SGLang and the client/reference dependencies.
+Native preflight requires `readelf` from binutils and `nvidia-smi` on the host.
 Install the client/reference packages from
 [`benchmark-requirements.txt`](../scripts/benchmark-requirements.txt) and the
 appropriate CPU or CUDA wheel of Torch 2.14.1. Install the serving runtime

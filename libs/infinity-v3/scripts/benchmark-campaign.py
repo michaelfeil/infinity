@@ -116,12 +116,15 @@ def source_snapshot(source_dir):
         raise CampaignError(f"dirty build inputs ({shown}); supply a clean checkout")
     return {"native": native, "commit": commit, "clean": True, "inputs": inputs}
 
-def infinity_binary(infinity_bin, torch_lib):
+def infinity_binary(infinity_bin, torch_lib, gpus=None):
     binary = Path(infinity_bin).resolve()
     if not binary.is_file():
         raise CampaignError(f"--infinity-bin is not a file: {infinity_bin}")
-    libraries = {path.name: sha256_file(path) for path in sorted(binary.parent.glob("*.so"))}
     common = load_common()
+    try:
+        libraries = common.native_library_sha256(binary, torch_lib, gpus=gpus)
+    except common.CampaignError as exc:
+        raise CampaignError(str(exc)) from exc
     bundle = None
     if torch_lib is not None:
         if not Path(torch_lib).is_dir():
@@ -309,8 +312,8 @@ def query_gpus():
         raise CampaignError("nvidia-smi returned no GPU devices")
     return devices
 
-def validate_cpu_lanes(lanes, online=None):
-    owners = {}
+def validate_cpu_lanes(lanes, online=None, core_map=None):
+    owners, physical = {}, {}
     for lane in lanes:
         for key in ("server_cpus", "client_cpus"):
             cpus = cpu_set(lane[key])
@@ -320,6 +323,12 @@ def validate_cpu_lanes(lanes, online=None):
                 if cpu in owners:
                     raise CampaignError(f"CPU {cpu} is shared by {owners[cpu]!r} and {lane[key]!r}")
                 owners[cpu] = lane[key]
+                pair = core_map.get(cpu) if core_map is not None else None
+                if pair is not None:
+                    if pair in physical:
+                        raise CampaignError(
+                            f"CPU {cpu} shares physical core {pair!r} with CPU {physical[pair]}")
+                    physical[pair] = cpu
 
 def hardware(gpus_argument, server_argument, client_argument, common):
     devices = query_gpus()
@@ -342,8 +351,8 @@ def hardware(gpus_argument, server_argument, client_argument, common):
             raise CampaignError(str(exc)) from exc
         lanes.append({"gpu": gpu, "server_cpus": server_cpus, "client_cpus": client_cpus})
     topology = cpu_topology()
-    validate_cpu_lanes(lanes, topology.pop("online"))
     core_map = physical_core_map()
+    validate_cpu_lanes(lanes, topology.pop("online"), core_map)
     lane_cores = []
     for lane in lanes:
         server_cpus = cpu_set(lane["server_cpus"])
@@ -649,7 +658,7 @@ def create_campaign(args, common):
         args.sglang_python, "--inspect-package", "sglang", env=sglang_env)
     vllm = installation(vllm_probe, "vLLM", args.allow_modified_runtimes)
     sglang = installation(sglang_probe, "SGLang", args.allow_modified_runtimes)
-    infinity = infinity_binary(args.infinity_bin, args.torch_lib)
+    infinity = infinity_binary(args.infinity_bin, args.torch_lib, gpus=args.gpus)
     client_versions = run_private(
         client_python, "--inspect-versions", env=infinity_client_env)
     client_identity = probe_python_identity(client_versions, "client Python")
@@ -670,7 +679,7 @@ def create_campaign(args, common):
     fingerprint_args = argparse.Namespace(
         infinity_bin=str(args.infinity_bin), vllm_python=str(args.vllm_python),
         sglang_python=str(args.sglang_python), client_python=str(client_python),
-        torch_lib=str(args.torch_lib) if args.torch_lib else None)
+        torch_lib=str(args.torch_lib) if args.torch_lib else None, gpus=args.gpus)
     cache = {}
     common.seed_package_probe(cache, str(args.vllm_python), "vllm", vllm_probe)
     common.seed_package_probe(cache, str(args.sglang_python), "sglang", sglang_probe)
@@ -732,6 +741,11 @@ def expect(error, function, *arguments):
 
 def self_test():
     common = load_common()
+    original_native_library_sha256 = common.native_library_sha256
+    def fixture_native_library_sha256(binary, torch_lib=None, cache=None, gpus=None):
+        return {path.name: sha256_file(path)
+                for path in sorted(Path(binary).parent.glob("*.so"))}
+    common.native_library_sha256 = fixture_native_library_sha256
     with tempfile.TemporaryDirectory() as temporary:
         root, repo = Path(temporary), Path(temporary) / "repo"
         native = repo / "libs" / "infinity-v3"
@@ -784,6 +798,44 @@ def self_test():
         assert physical_cores({0, 1, 2, 3}, core_map) == 2
         assert physical_cores({0, 1}, None) is None
         assert physical_cores({0, 9}, core_map) is None
+        smt_map = {0: ("0", "0"), 1: ("0", "1"), 8: ("1", "8"),
+                   128: ("0", "0"), 129: ("0", "1"), 136: ("1", "8")}
+        expect(CampaignError, validate_cpu_lanes,
+               [{"gpu": 0, "server_cpus": "0", "client_cpus": "128"}],
+               None, smt_map)
+        expect(CampaignError, validate_cpu_lanes,
+               [{"gpu": 0, "server_cpus": "0", "client_cpus": "8"},
+                {"gpu": 1, "server_cpus": "128", "client_cpus": "136"}],
+               None, smt_map)
+        expect(CampaignError, validate_cpu_lanes,
+               [{"gpu": 0, "server_cpus": "0-1", "client_cpus": "128-129"}],
+               None, smt_map)
+        expect(CampaignError, validate_cpu_lanes,
+               [{"gpu": 0, "server_cpus": "0,128", "client_cpus": "8"}],
+               None, smt_map)
+        validate_cpu_lanes(
+            [{"gpu": 0, "server_cpus": "0,128", "client_cpus": "8"}], None, None)
+        validate_cpu_lanes(
+            [{"gpu": 0, "server_cpus": "0,128", "client_cpus": "8"}],
+            None, {0: ("0", "0")})
+        validate_cpu_lanes(
+            [{"gpu": 0, "server_cpus": "0", "client_cpus": "8"},
+             {"gpu": 1, "server_cpus": "128", "client_cpus": "129"}],
+            None, {0: ("0", "0"), 128: ("1", "0"),
+                   8: ("1", "8"), 129: ("1", "1")})
+        validate_cpu_lanes(
+            [{"gpu": 0, "server_cpus": "0-1", "client_cpus": "8-9"}],
+            None, {0: ("0", "0"), 1: ("0", "1"), 8: ("1", "8"), 9: ("1", "9")})
+        expect(CampaignError, validate_cpu_lanes,
+               [{"gpu": 0, "server_cpus": "0-1", "client_cpus": "1-2"}],
+               None, {0: ("0", "0")})
+        expect(CampaignError, validate_cpu_lanes,
+               [{"gpu": 0, "server_cpus": "0", "client_cpus": "2"},
+                {"gpu": 1, "server_cpus": "128", "client_cpus": "3"}],
+               None, {0: ("0", "0"), 128: ("0", "0")})
+        expect(CampaignError, validate_cpu_lanes,
+               [{"gpu": 0, "server_cpus": "0-1", "client_cpus": "1-2"}],
+               None, None)
         clean = {"version": "1", "package_tree_sha256": "a" * 64, "record_sha256": "b" * 64,
                  "file_count": 1, "record_mismatches": [], "unrecorded_files": [],
                  "missing_record_files": []}
@@ -939,6 +991,44 @@ def self_test():
             "'file_count': 1, 'byte_count': len(data), 'distributions': [], "
             "'content_roots': [], 'interpreter': {}}, sort_keys=True))\n",
             encoding="utf-8")
+        resolver_calls = []
+        resolved_libraries = {
+            "libinfinity_torch.so": "a" * 64,
+            "infinityfa4/sm_100a/libinfinityfa4.so": "b" * 64}
+        resolver_common = types.SimpleNamespace(
+            CampaignError=common.CampaignError,
+            native_library_sha256=lambda binary, torch_lib=None, cache=None, gpus=None: (
+                resolver_calls.append((Path(binary), torch_lib, gpus)) or dict(resolved_libraries)),
+            runtime_loader_environment=lambda *arguments: (
+                {"PATH": os.environ.get("PATH", "")}, None),
+            torch_sdk_bundle=lambda path: {"digest_sha256": "c" * 64, "roots": {}})
+        original_load_common = globals()["load_common"]
+        globals()["load_common"] = lambda: resolver_common
+        try:
+            resolved = infinity_binary(infinity, torch_lib, gpus="4,6")
+        finally:
+            globals()["load_common"] = original_load_common
+        assert resolver_calls == [(infinity.resolve(), torch_lib, "4,6")]
+        assert resolved["native_library_sha256"] == resolved_libraries
+        assert resolved["package_tree_sha256"] == canonical_sha256(
+            {"binary_sha256": sha256_file(infinity),
+             "native_libraries": resolved_libraries})
+        resolver_marker = root / "resolver-error-marker"
+        resolver_error_binary = root / "resolver-error-infinity"
+        resolver_error_binary.write_text(
+            f"#!/bin/sh\ntouch {shlex.quote(str(resolver_marker))}\n"
+            "echo 'Infinity 9.9.9'\n", encoding="utf-8")
+        resolver_error_binary.chmod(0o755)
+        def failing_resolver(*arguments, **keywords):
+            raise common.CampaignError("fixture resolver failure")
+        resolver_error_common = types.SimpleNamespace(
+            CampaignError=common.CampaignError, native_library_sha256=failing_resolver)
+        globals()["load_common"] = lambda: resolver_error_common
+        try:
+            expect(CampaignError, infinity_binary, resolver_error_binary, torch_lib)
+        finally:
+            globals()["load_common"] = original_load_common
+        assert not resolver_marker.exists()
         original_integrity_helper = common.INTEGRITY_HELPER
         common.INTEGRITY_HELPER = fake_integrity
         fake_lanes = [{"gpu": 0, "server_cpus": "0-7", "client_cpus": "8-15"}]
@@ -957,6 +1047,13 @@ def self_test():
             recorded_probes.append((list(arguments), env))
             return original_run_private(python, *arguments, env=env)
         globals()["run_private"] = recording_run_private
+        class FixtureCommon:
+            def __getattr__(self, name):
+                return getattr(common, name)
+            def native_library_sha256(self, binary, torch_lib=None, cache=None, gpus=None):
+                return {path.name: sha256_file(path)
+                        for path in sorted(Path(binary).parent.glob("*.so"))}
+        globals()["load_common"] = lambda: FixtureCommon()
         try:
             campaign_args = argparse.Namespace(
                 output=root / "campaign-output", source_dir=repo,
@@ -969,6 +1066,7 @@ def self_test():
                 allow_modified_runtimes=False, overwrite=False)
             campaign = create_campaign(campaign_args, common)
         finally:
+            globals()["load_common"] = original_load_common
             globals()["hardware"] = original_hardware
             globals()["run_private"] = original_run_private
         files = campaign["fingerprint_files"]
@@ -1027,7 +1125,7 @@ def self_test():
         fingerprint_args = argparse.Namespace(
             infinity_bin=str(infinity), vllm_python=str(vllm_wrapper),
             sglang_python=str(sglang_wrapper), client_python=str(sys.executable),
-            torch_lib=str(torch_lib))
+            torch_lib=str(torch_lib), gpus="0")
         for runtime in common.RUNTIMES:
             assert common.runtime_files(fingerprint_args, runtime, campaign, {}) \
                 == files[runtime]
@@ -1046,6 +1144,7 @@ def self_test():
         expect(common.CampaignError, common.runtime_files, fingerprint_args, "infinity",
                campaign, {})
         common.INTEGRITY_HELPER = original_integrity_helper
+    common.native_library_sha256 = original_native_library_sha256
     print("self-test passed")
     return 0
 

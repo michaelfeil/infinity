@@ -236,6 +236,15 @@ def load(path):
     except (OSError, UnicodeError, ValueError) as e:
         raise ReportError(f"{path} invalid JSON: {str(e).splitlines()[0][:300]}")
 
+def portable_native_key(value):
+    if not isinstance(value, str) or not value:
+        return False
+    if "\\" in value or any(ord(c) < 32 or 0x7f <= ord(c) <= 0x9f for c in value):
+        return False
+    if value.startswith(("/", "~")) or ":" in value:
+        return False
+    return all(part not in ("", ".", "..") for part in value.split("/"))
+
 def anchor(v, top_binary):
     require(isinstance(v, dict) and set(v) == RTS,
         "campaign.fingerprint_files is missing or must contain exactly infinity/vllm/sglang")
@@ -250,7 +259,7 @@ def anchor(v, top_binary):
         lib = e["native_library_sha256"]
         require(isinstance(lib, dict), f"fingerprint_files[{r}].native_library_sha256 invalid")
         for n, h in lib.items():
-            require(isinstance(n, str) and n and "/" not in n and "\\" not in n and h64(h),
+            require(portable_native_key(n) and h64(h),
                 f"fingerprint_files[{r}] library hash invalid")
         torch_tree = e["torch_library_tree_sha256"]
         require(torch_tree is None or h64(torch_tree),
@@ -2245,6 +2254,21 @@ def selftest():
         save_run(path, d)
         return t, root, out, by_id, environment, path
 
+    def namespaced_native_fixture(native):
+        t, root, out = prep()
+        campaign_path = root / "campaign.json"
+        campaign = json.loads(campaign_path.read_text())
+        for r in RT:
+            campaign["fingerprint_files"][r]["native_library_sha256"] = dict(native)
+        campaign["build"]["native_library_sha256"] = dict(native)
+        campaign_path.write_text(json.dumps(campaign) + "\n")
+        for p in (root / "runs").glob("*.json"):
+            d = json.loads(p.read_text())
+            d["fingerprint_inputs"]["files"]["native_library_sha256"] = dict(native)
+            d["run_fingerprint"] = fp(d["fingerprint_inputs"])
+            p.write_text(json.dumps(d) + "\n")
+        return t, root, out
+
     @add
     def complete_export_matrix_anchor_and_size():
         t, root, out = prep()
@@ -2613,6 +2637,70 @@ def selftest():
                 assert "fingerprint model mismatch" in str(error), str(error)
             else:
                 raise AssertionError("mismatching fp.model declarations accepted")
+
+    @add
+    def native_library_namespaced_keys_are_portable_and_preserved():
+        native = {"libinfinity.so": "3" * 64,
+                  "infinityfa4/sm_100/libinfinityfa4.so": "4" * 64,
+                  "infinityfa4/sm_100/libcute_dsl_runtime.so": "5" * 64}
+        t, root, out = namespaced_native_fixture(native)
+        with t:
+            summary = export(root, out)
+            assert summary["status"] == "complete" and summary["numerical_passes"] == 10
+            rep = json.loads((out / "results.json").read_text())
+            campaign = rep["campaign"]
+            assert campaign["build"]["native_library_sha256"] == native
+            for r in RT:
+                assert campaign["fingerprint_files"][r]["native_library_sha256"] == native
+            for run in rep["raw_runs"]:
+                assert run["fingerprint_inputs"]["files"]["native_library_sha256"] == native
+
+    @add
+    def native_library_unsafe_keys_are_rejected():
+        unsafe = ["/abs/libinfinity.so", "a/../libinfinity.so",
+                  "a/./libinfinity.so", "a//libinfinity.so",
+                  "a/libinfinity.so/", "a\\libinfinity.so",
+                  "C:/libinfinity.so", "C:\\libinfinity.so",
+                  "//server/share/libinfinity.so", "~/libinfinity.so",
+                  "~user/libinfinity.so", "a/\x00libinfinity.so",
+                  "a/\x01libinfinity.so", "a/\x7flibinfinity.so",
+                  "file:/root/libinfinity.so", "file:libinfinity.so",
+                  "https:/host/libinfinity.so", "C:libinfinity.so"]
+        for key in unsafe:
+            t, root, out = namespaced_native_fixture({key: "3" * 64})
+            with t:
+                try:
+                    export(root, out)
+                except ReportError as error:
+                    assert "library hash invalid" in str(error), (key, str(error))
+                else:
+                    raise AssertionError(f"unsafe native key accepted: {key!r}")
+        safe = {"libinfinity.so": "3" * 64}
+        t, root, out = namespaced_native_fixture(safe)
+        with t:
+            campaign_path = root / "campaign.json"
+            campaign = json.loads(campaign_path.read_text())
+            campaign["fingerprint_files"]["vllm"]["native_library_sha256"] = {
+                "other.so": "4" * 64}
+            campaign_path.write_text(json.dumps(campaign) + "\n")
+            try:
+                export(root, out)
+            except ReportError as error:
+                assert "native library hashes must match" in str(error), str(error)
+            else:
+                raise AssertionError("runtime native map mismatch accepted")
+        t, root, out = namespaced_native_fixture(safe)
+        with t:
+            campaign_path = root / "campaign.json"
+            campaign = json.loads(campaign_path.read_text())
+            campaign["build"]["native_library_sha256"] = {"other.so": "4" * 64}
+            campaign_path.write_text(json.dumps(campaign) + "\n")
+            try:
+                export(root, out)
+            except ReportError as error:
+                assert "build native libraries do not match" in str(error), str(error)
+            else:
+                raise AssertionError("build native map mismatch accepted")
 
     rejects = [
         ("dirty", "source_clean"), ("malformed_commit", "source_commit"),

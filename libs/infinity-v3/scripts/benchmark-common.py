@@ -1365,17 +1365,340 @@ def _binary_path(args, runtime: str) -> str:
             "sglang": args.sglang_python}[runtime]
 
 
-def _native_libraries(args, cache: dict) -> dict:
-    key = ("native_libraries",)
-    if key not in cache:
-        libraries = {}
-        for library in sorted(Path(args.infinity_bin).resolve().parent.glob("*.so")):
-            name = library.name
+_PORTABLE_NATIVE_COMPONENT = re.compile(r"[A-Za-z0-9._-]+")
+
+
+def _safe_native_key(name: str) -> str:
+    if not isinstance(name, str) or not name or name.startswith("/") \
+            or "\\" in name or ":" in name:
+        raise CampaignError(f"unsafe native library key: {name!r}")
+    parts = name.split("/")
+    if any(part in ("", ".", "..")
+           or _PORTABLE_NATIVE_COMPONENT.fullmatch(part) is None
+           for part in parts):
+        raise CampaignError(f"unsafe native library key: {name!r}")
+    return name
+
+
+def _elf_interpreter(path: Path) -> str:
+    try:
+        result = subprocess.run(["readelf", "-l", str(path)], capture_output=True,
+                                text=True, check=False, timeout=30,
+                                env=sanitized_environment())
+    except OSError as exc:
+        raise CampaignError(f"cannot inspect ELF interpreter for {path}: {exc}") from exc
+    if result.returncode == 0:
+        match = re.search(r"Requesting program interpreter:\s*([^\]]+)\]", result.stdout)
+        if match:
+            return match.group(1).strip()
+        detail = "readelf found no PT_INTERP"
+    else:
+        detail = (result.stderr or result.stdout).strip()[:500] or str(result.returncode)
+    raise CampaignError(f"cannot inspect ELF interpreter for {path}: {detail}")
+
+
+def _loader_list(target: Path, environment: dict, interpreter: str = None) -> dict:
+    interpreter = interpreter or _elf_interpreter(target)
+    try:
+        result = subprocess.run([interpreter, "--list", str(target)], env=environment,
+                                capture_output=True, text=True, check=False, timeout=120)
+    except OSError as exc:
+        raise CampaignError(f"loader probe failed for {target}: {exc}") from exc
+    if result.returncode:
+        detail = (result.stderr or result.stdout).strip()[:500]
+        raise CampaignError(f"loader could not resolve {target}: {detail or result.returncode}")
+    resolved = {}
+    for line in result.stdout.splitlines():
+        match = re.match(r"\s*(\S+)\s+=>\s+(\S+)", line)
+        if match:
+            resolved[match.group(1)] = match.group(2)
+    return resolved
+
+
+def _fa4_loader_supported(bridge: Path, cache: dict) -> bool:
+    key = ("fa4_loader_support", _probe_path(bridge))
+    if key in cache:
+        return cache[key]
+    required = ("infinity_fa4_portable_host_v1", "infinity_fa4_forward_v1",
+                "infinity_fa4_error_v1")
+    try:
+        symbols = subprocess.run(["readelf", "--dyn-syms", str(bridge)],
+                                 capture_output=True, text=True, check=False, timeout=60,
+                                 env=sanitized_environment())
+        data = bridge.read_bytes()
+    except OSError as exc:
+        raise CampaignError(f"cannot inspect Infinity bridge {bridge}: {exc}") from exc
+    supported = (symbols.returncode == 0
+                 and all(name in symbols.stdout for name in required)) \
+        or all(name.encode() in data for name in required)
+    cache[key] = supported
+    return supported
+
+
+def _fa4_bundle_files(bridge_parent: Path, cache: dict) -> dict:
+    root = bridge_parent / "infinityfa4"
+    if not root.is_dir():
+        raise CampaignError(f"bridge-relative FA4 bundle directory is missing: {root}")
+    bundles = sorted(path for path in root.iterdir()
+                     if path.is_dir() and re.fullmatch(r"sm_[0-9]+", path.name))
+    if not bundles:
+        raise CampaignError(f"bridge-relative FA4 bundle root has no sm_* bundles: {root}")
+    resolved_root = root.resolve()
+    libraries = ("libinfinityfa4.so", "libcute_dsl_runtime.so", "libtvm_ffi.so")
+    files = {}
+    for bundle in bundles:
+        manifest_path = bundle / "manifest.json"
+        if not manifest_path.is_file():
+            raise CampaignError(f"InfinityFA4 bundle lacks manifest.json: {bundle}")
+        try:
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError) as exc:
+            raise CampaignError(
+                f"InfinityFA4 manifest is invalid: {manifest_path}: {exc}") from exc
+        if not isinstance(manifest, dict):
+            raise CampaignError(f"InfinityFA4 manifest is not an object: {manifest_path}")
+        if manifest.get("name") != "InfinityFA4" or manifest.get("native_abi_version") != 1:
+            raise CampaignError(f"unsupported InfinityFA4 bundle ABI: {manifest_path}")
+        if manifest.get("architecture") not in {bundle.name, bundle.name + "a"}:
+            raise CampaignError(f"InfinityFA4 architecture mismatch: {manifest_path}")
+        expected = manifest.get("libraries")
+        if not isinstance(expected, dict) or set(expected) != set(libraries):
+            raise CampaignError(
+                f"InfinityFA4 manifest libraries are incomplete: {manifest_path}")
+        for name in libraries:
+            path = bundle / name
+            if not path.is_file():
+                raise CampaignError(f"InfinityFA4 bundle lacks {name}: {bundle}")
+            if path.is_symlink():
+                target = os.readlink(path)
+                if os.path.isabs(target):
+                    raise CampaignError(
+                        f"InfinityFA4 bundle uses an absolute symlink: {path}")
+                try:
+                    resolved = path.resolve(strict=True)
+                except OSError as exc:
+                    raise CampaignError(
+                        f"InfinityFA4 bundle symlink is broken: {path}: {exc}") from exc
+                if not _is_within(resolved, resolved_root):
+                    raise CampaignError(
+                        f"InfinityFA4 bundle symlink escapes {root}: {path}")
+            digest = sha256_file(path)
+            if digest != expected[name]:
+                raise CampaignError(
+                    f"InfinityFA4 library differs from its manifest: {path}")
+            files[_safe_native_key(f"infinityfa4/{bundle.name}/{name}")] = digest
+        files[_safe_native_key(
+            f"infinityfa4/{bundle.name}/manifest.json")] = sha256_file(manifest_path)
+    return files
+
+
+_SYSTEM_NATIVE_SONAMES = re.compile(
+    r"^(?:linux-vdso\.so\.1|ld-linux[^/]*\.so(?:\..*)?|libc\.so(?:\..*)?|"
+    r"libstdc\+\+\.so(?:\..*)?|libgcc_s\.so(?:\..*)?|"
+    r"libpthread\.so(?:\..*)?|libdl\.so(?:\..*)?|libm\.so(?:\..*)?|"
+    r"librt\.so(?:\..*)?|libutil\.so(?:\..*)?|libcuda\.so(?:\..*)?)$")
+
+
+def _system_native(name: str) -> bool:
+    return _SYSTEM_NATIVE_SONAMES.match(name) is not None
+
+
+def _resolved_provider_path(name, main_resolved, bundle_resolved, bundle_lib):
+    for source in (main_resolved, bundle_resolved):
+        candidate = source.get(name)
+        if candidate and candidate != "not found":
+            path = Path(candidate)
+            if path.is_file():
+                return path
+    raise CampaignError(
+        f"unresolved provider dependency {name!r} required by {bundle_lib}")
+
+
+def _main_provider_files(main_resolved) -> dict:
+    files = {}
+    for name, candidate in sorted(main_resolved.items()):
+        if _system_native(name):
+            continue
+        if not (name.startswith("libinfinity")
+                or name in {"libcute_dsl_runtime.so", "libtvm_ffi.so"}):
+            continue
+        if not candidate or candidate == "not found":
+            raise CampaignError(f"unresolved main provider dependency {name!r}")
+        path = Path(candidate)
+        if not path.is_file():
+            raise CampaignError(f"main provider dependency is not a file: {path}")
+        files[_safe_native_key(f"loaded/{name}")] = sha256_file(path)
+    return files
+
+
+def _fa4_loaded_dependencies(bridge_parent, main_resolved, environment,
+                             program_interpreter) -> dict:
+    root = bridge_parent / "infinityfa4"
+    bundles = sorted(path for path in root.iterdir()
+                     if path.is_dir() and re.fullmatch(r"sm_[0-9]+", path.name))
+    files = {}
+    for bundle in bundles:
+        bundle_lib = bundle / "libinfinityfa4.so"
+        if not bundle_lib.is_file():
+            raise CampaignError(f"InfinityFA4 bundle lacks libinfinityfa4.so: {bundle}")
+        resolved = _loader_list(bundle_lib, environment, program_interpreter)
+        for name in ("libcute_dsl_runtime.so", "libtvm_ffi.so"):
+            if name not in resolved and name not in main_resolved:
+                raise CampaignError(
+                    f"FA4 bundle provider dependency {name!r} is not resolved "
+                    f"for {bundle_lib}")
+        for name in sorted(resolved):
+            if name == bundle_lib.name or _system_native(name):
+                continue
+            path = _resolved_provider_path(
+                name, main_resolved, resolved, bundle_lib)
+            files[_safe_native_key(
+                f"infinityfa4/{bundle.name}/loaded/{name}")] = sha256_file(path)
+    return files
+
+
+def _selected_gpu_ids(gpus):
+    if gpus is None:
+        return None
+    if isinstance(gpus, str):
+        items = [part.strip() for part in gpus.split(",") if part.strip()]
+    elif isinstance(gpus, (list, tuple, set, frozenset)):
+        items = [str(part).strip() for part in gpus if str(part).strip()]
+    else:
+        raise CampaignError(
+            "gpus must be a comma-separated string or an iterable of physical GPU IDs")
+    if not items:
+        return None
+    if len(set(items)) != len(items):
+        raise CampaignError("gpus must contain distinct physical GPU IDs")
+    for item in items:
+        if not re.fullmatch(r"[0-9]+", item):
+            raise CampaignError(f"invalid physical GPU index: {item!r}")
+    return items
+
+
+def _nvidia_compute_capabilities(gpus):
+    command = ["nvidia-smi", "--id=" + ",".join(gpus),
+               "--query-gpu=index,compute_cap", "--format=csv,noheader,nounits"]
+    try:
+        result = subprocess.run(command, capture_output=True, text=True,
+                                check=False, timeout=60, env=sanitized_environment())
+    except OSError as exc:
+        raise CampaignError(
+            f"cannot query selected GPU compute capabilities: {exc}") from exc
+    if result.returncode:
+        detail = (result.stderr or result.stdout).strip()[:500]
+        raise CampaignError(
+            f"cannot query selected GPU compute capabilities: "
+            f"{detail or result.returncode}")
+    capabilities = {}
+    for line in result.stdout.splitlines():
+        if not line.strip():
+            continue
+        parts = [part.strip() for part in line.split(",")]
+        if len(parts) != 2:
+            raise CampaignError(f"unexpected nvidia-smi compute_cap row: {line!r}")
+        index, capability = parts
+        match = re.fullmatch(r"(\d+)\.(\d+)", capability)
+        if not match:
+            raise CampaignError(
+                f"cannot derive CUDA SM from compute_cap {capability!r} for GPU {index}")
+        if index in capabilities:
+            raise CampaignError(f"duplicate nvidia-smi row for GPU {index}")
+        capabilities[index] = int(match.group(1)) * 10 + int(match.group(2))
+    return capabilities
+
+
+def _fa4_selected_bundles(bridge_parent: Path, gpus) -> None:
+    root = bridge_parent / "infinityfa4"
+    selected = _selected_gpu_ids(gpus)
+    if not selected:
+        raise CampaignError(
+            "FA4 loader ABI requires an explicit selected physical GPU list "
+            "(gpus) to verify sm_* bundles")
+    capabilities = _nvidia_compute_capabilities(selected)
+    if set(capabilities) != set(selected):
+        raise CampaignError(
+            "selected GPU compute capability query did not return exactly "
+            f"{selected!r}: {sorted(capabilities)!r}")
+    missing = []
+    for gpu in selected:
+        sm = capabilities[gpu]
+        if not (root / f"sm_{sm}").is_dir():
+            missing.append(f"GPU {gpu} sm_{sm}: {root / f'sm_{sm}'}")
+    if missing:
+        raise CampaignError(
+            "bridge-relative FA4 bundle is missing selected GPU architectures: "
+            + "; ".join(missing))
+
+
+def native_library_sha256(infinity_bin, torch_lib=None, cache=None, gpus=None) -> dict:
+    """Hash top-level native libraries, the loader-resolved bridge, and packaged FA4 bundles.
+
+    The bridge is resolved with the ELF interpreter under the same sanitized loader
+    environment used to launch the Infinity server; LD_LIBRARY_PATH and DT_RUNPATH
+    are honored without guessing their order. Keys are safe portable relative
+    paths. A bridge advertising FA4 loader ABI must have complete bridge-relative
+    packaged bundles for every selected physical GPU SM; an opaque compiled
+    fallback is refused.
+    """
+    cache = cache if isinstance(cache, dict) else {}
+    binary = Path(infinity_bin).resolve()
+    normalised_gpus = _selected_gpu_ids(gpus)
+    key = ("native_library_sha256", _probe_path(binary),
+           _probe_path(torch_lib) if torch_lib else None,
+           tuple(sorted(normalised_gpus)) if normalised_gpus else None)
+    if key in cache:
+        return cache[key]
+    if not binary.is_file():
+        raise CampaignError(f"Infinity binary is not a file: {binary}")
+    environment, _ = runtime_loader_environment("infinity", infinity_bin, torch_lib)
+    program_interpreter = _elf_interpreter(binary)
+    resolved = _loader_list(binary, environment, program_interpreter)
+    bridge_name = "libinfinity_torch.so"
+    bridge_path = resolved.get(bridge_name)
+    if not bridge_path or bridge_path == "not found":
+        detail = "; ".join(f"{name} => {path}"
+                           for name, path in sorted(resolved.items()))[:800]
+        raise CampaignError(
+            f"load {binary} did not resolve {bridge_name}; "
+            f"resolved: {detail or 'nothing'}")
+    bridge = Path(bridge_path).resolve()
+    if not bridge.is_file():
+        raise CampaignError(f"resolved Infinity bridge is not a file: {bridge}")
+    libraries = {}
+    for directory in (binary.parent, bridge.parent):
+        for library in sorted(directory.glob("*.so")):
+            name = _safe_native_key(library.name)
             digest = sha256_file(library)
             if name in libraries and libraries[name] != digest:
-                raise CampaignError(f"duplicate native library basename {name!r}")
+                raise CampaignError(f"conflicting native library basename {name!r}")
             libraries[name] = digest
-        cache[key] = libraries
+    libraries.update(_main_provider_files(resolved))
+    libraries[_safe_native_key(f"loaded/{bridge.name}")] = sha256_file(bridge)
+    fa4_root = bridge.parent / "infinityfa4"
+    if _fa4_loader_supported(bridge, cache):
+        if not fa4_root.is_dir():
+            raise CampaignError(
+                f"loaded Infinity bridge {bridge} advertises FA4 loader ABI but has no "
+                f"bridge-relative packaged bundle directory {fa4_root}; refusing to "
+                "fingerprint an opaque compiled fallback")
+        _fa4_selected_bundles(bridge.parent, normalised_gpus)
+        libraries.update(_fa4_bundle_files(bridge.parent, cache))
+        libraries.update(_fa4_loaded_dependencies(
+            bridge.parent, resolved, environment, program_interpreter))
+    elif fa4_root.is_dir():
+        libraries.update(_fa4_bundle_files(bridge.parent, cache))
+    cache[key] = libraries
+    return libraries
+
+
+def _native_libraries(args, cache: dict) -> dict:
+    gpus = _selected_gpu_ids(getattr(args, "gpus", None))
+    key = ("native_libraries", tuple(sorted(gpus)) if gpus else None)
+    if key not in cache:
+        cache[key] = native_library_sha256(
+            args.infinity_bin, getattr(args, "torch_lib", None), cache, gpus)
     return cache[key]
 
 
@@ -1865,6 +2188,236 @@ def _expect(error, function, *args) -> None:
     raise AssertionError(f"{function.__name__} did not raise {error.__name__}")
 
 
+def _self_test_native_fa4() -> None:
+    cc = shutil.which("cc")
+    if cc is None:
+        raise AssertionError("cc is required for native library fixtures")
+    original_capabilities = globals()["_nvidia_compute_capabilities"]
+    capabilities = {"value": 100}
+    globals()["_nvidia_compute_capabilities"] = \
+        lambda ids: {str(index): capabilities["value"] for index in ids}
+    try:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            runtime = root / "runtime"
+            runtime.mkdir()
+            cute = runtime / "libcute_dsl_runtime.so"
+            tvm = runtime / "libtvm_ffi.so"
+            cute_source = root / "cute.c"
+            cute_source.write_text("int cute(void) { return 1; }\n", encoding="utf-8")
+            tvm_source = root / "tvm.c"
+            tvm_source.write_text("int tvm(void) { return 2; }\n", encoding="utf-8")
+            subprocess.run(
+                [cc, "-shared", "-fPIC", "-Wl,-soname,libcute_dsl_runtime.so",
+                 "-o", str(cute), str(cute_source)], check=True, capture_output=True)
+            subprocess.run(
+                [cc, "-shared", "-fPIC", "-Wl,-soname,libtvm_ffi.so",
+                 "-o", str(tvm), str(tvm_source)], check=True, capture_output=True)
+            bridge = runtime / "libinfinity_torch.so"
+            bridge_source = root / "fa4-bridge.c"
+            bridge_source.write_text(
+                "extern int cute(void);\n"
+                "extern int tvm(void);\n"
+                "int infinity_fa4_portable_host_v1(void) { return 1; }\n"
+                "int infinity_fa4_forward_v1(void) { return 0; }\n"
+                "int infinity_fa4_error_v1(void) { return 0; }\n"
+                "int bridge(void) { return cute() + tvm(); }\n", encoding="utf-8")
+            subprocess.run(
+                [cc, "-shared", "-fPIC", "-Wl,-soname,libinfinity_torch.so",
+                 "-o", str(bridge), str(bridge_source), "-L" + str(runtime),
+                 "-lcute_dsl_runtime", "-ltvm_ffi"],
+                check=True, capture_output=True)
+            server_source = root / "server.c"
+            server_source.write_text(
+                "extern int bridge(void); int main(void) { return bridge(); }\n",
+                encoding="utf-8")
+            server = runtime / "server"
+            subprocess.run(
+                [cc, "-o", str(server), str(server_source), "-L" + str(runtime),
+                 "-linfinity_torch", "-Wl,-rpath," + str(runtime)],
+                check=True, capture_output=True)
+            _expect(CampaignError, native_library_sha256, server, None, {}, [0])
+            _expect(CampaignError, native_library_sha256, server, None, {}, None)
+            _expect(CampaignError, native_library_sha256, server, None, {}, [])
+            fa4 = runtime / "infinityfa4"
+            sm100 = fa4 / "sm_100"
+            sm100.mkdir(parents=True)
+            names = ("libinfinityfa4.so", "libcute_dsl_runtime.so", "libtvm_ffi.so")
+            bundle_source = root / "bundle-fa4.c"
+            bundle_source.write_text(
+                "extern int cute(void);\n"
+                "extern int tvm(void);\n"
+                "int infinity_fa4_portable_host_v1(void) { return 1; }\n"
+                "int infinity_fa4_forward_v1(void) { return 0; }\n"
+                "int infinity_fa4_error_v1(void) { return 0; }\n"
+                "int bundle(void) { return cute() + tvm(); }\n", encoding="utf-8")
+            subprocess.run(
+                [cc, "-shared", "-fPIC", "-Wl,-soname,libinfinityfa4.so",
+                 "-o", str(sm100 / "libinfinityfa4.so"), str(bundle_source),
+                 "-L" + str(runtime), "-lcute_dsl_runtime", "-ltvm_ffi"],
+                check=True, capture_output=True)
+            (sm100 / "libcute_dsl_runtime.so").write_bytes(
+                b"bundled-cute-placeholder")
+            (sm100 / "libtvm_ffi.so").write_bytes(b"bundled-tvm-placeholder")
+            manifest = {"name": "InfinityFA4", "native_abi_version": 1,
+                        "architecture": "sm_100", "abi_version": 7,
+                        "libraries": {name: sha256_file(sm100 / name)
+                                      for name in names}}
+            (sm100 / "manifest.json").write_text(
+                json.dumps(manifest), encoding="utf-8")
+            libraries = native_library_sha256(server, None, {}, [0])
+            assert libraries == native_library_sha256(
+                server, None, {}, gpus=[0])
+            assert libraries["loaded/libinfinity_torch.so"] == sha256_file(bridge)
+            assert libraries["loaded/libcute_dsl_runtime.so"] == sha256_file(cute)
+            assert libraries["loaded/libtvm_ffi.so"] == sha256_file(tvm)
+            assert libraries["infinityfa4/sm_100/loaded/libcute_dsl_runtime.so"] \
+                == sha256_file(cute)
+            assert libraries["infinityfa4/sm_100/loaded/libtvm_ffi.so"] \
+                == sha256_file(tvm)
+            for name in names:
+                assert libraries[f"infinityfa4/sm_100/{name}"] == sha256_file(
+                    sm100 / name)
+            assert libraries["infinityfa4/sm_100/manifest.json"] == sha256_file(
+                sm100 / "manifest.json")
+            capabilities["value"] = 90
+            _expect(CampaignError, native_library_sha256, server, None, {}, [0])
+            capabilities["value"] = 100
+            original_cute = cute.read_bytes()
+            cute2_source = root / "cute2.c"
+            cute2_source.write_text("int cute(void) { return 3; }\n", encoding="utf-8")
+            subprocess.run(
+                [cc, "-shared", "-fPIC", "-Wl,-soname,libcute_dsl_runtime.so",
+                 "-o", str(cute), str(cute2_source)], check=True, capture_output=True)
+            moved_dependency = native_library_sha256(server, None, {}, [0])
+            assert moved_dependency["infinityfa4/sm_100/loaded/libcute_dsl_runtime.so"] \
+                != libraries["infinityfa4/sm_100/loaded/libcute_dsl_runtime.so"]
+            cute.write_bytes(original_cute)
+            cute_backup = cute.with_suffix(".bak")
+            cute.rename(cute_backup)
+            _expect(CampaignError, native_library_sha256, server, None, {}, [0])
+            cute_backup.rename(cute)
+            bundled_tvm = (sm100 / "libtvm_ffi.so").read_bytes()
+            (sm100 / "libtvm_ffi.so").write_bytes(b"mutated-bundled-tvm")
+            _expect(CampaignError, native_library_sha256, server, None, {}, [0])
+            (sm100 / "libtvm_ffi.so").write_bytes(bundled_tvm)
+            bundled_fa4 = (sm100 / "libinfinityfa4.so").read_bytes()
+            (sm100 / "libinfinityfa4.so").unlink()
+            _expect(CampaignError, native_library_sha256, server, None, {}, [0])
+            (sm100 / "libinfinityfa4.so").write_bytes(bundled_fa4)
+            bad_manifest = dict(manifest)
+            bad_manifest["libraries"] = dict(manifest["libraries"])
+            bad_manifest["libraries"]["libtvm_ffi.so"] = "0" * 64
+            (sm100 / "manifest.json").write_text(
+                json.dumps(bad_manifest), encoding="utf-8")
+            _expect(CampaignError, native_library_sha256, server, None, {}, [0])
+            (sm100 / "manifest.json").write_text(
+                json.dumps(manifest), encoding="utf-8")
+            fallback = root / "fallback" / "sm_100"
+            fallback.mkdir(parents=True)
+            for name in names:
+                (fallback / name).write_bytes(("fallback-" + name).encode())
+            (fallback / "manifest.json").write_text(json.dumps({
+                "name": "InfinityFA4", "native_abi_version": 1,
+                "architecture": "sm_100",
+                "libraries": {name: sha256_file(fallback / name)
+                              for name in names},
+            }), encoding="utf-8")
+            shutil.rmtree(fa4)
+            _expect(CampaignError, native_library_sha256, server, None, {}, [0])
+            sm90 = fa4 / "sm_90"
+            sm90.mkdir(parents=True)
+            sm100.mkdir(parents=True)
+            (sm90 / "libinfinityfa4.so").write_bytes(bundled_fa4)
+            (sm90 / "libcute_dsl_runtime.so").write_bytes(b"shared-cute-placeholder")
+            (sm90 / "libtvm_ffi.so").write_bytes(b"sm90-tvm-placeholder")
+            (sm100 / "libinfinityfa4.so").write_bytes(bundled_fa4)
+            (sm100 / "libtvm_ffi.so").write_bytes(b"sm100-tvm-placeholder")
+            (sm100 / "libcute_dsl_runtime.so").symlink_to(
+                "../sm_90/libcute_dsl_runtime.so")
+            linked_manifest = {"name": "InfinityFA4", "native_abi_version": 1,
+                               "architecture": "sm_100", "abi_version": 7,
+                               "libraries": {name: sha256_file(sm100 / name)
+                                             for name in names}}
+            (sm100 / "manifest.json").write_text(
+                json.dumps(linked_manifest), encoding="utf-8")
+            (sm90 / "manifest.json").write_text(json.dumps({
+                "name": "InfinityFA4", "native_abi_version": 1,
+                "architecture": "sm_90",
+                "libraries": {name: sha256_file(sm90 / name)
+                              for name in names},
+            }), encoding="utf-8")
+            linked = native_library_sha256(server, None, {}, [0])
+            assert linked["infinityfa4/sm_100/libcute_dsl_runtime.so"] \
+                == sha256_file(sm90 / "libcute_dsl_runtime.so")
+            (sm100 / "libcute_dsl_runtime.so").unlink()
+            (sm100 / "libcute_dsl_runtime.so").symlink_to(
+                (sm90 / "libcute_dsl_runtime.so").resolve())
+            absolute_manifest = dict(linked_manifest)
+            absolute_manifest["libraries"] = dict(linked_manifest["libraries"])
+            absolute_manifest["libraries"]["libcute_dsl_runtime.so"] = sha256_file(
+                sm90 / "libcute_dsl_runtime.so")
+            (sm100 / "manifest.json").write_text(
+                json.dumps(absolute_manifest), encoding="utf-8")
+            _expect(CampaignError, native_library_sha256, server, None, {}, [0])
+            plain_runtime = root / "plain-runtime"
+            plain_runtime.mkdir()
+            plain_bridge = plain_runtime / "libinfinity_torch.so"
+            plain_source = root / "plain-bridge.c"
+            plain_source.write_text(
+                "int bridge(void) { return 0; }\n", encoding="utf-8")
+            subprocess.run(
+                [cc, "-shared", "-fPIC", "-Wl,-soname,libinfinity_torch.so",
+                 "-o", str(plain_bridge), str(plain_source)],
+                check=True, capture_output=True)
+            plain_server = plain_runtime / "plain-server"
+            subprocess.run(
+                [cc, "-o", str(plain_server), str(server_source),
+                 "-L" + str(plain_runtime), "-linfinity_torch",
+                 "-Wl,-rpath," + str(plain_runtime)],
+                check=True, capture_output=True)
+            plain = native_library_sha256(plain_server, None, {})
+            assert plain["loaded/libinfinity_torch.so"] == sha256_file(plain_bridge)
+            assert not any(name.startswith("infinityfa4/") for name in plain)
+    finally:
+        globals()["_nvidia_compute_capabilities"] = original_capabilities
+
+
+def _self_test_native_metadata_env() -> None:
+    sentinels = {name: f"sentinel-{name}" for name in SCRUBBED_LOADER_VARIABLES}
+    original_environment = {name: os.environ.get(name) for name in sentinels}
+    original_run = subprocess.run
+    captured = []
+
+    def capture(command, *args, **kwargs):
+        tool = os.path.basename(str(command[0])) if command else ""
+        if tool in {"readelf", "nvidia-smi"}:
+            captured.append((tool, dict(kwargs.get("env") or {})))
+        if tool == "nvidia-smi":
+            return subprocess.CompletedProcess(
+                command, 0, stdout="0, 10.0\n", stderr="")
+        return original_run(command, *args, **kwargs)
+
+    subprocess.run = capture
+    try:
+        os.environ.update(sentinels)
+        assert _elf_interpreter(Path(sys.executable))
+        _fa4_loader_supported(Path(sys.executable), {})
+        assert _nvidia_compute_capabilities(["0"]) == {"0": 100}
+    finally:
+        subprocess.run = original_run
+        for name, value in original_environment.items():
+            if value is None:
+                os.environ.pop(name, None)
+            else:
+                os.environ[name] = value
+    assert {tool for tool, _ in captured} == {"readelf", "nvidia-smi"}
+    for tool, environment in captured:
+        for name, value in sentinels.items():
+            assert environment.get(name) != value, (tool, name)
+        assert environment.get("PYTHONSAFEPATH") == "1"
+
+
 def self_test() -> int:
     parsed = parse_args(["prepare"])
     assert parsed.infinity_bin is None and parsed.vllm_python is None
@@ -1943,7 +2496,29 @@ def self_test() -> int:
         inf_bin = root / "infinity" / "bin"
         inf_bin.mkdir(parents=True)
         infinity = inf_bin / "infinity"
-        infinity.write_bytes(b"infinity-binary")
+        runpath_dir = root / "runpath"
+        runpath_dir.mkdir()
+        bridge_source = root / "bridge.c"
+        bridge_source.write_text("int bridge(void) { return 1; }\n", encoding="utf-8")
+        runpath_source = root / "runpath-bridge.c"
+        runpath_source.write_text("int bridge(void) { return 2; }\n", encoding="utf-8")
+        subprocess.run(
+            ["cc", "-shared", "-fPIC", "-Wl,-soname,libinfinity_torch.so",
+             "-o", str(inf_bin / "libinfinity_torch.so"), str(bridge_source)],
+            check=True, capture_output=True)
+        subprocess.run(
+            ["cc", "-shared", "-fPIC", "-Wl,-soname,libinfinity_torch.so",
+             "-o", str(runpath_dir / "libinfinity_torch.so"), str(runpath_source)],
+            check=True, capture_output=True)
+        server_source = root / "server.c"
+        server_source.write_text(
+            "extern int bridge(void); int main(void) { return bridge(); }\n",
+            encoding="utf-8")
+        subprocess.run(
+            ["cc", "-o", str(infinity), str(server_source),
+             "-L" + str(inf_bin), "-linfinity_torch",
+             "-Wl,-rpath," + str(runpath_dir)],
+            check=True, capture_output=True)
         bridge_names = ["libinfinity_backend.so", "libinfinity_fa4.so",
                         "libinfinity_cuda.so", "libtorch_bridge.so", "libc10_bridge.so"]
         for name in bridge_names:
@@ -2065,7 +2640,13 @@ def self_test() -> int:
             "native_library_sha256", "runtime_package_tree_sha256",
             "torch_library_tree_sha256", "python_environment_sha256",
             "integrity_helper_sha256", "campaign_inspector_sha256"}
-        assert set(files["native_library_sha256"]) == set(bridge_names)
+        native = files["native_library_sha256"]
+        assert set(bridge_names).issubset(native)
+        assert native["loaded/libinfinity_torch.so"] == sha256_file(
+            inf_bin / "libinfinity_torch.so")
+        assert native["loaded/libinfinity_torch.so"] != sha256_file(
+            runpath_dir / "libinfinity_torch.so")
+        assert not any(name.startswith("infinityfa4/") for name in native)
         bundle = torch_sdk_bundle(torch_lib)
         assert set(bundle["roots"]) == {"torch_lib", "nvidia"}
         assert files["torch_library_tree_sha256"] == bundle["digest_sha256"]
@@ -2873,6 +3454,8 @@ def self_test() -> int:
             time.sleep(0.01)
         assert not _process_running(child)
         globals()["INTEGRITY_HELPER"] = original_integrity_helper
+    _self_test_native_fa4()
+    _self_test_native_metadata_env()
     print("self-test passed")
     return 0
 
