@@ -1433,10 +1433,11 @@ explicitly; standard erf/tanh GELU, ordinary SiLU, packed gate/up activation
 without an explicit rounded recipe, clipping, and casts keep the composed path.
 Qwen3.5 post-attention normalization can also produce the dense MLP's FP8 input
 directly, omitting its unused BF16 copy.</p>
-<p>Eligible cached GDN suffixes use the existing tensor-core prefill kernels by
-default. Batch geometry and provider support are selected automatically; other
-layouts retain recurrent execution. Set <code>INFINITY_TORCH_GDN_SUFFIX_PREFILL=0</code>
-to disable suffix prefill. BF16 normalized Q/K and chunk arithmetic can change
+<p>Cached GDN suffixes use the existing tensor-core prefill provider automatically
+whenever an immutable FP32 prefix state is available. Batch size and per-row
+length do not select a different arithmetic path. Prefix capture, native
+checkpoint resumption, and unsupported provider capabilities retain native
+recurrent execution. BF16 normalized Q/K and chunk arithmetic can change
 probabilities and selected answers, including with FP8 enabled. The GDN provider and native
 backend must be rebuilt together for provider ABI 2; old provider bundles are
 rejected during configuration.</p>
