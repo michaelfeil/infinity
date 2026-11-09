@@ -37,6 +37,7 @@ class Tensor;
 #define qwen3_moe_workspace_bytes infinity_qwen3_moe_workspace_bytes
 
 namespace infinity_moe {
+size_t gemma4_moe_grouped_workspace_bytes(int tokens, int hidden, int intermediate);
 int gemma4_moe_forward_grouped_bf16(const at::Tensor& input,
                                     const at::Tensor& logits,
                                     const at::Tensor& gate_up,

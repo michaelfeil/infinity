@@ -149,11 +149,15 @@ at::Tensor routed_moe_cuda(const at::Tensor& x,
                              : (e == 128 ? hopper_qwen3_moe_workspace_bytes(t, h, i)
                                          : hopper_qwen35_moe_workspace_bytes(t, h, i));
 #endif
-  // SM90 without the Hopper object, and SM100 (B200), use the shared ATen
-  // grouped-GEMM provider instead of the SM80 portable expert GEMM.
+  // Use ATen where its device-only grouped provider is supported. Its generic
+  // fallback reads offsets on the CPU, which is incompatible with capture.
+  // ATen cannot return FP32 for BF16 inputs, so down retains the weighted
+  // FP32 recipe through CUTLASS rather than rounding each route early.
   const bool grouped = scales.defined() && !hopper && (props->major == 9 || props->major == 10);
+  if (grouped)
+    bytes = infinity_moe::gemma4_moe_grouped_workspace_bytes(t, h, i);
 #ifdef INFINITY_TORCH_MOE_SM100
-  if (grouped && infinity_moe::sm100_down_available(props->major, props->minor))
+  if (grouped && bytes && infinity_moe::sm100_down_available(props->major, props->minor))
     bytes += infinity_moe::sm100_down_workspace_bytes();
 #endif
   TORCH_CHECK(bytes, "Unsupported routed MoE workspace dimensions");

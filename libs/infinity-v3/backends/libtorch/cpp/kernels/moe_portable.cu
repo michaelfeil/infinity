@@ -10,7 +10,59 @@
 #include "kernels/moe_symbols.h"
 #include "vendor/candle_kernels/moe/grouped_gemm.cu"
 
+namespace {
+/// The shared ATen provider allocates the gate/up result internally (the pinned
+/// PyTorch exposes no `_grouped_mm` out variant), so the grouped path omits the
+/// portable template's gate_up slice while keeping every other buffer and its
+/// 256-byte alignment identical.
+struct GroupedBuffers {
+  int *counts, *offsets, *cursors;
+  uint32_t *ids, *mapping;
+  float* weights;
+  Element *packed, *activated;
+  float* expert_output;
+  cutlass::gemm::GemmCoord* problems;
+  Element **a, **b, **c;
+  float** c_f32;
+  int64_t *lda, *ldb, *ldc;
+
+  GroupedBuffers(
+      Workspace& w, size_t tokens, size_t hidden, size_t intermediate, size_t experts = 128) {
+    const size_t slots = tokens * 8;
+    counts = w.take<int>(experts);
+    offsets = w.take<int>(experts + 1);
+    cursors = w.take<int>(experts);
+    ids = w.take<uint32_t>(slots);
+    mapping = w.take<uint32_t>(slots);
+    weights = w.take<float>(slots);
+    packed = w.take<Element>(slots * hidden);
+    activated = w.take<Element>(slots * intermediate);
+    expert_output = w.take<float>(slots * hidden);
+    problems = w.take<cutlass::gemm::GemmCoord>(experts);
+    a = w.take<Element*>(experts);
+    b = w.take<Element*>(experts);
+    c = w.take<Element*>(experts);
+    c_f32 = w.take<float*>(experts);
+    lda = w.take<int64_t>(experts);
+    ldb = w.take<int64_t>(experts);
+    ldc = w.take<int64_t>(experts);
+  }
+};
+} // namespace
+
 namespace infinity_moe {
+size_t gemma4_moe_grouped_workspace_bytes(int tokens, int hidden, int intermediate) {
+  if (!gemma4_moe_workspace_bytes(tokens, hidden, intermediate))
+    return 0;
+  Workspace w{nullptr};
+  GroupedBuffers b(w,
+                   static_cast<size_t>(tokens),
+                   static_cast<size_t>(hidden),
+                   static_cast<size_t>(intermediate));
+  (void)b;
+  return (w.offset + 255) & ~size_t(255);
+}
+
 /// Use the shared ATen SM90/SM100 grouped GEMM provider for the gate/up
 /// projection when the Hopper-native path is unavailable. Down uses the SM100
 /// FP32 provider when built, otherwise the portable FP32 grouped GEMM; both
@@ -30,7 +82,7 @@ int gemma4_moe_forward_grouped_bf16(const at::Tensor& input,
   const int hidden = static_cast<int>(input.size(1));
   const int intermediate = static_cast<int>(down.size(2));
   const int experts = static_cast<int>(gate_up.size(0));
-  const size_t required = gemma4_moe_workspace_bytes(tokens, hidden, intermediate);
+  const size_t required = gemma4_moe_grouped_workspace_bytes(tokens, hidden, intermediate);
 #ifdef INFINITY_TORCH_MOE_SM100
   const bool sm100_down = sm100_down_available(props->major, props->minor);
   const size_t sm100_workspace = sm100_down ? sm100_down_workspace_bytes() : 0;
@@ -41,7 +93,7 @@ int gemma4_moe_forward_grouped_bf16(const at::Tensor& input,
   if (!required || scratch_bytes < required + sm100_workspace || !scratch)
     return -1;
   Workspace w{static_cast<char*>(scratch)};
-  Buffers b(w, tokens, hidden, intermediate, experts);
+  GroupedBuffers b(w, tokens, hidden, intermediate, experts);
   const int slots = tokens * 8;
   const cudaStream_t stream = at::cuda::getCurrentCUDAStream(input.get_device()).stream();
   if (cudaMemsetAsync(b.counts, 0, experts * sizeof(int), stream) != cudaSuccess ||
