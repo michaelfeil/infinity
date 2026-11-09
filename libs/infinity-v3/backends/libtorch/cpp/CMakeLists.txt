@@ -337,6 +337,47 @@ if(TARGET torch_cuda)
     install(DIRECTORY "${FLASHINFER_ROOT}/licenses/" DESTINATION share/licenses/infinity_torch/flashinfer/licenses)
 
   endif()
+  set(INFINITY_MOE_REQUESTED_ARCHITECTURES "")
+  foreach(arch IN LISTS INFINITY_REQUESTED_CUDA_ARCHITECTURES)
+    string(REGEX REPLACE "-(real|virtual)$" "" arch_base "${arch}")
+    list(APPEND INFINITY_MOE_REQUESTED_ARCHITECTURES "${arch_base}")
+  endforeach()
+  list(REMOVE_DUPLICATES INFINITY_MOE_REQUESTED_ARCHITECTURES)
+  set(INFINITY_MOE_SM100_REQUESTED OFF)
+  foreach(arch IN LISTS INFINITY_MOE_REQUESTED_ARCHITECTURES)
+    if(arch MATCHES "^10[03][af]?$")
+      set(INFINITY_MOE_SM100_REQUESTED ON)
+    endif()
+  endforeach()
+  if(INFINITY_MOE_SM100_REQUESTED OR
+     CMAKE_CUDA_FLAGS MATCHES "compute_10[03][,a-f]?")
+    # SM100/SM103 datacenter family. The pinned CUTLASS 4.5 config lists
+    # 100f/103f as supported from CUDA 12.9, matching the NVFP4 family policy;
+    # prefer the family target so one image serves both. Older toolkits fall
+    # back to the SM100 architecture target. This object always emits real
+    # family SASS, including for virtual-only architecture requests.
+    if(CMAKE_CUDA_COMPILER_VERSION VERSION_GREATER_EQUAL 12.9)
+      set(INFINITY_MOE_SM100_ARCHITECTURES "100f-real")
+      set(INFINITY_MOE_SM100_FAMILY ON)
+    else()
+      set(INFINITY_MOE_SM100_ARCHITECTURES "100a")
+      set(INFINITY_MOE_SM100_FAMILY OFF)
+    endif()
+    add_library(infinity_moe_sm100 OBJECT kernels/moe_sm100_down.cu)
+    set_target_properties(infinity_moe_sm100 PROPERTIES
+      POSITION_INDEPENDENT_CODE ON CUDA_STANDARD 20
+      CUDA_ARCHITECTURES "${INFINITY_MOE_SM100_ARCHITECTURES}")
+    target_include_directories(infinity_moe_sm100 PRIVATE
+      "${CMAKE_CURRENT_SOURCE_DIR}" "${CUTLASS_ROOT}/include" "${CUTLASS_ROOT}/tools/util/include")
+    target_compile_options(infinity_moe_sm100 PRIVATE --expt-relaxed-constexpr -DNDEBUG)
+    target_sources(infinity_torch PRIVATE $<TARGET_OBJECTS:infinity_moe_sm100>)
+    target_compile_definitions(infinity_moe_sm100 PRIVATE INFINITY_TORCH_MOE_SM100)
+    target_compile_definitions(infinity_torch PRIVATE INFINITY_TORCH_MOE_SM100)
+    if(INFINITY_MOE_SM100_FAMILY)
+      target_compile_definitions(infinity_moe_sm100 PRIVATE INFINITY_TORCH_MOE_SM100_FAMILY)
+      target_compile_definitions(infinity_torch PRIVATE INFINITY_TORCH_MOE_SM100_FAMILY)
+    endif()
+  endif()
 endif()
 
 option(INFINITY_BUILD_NATIVE_TESTS "Build native packed model regression tests" OFF)

@@ -2,6 +2,11 @@
 #include "kernels/moe_kernels.h"
 #include "kernels/fast_kernels.h"
 #include "kernels/qwen35_kernels.h"
+#include <ATen/cuda/CUDAContext.h>
+#include <ATen/cuda/CUDAGraph.h>
+#include <c10/cuda/CUDAException.h>
+#include <c10/cuda/CUDAGuard.h>
+#include <cstring>
 #include <iostream>
 
 int main() {
@@ -49,7 +54,9 @@ int main() {
                   << " cosine=" << cos << "\n";
       }
     {
-      const int experts = 128, tokens = 3, hidden = 2816, intermediate = 704;
+      // Enough routes to exercise uneven multi-row expert groups, not just
+      // empty or single-row groups.
+      const int experts = 128, tokens = 17, hidden = 2816, intermediate = 704;
       auto x = at::randn({tokens, hidden}, opts) * .25;
       auto gu = at::randn({experts, 2 * intermediate, hidden}, opts) * .02;
       auto down = at::randn({experts, hidden, intermediate}, opts) * .02;
@@ -86,6 +93,67 @@ int main() {
                   " / ",
                   cos);
       std::cout << "Gemma learned expert scales max_abs=" << delta << " cosine=" << cos << "\n";
+
+      // Direct capture coverage for the routed call itself. Warm the selected
+      // provider, capture on a pooled nondefault stream, then mutate the same
+      // input/logit storage and replay. Production model graph policy is not
+      // changed: bridge-native MoE graphs remain limited to validated Hopper.
+      {
+        c10::cuda::CUDAGuard device_guard(x.device());
+        C10_CUDA_CHECK(cudaDeviceSynchronize());
+        auto stream = at::cuda::getStreamFromPool(false, x.device().index());
+        c10::cuda::CUDAStreamGuard stream_guard(stream);
+        const auto bits_equal = [](const at::Tensor& a, const at::Tensor& b) {
+          auto ac = a.cpu().contiguous(), bc = b.cpu().contiguous();
+          return ac.sizes() == bc.sizes() && ac.scalar_type() == bc.scalar_type() &&
+                 std::memcmp(ac.data_ptr(), bc.data_ptr(), ac.numel() * ac.element_size()) == 0;
+        };
+        for (int run = 0; run < 3; ++run) {
+          auto warm = infinity::routed_moe_cuda(x, logits, gu, down, true, scales);
+          TORCH_CHECK(warm.defined(),
+                      "Native Gemma weighted epilogue unavailable for graph warmup");
+        }
+        stream.synchronize();
+        auto eager = infinity::routed_moe_cuda(x, logits, gu, down, true, scales);
+        TORCH_CHECK(eager.defined(), "Native Gemma weighted epilogue unavailable for graph eager");
+        auto eager_bits = eager.clone();
+        auto old_ids = at::argsort(at::softmax(logits, -1), true, -1, true).narrow(-1, 0, 8);
+        auto changed_x = at::randn_like(x) * .25;
+        auto changed_logits = at::roll(logits, {1}, {1});
+        auto new_ids =
+            at::argsort(at::softmax(changed_logits, -1), true, -1, true).narrow(-1, 0, 8);
+        TORCH_CHECK(!at::equal(old_ids, new_ids), "Graph fixture did not change top-8 routing");
+        const auto x_ptr = x.data_ptr();
+        const auto logits_ptr = logits.data_ptr();
+        stream.synchronize();
+
+        at::cuda::CUDAGraph graph;
+        graph.capture_begin();
+        auto captured = infinity::routed_moe_cuda(x, logits, gu, down, true, scales);
+        graph.capture_end();
+        graph.replay();
+        stream.synchronize();
+        TORCH_CHECK(bits_equal(captured, eager_bits),
+                    "Gemma graph replay changed eager routed bits");
+
+        auto first = captured.clone();
+        x.copy_(changed_x);
+        logits.copy_(changed_logits);
+        TORCH_CHECK(x.data_ptr() == x_ptr && logits.data_ptr() == logits_ptr,
+                    "Graph replay fixture moved input/logit storage");
+        auto eager_changed = infinity::routed_moe_cuda(x, logits, gu, down, true, scales);
+        TORCH_CHECK(eager_changed.defined(),
+                    "Native Gemma weighted epilogue unavailable after graph input change");
+        auto eager_changed_bits = eager_changed.clone();
+        stream.synchronize();
+        graph.replay();
+        stream.synchronize();
+        TORCH_CHECK(bits_equal(captured, eager_changed_bits),
+                    "Gemma graph replay reused stale input/logits");
+        TORCH_CHECK(!bits_equal(first, captured),
+                    "Gemma graph replay did not change output for different routing");
+        std::cout << "Gemma graph replay bitwise parity passed\n";
+      }
     }
     TORCH_CHECK(!infinity::routed_moe_cuda(at::zeros({2, 16}), {}, {}, {}, true).defined(),
                 "CPU must retain reference path");

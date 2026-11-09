@@ -149,6 +149,13 @@ at::Tensor routed_moe_cuda(const at::Tensor& x,
                              : (e == 128 ? hopper_qwen3_moe_workspace_bytes(t, h, i)
                                          : hopper_qwen35_moe_workspace_bytes(t, h, i));
 #endif
+  // SM90 without the Hopper object, and SM100 (B200), use the shared ATen
+  // grouped-GEMM provider instead of the SM80 portable expert GEMM.
+  const bool grouped = scales.defined() && !hopper && (props->major == 9 || props->major == 10);
+#ifdef INFINITY_TORCH_MOE_SM100
+  if (grouped && infinity_moe::sm100_down_available(props->major, props->minor))
+    bytes += infinity_moe::sm100_down_workspace_bytes();
+#endif
   TORCH_CHECK(bytes, "Unsupported routed MoE workspace dimensions");
   auto scratch = at::empty({static_cast<int64_t>(bytes)}, x.options().dtype(at::kByte));
   auto out = at::empty_like(x);
@@ -186,7 +193,10 @@ at::Tensor routed_moe_cuda(const at::Tensor& x,
     }
   } else
 #endif
-  {
+      if (grouped) {
+    status = infinity_moe::gemma4_moe_forward_grouped_bf16(
+        x, logits, gu, down, scales, out, scratch.data_ptr(), bytes);
+  } else {
     if (scales.defined())
       status = gemma4_moe_forward_bf16(logits.data_ptr<float>(),
                                        scales.data_ptr<float>(),
