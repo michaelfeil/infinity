@@ -1711,8 +1711,7 @@ at::Tensor qwen35_delta_cuda(const at::Tensor& qkv,
                              bool chunk_prefill,
                              int64_t cache_layer,
                              bool allow_prefill,
-                             const std::pair<at::Tensor, at::Tensor>* quantized_output,
-                             bool suffix_prefill) {
+                             const std::pair<at::Tensor, at::Tensor>* quantized_output) {
   c10::cuda::CUDAGuard guard(qkv.device());
   TORCH_CHECK(qkv.scalar_type() == at::kBFloat16 && z.scalar_type() == at::kBFloat16 &&
                   ab.scalar_type() == at::kBFloat16 && conv.scalar_type() == at::kBFloat16 &&
@@ -1825,8 +1824,7 @@ at::Tensor qwen35_delta_cuda(const at::Tensor& qkv,
                     value_heads,
                     final_state),
                 "Selected GDN provider is unavailable");
-  } else if (suffix_prefill && initial.defined() && !input.prefix && input.batch > 0 &&
-             tokens >= 256 && tokens / input.batch >= 64 &&
+  } else if (initial.defined() && !input.prefix && input.batch > 0 && tokens > 0 &&
              flashinfer_gdn_resume(convolution,
                                    qk,
                                    decay,
