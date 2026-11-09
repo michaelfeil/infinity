@@ -282,6 +282,10 @@ def load_campaign(root):
     commit = d.get("source_commit")
     require(isinstance(commit, str) and re.fullmatch(r"[0-9a-fA-F]{40}", commit),
         "campaign.source_commit must be a full 40-hex commit")
+    harness_commit = d.get("harness_source_commit")
+    require(harness_commit is None or isinstance(harness_commit, str) and
+            re.fullmatch(r"[0-9a-fA-F]{40}", harness_commit),
+            "campaign.harness_source_commit must be a full 40-hex commit")
     require(h64(d.get("binary_sha256")), "campaign.binary_sha256 invalid")
     require(h64(d.get("manifest_sha256")), "campaign.manifest_sha256 pin invalid")
     mpath = Path(root) / "manifest.json"
@@ -344,6 +348,13 @@ def load_campaign(root):
     require(isinstance(python_identities, dict) and set(python_identities) == RTS
             and all(h64(value) for value in python_identities.values()),
             "campaign.method.runtime_python_identity_sha256 invalid")
+    client_context = meth.get("client_context")
+    if client_context is not None:
+        require(isinstance(client_context, dict) and set(client_context) ==
+                {"python_identity_sha256", "python_environment_sha256"} and
+                client_context.get("python_identity_sha256") == python_identities["infinity"] and
+                client_context.get("python_environment_sha256") == files["infinity"]["python_environment_sha256"],
+                "campaign.method.client_context invalid")
     build = d.get("build") or {}
     if build.get("binary_sha256") is not None:
         require(build["binary_sha256"] == files["infinity"]["binary_sha256"],
@@ -403,6 +414,7 @@ def load_campaign(root):
                 "max_sequence_length": meth["max_sequence_length"], "dtype": DTYPE,
                 "request_batch_size": 1, "prefix_cache": meth.get("prefix_cache"),
                 "runtime_python_identity_sha256": python_identities,
+                "client_context": client_context,
                 "lanes": clean(lanes)},
             "files": files, "build": build, "runtime_installations": inst,
             "lanes": lanes, "lane_keys": lane_keys}
@@ -563,6 +575,8 @@ def validate_fingerprint(camp, model, raw, cp, revision, status):
     require(cjson(x["model"]) == cjson(portable(model["raw"])),
         f"{model['id']}: fingerprint model mismatch")
     require(x["runtime"] == raw["runtime"], f"{model['id']}: fingerprint runtime mismatch")
+    require(x.get("client_context") == camp["method"].get("client_context"),
+            f"{model['id']}: fingerprint client context does not match campaign")
     c = x["checkpoint"]
     require(isinstance(c, dict) and set(c) >= {"id", "revision", "metadata_sha256", "code_dependencies",
                                             "dependencies", "weights_sha256"},
@@ -1209,6 +1223,7 @@ def public_campaign(camp):
                    if e.get(k) is not None}
     return {"id": clean(camp["id"]), "date_local": clean(camp["date_local"]),
             "timezone": clean(camp["timezone"]), "source_commit": camp["commit"],
+            "harness_source_commit": clean(camp["doc"].get("harness_source_commit")),
             "source_clean": True, "binary_sha256": camp["binary"],
             "runtime_versions": clean(camp["versions"]),
             "hardware": clean(camp["hardware"]), "method": clean(camp["method"]),
@@ -1544,6 +1559,10 @@ def markdown(camp, models, runs, rep):
     ci = {(x["model"], x["runtime"], x["length"]): x for x in rep["comparisons"]}
     hw = camp["hardware"]; b = camp["build"]
     vi = camp["runtime_installations"]["vllm"]; si = camp["runtime_installations"]["sglang"]
+    harness = camp["doc"].get("harness_source_commit")
+    harness_note = (f"- Measured benchmark tooling: [`{harness}`]"
+                    f"(https://github.com/michaelfeil/infinity/tree/{harness}/libs/infinity-v3/scripts)."
+                    if harness else "- Benchmark tool sources are identified by the recorded file hashes.")
     lines = [f"# Infinity embedding benchmark export — {rep['status'].upper()}", "",
              "No aggregate winner or ranking. Failed/diagnostic/missing cells are not ranked.", "",
              ("Data: [results.json](results.json) · [results.csv](results.csv) · "
@@ -1551,6 +1570,7 @@ def markdown(camp, models, runs, rep):
              "## Provenance", "",
              (f"- Campaign `{clean(camp['id'] or '')}`; source `{camp['commit']}` clean; "
               f"manifest SHA256 `{shafile(Path(camp['root']) / 'manifest.json')}`."),
+             harness_note,
              (f"- Recorded campaign date `{clean(camp['date_local'])}` local timezone "
               f"`{clean(camp['timezone'])}` (recorded campaign date, not generation clock)."),
              (f"- Infinity `{camp['versions']['infinity']}` build `{clean(b.get('version'))}`, "
@@ -2264,6 +2284,33 @@ def selftest():
             assert "timing=variable" in markdown_text
             assert "| `acme/dense-a` | vllm | 128 |" in markdown_text
             assert "cause is not established" in markdown_text
+
+    @add
+    def newer_client_context_is_bound_without_relabeling_historical_records():
+        t, root, out = prep()
+        with t:
+            path = root / "campaign.json"; campaign = json.loads(path.read_text())
+            context = {"python_identity_sha256": campaign["method"]["runtime_python_identity_sha256"]["infinity"],
+                       "python_environment_sha256": campaign["fingerprint_files"]["infinity"]["python_environment_sha256"]}
+            campaign["method"]["client_context"] = context
+            path.write_text(json.dumps(campaign))
+            for record_path in (root / "runs").glob("*.json"):
+                record = json.loads(record_path.read_text())
+                record["fingerprint_inputs"]["client_context"] = dict(context)
+                record["run_fingerprint"] = fp(record["fingerprint_inputs"])
+                record_path.write_text(json.dumps(record))
+            export(root, out)
+            record_path = root / "runs" / "acme--dense-a--vllm.json"
+            record = json.loads(record_path.read_text())
+            record["fingerprint_inputs"]["client_context"]["python_environment_sha256"] = "f" * 64
+            record["run_fingerprint"] = fp(record["fingerprint_inputs"])
+            record_path.write_text(json.dumps(record))
+            try:
+                export(root, out)
+            except ReportError as error:
+                assert "fingerprint client context" in str(error)
+            else:
+                raise AssertionError("new client environment mismatch accepted")
 
     @add
     def provisional_and_default_reject():

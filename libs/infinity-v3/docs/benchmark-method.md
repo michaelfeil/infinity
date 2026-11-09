@@ -148,6 +148,11 @@ document the pinned `build_all.py` recipe; the provider source recipe is in
 [`fa4_source.py`](../backends/libtorch/cpp/vendor/infinity_fa4/fa4_source.py).
 The benchmark scripts are supplied with this contribution; they are not present
 in the earlier benchmarked source commit.
+The dataset identifies its measured tool revision in
+`campaign.harness_source_commit` and records each helper's content hash.
+Use those exact tool bytes to reproduce the published fingerprints. Newer tool
+versions can produce new fingerprints even when the serving configuration is
+unchanged.
 
 Set `BENCH_OUTPUT` to an absolute output directory, `SOURCE_CHECKOUT` to the
 build's repository root, `CLIENT_PYTHON` to the Python interpreter from the

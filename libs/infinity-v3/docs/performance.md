@@ -21,12 +21,12 @@ between timing windows are excluded from these examples.
 <!-- benchmark-examples -->
 | Checkpoint (512 tokens, concurrency 32) | Infinity | vLLM | SGLang |
 |---|---:|---:|---:|
-| `tencent/KaLM-Embedding-Gemma3-12B-2511` | 43,965 | 54,739 | 43,418 |
-| `Qwen/Qwen3-Embedding-8B` | 86,223 | 87,108 | 88,611 |
-| `intfloat/e5-mistral-7b-instruct` | 86,429 | 88,775 | 89,982 |
-| `Qwen/Qwen3-Embedding-4B` | 148,325 | 144,927 | 150,472 |
-| `Snowflake/snowflake-arctic-embed-l-v2.0` | 1,176,442 | 800,265 | 446,064 |
-| `BAAI/bge-large-en-v1.5` | 1,155,862 | 724,468 | 360,990 |
+| `tencent/KaLM-Embedding-Gemma3-12B-2511` | 43,724 | 54,696 | 43,593 |
+| `Qwen/Qwen3-Embedding-8B` | 87,471 | 87,242 | 89,207 |
+| `intfloat/e5-mistral-7b-instruct` | 85,861 | 88,344 | 90,577 |
+| `Qwen/Qwen3-Embedding-4B` | 148,074 | 146,035 | 152,961 |
+| `Snowflake/snowflake-arctic-embed-l-v2.0` | 1,181,529 | 803,650 | 446,889 |
+| `BAAI/bge-large-en-v1.5` | 1,156,030 | 722,625 | 360,950 |
 <!-- /benchmark-examples -->
 
 Harrier 27B and both SFR 7B checkpoints completed measurements in all three

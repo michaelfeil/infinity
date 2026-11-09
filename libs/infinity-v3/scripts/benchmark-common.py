@@ -1235,6 +1235,18 @@ def python_environment_sha256(args, runtime: str, cache=None) -> str:
     return python_environment_probe(args, runtime, cache)["digest_sha256"]
 
 
+CLIENT_CONTEXT_FIELDS = ("python_identity_sha256", "python_environment_sha256")
+
+
+def client_context(args, cache=None) -> dict:
+    return {
+        "python_identity_sha256": runtime_python_identity_sha256(
+            args, "infinity", cache),
+        "python_environment_sha256": python_environment_sha256(
+            args, "infinity", cache),
+    }
+
+
 def _source_file_sha256(path, cache: dict, role: str) -> str:
     key = ("source_file_sha256", role, _probe_path(path))
     if key not in cache:
@@ -1503,6 +1515,23 @@ def _verify_runtime_anchor(args, campaign, runtime: str, files: dict, cache) -> 
             f"current {runtime!r} runtime Python identity differs from campaign")
 
 
+def _verify_client_context_anchor(args, campaign, cache) -> None:
+    method = campaign.get("method") if isinstance(campaign, dict) else None
+    anchor = method.get("client_context") if isinstance(method, dict) else None
+    if not isinstance(anchor, dict) or set(anchor) != set(CLIENT_CONTEXT_FIELDS):
+        raise CampaignError(
+            "campaign.method.client_context must contain exactly "
+            "python_identity_sha256 and python_environment_sha256")
+    if any(not isinstance(anchor[field], str)
+           or not re.fullmatch(r"[0-9a-f]{64}", anchor[field])
+           for field in CLIENT_CONTEXT_FIELDS):
+        raise CampaignError(
+            "campaign.method.client_context values must be 64-hex digests")
+    if client_context(args, cache) != anchor:
+        raise CampaignError(
+            "current client context differs from campaign.method.client_context")
+
+
 def _checkpoint_identity(receipt: dict, metadata: str, weights=None,
                          dependencies=None, code_dependencies=None) -> dict:
     if weights is None:
@@ -1520,7 +1549,8 @@ def _checkpoint_identity(receipt: dict, metadata: str, weights=None,
 
 
 def fingerprint_inputs(model: dict, checkpoint: dict, runtime: str, gpu: int,
-                       cpus: str, client_cpus: str, settings: dict, files: dict) -> dict:
+                       cpus: str, client_cpus: str, settings: dict, files: dict,
+                       client_context: dict) -> dict:
     return {
         "model": portable(model),
         "checkpoint": checkpoint,
@@ -1528,6 +1558,8 @@ def fingerprint_inputs(model: dict, checkpoint: dict, runtime: str, gpu: int,
         "lane": {"gpu": gpu, "cpus": cpus, "client_cpus": client_cpus},
         "settings": settings,
         "files": files,
+        "client_context": {field: client_context[field]
+                           for field in CLIENT_CONTEXT_FIELDS},
     }
 
 
@@ -1659,8 +1691,10 @@ def run_one(args, model: dict, runtime: str, gpu: int, cpus: str, client_cpus: s
         settings = _settings(args, model, runtime, None, tree_cache)
     files = runtime_files(args, runtime, campaign, tree_cache)
     _verify_runtime_anchor(args, campaign, runtime, files, tree_cache)
+    _verify_client_context_anchor(args, campaign, tree_cache)
+    context = client_context(args, tree_cache)
     inputs = fingerprint_inputs(model, checkpoint_identity_value, runtime,
-                                gpu, cpus, client_cpus, settings, files)
+                                gpu, cpus, client_cpus, settings, files, context)
     current = fingerprint(inputs)
     item = {"model": model["id"], "task": model["task"], "runtime": runtime,
             "status": "load_failed", "gpu": gpu, "cpus": cpus,
@@ -1774,6 +1808,7 @@ def _preflight_checkpoints(args, models: list[dict], cache: dict) -> None:
 
 
 def _preflight_runtimes(args, campaign, runtimes, cache: dict) -> None:
+    _verify_client_context_anchor(args, campaign, cache)
     method = campaign.get("method") if isinstance(campaign, dict) else None
     identities = method.get("runtime_python_identity_sha256") \
         if isinstance(method, dict) else None
@@ -2079,14 +2114,71 @@ def self_test() -> int:
                 "infinity": inf_record["python_identity_sha256"]}}}
         _expect(CampaignError, _verify_runtime_anchor, env_args, inspector_anchor,
                 "infinity", inspector_b_files, {})
+        client_context_value = client_context(env_args, {})
         fingerprint_values = [fingerprint(fingerprint_inputs(
             model, _checkpoint_identity(
                 {"id": model["id"], "revision": model["revision"]}, "f" * 64),
-            "infinity", 0, "0-7", "32-39", {"seconds": 10, "repeats": 3}, files))]
+            "infinity", 0, "0-7", "32-39", {"seconds": 10, "repeats": 3}, files,
+            client_context_value))]
         assert str(root) not in json.dumps(fingerprint_inputs(
             model, _checkpoint_identity(
                 {"id": model["id"], "revision": model["revision"]}, "f" * 64),
-            "infinity", 0, "0-7", "32-39", {"seconds": 10, "repeats": 3}, files))
+            "infinity", 0, "0-7", "32-39", {"seconds": 10, "repeats": 3}, files,
+            client_context_value))
+        assert client_context_value == client_context(env_args, {})
+        assert str(root) not in json.dumps(client_context_value)
+        assert client_context_value["python_identity_sha256"] \
+            == inf_record["python_identity_sha256"]
+        assert client_context_value["python_environment_sha256"] \
+            == files["python_environment_sha256"]
+        switched_client_args = argparse.Namespace(
+            **{**vars(env_args), "client_python": str(switched_wrapper)})
+        changed_identity_context = client_context(switched_client_args, {})
+        assert changed_identity_context["python_identity_sha256"] \
+            != client_context_value["python_identity_sha256"]
+        assert changed_identity_context["python_environment_sha256"] \
+            == client_context_value["python_environment_sha256"]
+        original_context_marker = integrity_marker.read_bytes()
+        integrity_marker.write_bytes(b"python-environment-v2")
+        try:
+            changed_environment_context = client_context(env_args, {})
+        finally:
+            integrity_marker.write_bytes(original_context_marker)
+        assert changed_environment_context["python_identity_sha256"] \
+            == client_context_value["python_identity_sha256"]
+        assert changed_environment_context["python_environment_sha256"] \
+            != client_context_value["python_environment_sha256"]
+        context_checkpoint = _checkpoint_identity(
+            {"id": model["id"], "revision": model["revision"]}, "f" * 64)
+        context_settings = {"seconds": 10, "repeats": 3}
+        for runtime in ("vllm", "sglang"):
+            baseline_context_fingerprint = fingerprint(fingerprint_inputs(
+                model, context_checkpoint, runtime, 0, "0-7", "32-39",
+                context_settings, files, client_context_value))
+            identity_context_fingerprint = fingerprint(fingerprint_inputs(
+                model, context_checkpoint, runtime, 0, "0-7", "32-39",
+                context_settings, files, changed_identity_context))
+            environment_context_fingerprint = fingerprint(fingerprint_inputs(
+                model, context_checkpoint, runtime, 0, "0-7", "32-39",
+                context_settings, files, changed_environment_context))
+            assert identity_context_fingerprint != baseline_context_fingerprint
+            assert environment_context_fingerprint != baseline_context_fingerprint
+            assert fingerprint(fingerprint_inputs(
+                model, context_checkpoint, runtime, 0, "0-7", "32-39",
+                context_settings, files, client_context(env_args, {}))) \
+                == baseline_context_fingerprint
+            context_resume = root / f"client-context-resume-{runtime}.json"
+            for changed_context in (changed_identity_context,
+                                    changed_environment_context):
+                save_json(context_resume, {
+                    "run_fingerprint": baseline_context_fingerprint,
+                    "status": "measured", "measurement": {"ok": True}})
+                assert resume_decision(
+                    context_resume,
+                    fingerprint(fingerprint_inputs(
+                        model, context_checkpoint, runtime, 0, "0-7", "32-39",
+                        context_settings, files, changed_context)),
+                    False) == "archive"
         moved_site = root / "sdk-relocated"
         shutil.copytree(sdk_site, moved_site, symlinks=True)
         moved_args = argparse.Namespace(
@@ -2115,7 +2207,8 @@ def self_test() -> int:
         changed_fingerprint = fingerprint(fingerprint_inputs(
             model, _checkpoint_identity(
                 {"id": model["id"], "revision": model["revision"]}, "f" * 64),
-            "infinity", 0, "0-7", "32-39", {"seconds": 10, "repeats": 3}, changed))
+            "infinity", 0, "0-7", "32-39", {"seconds": 10, "repeats": 3}, changed,
+            client_context_value))
         assert changed_fingerprint != fingerprint_values[0]
         resume_raw = root / "torch-resume.json"
         save_json(resume_raw, {"run_fingerprint": fingerprint_values[0],
@@ -2229,7 +2322,7 @@ def self_test() -> int:
             before, [], [])
         before_fingerprint = fingerprint(fingerprint_inputs(
             model, before_identity, "infinity", 0, "0-7", "32-39",
-            {"seconds": 10, "repeats": 3}, files))
+            {"seconds": 10, "repeats": 3}, files, client_context_value))
         original_shard = (mutable / shard_a.name).read_bytes()
         (mutable / shard_a.name).write_bytes(
             b"X" + original_shard[1:])
@@ -2240,7 +2333,7 @@ def self_test() -> int:
             model, _checkpoint_identity(
                 {"id": model["id"], "revision": model["revision"]}, "f" * 64,
                 after, [], []), "infinity", 0, "0-7", "32-39",
-            {"seconds": 10, "repeats": 3}, files))
+            {"seconds": 10, "repeats": 3}, files, client_context_value))
         assert after_fingerprint != before_fingerprint
         save_json(root / "weights-resume.json", {
             "run_fingerprint": before_fingerprint, "status": "measured",
@@ -2418,12 +2511,14 @@ def self_test() -> int:
 
         inf_files = runtime_files(env_args, "infinity", None, {})
         vllm_files = runtime_files(package_args, "vllm", package_campaign, {})
+        run_client_context = client_context(env_args, {})
         run_campaign = {
             "fingerprint_files": {"infinity": inf_files, "vllm": vllm_files},
             "method": {"runtime_python_identity_sha256": {
                 "infinity": runtime_python_identity_sha256(env_args, "infinity", {}),
                 "vllm": runtime_python_identity_sha256(package_args, "vllm", {}),
-                "sglang": runtime_python_identity_sha256(env_args, "sglang", {})}},
+                "sglang": runtime_python_identity_sha256(env_args, "sglang", {})},
+                "client_context": run_client_context},
             "build": {"torch_library_tree_sha256":
                       inf_files["torch_library_tree_sha256"],
                       "torch_library_roots": torch_sdk_bundle(torch_lib)["roots"]},
@@ -2492,6 +2587,39 @@ def self_test() -> int:
         assert all(Path(str(command[0])).name != "taskset"
                    for command in launch_commands if command)
 
+        stale_anchor = {
+            **run_campaign,
+            "method": {**run_campaign["method"], "client_context": {
+                **run_client_context, "python_identity_sha256": "0" * 64}}}
+        missing_anchor = {
+            **run_campaign,
+            "method": {key: value for key, value in run_campaign["method"].items()
+                       if key != "client_context"}}
+        malformed_anchor = {
+            **run_campaign,
+            "method": {**run_campaign["method"], "client_context": {
+                "python_identity_sha256":
+                    run_client_context["python_identity_sha256"]}}}
+        vllm_only_args = argparse.Namespace(
+            **{**vars(run_args), "runtimes": ["vllm"]})
+        run_calls.clear()
+        launch_commands.clear()
+        globals()["run_one"] = fake_run_one
+        globals()["resume_decision"] = fake_resume
+        subprocess.Popen = recording_popen
+        try:
+            for bad_campaign in (stale_anchor, missing_anchor, malformed_anchor):
+                _expect(CampaignError, run, vllm_only_args, [model], bad_campaign)
+                _expect(CampaignError, _preflight_runtimes, vllm_only_args,
+                        bad_campaign, ["vllm"], {})
+        finally:
+            subprocess.Popen = original_popen
+            globals()["run_one"] = original_run_one
+            globals()["resume_decision"] = original_resume
+        assert run_calls == []
+        assert all(Path(str(command[0])).name != "taskset"
+                   for command in launch_commands if command)
+
         run_one_output = root / "run-one-output"
         run_one_receipt = run_one_output / "checkpoints" / "org--model.json"
         bad_checkpoint = root / "bad-checkpoint"
@@ -2518,8 +2646,24 @@ def self_test() -> int:
                "vllm_port_base": 18300, "sglang_port_base": 18400,
                "prometheus_port_offset": 1000, "startup_timeout": 1.0,
                "client_timeout": 1.0})
-        failed_resume_calls = []
         original_resume_decision = globals()["resume_decision"]
+        anchor_resume_calls = []
+        def anchor_resume(*arguments, **keywords):
+            anchor_resume_calls.append("resume")
+            return "skip"
+        launch_commands.clear()
+        globals()["resume_decision"] = anchor_resume
+        subprocess.Popen = recording_popen
+        try:
+            _expect(CampaignError, run_one, run_one_args, model, "infinity", 0,
+                    "0-7", "32-39", stale_anchor, {})
+        finally:
+            subprocess.Popen = original_popen
+            globals()["resume_decision"] = original_resume_decision
+        assert anchor_resume_calls == []
+        assert all(Path(str(command[0])).name != "taskset"
+                   for command in launch_commands if command)
+        failed_resume_calls = []
         def failing_resume(*arguments, **keywords):
             failed_resume_calls.append("resume")
             return "skip"

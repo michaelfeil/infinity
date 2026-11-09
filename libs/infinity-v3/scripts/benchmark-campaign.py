@@ -678,6 +678,7 @@ def create_campaign(args, common):
     python_environments = {
         runtime: common.python_environment_probe(fingerprint_args, runtime, cache)
         for runtime in common.RUNTIMES}
+    client_context = common.client_context(fingerprint_args, cache)
     build = {"version": infinity["version"], "binary_sha256": infinity["binary_sha256"],
              "native_library_sha256": infinity["native_library_sha256"],
              "torch_library_tree_sha256": infinity["torch_library_tree_sha256"],
@@ -713,6 +714,7 @@ def create_campaign(args, common):
                                "infinity": client_identity["sha256"],
                                "vllm": vllm_identity["sha256"],
                                "sglang": sglang_identity["sha256"]},
+                           "client_context": client_context,
                            "lanes": lanes},
                 "manifest_sha256": sha256_file(manifest), "fingerprint_files": {},
                 "interference_note": extra.get("interference_note", "No interference note supplied.")}
@@ -1017,6 +1019,11 @@ def self_test():
         assert set(identities) == set(common.RUNTIMES)
         assert all(re.fullmatch(r"[0-9a-f]{64}", value)
                    for value in identities.values())
+        client_context = campaign["method"]["client_context"]
+        assert set(client_context) == set(common.CLIENT_CONTEXT_FIELDS)
+        assert client_context["python_identity_sha256"] == identities["infinity"]
+        assert client_context["python_environment_sha256"] \
+            == files["infinity"]["python_environment_sha256"]
         fingerprint_args = argparse.Namespace(
             infinity_bin=str(infinity), vllm_python=str(vllm_wrapper),
             sglang_python=str(sglang_wrapper), client_python=str(sys.executable),
