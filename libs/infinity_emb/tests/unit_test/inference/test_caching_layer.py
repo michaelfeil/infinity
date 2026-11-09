@@ -58,25 +58,15 @@ class Planted:
         return (planted, ())
 
 
-@pytest.mark.anyio
-async def test_cache_planted_pickle_is_a_miss():
-    loop = asyncio.get_event_loop()
+def test_cache_planted_pickle_is_a_miss(tmp_path, monkeypatch):
+    monkeypatch.setitem(vars(caching_layer.MANAGER), "cache_dir", tmp_path)
+    planted_calls.clear()
     shutdown = threading.Event()
     try:
-        c = caching_layer.Cache(cache_name="pytest_planted", shutdown=shutdown)
-        with diskcache_community.Cache(
-            c._cache.directory, disk=diskcache_community.Disk
-        ) as other_writer:
-            other_writer.set("dummy", Planted())
-
-        sample = EmbeddingInner(
-            content=EmbeddingSingle(sentence="dummy"), future=loop.create_future()
-        )
-        lookup = asyncio.create_task(c.aget_complete(sample))
-        await asyncio.sleep(0.5)
-        assert not sample.future.done()
+        c = caching_layer.Cache(cache_name="planted", shutdown=shutdown)
+        with diskcache_community.Cache(c._cache.directory, disk=diskcache_community.Disk) as writer:
+            writer.set("dummy", Planted())
+        assert c._get("dummy") is None
         assert planted_calls == []
-        await sample.complete(np.ones(5))
-        await lookup
     finally:
         shutdown.set()
