@@ -33,19 +33,30 @@ __device__ __forceinline__ __nv_bfloat16 conv_silu(float sum) {
   return __float2bfloat16_rn(rounded / (1.f + expf(-rounded)));
 }
 
+template <bool Cached = false>
 __device__ __forceinline__ ConvValues conv_vector(const __nv_bfloat16* x,
                                                   const __nv_bfloat16* weight,
                                                   int column,
                                                   int token,
                                                   int kernel,
                                                   uint32_t begin,
-                                                  int64_t row_stride) {
+                                                  int64_t row_stride,
+                                                  int history_end = 0,
+                                                  int previous = 0,
+                                                  const __nv_bfloat16* history = nullptr,
+                                                  int64_t history_stride = 0) {
   float sums[4] = {};
   for (int j = 0; j < kernel; ++j) {
     const int source = token + j - kernel + 1;
-    if (source >= int(begin)) {
-      const auto values =
-          *reinterpret_cast<const ConvValues*>(x + int64_t(source) * row_stride + column);
+    const __nv_bfloat16* row = nullptr;
+    if (source >= int(begin))
+      row = x + int64_t(source) * row_stride;
+    else if constexpr (Cached) {
+      if (source >= int(begin) - previous)
+        row = history + int64_t(history_end + source - int(begin)) * history_stride;
+    }
+    if (row) {
+      const auto values = *reinterpret_cast<const ConvValues*>(row + column);
 #pragma unroll
       for (int i = 0; i < 4; ++i)
         conv_accumulate(sums[i], values.values[i], weight[(column + i) * kernel + j]);
@@ -87,28 +98,18 @@ __global__ void packed_conv_vector(const __nv_bfloat16* x,
     history_end = history_cu[sources[lo] + 1];
     previous = history_end - history_cu[sources[lo]];
   }
-  float sums[4] = {};
-  for (int j = 0; j < kernel; ++j) {
-    const int source = token + j - kernel + 1;
-    const __nv_bfloat16* row = nullptr;
-    if (source >= int(cumulative[lo]))
-      row = x + int64_t(source) * row_stride;
-    else if constexpr (Cached) {
-      if (source >= int(cumulative[lo]) - previous)
-        row = history + int64_t(history_end + source - int(cumulative[lo])) * channels;
-    }
-    if (row) {
-      const auto values = *reinterpret_cast<const ConvValues*>(row + column);
-#pragma unroll
-      for (int i = 0; i < 4; ++i)
-        conv_accumulate(sums[i], values.values[i], weight[(column + i) * kernel + j]);
-    }
-  }
-  ConvValues result;
-#pragma unroll
-  for (int i = 0; i < 4; ++i)
-    result.values[i] = conv_silu(sums[i]);
-  *reinterpret_cast<ConvValues*>(output + int64_t(token) * channels + column) = result;
+  *reinterpret_cast<ConvValues*>(output + int64_t(token) * channels + column) =
+      conv_vector<Cached>(x,
+                          weight,
+                          column,
+                          token,
+                          kernel,
+                          cumulative[lo],
+                          row_stride,
+                          history_end,
+                          previous,
+                          history,
+                          channels);
 }
 }
 
@@ -1356,7 +1357,9 @@ __global__ void pack_gdn_inputs(const T* values,
 // Reduction mapping: lane L owns dimensions 4L..4L+3. Width-8 shuffles at
 // offsets 4,2,1 are the original 32-lane offsets 16,8,4; combining components
 // (0+2)+(1+3) is the original offset 2 then 1. Lanes 0/8/16/24 hold the four
-// original warp partials and are added left to right.
+// original warp partials and are added left to right. Cached suffixes read the
+// same immutable history rows as packed_conv_vector<true>.
+template <bool Cached = false>
 __global__ void prepare_pack_gdn_inputs(const __nv_bfloat16* qkv,
                                         const __nv_bfloat16* conv,
                                         const uint32_t* cumulative,
@@ -1374,7 +1377,10 @@ __global__ void prepare_pack_gdn_inputs(const __nv_bfloat16* qkv,
                                         int sequences,
                                         int tokens,
                                         int64_t qkv_stride,
-                                        int64_t ab_stride) {
+                                        int64_t ab_stride,
+                                        const int64_t* sources = nullptr,
+                                        const __nv_bfloat16* history = nullptr,
+                                        const int32_t* history_cu = nullptr) {
   const int row = blockIdx.x * 4 + threadIdx.x / 32;
   if (row >= tokens * kh)
     return;
@@ -1389,9 +1395,33 @@ __global__ void prepare_pack_gdn_inputs(const __nv_bfloat16* qkv,
       hi = middle;
   }
   const uint32_t begin = cumulative[lo];
-  const auto qv = conv_vector(qkv, conv, head * 128 + column, t, kernel, begin, qkv_stride);
-  const auto kv =
-      conv_vector(qkv, conv, kh * 128 + head * 128 + column, t, kernel, begin, qkv_stride);
+  int history_end = 0, previous = 0;
+  if constexpr (Cached) {
+    history_end = history_cu[sources[lo] + 1];
+    previous = history_end - history_cu[sources[lo]];
+  }
+  const auto qv = conv_vector<Cached>(qkv,
+                                      conv,
+                                      head * 128 + column,
+                                      t,
+                                      kernel,
+                                      begin,
+                                      qkv_stride,
+                                      history_end,
+                                      previous,
+                                      history,
+                                      (2 * kh + vh) * 128);
+  const auto kv = conv_vector<Cached>(qkv,
+                                      conv,
+                                      kh * 128 + head * 128 + column,
+                                      t,
+                                      kernel,
+                                      begin,
+                                      qkv_stride,
+                                      history_end,
+                                      previous,
+                                      history,
+                                      (2 * kh + vh) * 128);
   float qf[4], kf[4], qsum[4], ksum[4];
 #pragma unroll
   for (int i = 0; i < 4; ++i) {
@@ -1442,8 +1472,17 @@ __global__ void prepare_pack_gdn_inputs(const __nv_bfloat16* qkv,
   for (int r = 0; r < ratio; ++r) {
     const int value_head = head * ratio + r;
     *reinterpret_cast<ConvValues*>(v + int64_t(t) * vh * 128 + value_head * 128 + column) =
-        conv_vector(
-            qkv, conv, 2 * kh * 128 + value_head * 128 + column, t, kernel, begin, qkv_stride);
+        conv_vector<Cached>(qkv,
+                            conv,
+                            2 * kh * 128 + value_head * 128 + column,
+                            t,
+                            kernel,
+                            begin,
+                            qkv_stride,
+                            history_end,
+                            previous,
+                            history,
+                            (2 * kh + vh) * 128);
   }
 }
 }
@@ -1451,9 +1490,13 @@ __global__ void prepare_pack_gdn_inputs(const __nv_bfloat16* qkv,
 at::Tensor qwen35_conv_cuda(const at::Tensor& qkv,
                             const at::Tensor& conv,
                             const at::Tensor& cumulative,
-                            int64_t sequences) {
+                            int64_t sequences,
+                            const at::Tensor& sources,
+                            const at::Tensor& history,
+                            const at::Tensor& history_cumulative) {
   TORCH_CHECK(qkv.is_cuda() && qkv.dim() == 2 && qkv.stride(1) == 1 &&
-                  qkv.scalar_type() == at::kBFloat16 && qkv.is_contiguous() &&
+                  qkv.scalar_type() == at::kBFloat16 &&
+                  (qkv.size(0) <= 1 || qkv.stride(0) >= qkv.size(1)) && qkv.stride(0) % 4 == 0 &&
                   reinterpret_cast<uintptr_t>(qkv.const_data_ptr()) % 8 == 0,
               "Invalid GDN convolution geometry");
   const auto tokens = qkv.size(0), channels = qkv.size(1);
@@ -1465,22 +1508,50 @@ at::Tensor qwen35_conv_cuda(const at::Tensor& qkv,
                   cumulative.is_contiguous() && cumulative.dim() == 1 && cumulative.numel() > 1 &&
                   sequences == cumulative.numel() - 1,
               "Invalid GDN convolution operands");
+  const bool cached = history.defined();
+  TORCH_CHECK(!cached ||
+                  (sources.defined() && history_cumulative.defined() &&
+                   history.device() == qkv.device() && history.scalar_type() == at::kBFloat16 &&
+                   history.is_contiguous() && history.dim() == 2 && history.size(1) == channels &&
+                   history_cumulative.device() == qkv.device() &&
+                   history_cumulative.scalar_type() == at::kInt &&
+                   history_cumulative.is_contiguous() && history_cumulative.dim() == 1 &&
+                   history_cumulative.numel() > 1 && sources.device() == qkv.device() &&
+                   sources.scalar_type() == at::kLong && sources.is_contiguous() &&
+                   sources.dim() == 1 && sources.numel() == sequences),
+              "Invalid cached GDN convolution history");
   c10::cuda::CUDAGuard guard(qkv.device());
   auto output = at::empty({tokens, channels}, qkv.options());
-  if (tokens)
-    packed_conv_vector<<<dim3(tokens, (channels / 4 + 255) / 256),
-                         256,
-                         0,
-                         at::cuda::getCurrentCUDAStream()>>>(
-        reinterpret_cast<const __nv_bfloat16*>(qkv.const_data_ptr()),
-        reinterpret_cast<const __nv_bfloat16*>(conv.const_data_ptr()),
-        reinterpret_cast<const uint32_t*>(cumulative.const_data_ptr<int32_t>()),
-        reinterpret_cast<__nv_bfloat16*>(output.mutable_data_ptr()),
-        channels,
-        int(conv.size(1)),
-        int(sequences),
-        qkv.stride(0));
-  C10_CUDA_KERNEL_LAUNCH_CHECK();
+  if (tokens) {
+    if (cached)
+      packed_conv_vector<true>
+          <<<dim3(tokens, (channels / 4 + 255) / 256), 256, 0, at::cuda::getCurrentCUDAStream()>>>(
+              reinterpret_cast<const __nv_bfloat16*>(qkv.const_data_ptr()),
+              reinterpret_cast<const __nv_bfloat16*>(conv.const_data_ptr()),
+              reinterpret_cast<const uint32_t*>(cumulative.const_data_ptr<int32_t>()),
+              reinterpret_cast<__nv_bfloat16*>(output.mutable_data_ptr()),
+              channels,
+              int(conv.size(1)),
+              int(sequences),
+              qkv.stride(0),
+              sources.const_data_ptr<int64_t>(),
+              reinterpret_cast<const __nv_bfloat16*>(history.const_data_ptr()),
+              history_cumulative.const_data_ptr<int32_t>());
+    else
+      packed_conv_vector<<<dim3(tokens, (channels / 4 + 255) / 256),
+                           256,
+                           0,
+                           at::cuda::getCurrentCUDAStream()>>>(
+          reinterpret_cast<const __nv_bfloat16*>(qkv.const_data_ptr()),
+          reinterpret_cast<const __nv_bfloat16*>(conv.const_data_ptr()),
+          reinterpret_cast<const uint32_t*>(cumulative.const_data_ptr<int32_t>()),
+          reinterpret_cast<__nv_bfloat16*>(output.mutable_data_ptr()),
+          channels,
+          int(conv.size(1)),
+          int(sequences),
+          qkv.stride(0));
+    C10_CUDA_KERNEL_LAUNCH_CHECK();
+  }
   return output;
 }
 
@@ -1529,7 +1600,10 @@ std::array<at::Tensor, 5> qwen35_gdn_prepare_pack_cuda(const at::Tensor& qkv,
                                                        const at::Tensor& a_log,
                                                        const at::Tensor& dt_bias,
                                                        int64_t kh,
-                                                       int64_t vh) {
+                                                       int64_t vh,
+                                                       const at::Tensor& sources,
+                                                       const at::Tensor& history,
+                                                       const at::Tensor& history_cumulative) {
   TORCH_CHECK(qkv.is_cuda() && qkv.dim() == 2 && qkv.stride(1) == 1 &&
                   qkv.scalar_type() == at::kBFloat16 && kh > 0 && vh > 0 && vh <= 128 &&
                   vh % kh == 0,
@@ -1550,34 +1624,72 @@ std::array<at::Tensor, 5> qwen35_gdn_prepare_pack_cuda(const at::Tensor& qkv,
           a_log.numel() == vh && a_log.is_contiguous() && dt_bias.device() == qkv.device() &&
           dt_bias.scalar_type() == at::kFloat && dt_bias.numel() == vh && dt_bias.is_contiguous(),
       "Invalid fused GDN provider operands");
+  const auto kernel = conv.size(1), sequences = cumulative.numel() - 1;
+  const bool cached = history.defined();
+  TORCH_CHECK(!cached ||
+                  (sources.defined() && history_cumulative.defined() &&
+                   history.device() == qkv.device() && history.scalar_type() == at::kBFloat16 &&
+                   history.is_contiguous() && history.dim() == 2 && history.size(1) == channels &&
+                   history_cumulative.device() == qkv.device() &&
+                   history_cumulative.scalar_type() == at::kInt &&
+                   history_cumulative.is_contiguous() && history_cumulative.dim() == 1 &&
+                   history_cumulative.numel() > 1 && sources.device() == qkv.device() &&
+                   sources.scalar_type() == at::kLong && sources.is_contiguous() &&
+                   sources.dim() == 1 && sources.numel() == sequences),
+              "Invalid cached GDN provider history");
   c10::cuda::CUDAGuard guard(qkv.device());
   auto q = at::empty({tokens, kh, 128}, qkv.options()), k = at::empty_like(q),
        v = at::empty({tokens, vh * 128}, qkv.options());
   // Fresh allocations retain the provider's alignment even for a single gate.
   auto alpha = at::empty({tokens, vh}, qkv.options().dtype(at::kFloat)),
        beta = at::empty_like(alpha);
-  const auto kernel = conv.size(1), sequences = cumulative.numel() - 1;
-  if (tokens)
-    prepare_pack_gdn_inputs<<<int((rows + 3) / 4), 128, 0, at::cuda::getCurrentCUDAStream()>>>(
-        reinterpret_cast<const __nv_bfloat16*>(qkv.const_data_ptr()),
-        reinterpret_cast<const __nv_bfloat16*>(conv.const_data_ptr()),
-        reinterpret_cast<const uint32_t*>(cumulative.const_data_ptr<int32_t>()),
-        reinterpret_cast<const __nv_bfloat16*>(ab.const_data_ptr()),
-        a_log.const_data_ptr<float>(),
-        dt_bias.const_data_ptr<float>(),
-        reinterpret_cast<__nv_bfloat16*>(q.mutable_data_ptr()),
-        reinterpret_cast<__nv_bfloat16*>(k.mutable_data_ptr()),
-        reinterpret_cast<__nv_bfloat16*>(v.mutable_data_ptr()),
-        alpha.mutable_data_ptr<float>(),
-        beta.mutable_data_ptr<float>(),
-        kh,
-        vh,
-        int(kernel),
-        int(sequences),
-        int(tokens),
-        qkv.stride(0),
-        ab.stride(0));
-  C10_CUDA_KERNEL_LAUNCH_CHECK();
+  if (tokens) {
+    if (cached)
+      prepare_pack_gdn_inputs<true>
+          <<<int((rows + 3) / 4), 128, 0, at::cuda::getCurrentCUDAStream()>>>(
+              reinterpret_cast<const __nv_bfloat16*>(qkv.const_data_ptr()),
+              reinterpret_cast<const __nv_bfloat16*>(conv.const_data_ptr()),
+              reinterpret_cast<const uint32_t*>(cumulative.const_data_ptr<int32_t>()),
+              reinterpret_cast<const __nv_bfloat16*>(ab.const_data_ptr()),
+              a_log.const_data_ptr<float>(),
+              dt_bias.const_data_ptr<float>(),
+              reinterpret_cast<__nv_bfloat16*>(q.mutable_data_ptr()),
+              reinterpret_cast<__nv_bfloat16*>(k.mutable_data_ptr()),
+              reinterpret_cast<__nv_bfloat16*>(v.mutable_data_ptr()),
+              alpha.mutable_data_ptr<float>(),
+              beta.mutable_data_ptr<float>(),
+              kh,
+              vh,
+              int(kernel),
+              int(sequences),
+              int(tokens),
+              qkv.stride(0),
+              ab.stride(0),
+              sources.const_data_ptr<int64_t>(),
+              reinterpret_cast<const __nv_bfloat16*>(history.const_data_ptr()),
+              history_cumulative.const_data_ptr<int32_t>());
+    else
+      prepare_pack_gdn_inputs<<<int((rows + 3) / 4), 128, 0, at::cuda::getCurrentCUDAStream()>>>(
+          reinterpret_cast<const __nv_bfloat16*>(qkv.const_data_ptr()),
+          reinterpret_cast<const __nv_bfloat16*>(conv.const_data_ptr()),
+          reinterpret_cast<const uint32_t*>(cumulative.const_data_ptr<int32_t>()),
+          reinterpret_cast<const __nv_bfloat16*>(ab.const_data_ptr()),
+          a_log.const_data_ptr<float>(),
+          dt_bias.const_data_ptr<float>(),
+          reinterpret_cast<__nv_bfloat16*>(q.mutable_data_ptr()),
+          reinterpret_cast<__nv_bfloat16*>(k.mutable_data_ptr()),
+          reinterpret_cast<__nv_bfloat16*>(v.mutable_data_ptr()),
+          alpha.mutable_data_ptr<float>(),
+          beta.mutable_data_ptr<float>(),
+          kh,
+          vh,
+          int(kernel),
+          int(sequences),
+          int(tokens),
+          qkv.stride(0),
+          ab.stride(0));
+    C10_CUDA_KERNEL_LAUNCH_CHECK();
+  }
   return {q, k, v, alpha, beta};
 }
 
@@ -1743,10 +1855,14 @@ at::Tensor qwen35_delta_cuda(const at::Tensor& qkv,
                 "Invalid quantized GDN output buffers");
   }
   auto stream = at::cuda::getCurrentCUDAStream(qkv.device().index());
+  const bool provider_available = flashinfer_gdn_available(qkv.device());
   const bool provider_prefix = (final_state || allow_prefill) && !initial.defined() &&
-                               !input.prefix && !history.defined() &&
-                               flashinfer_gdn_available(qkv.device());
-  auto convolution = provider_prefix ? at::Tensor() : at::empty({tokens, channels}, qkv.options());
+                               !input.prefix && !history.defined() && provider_available;
+  const bool provider_suffix = initial.defined() && !input.prefix && input.batch > 0 &&
+                               tokens > 0 && history.defined() && provider_available;
+  auto convolution = (provider_prefix || provider_suffix)
+                         ? at::Tensor()
+                         : at::empty({tokens, channels}, qkv.options());
   auto qk = at::Tensor(), decay = at::Tensor();
   auto recurrence = at::empty({tokens, value_heads, 128}, qkv.options());
   auto output = quantized_output ? at::Tensor() : at::empty_like(recurrence);
@@ -1756,10 +1872,7 @@ at::Tensor qwen35_delta_cuda(const at::Tensor& qkv,
   auto mut = [](at::Tensor& t) { return reinterpret_cast<__nv_bfloat16*>(t.mutable_data_ptr()); };
   auto cu = reinterpret_cast<const uint32_t*>(input.cumulative.const_data_ptr<int32_t>());
   auto cached = prefix_recurrent(input, qkv, cache_layer, value_heads, conv.size(-1));
-  if (!provider_prefix && input.prefix)
-    qwen35_cached_conv_cuda(
-        qkv.contiguous(), conv, input, cached.history, cached.history_lengths, convolution, true);
-  else if (!provider_prefix && history.defined()) {
+  if (!input.prefix && history.defined()) {
     TORCH_CHECK(history.device() == qkv.device() && history.scalar_type() == qkv.scalar_type() &&
                     history.is_contiguous() && history.dim() == 2 && history.size(1) == channels &&
                     history_cumulative.device() == qkv.device() &&
@@ -1775,6 +1888,11 @@ at::Tensor qwen35_delta_cuda(const at::Tensor& qkv,
     for (const auto source : input.block_prefix_sources)
       TORCH_CHECK(source >= 0 && source < history_cumulative.numel() - 1,
                   "Invalid packed GDN prefix source");
+  }
+  if (!provider_prefix && !provider_suffix && input.prefix)
+    qwen35_cached_conv_cuda(
+        qkv.contiguous(), conv, input, cached.history, cached.history_lengths, convolution, true);
+  else if (!provider_prefix && !provider_suffix && history.defined())
     packed_conv_vector<true><<<dim3(tokens, (channels / 4 + 255) / 256), 256, 0, stream>>>(
         bf(qkv),
         bf(conv),
@@ -1787,7 +1905,7 @@ at::Tensor qwen35_delta_cuda(const at::Tensor& qkv,
         input.block_cache_sources.const_data_ptr<int64_t>(),
         bf(history),
         history_cumulative.const_data_ptr<int32_t>());
-  } else if (!provider_prefix)
+  else if (!provider_prefix && !provider_suffix)
     packed_conv_vector<<<dim3(tokens, (channels / 4 + 255) / 256), 256, 0, stream>>>(
         bf(qkv),
         bf(conv),
@@ -1798,20 +1916,27 @@ at::Tensor qwen35_delta_cuda(const at::Tensor& qkv,
         input.batch,
         qkv.stride(0));
   C10_CUDA_KERNEL_LAUNCH_CHECK();
-  if (!provider_prefix) {
+  if (!provider_prefix && !provider_suffix) {
     auto prepared =
         qwen35_gdn_prepare_cuda(convolution, ab, a_log, dt_bias, key_heads, value_heads);
     qk = prepared.first;
     decay = prepared.second;
   }
   if (initial.defined()) {
-    TORCH_CHECK(history.defined() && initial.device() == qkv.device() &&
-                    initial.scalar_type() == at::kFloat && initial.is_contiguous() &&
-                    initial.dim() == 4 && initial.size(0) == history_cumulative.numel() - 1 &&
-                    initial.size(1) == value_heads && initial.size(2) == 128 &&
-                    initial.size(3) == 128,
-                "Invalid packed cached GDN state");
+    // Provider captures expose native-logical [B,H,K,V] as a transpose view of provider
+    // [B,H,V,K] storage; native fallbacks below materialize their own contiguous copy.
+    const bool provider_view =
+        initial.dim() == 4 && initial.stride(2) == 1 && initial.stride(3) == 128;
+    TORCH_CHECK(
+        history.defined() && initial.device() == qkv.device() &&
+            initial.scalar_type() == at::kFloat && (initial.is_contiguous() || provider_view) &&
+            initial.dim() == 4 && initial.size(0) == history_cumulative.numel() - 1 &&
+            initial.size(1) == value_heads && initial.size(2) == 128 && initial.size(3) == 128,
+        "Invalid packed cached GDN state");
   }
+  auto native_state = [&] {
+    return initial.defined() && !initial.is_contiguous() ? initial.contiguous() : initial;
+  };
   // Availability selects one producer; the packed provider call uses the same
   // device and BF16 buffers, so a false return would violate that contract.
   if (provider_prefix) {
@@ -1823,6 +1948,25 @@ at::Tensor qwen35_delta_cuda(const at::Tensor& qkv,
                     key_heads,
                     value_heads,
                     final_state),
+                "Selected GDN provider is unavailable");
+  } else if (provider_suffix) {
+    TORCH_CHECK(flashinfer_gdn_resume_packed(qwen35_gdn_prepare_pack_cuda(qkv,
+                                                                          conv,
+                                                                          input.cumulative,
+                                                                          ab,
+                                                                          a_log,
+                                                                          dt_bias,
+                                                                          key_heads,
+                                                                          value_heads,
+                                                                          input.block_cache_sources,
+                                                                          history,
+                                                                          history_cumulative),
+                                             input,
+                                             recurrence,
+                                             key_heads,
+                                             value_heads,
+                                             final_state,
+                                             initial),
                 "Selected GDN provider is unavailable");
   } else if (initial.defined() && !input.prefix && input.batch > 0 && tokens > 0 &&
              flashinfer_gdn_resume(convolution,
@@ -1857,9 +2001,17 @@ at::Tensor qwen35_delta_cuda(const at::Tensor& qkv,
                                  cached.checkpoint_rows,
                                  cached.checkpoints);
   else if (chunk_prefill && input.max_sequence >= 256) {
-    qwen35_chunk_delta_cuda(
-        convolution, qk, decay, input, recurrence, key_heads, value_heads, initial, final_state);
+    qwen35_chunk_delta_cuda(convolution,
+                            qk,
+                            decay,
+                            input,
+                            recurrence,
+                            key_heads,
+                            value_heads,
+                            native_state(),
+                            final_state);
   } else if (initial.defined() || final_state) {
+    const auto native_initial = native_state();
     if (final_state)
       *final_state =
           at::empty({input.batch, value_heads, 128, 128}, qkv.options().dtype(at::kFloat));
@@ -1873,9 +2025,9 @@ at::Tensor qwen35_delta_cuda(const at::Tensor& qkv,
       mut(recurrence),                                                                             \
       key_heads,                                                                                   \
       value_heads,                                                                                 \
-      initial.defined() ? initial.const_data_ptr<float>() : nullptr,                               \
+      native_initial.defined() ? native_initial.const_data_ptr<float>() : nullptr,                 \
       final_state ? final_state->mutable_data_ptr<float>() : nullptr,                              \
-      initial.defined() ? input.block_cache_sources.const_data_ptr<int64_t>() : nullptr);
+      native_initial.defined() ? input.block_cache_sources.const_data_ptr<int64_t>() : nullptr);
     if (input.batch * value_heads >= 256) {
       CACHED(8);
     } else {

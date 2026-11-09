@@ -6,6 +6,7 @@
 #include "vendor/infinity_gdn/bridge.h"
 #include <ATen/cuda/CUDAContext.h>
 #include <c10/cuda/CUDAGuard.h>
+#include <cstdint>
 #endif
 namespace infinity {
 bool flashinfer_gdn_available(const c10::Device& device) {
@@ -34,9 +35,27 @@ static bool run_packed(const std::array<at::Tensor, 5>& packed,
     return false;
   const int dtype = q.scalar_type() == at::kHalf ? 0 : 1;
   const auto tokens = q.size(0);
-  auto start = initial.defined()
-                   ? initial.transpose(2, 3).contiguous().index_select(0, input.block_cache_sources)
-                   : at::Tensor();
+  auto start = at::Tensor();
+  if (initial.defined()) {
+    // Native kernels store [B,H,K,V]. A captured provider state is the transpose view of
+    // provider [B,H,V,K] storage, so transposing it back already yields provider layout.
+    auto provider = initial.dim() == 4 && initial.stride(2) == 1
+                        ? initial.transpose(2, 3)
+                        : initial.transpose(2, 3).contiguous();
+    const bool reuse = input.block_cache_sources_identity;
+    if (reuse) {
+      TORCH_CHECK(input.block_cache_sources.defined() && input.block_cache_sources.dim() == 1 &&
+                      input.block_cache_sources.scalar_type() == at::kLong &&
+                      input.block_cache_sources.device() == provider.device() &&
+                      input.block_cache_sources.numel() == input.batch,
+                  "Invalid identity GDN cache sources");
+      TORCH_CHECK(provider.size(0) >= input.batch, "Initial GDN state has too few prefix rows");
+    }
+    start = reuse && provider.is_contiguous() &&
+                    reinterpret_cast<uintptr_t>(provider.const_data_ptr()) % 16 == 0
+                ? provider
+                : provider.index_select(0, input.block_cache_sources);
+  }
   auto state = at::empty({input.batch, vh, 128, 128}, q.options().dtype(at::kFloat));
   // FlashInfer owns one TMA slot per SM (four descriptors on SM10x).
   auto workspace = at::empty({props->multiProcessorCount * (props->major == 10 ? 512 : 128)},
@@ -62,8 +81,9 @@ static bool run_packed(const std::array<at::Tensor, 5>& packed,
                                            workspace.numel(),
                                            start.defined() ? start.mutable_data_ptr() : nullptr);
   TORCH_CHECK(code == 0, "FlashInfer GDN prefill failed: ", infinity_gdn_error_v1());
+  // Native logical [B,H,K,V] over provider V/K storage; resume transposes it back without a copy.
   if (final_state)
-    *final_state = state.transpose(2, 3).contiguous();
+    *final_state = state.transpose(2, 3);
   return true;
 #else
   return false;
@@ -125,5 +145,15 @@ bool flashinfer_gdn_resume(const at::Tensor& values,
                            at::Tensor* final_state,
                            const at::Tensor& initial) {
   return run_gdn(values, qk, gates, input, output, kh, vh, final_state, initial);
+}
+
+bool flashinfer_gdn_resume_packed(const std::array<at::Tensor, 5>& packed,
+                                  const PackedInput& input,
+                                  at::Tensor& output,
+                                  int64_t kh,
+                                  int64_t vh,
+                                  at::Tensor* final_state,
+                                  const at::Tensor& initial) {
+  return run_packed(packed, input, output, kh, vh, final_state, initial);
 }
 }

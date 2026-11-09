@@ -182,6 +182,8 @@ struct AudioInput {
 // graph owns these boundaries independently of the request that supplied them.
 struct BlockLayout {
   at::Tensor prefix_cumulative, suffix_cumulative, kv_cumulative, history_cumulative, cache_sources;
+  // Every executed suffix selects its own representative, so no device gather is needed.
+  bool cache_sources_identity = false;
   std::vector<int32_t> history_offsets;
   BlockPages pages;
 };
@@ -204,6 +206,8 @@ struct PackedInput {
   std::vector<int64_t> block_prefix_lengths{}, block_prefix_sources{};
   // Packed suffix rows select immutable prefix KV/recurrent/conv snapshots.
   at::Tensor block_cache_sources{};
+  // Host-resolved from the exact uploaded source vector; never inferred on device.
+  bool block_cache_sources_identity = false;
   // Execution-only state; original logical request metadata lives in the context.
   PrefixContext* prefix = nullptr;
   // Borrowed full-input host views, valid for this native submission only.

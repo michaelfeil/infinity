@@ -38,4 +38,12 @@ bool flashinfer_gdn_resume(const at::Tensor& values,
                            int64_t vh,
                            at::Tensor* final_state,
                            const at::Tensor& initial);
+/// Resume from already packed provider buffers and immutable FP32 prefix states.
+bool flashinfer_gdn_resume_packed(const std::array<at::Tensor, 5>& packed,
+                                  const PackedInput& input,
+                                  at::Tensor& output,
+                                  int64_t kh,
+                                  int64_t vh,
+                                  at::Tensor* final_state,
+                                  const at::Tensor& initial);
 }
