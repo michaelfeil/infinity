@@ -386,6 +386,81 @@ int main(int argc, char** argv) {
                     "GDN packing changed provider values, casts or alignment");
     }
   std::cout << "GDN provider packing values, casts, strides and alignment passed\n";
+  // Keep later reference fixtures independent of this comparison's random draws.
+  auto generator = at::globalContext().defaultGenerator(device).clone();
+  // The fused fresh-prefix producer must match convolution, prepare, and pack
+  // bit for bit, including padded strides, sequence boundaries, and both
+  // softplus branches.
+  for (auto [kh, vh] : {std::pair<int64_t, int64_t>{3, 3}, {16, 48}})
+    for (int64_t tokens : {1, 257}) {
+      auto options = at::TensorOptions().device(device).dtype(at::kBFloat16);
+      const auto channels = (2 * kh + vh) * 128;
+      auto values_base = at::randn({tokens, channels + 8}, generator, options);
+      auto values = values_base.narrow(1, 4, channels);
+      auto ab_base = at::randn({tokens, 2 * vh + 3}, generator, options);
+      auto ab = ab_base.narrow(1, tokens % 2, 2 * vh);
+      for (int64_t t = 0; t < tokens; ++t) {
+        float a = 0.f, b = 0.f;
+        switch (t % 5) {
+        case 0:
+          a = 25.f;
+          b = 40.f;
+          break;
+        case 1:
+          a = 20.f;
+          b = -40.f;
+          break;
+        case 2:
+          a = -25.f;
+          b = 0.f;
+          break;
+        case 3:
+          a = 0.f;
+          b = 20.f;
+          break;
+        default:
+          a = 1e-3f;
+          b = -20.f;
+          break;
+        }
+        ab.select(0, t).narrow(0, 0, vh).fill_(a);
+        ab.select(0, t).narrow(0, vh, vh).fill_(b);
+      }
+      auto weights = (at::randn({channels, 4}, generator, options) * .2).contiguous();
+      std::vector<int32_t> boundaries =
+          tokens > 4 ? std::vector<int32_t>{0, 1, int32_t(tokens / 2), int32_t(tokens)}
+                     : std::vector<int32_t>{0, int32_t(tokens)};
+      auto cumulative = at::tensor(boundaries, options.dtype(at::kInt));
+      auto convolution = infinity::qwen35_conv_cuda(
+          values.clone(), weights, cumulative, int64_t(boundaries.size()) - 1);
+      auto a_log = at::linspace(-2.f, 2.f, vh, options.dtype(at::kFloat));
+      auto dt_bias = at::linspace(-.5f, .5f, vh, options.dtype(at::kFloat));
+      auto fused = infinity::qwen35_gdn_prepare_pack_cuda(
+          values, weights, cumulative, ab, a_log, dt_bias, kh, vh);
+      auto [qk, decay] =
+          infinity::qwen35_gdn_prepare_cuda(convolution, ab.contiguous(), a_log, dt_bias, kh, vh);
+      auto qk_base = at::empty({tokens * kh, 264}, options.dtype(at::kFloat));
+      auto qk_strided = qk_base.narrow(1, 0, 256);
+      qk_strided.copy_(qk);
+      auto gate_base = at::empty({tokens, 2 * vh + 3}, options.dtype(at::kFloat));
+      auto gate_strided = gate_base.narrow(1, 0, 2 * vh);
+      gate_strided.copy_(decay);
+      auto expected =
+          infinity::flashinfer_gdn_pack_cuda(convolution, qk_strided, gate_strided, kh, vh);
+      for (size_t i = 0; i < fused.size(); ++i)
+        TORCH_CHECK(fused[i].is_contiguous() &&
+                        reinterpret_cast<uintptr_t>(fused[i].const_data_ptr()) % 16 == 0 &&
+                        at::equal(fused[i].view(at::kByte), expected[i].view(at::kByte)),
+                    "Fused GDN convolution/prepare/pack changed provider buffers kh=",
+                    kh,
+                    " vh=",
+                    vh,
+                    " tokens=",
+                    tokens,
+                    " buffer=",
+                    i);
+    }
+  std::cout << "Fused GDN convolution/prepare/pack matches the old route bit for bit\n";
   for (int width : {1, 3, 4, 7, 8, 16, 32, 33, 64, 128, 256, 384, 1024, 2048, 4096, 5120, 8192})
     for (int layout : {0, 1, 2}) {
       bool strided = layout == 1;
