@@ -68,7 +68,7 @@ std::array<at::Tensor, 5> qwen35_gdn_prepare_pack_cuda(const at::Tensor& qkv,
 /// the existing BF16 Hopper prefill provider without retaining a final state.
 /// Optional two-byte-aligned quantized destinations receive E4M3 rows and FP32 scales directly;
 /// that mode returns an undefined tensor instead of materializing BF16 output.
-/// suffix_prefill opts into tensor-core cached execution with BF16 normalized Q/K.
+/// Cached suffixes use the tensor-core provider automatically when it is available.
 at::Tensor qwen35_delta_cuda(const at::Tensor& qkv,
                              const at::Tensor& z,
                              const at::Tensor& ab,
@@ -87,6 +87,5 @@ at::Tensor qwen35_delta_cuda(const at::Tensor& qkv,
                              bool chunk_prefill = true,
                              int64_t cache_layer = -1,
                              bool allow_prefill = false,
-                             const std::pair<at::Tensor, at::Tensor>* quantized_output = nullptr,
-                             bool suffix_prefill = false);
+                             const std::pair<at::Tensor, at::Tensor>* quantized_output = nullptr);
 }

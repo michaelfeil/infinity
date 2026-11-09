@@ -75,7 +75,7 @@ class Qwen35 final : public Model {
   double epsilon;
   int64_t block_kv_chunk_tokens = 500000;
   bool block_paged = true;
-  bool delta_prefill = false, delta_suffix_prefill = false;
+  bool delta_prefill = false;
   at::Tensor cos_cache, sin_cache;
 
   /// Dense, routed, and shared-expert projections for one Qwen3.5 feed-forward block.
@@ -830,8 +830,7 @@ class Qwen35 final : public Model {
                               chunks,
                               cache_layer,
                               delta_prefill && !cache,
-                              quantized_output,
-                              delta_suffix_prefill);
+                              quantized_output);
       }
 #else
       TORCH_CHECK(false, "Qwen3.5 requires the native DeltaNet CUDA kernel build");
@@ -1166,8 +1165,6 @@ public:
         quantization == Quantization::None ? QuantizationScope::Mlp : QuantizationScope::All);
     // Let the native provider select supported GPU families and GDN layouts.
     delta_prefill = device.is_cuda() && quantization == Quantization::None;
-    const auto* suffix_policy = std::getenv(INFINITY_ENV("TORCH_GDN_SUFFIX_PREFILL"));
-    delta_suffix_prefill = !suffix_policy || std::string_view(suffix_policy) == "1";
     const bool quantized = quantization != Quantization::None;
     TORCH_CHECK(scope != QuantizationScope::All || quantized,
                 "All-linear quantization requires a quantization format");

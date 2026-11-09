@@ -10,9 +10,13 @@
 #include <iostream>
 #include <vector>
 
-void resumed_delta(
-    c10::Device device, int64_t kh, int64_t vh, bool fma, bool quantization_only = false) {
-  constexpr int64_t tokens = 35;
+void resumed_delta(c10::Device device,
+                   int64_t kh,
+                   int64_t vh,
+                   bool fma,
+                   bool quantization_only = false,
+                   int32_t tokens = 35) {
+  TORCH_CHECK(tokens > 13, "Split/resume fixture requires at least 14 tokens");
   auto opts = at::TensorOptions().device(device).dtype(at::kBFloat16);
   auto qkv = (at::randn({tokens, (2 * kh + vh) * 128}, opts) * .2).contiguous();
   auto z = (at::randn({tokens, vh * 128}, opts) * .2).contiguous();
@@ -110,7 +114,7 @@ void resumed_delta(
   }
   if (quantization_only)
     return;
-  for (int64_t boundary : {1, 13, 34}) {
+  for (int64_t boundary : {1, 13, tokens - 1}) {
     if (fma) {
       auto prefill = full;
       int32_t prefix_offsets[] = {0, int32_t(boundary)};
@@ -665,6 +669,9 @@ int main(int argc, char** argv) {
     }
   for (auto geometry : {std::pair<int64_t, int64_t>{16, 16}, {16, 48}, {32, 128}})
     resumed_delta(device, geometry.first, geometry.second, true, true);
+  // A lone 185-token suffix and eight copies must use the same arithmetic.
+  // Reuse the cache/state oracle with a real GVA geometry across the old gate.
+  resumed_delta(device, 16, 48, true, false, 198);
   std::cout << "Independent original norms and synthetic packed sequence isolation passed\n";
   std::cout << "DeltaNet cache isolation and split/resume passed in both arithmetic modes\n";
 }
