@@ -19,7 +19,7 @@ import datetime
 import hashlib
 import json
 import os
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 import re
 import shlex
 import shutil
@@ -56,6 +56,16 @@ METADATA_SUFFIXES = frozenset(
 PATH_KEYS = frozenset({"path", "cached_path", "cache_path", "local_dir", "local_path"})
 REVISION_RE = re.compile(r"^(?:[0-9a-fA-F]{40}|[0-9a-fA-F]{64})$")
 COMMIT_RE = re.compile(r"^[0-9a-fA-F]{40}$")
+SCRUBBED_LOADER_VARIABLES = (
+    "LD_LIBRARY_PATH", "LD_PRELOAD", "LD_AUDIT", "PYTHONPATH", "PYTHONHOME")
+PYTHON_SAFE_PATH = "1"
+INTEGRITY_HELPER = HERE / "benchmark-integrity.py"
+CAMPAIGN_INSPECTOR = HERE / "benchmark-campaign.py"
+WEIGHT_FAMILIES = (
+    ("safetensors", (".safetensors",), "*.safetensors.index.json"),
+    ("bin", (".bin",), "*.bin.index.json"),
+    ("torch", (".pt", ".pth"), None),
+)
 
 
 class CampaignError(ValueError):
@@ -74,6 +84,38 @@ def sha256_bytes(data: bytes) -> str:
 def canonical_sha256(value) -> str:
     text = json.dumps(value, sort_keys=True, separators=(",", ":"), allow_nan=False)
     return sha256_bytes(text.encode())
+
+
+def sanitized_environment(base=None) -> dict:
+    """Return an environment with ambient loader/Python overrides removed."""
+    env = dict(os.environ if base is None else base)
+    for name in SCRUBBED_LOADER_VARIABLES:
+        env.pop(name, None)
+    env["PYTHONSAFEPATH"] = PYTHON_SAFE_PATH
+    return env
+
+
+def runtime_loader_environment(runtime: str, infinity_bin=None, torch_lib=None,
+                               base=None) -> tuple[dict, list[str]]:
+    env = sanitized_environment(base)
+    injected = []
+    if runtime == "infinity":
+        if not infinity_bin:
+            raise CampaignError("Infinity binary is required for its loader environment")
+        injected.append(str(Path(infinity_bin).resolve().parent))
+        if torch_lib:
+            injected.append(str(Path(torch_lib).resolve()))
+        env["LD_LIBRARY_PATH"] = os.pathsep.join(injected)
+    return env, injected
+
+
+def loader_policy(runtime: str) -> dict:
+    return {"version": 1,
+            "ld_library_path": ("infinity_selected_only" if runtime == "infinity"
+                                else "empty"),
+            "ld_preload": "unset", "ld_audit": "unset",
+            "pythonpath": "unset", "pythonhome": "unset",
+            "python_safe_path": True}
 
 
 def library_tree_sha256(path: Path) -> str:
@@ -111,6 +153,85 @@ def library_tree_sha256(path: Path) -> str:
     if not files:
         raise CampaignError(f"library directory is empty: {path}")
     return canonical_sha256(files)
+
+
+def _is_within(path: Path, parent: Path) -> bool:
+    try:
+        path = path.resolve()
+        parent = parent.resolve()
+    except (OSError, RuntimeError):
+        return False
+    return path == parent or parent in path.parents
+
+
+def _elf_runpath_directories(torch_lib: Path) -> list[Path]:
+    result = []
+    for candidate in sorted(torch_lib.rglob("*.so*")):
+        if not candidate.is_file():
+            continue
+        try:
+            completed = subprocess.run(
+                ["readelf", "-d", str(candidate)], capture_output=True, text=True,
+                check=False, timeout=30, env=sanitized_environment())
+        except OSError:
+            continue
+        if completed.returncode:
+            continue
+        for line in completed.stdout.splitlines():
+            match = re.search(r"\((?:RPATH|RUNPATH)\).*?\[(.*?)\]", line)
+            if match is None:
+                continue
+            for entry in match.group(1).split(":"):
+                entry = entry.strip()
+                if not entry or ("$" in entry and "$ORIGIN" not in entry
+                                 and "${ORIGIN}" not in entry):
+                    continue
+                expanded = entry.replace("${ORIGIN}", str(candidate.parent))
+                expanded = expanded.replace("$ORIGIN", str(candidate.parent))
+                if "$" in expanded or not os.path.isabs(expanded):
+                    continue
+                directory = Path(expanded)
+                if directory.is_dir():
+                    result.append(directory)
+    return result
+
+
+def torch_sdk_bundle(torch_lib: Path) -> dict:
+    """Return the canonical selected Torch SDK bundle digest and portable roots."""
+    try:
+        root = Path(torch_lib).resolve(strict=True)
+    except (OSError, RuntimeError) as exc:
+        raise CampaignError(
+            f"Torch library directory cannot be resolved: {torch_lib}: {exc}") from exc
+    if not root.is_dir():
+        raise CampaignError(f"Torch library directory is not a directory: {root}")
+    site = (root.parent.parent if root.name == "lib" and root.parent.name == "torch"
+            else None)
+    nvidia = site / "nvidia" if site is not None else None
+    roots = {"torch_lib": library_tree_sha256(root)}
+    if nvidia is not None and nvidia.is_dir():
+        roots["nvidia"] = library_tree_sha256(nvidia)
+    sdk_base = site if site is not None else root.parent
+    known = [root.resolve()]
+    if nvidia is not None and nvidia.is_dir():
+        known.append(nvidia.resolve())
+    rpath_roles = {}
+    for directory in _elf_runpath_directories(root):
+        try:
+            resolved = directory.resolve()
+        except (OSError, RuntimeError):
+            continue
+        if not _is_within(resolved, sdk_base) or any(
+                resolved == item or item in resolved.parents
+                or resolved in item.parents for item in known):
+            continue
+        relative = os.path.relpath(resolved, sdk_base.resolve()).replace(os.sep, "/")
+        rpath_roles[f"rpath/{relative}"] = resolved
+    for role, directory in sorted(rpath_roles.items()):
+        roots[role] = library_tree_sha256(directory)
+    payload = {"schema_version": 1, "roots": roots}
+    return {"schema_version": 1, "roots": roots,
+            "digest_sha256": canonical_sha256(payload)}
 
 
 def save_json(path: Path, value) -> None:
@@ -261,13 +382,287 @@ def metadata_sha256(path: Path) -> str:
     return sha256_bytes(json.dumps(files, sort_keys=True, separators=(",", ":")).encode())
 
 
+def _safe_weight_relative(name, label: str) -> Path:
+    if not isinstance(name, str) or not name.strip():
+        raise CampaignError(f"{label}: weight reference is not a non-empty string")
+    if os.path.isabs(name) or name.startswith(("/", "\\")):
+        raise CampaignError(f"{label}: absolute weight reference {name!r} is not allowed")
+    parts = [part for part in re.split(r"[\\/]+", name) if part not in {"", "."}]
+    if not parts or any(part == ".." for part in parts):
+        raise CampaignError(f"{label}: escaping weight reference {name!r} is not allowed")
+    return Path(*parts)
+
+
+def _walk_files(root: Path) -> list[Path]:
+    root = Path(root)
+    if not root.is_dir():
+        raise CampaignError(f"directory is unavailable: {root}")
+    result = []
+
+    def visit(directory: Path, ancestors: frozenset) -> None:
+        try:
+            resolved = directory.resolve(strict=True)
+        except (OSError, RuntimeError) as exc:
+            raise CampaignError(f"cannot resolve directory {directory}: {exc}") from exc
+        if resolved in ancestors:
+            return
+        ancestors = ancestors | {resolved}
+        try:
+            entries = sorted(directory.iterdir(), key=lambda item: item.name)
+        except OSError as exc:
+            raise CampaignError(f"cannot read directory {directory}: {exc}") from exc
+        for item in entries:
+            try:
+                if item.is_dir():
+                    visit(item, ancestors)
+                elif item.is_file():
+                    result.append(item)
+            except OSError as exc:
+                raise CampaignError(f"cannot inspect {item}: {exc}") from exc
+
+    visit(root, frozenset())
+    return result
+
+
+def _weight_suffixes() -> frozenset:
+    return frozenset(suffix for _, suffixes, _ in WEIGHT_FAMILIES for suffix in suffixes)
+
+
+def _index_family(path: Path):
+    for family, suffixes, pattern in WEIGHT_FAMILIES:
+        if pattern is not None and path.name.endswith(pattern[1:]):
+            return family, suffixes
+    return None
+
+
+def _weight_and_index_files(root: Path) -> tuple[list[Path], list[Path]]:
+    suffixes = _weight_suffixes()
+    weights, indexes = [], []
+    for path in _walk_files(root):
+        if path.name.lower() == "tokenizer.bin":
+            continue
+        if path.suffix.lower() in suffixes:
+            weights.append(path)
+        if _index_family(path) is not None:
+            indexes.append(path)
+    return weights, indexes
+
+
+def _validated_index_weights(index: Path, root: Path, label: str,
+                             suffixes) -> dict:
+    document = _load_json(index)
+    weight_map = document.get("weight_map") if isinstance(document, dict) else None
+    if not isinstance(weight_map, dict) or not weight_map:
+        raise CampaignError(f"{label}: {index.name} has no valid weight_map")
+    selected = {}
+    for tensor, name in weight_map.items():
+        windows = PureWindowsPath(name) if isinstance(name, str) else None
+        if windows is not None and (windows.is_absolute() or windows.drive):
+            raise CampaignError(
+                f"{label}: absolute weight reference {name!r} is not allowed")
+        relative = _safe_weight_relative(name, f"{label}: {index.name} {tensor}")
+        if relative.suffix.lower() not in suffixes:
+            raise CampaignError(
+                f"{label}: weight reference {name!r} has no active weight suffix")
+        candidate = index.parent / relative
+        try:
+            candidate.relative_to(root)
+        except ValueError as exc:
+            raise CampaignError(
+                f"{label}: weight reference {name!r} escapes checkpoint") from exc
+        if not candidate.is_file():
+            raise CampaignError(
+                f"{label}: active weight {name!r} referenced by {index.name} is missing")
+        relative_name = candidate.relative_to(root).as_posix()
+        selected[relative_name] = candidate
+    return selected
+
+
+def _weight_files_for_root(root: Path, label: str) -> dict:
+    root = Path(root)
+    if not root.is_dir():
+        raise CampaignError(f"{label}: checkpoint directory is unavailable")
+    weights, indexes = _weight_and_index_files(root)
+    selected = {path.relative_to(root).as_posix(): path for path in weights}
+    indexes_by_directory = {}
+    for index in indexes:
+        family = _index_family(index)
+        if family is not None:
+            indexes_by_directory.setdefault(index.parent, []).append(index)
+    for directory, directory_indexes in sorted(indexes_by_directory.items()):
+        direct_weights = [path for path in weights if path.parent == directory]
+        preferred = None
+        for family, suffixes, _ in WEIGHT_FAMILIES:
+            has_file = any(path.suffix.lower() in suffixes for path in direct_weights)
+            has_index = any(_index_family(index)[0] == family
+                            for index in directory_indexes)
+            if has_file or has_index:
+                preferred = (family, suffixes)
+                break
+        if preferred is None:
+            continue
+        family, suffixes = preferred
+        for index in directory_indexes:
+            index_family = _index_family(index)
+            if index_family is not None and index_family[0] == family:
+                selected.update(_validated_index_weights(
+                    index, root, label, suffixes))
+    if not selected:
+        raise CampaignError(f"{label}: no usable .safetensors/.bin/.pt/.pth weights")
+    return {name: selected[name] for name in sorted(selected)}
+
+
+def _has_weight_candidates(root: Path) -> bool:
+    weights, indexes = _weight_and_index_files(Path(root))
+    return bool(weights or indexes)
+
+
 def weight_bytes(path: Path) -> int:
-    total = 0
-    if Path(path).is_dir():
-        for file in Path(path).rglob("*"):
-            if file.is_file() and file.suffix in {".safetensors", ".bin"}:
-                total += file.stat().st_size
-    return total
+    return sum(path.stat().st_size
+               for path in _weight_files_for_root(Path(path), "checkpoint").values())
+
+
+def _dependency_paths(items) -> tuple:
+    result = []
+    for item in items or []:
+        if isinstance(item, dict) and item.get("id") and item.get("revision") \
+                and item.get("path"):
+            result.append((str(item["id"]), str(item["revision"]), str(item["path"])))
+    return tuple(result)
+
+
+def checkpoint_weights(path: Path, dependencies=(), code_dependencies=(),
+                       cache: dict | None = None) -> dict:
+    cache = cache if isinstance(cache, dict) else {}
+    root = Path(path)
+    dependency_paths = _dependency_paths(dependencies)
+    code_paths = _dependency_paths(code_dependencies)
+    key = ("checkpoint_weights", _probe_path(root), dependency_paths, code_paths)
+    if key in cache:
+        return cache[key]
+    root_files = _weight_files_for_root(root, "checkpoint")
+    selected = dict(root_files)
+    root_bytes = sum(item.stat().st_size for item in root_files.values())
+    seen = {}
+    for namespace, items in (("dependencies", dependency_paths),
+                             ("code_dependencies", code_paths)):
+        for identity, revision, raw_path in items:
+            dependency_root = Path(raw_path)
+            if not dependency_root.is_dir():
+                raise CampaignError(
+                    f"dependency {identity}@{revision}: path is unavailable")
+            real_root = os.path.realpath(dependency_root)
+            previous = seen.get((identity, revision))
+            if previous is not None and previous != real_root:
+                raise CampaignError(
+                    f"dependency {identity}@{revision} has multiple roots")
+            seen[(identity, revision)] = real_root
+            if not _has_weight_candidates(dependency_root):
+                continue
+            files = _weight_files_for_root(
+                dependency_root, f"dependency {identity}@{revision}")
+            prefix = f"{namespace}/{slug(identity)}@{revision}"
+            for relative, file in files.items():
+                selected[f"{prefix}/{relative}"] = file
+    weight_map = {name: sha256_file(file)
+                  for name, file in sorted(selected.items())}
+    result = {"weight_files_sha256": weight_map,
+              "weights_sha256": canonical_sha256(weight_map),
+              "weight_bytes": root_bytes}
+    cache[key] = result
+    return result
+
+
+def _metadata_sha256_cached(path, cache: dict) -> str:
+    key = ("metadata_sha256", _probe_path(path) if path else "")
+    if key not in cache:
+        cache[key] = metadata_sha256(Path(path)) if path else ""
+    return cache[key]
+
+
+def _refresh_dependency_descriptors(items, cache: dict) -> list[dict]:
+    result = []
+    for item in items or []:
+        if not isinstance(item, dict) or not item.get("id") or not item.get("revision"):
+            continue
+        descriptor = dict(item)
+        path = descriptor.get("path")
+        descriptor["metadata_sha256"] = (
+            _metadata_sha256_cached(path, cache) if path
+            else descriptor.get("metadata_sha256") or "")
+        result.append(descriptor)
+    return result
+
+
+def _dependency_identity(items) -> list[dict]:
+    result = []
+    for item in items or []:
+        if isinstance(item, dict) and item.get("id") and item.get("revision"):
+            result.append({"id": item["id"], "revision": item["revision"],
+                           "metadata_sha256": item.get("metadata_sha256") or ""})
+    return result
+
+
+def _strict_dependency_descriptors(items, label: str, cache: dict) -> list[dict]:
+    if items is None:
+        return []
+    if not isinstance(items, list):
+        raise CampaignError(f"{label} must be a list")
+    result = []
+    for position, item in enumerate(items):
+        if not isinstance(item, dict):
+            raise CampaignError(f"{label}[{position}] must be an object")
+        if not isinstance(item.get("id"), str) or not item["id"] \
+                or not isinstance(item.get("revision"), str) or not item["revision"]:
+            raise CampaignError(f"{label}[{position}] lacks id/revision")
+        path = item.get("path")
+        if not isinstance(path, str) or not path:
+            raise CampaignError(f"{label}[{position}] lacks a dependency path")
+        if not Path(path).is_dir():
+            raise CampaignError(f"{label}[{position}] path is unavailable")
+        metadata = _metadata_sha256_cached(path, cache)
+        if not re.fullmatch(r"[0-9a-f]{64}", metadata):
+            raise CampaignError(f"{label}[{position}] metadata is unavailable")
+        descriptor = dict(item)
+        descriptor["metadata_sha256"] = metadata
+        result.append(descriptor)
+    return result
+
+
+def checkpoint_identity(receipt: dict, cache: dict | None = None) -> dict:
+    """Return a fresh raw checkpoint receipt and its portable identity."""
+    if not isinstance(receipt, dict):
+        raise CampaignError("checkpoint receipt must be an object")
+    path_value = receipt.get("path")
+    if not isinstance(path_value, str) or not path_value:
+        raise CampaignError("checkpoint receipt lacks a path")
+    path = Path(path_value)
+    if not path.is_dir():
+        raise CampaignError(f"checkpoint path is unavailable: {path}")
+    cache = cache if isinstance(cache, dict) else {}
+    dependencies = _strict_dependency_descriptors(
+        receipt.get("dependencies"), "dependencies", cache)
+    code_dependencies = _strict_dependency_descriptors(
+        receipt.get("code_dependencies"), "code_dependencies", cache)
+    key = ("checkpoint_identity", _probe_path(path),
+           receipt.get("id"), receipt.get("revision"),
+           _dependency_paths(dependencies), _dependency_paths(code_dependencies))
+    if key in cache:
+        return cache[key]
+    metadata = _metadata_sha256_cached(path, cache)
+    weights = checkpoint_weights(path, dependencies, code_dependencies, cache)
+    checkpoint = dict(receipt)
+    checkpoint.update(path=str(path), metadata_sha256=metadata,
+                      weight_bytes=weights["weight_bytes"],
+                      weight_files_sha256=weights["weight_files_sha256"],
+                      weights_sha256=weights["weights_sha256"],
+                      dependencies=dependencies,
+                      code_dependencies=code_dependencies)
+    result = {"checkpoint": checkpoint,
+              "identity": _checkpoint_identity(
+                  receipt, metadata, weights, dependencies, code_dependencies)}
+    cache[key] = result
+    return result
 
 
 def _config_scope(path: Path) -> dict:
@@ -365,11 +760,19 @@ def _download_model(model: dict, args):
     _verify_pinned(api, model["id"], revision)
     names = api.list_repo_files(model["id"], revision=revision)
     has_safetensors = any(name.endswith(".safetensors") for name in names)
-    has_bin = any(name.endswith(".bin") for name in names)
-    if not has_safetensors and not has_bin:
-        raise CampaignError(f"{model['id']}: snapshot has no .safetensors or .bin weights")
+    has_bin = any(name.endswith(".bin") and Path(name).name.lower() != "tokenizer.bin"
+                  for name in names)
+    has_torch = any(name.endswith((".pt", ".pth")) for name in names)
+    if not has_safetensors and not has_bin and not has_torch:
+        raise CampaignError(
+            f"{model['id']}: snapshot has no .safetensors/.bin/.pt/.pth weights")
     patterns = list(CODE_PATTERNS)
-    patterns.append("*.safetensors" if has_safetensors else "*.bin")
+    if has_safetensors:
+        patterns.append("*.safetensors")
+    elif has_bin:
+        patterns.append("*.bin")
+    else:
+        patterns.extend(["*.pt", "*.pth"])
     path = _download_snapshot(api, snapshot_download, model["id"], revision,
                               patterns, args.download_workers)
     code_dependencies = []
@@ -487,13 +890,14 @@ def _declared_missing(receipt: dict, model: dict, key: str) -> bool:
     return not declared.issubset(present)
 
 
-def _refresh_receipt(receipt: dict, model: dict, args):
+def _refresh_receipt(receipt: dict, model: dict, args, cache=None):
     path, adapter = ensure_tokenizer(Path(receipt["path"]), model, args.output)
-    receipt = dict(receipt)
-    receipt.update(path=str(path), metadata_sha256=metadata_sha256(path),
-                   weight_bytes=receipt.get("weight_bytes") or weight_bytes(path),
-                   tokenizer_adapter=adapter)
-    return receipt
+    cache = _invocation_cache(args, cache)
+    prepared = dict(receipt)
+    prepared["path"] = str(path)
+    refreshed = checkpoint_identity(prepared, cache)["checkpoint"]
+    refreshed["tokenizer_adapter"] = adapter
+    return refreshed
 
 
 def prepare_one(args, model: dict) -> dict:
@@ -539,6 +943,7 @@ def prepare_one(args, model: dict) -> dict:
 def prepare(args, models: list[dict]) -> None:
     if args.download_workers < 1:
         raise CampaignError("--download-workers must be >= 1")
+    args._benchmark_cache = {}
     with concurrent.futures.ThreadPoolExecutor(max_workers=args.download_workers) as pool:
         receipts = list(pool.map(lambda model: prepare_one(args, model), models))
     save_json(args.output / "checkpoints.json", receipts)
@@ -717,10 +1122,17 @@ def _package_key(python, module: str) -> tuple:
     return ("package_probe", _probe_path(python), module)
 
 
-def _run_probe(command, label: str) -> dict:
+def _probe_environment(args, runtime: str) -> dict:
+    env, _ = runtime_loader_environment(
+        runtime, getattr(args, "infinity_bin", None),
+        getattr(args, "torch_lib", None))
+    return env
+
+
+def _run_probe(command, label: str, env=None) -> dict:
     try:
         result = subprocess.run(command, capture_output=True, text=True,
-                                check=False, timeout=600)
+                                check=False, timeout=600, env=env)
     except OSError as exc:
         raise CampaignError(f"{label}: {exc}") from exc
     try:
@@ -759,7 +1171,8 @@ def runtime_python_identity_info(args, runtime: str, cache=None) -> dict:
     key = _identity_key(selected)
     if key not in cache:
         payload = _run_probe([str(selected), "-c", _IDENTITY_PROGRAM],
-                             f"runtime Python identity probe ({selected})")
+                             f"runtime Python identity probe ({selected})",
+                             env=_probe_environment(args, runtime))
         cache[key] = _normalise_identity(payload)
     return cache[key]
 
@@ -776,9 +1189,10 @@ def runtime_package_probe(args, runtime: str, cache=None) -> dict:
     key = _package_key(selected, runtime)
     if key not in cache:
         payload = _run_probe(
-            [str(selected), str(HERE / "benchmark-campaign.py"),
+            [str(selected), str(CAMPAIGN_INSPECTOR),
              "--inspect-package", runtime],
-            f"runtime package probe ({selected})")
+            f"runtime package probe ({selected})",
+            env=_probe_environment(args, runtime))
         cache[key] = payload
         if payload.get("python_identity") is not None:
             cache[_identity_key(selected)] = _normalise_identity(
@@ -796,10 +1210,49 @@ def seed_package_probe(cache: dict, python, module: str, payload: dict) -> None:
         cache[_identity_key(python)] = _normalise_identity(payload["python_identity"])
 
 
+def python_environment_probe(args, runtime: str, cache=None) -> dict:
+    selected = _runtime_python(args, runtime)
+    cache = _invocation_cache(args, cache)
+    key = ("python_environment", _probe_path(selected))
+    if key not in cache:
+        helper = Path(INTEGRITY_HELPER)
+        if not helper.is_file():
+            raise CampaignError(
+                f"Python environment helper is unavailable: {helper}")
+        payload = _run_probe(
+            [str(selected), str(helper)],
+            f"python environment probe ({selected})",
+            env=_probe_environment(args, runtime))
+        digest = payload.get("digest_sha256")
+        if not isinstance(digest, str) or not re.fullmatch(r"[0-9a-f]{64}", digest):
+            raise CampaignError(
+                f"python environment probe ({selected}) returned no valid digest")
+        cache[key] = payload
+    return cache[key]
+
+
+def python_environment_sha256(args, runtime: str, cache=None) -> str:
+    return python_environment_probe(args, runtime, cache)["digest_sha256"]
+
+
+def _source_file_sha256(path, cache: dict, role: str) -> str:
+    key = ("source_file_sha256", role, _probe_path(path))
+    if key not in cache:
+        cache[key] = sha256_file(Path(path))
+    return cache[key]
+
+
 def _library_tree_sha256(path, cache: dict) -> str:
     key = ("library_tree", _probe_path(path))
     if key not in cache:
         cache[key] = library_tree_sha256(Path(path))
+    return cache[key]
+
+
+def _torch_sdk_bundle(path, cache: dict) -> dict:
+    key = ("torch_sdk_bundle", _probe_path(path))
+    if key not in cache:
+        cache[key] = torch_sdk_bundle(Path(path))
     return cache[key]
 
 
@@ -814,6 +1267,7 @@ def _settings(args, model: dict, runtime: str, path: Path | None, cache=None) ->
                  if runtime == "sglang" else {})
     overrides["python_identity_sha256"] = runtime_python_identity_sha256(
         args, runtime, cache)
+    overrides["loader_policy"] = loader_policy(runtime)
     return {"dtype": args.dtype, "seconds": args.seconds, "repeats": args.repeats,
             "warmup": args.warmup, "concurrency": args.concurrency,
             "long_input_concurrency": args.long_input_concurrency,
@@ -863,13 +1317,15 @@ def _server_command(args, model: dict, path: Path, runtime: str, gpu: int) -> li
 
 
 def _environment(args, runtime: str, gpu: int, cache=None) -> tuple[dict, dict]:
-    env = os.environ.copy()
+    env, injected = runtime_loader_environment(
+        runtime, getattr(args, "infinity_bin", None), getattr(args, "torch_lib", None))
     overrides = {
         "CUDA_VISIBLE_DEVICES": str(gpu), "OMP_NUM_THREADS": "8",
         "MKL_NUM_THREADS": "8", "TOKENIZERS_PARALLELISM": "false",
         "VLLM_NO_USAGE_STATS": "1", "DO_NOT_TRACK": "1",
         "HF_HUB_OFFLINE": "1", "TRANSFORMERS_OFFLINE": "1",
         "HF_HUB_DISABLE_TELEMETRY": "1",
+        "PYTHONSAFEPATH": PYTHON_SAFE_PATH,
     }
     if runtime == "infinity":
         overrides.update({"INFINITY_TORCH_CUDA_GRAPHS": "1",
@@ -880,21 +1336,15 @@ def _environment(args, runtime: str, gpu: int, cache=None) -> tuple[dict, dict]:
     python_bin = str(Path(identity["executable"]).absolute().parent)
     env.update(overrides)
     env["PATH"] = python_bin + os.pathsep + env.get("PATH", "")
-    existing = env.get("LD_LIBRARY_PATH", "")
-    injected = []
-    if runtime == "infinity":
-        injected = [str(Path(args.infinity_bin).resolve().parent)]
-        if args.torch_lib:
-            injected.append(str(Path(args.torch_lib).resolve()))
-        env["LD_LIBRARY_PATH"] = os.pathsep.join(
-            injected + ([existing] if existing else []))
     recorded = dict(overrides)
+    recorded["loader_policy"] = loader_policy(runtime)
     recorded["python_identity_sha256"] = identity["sha256"]
     recorded["python_executable"] = identity["executable"]
     recorded["python_prefix"] = identity["prefix"]
     recorded["PATH_prepend"] = python_bin
     recorded["LD_LIBRARY_PATH_injected"] = injected
-    recorded["LD_LIBRARY_PATH_inherited"] = existing
+    recorded["LD_LIBRARY_PATH_inherited"] = ""
+    recorded["sanitized_variables"] = list(SCRUBBED_LOADER_VARIABLES)
     return env, recorded
 
 
@@ -958,14 +1408,30 @@ def _verify_runtime_installation(campaign, runtime: str, package_tree: str, prob
                 f"{actual!r} != {expected!r}")
 
 
-def _verify_infinity_torch(campaign, torch_tree):
+def _verify_infinity_torch(campaign, torch_tree, roots=None):
     if campaign is None:
         return
     build = campaign.get("build")
     if not isinstance(build, dict):
         raise CampaignError("campaign.build is missing")
     if build.get("torch_library_tree_sha256") != torch_tree:
-        raise CampaignError("current Infinity Torch library tree differs from campaign")
+        raise CampaignError("current Infinity Torch SDK bundle differs from campaign")
+    expected_roots = build.get("torch_library_roots")
+    if roots is not None and expected_roots is not None and expected_roots != roots:
+        raise CampaignError("current Infinity Torch SDK roots differ from campaign")
+
+
+def _verify_python_environment(campaign, runtime: str, digest: str):
+    entry = _campaign_installation(campaign, runtime)
+    if entry is None:
+        return
+    receipt = entry.get("python_environment")
+    if receipt is None:
+        return
+    if not isinstance(receipt, dict) \
+            or receipt.get("digest_sha256") != digest:
+        raise CampaignError(
+            f"current {runtime!r} Python environment differs from campaign receipt")
 
 
 def runtime_files(args, runtime: str, campaign, cache=None) -> dict:
@@ -978,12 +1444,15 @@ def runtime_files(args, runtime: str, campaign, cache=None) -> dict:
     binary_sha = sha256_file(binary)
     probe = None
     torch_tree = None
+    torch_roots = None
     if runtime == "infinity":
         package_tree = canonical_sha256(
             {"binary_sha256": binary_sha, "native_libraries": libraries})
         if getattr(args, "torch_lib", None):
-            torch_tree = _library_tree_sha256(args.torch_lib, cache)
-        _verify_infinity_torch(campaign, torch_tree)
+            bundle = _torch_sdk_bundle(args.torch_lib, cache)
+            torch_tree = bundle["digest_sha256"]
+            torch_roots = bundle["roots"]
+        _verify_infinity_torch(campaign, torch_tree, torch_roots)
     else:
         probe = runtime_package_probe(args, runtime, cache)
         package_tree = probe.get("package_tree_sha256")
@@ -991,7 +1460,9 @@ def runtime_files(args, runtime: str, campaign, cache=None) -> dict:
                 or not re.fullmatch(r"[0-9a-f]{64}", package_tree):
             raise CampaignError(
                 f"runtime package probe for {runtime!r} returned no package tree")
+    python_environment = python_environment_sha256(args, runtime, cache)
     _verify_runtime_installation(campaign, runtime, package_tree, probe)
+    _verify_python_environment(campaign, runtime, python_environment)
     files = {
         "runner_sha256": sha256_file(Path(__file__)),
         "client_sha256": sha256_file(HERE / "benchmark-http.py"),
@@ -999,6 +1470,11 @@ def runtime_files(args, runtime: str, campaign, cache=None) -> dict:
         "native_library_sha256": libraries,
         "runtime_package_tree_sha256": package_tree,
         "torch_library_tree_sha256": torch_tree,
+        "python_environment_sha256": python_environment,
+        "integrity_helper_sha256": _source_file_sha256(
+            INTEGRITY_HELPER, cache, "integrity_helper"),
+        "campaign_inspector_sha256": _source_file_sha256(
+            CAMPAIGN_INSPECTOR, cache, "campaign_inspector"),
     }
     cache[key] = files
     return files
@@ -1027,13 +1503,20 @@ def _verify_runtime_anchor(args, campaign, runtime: str, files: dict, cache) -> 
             f"current {runtime!r} runtime Python identity differs from campaign")
 
 
-def _checkpoint_identity(receipt: dict, metadata: str) -> dict:
-    code_dependencies = []
-    for item in receipt.get("code_dependencies") or []:
-        if isinstance(item, dict) and item.get("id") and item.get("revision"):
-            code_dependencies.append({"id": item["id"], "revision": item["revision"]})
+def _checkpoint_identity(receipt: dict, metadata: str, weights=None,
+                         dependencies=None, code_dependencies=None) -> dict:
+    if weights is None:
+        weights_sha = receipt.get("weights_sha256")
+    else:
+        weights_sha = weights.get("weights_sha256")
+    if dependencies is None:
+        dependencies = receipt.get("dependencies")
+    if code_dependencies is None:
+        code_dependencies = receipt.get("code_dependencies")
     return {"id": receipt.get("id"), "revision": receipt.get("revision"),
-            "metadata_sha256": metadata, "code_dependencies": code_dependencies}
+            "metadata_sha256": metadata, "weights_sha256": weights_sha,
+            "dependencies": _dependency_identity(dependencies),
+            "code_dependencies": _dependency_identity(code_dependencies)}
 
 
 def fingerprint_inputs(model: dict, checkpoint: dict, runtime: str, gpu: int,
@@ -1150,9 +1633,23 @@ def run_one(args, model: dict, runtime: str, gpu: int, cpus: str, client_cpus: s
     log = args.output / "logs" / (stem + ".log")
     receipt = _receipt_for(model, args.output / "checkpoints" / (slug(model["id"]) + ".json"))
     path = Path(receipt["path"]) if receipt.get("path") else None
-    metadata = metadata_sha256(path) if path and path.is_dir() else ""
-    checkpoint = dict(receipt)
-    checkpoint["metadata_sha256"] = metadata
+    checkpoint_error = None
+    try:
+        fresh = checkpoint_identity(receipt, tree_cache)
+        checkpoint = fresh["checkpoint"]
+        checkpoint_identity_value = fresh["identity"]
+        path = Path(checkpoint["path"])
+    except Exception as exc:
+        checkpoint_error = f"{type(exc).__name__}: {exc}"
+        metadata = metadata_sha256(path) if path and path.is_dir() else ""
+        checkpoint = dict(receipt)
+        checkpoint.update(
+            metadata_sha256=metadata, weight_files_sha256={},
+            weights_sha256=None, weight_bytes=0,
+            dependencies=[], code_dependencies=[])
+        checkpoint_identity_value = _checkpoint_identity(
+            {"id": receipt.get("id"), "revision": receipt.get("revision")},
+            metadata, {"weights_sha256": None}, [], [])
     preflight_error = None
     try:
         settings = _settings(args, model, runtime,
@@ -1162,16 +1659,9 @@ def run_one(args, model: dict, runtime: str, gpu: int, cpus: str, client_cpus: s
         settings = _settings(args, model, runtime, None, tree_cache)
     files = runtime_files(args, runtime, campaign, tree_cache)
     _verify_runtime_anchor(args, campaign, runtime, files, tree_cache)
-    inputs = fingerprint_inputs(model, _checkpoint_identity(receipt, metadata), runtime,
+    inputs = fingerprint_inputs(model, checkpoint_identity_value, runtime,
                                 gpu, cpus, client_cpus, settings, files)
     current = fingerprint(inputs)
-    decision = resume_decision(target, current, args.retry_failures)
-    if decision == "skip":
-        return _load_json(target)
-    if decision == "archive":
-        for kind, owned in (("runs", target), ("clients", client_result), ("logs", log)):
-            _archive_previous(args.output, kind, owned)
-    _clear_client_result(client_result)
     item = {"model": model["id"], "task": model["task"], "runtime": runtime,
             "status": "load_failed", "gpu": gpu, "cpus": cpus,
             "client_cpus": client_cpus, "dtype": args.dtype,
@@ -1179,11 +1669,23 @@ def run_one(args, model: dict, runtime: str, gpu: int, cpus: str, client_cpus: s
             "run_fingerprint": current, "fingerprint_inputs": inputs,
             "timestamp_utc": datetime.datetime.now(datetime.timezone.utc).isoformat()}
     identity_error = receipt_identity_error(model, receipt)
-    if identity_error or not path or not path.is_dir():
+    if identity_error or checkpoint_error or not path or not path.is_dir():
+        for kind, owned in (("runs", target), ("clients", client_result),
+                            ("logs", log)):
+            _archive_previous(args.output, kind, owned)
         item.update(status="checkpoint_unavailable",
-                    error=identity_error or "checkpoint path is unavailable")
+                    error=identity_error or checkpoint_error
+                    or "checkpoint path is unavailable")
         save_json(target, item)
         return item
+    decision = resume_decision(target, current, args.retry_failures)
+    if decision == "skip":
+        return _load_json(target)
+    if decision == "archive":
+        for kind, owned in (("runs", target), ("clients", client_result), ("logs", log)):
+            _archive_previous(args.output, kind, owned)
+    _clear_client_result(client_result)
+    item["status"] = "load_failed"
     if preflight_error:
         item.update(status="load_failed", error=preflight_error,
                     total_elapsed_s=0.0)
@@ -1261,6 +1763,16 @@ def _placements(args, models: list[dict], gpus: list[int]) -> dict:
     return placements
 
 
+def _preflight_checkpoints(args, models: list[dict], cache: dict) -> None:
+    for model in models:
+        receipt = _receipt_for(
+            model, args.output / "checkpoints" / (slug(model["id"]) + ".json"))
+        try:
+            checkpoint_identity(receipt, cache)
+        except Exception:
+            pass
+
+
 def _preflight_runtimes(args, campaign, runtimes, cache: dict) -> None:
     method = campaign.get("method") if isinstance(campaign, dict) else None
     identities = method.get("runtime_python_identity_sha256") \
@@ -1294,6 +1806,7 @@ def run(args, models: list[dict], campaign) -> None:
     if any(2048 in model["lengths"] for model in models) \
             and args.long_input_concurrency != 8:
         raise CampaignError("the client fixes 2048-token concurrency to 8")
+    _preflight_checkpoints(args, models, tree_cache)
     _preflight_runtimes(args, campaign, args.runtimes, tree_cache)
     def lane(index: int, gpu: int) -> None:
         cpus, client_cpus = lane_placement(index, gpu, gpus, server_lanes, client_lanes)
@@ -1400,10 +1913,32 @@ def self_test() -> int:
                         "libinfinity_cuda.so", "libtorch_bridge.so", "libc10_bridge.so"]
         for name in bridge_names:
             (inf_bin / name).write_bytes(("bridge-" + name).encode())
-        torch_lib = root / "torch"
+        sdk_site = root / "sdk-site"
+        torch_lib = sdk_site / "torch" / "lib"
         (torch_lib / "nested").mkdir(parents=True)
         (torch_lib / "libtorch.so").write_bytes(b"torch-library")
         (torch_lib / "nested" / "libc10.so").write_bytes(b"c10-library")
+        nvidia_lib = sdk_site / "nvidia" / "cudnn" / "lib"
+        nvidia_lib.mkdir(parents=True)
+        (nvidia_lib / "libcudnn.so").write_bytes(b"cudnn-library")
+        integrity_marker = root / "integrity-marker"
+        integrity_marker.write_bytes(b"python-environment-v1")
+        fake_integrity = root / "fake-integrity.py"
+        fake_integrity.write_text(
+            "import hashlib, json, os\n"
+            f"marker = {str(integrity_marker)!r}\n"
+            "leaked = next((name for name in "
+            "('LD_LIBRARY_PATH', 'LD_PRELOAD', 'LD_AUDIT', 'PYTHONPATH', "
+            "'PYTHONHOME') if os.environ.get(name) == 'sentinel-' + name), None)\n"
+            "data = (b'leaked:' + leaked.encode()) if leaked else "
+            "open(marker, 'rb').read()\n"
+            "print(json.dumps({'schema_version': 1, 'scope': 'fixture', "
+            "'digest_sha256': hashlib.sha256(data).hexdigest(), "
+            "'file_count': 1, 'byte_count': len(data), 'distributions': [], "
+            "'content_roots': [], 'interpreter': {}}, sort_keys=True))\n",
+            encoding="utf-8")
+        original_integrity_helper = INTEGRITY_HELPER
+        globals()["INTEGRITY_HELPER"] = fake_integrity
         client_python = make_venv("client-env")
         vllm_python = make_venv("vllm-env")
         sg_python = make_venv("sg-env")
@@ -1412,8 +1947,11 @@ def self_test() -> int:
             infinity_bin=str(infinity), torch_lib=str(torch_lib),
             vllm_python=str(vllm_wrapper), sglang_python=str(sg_python),
             client_python=str(client_python))
-        previous_ld = os.environ.get("LD_LIBRARY_PATH")
-        os.environ["LD_LIBRARY_PATH"] = "sentinel"
+        sentinel_values = {name: f"sentinel-{name}"
+                           for name in SCRUBBED_LOADER_VARIABLES}
+        previous_environment = {
+            name: os.environ.get(name) for name in sentinel_values}
+        os.environ.update(sentinel_values)
         try:
             cache = {}
             inf_env, inf_record = _environment(env_args, "infinity", 0, cache)
@@ -1425,20 +1963,36 @@ def self_test() -> int:
                    "long_input_concurrency": 8, "max_batch_tokens": 16384,
                    "max_sequence_length": 2048})
             vllm_settings = _settings(settings_args, model, "vllm", None, cache)
+            sentinel_probe_digest = python_environment_sha256(
+                settings_args, "vllm", cache)
         finally:
-            if previous_ld is None:
-                os.environ.pop("LD_LIBRARY_PATH", None)
-            else:
-                os.environ["LD_LIBRARY_PATH"] = previous_ld
-        assert vllm_env["LD_LIBRARY_PATH"] == "sentinel"
-        assert sg_env["LD_LIBRARY_PATH"] == "sentinel"
-        assert str(inf_bin.resolve()) in inf_env["LD_LIBRARY_PATH"]
-        assert str(torch_lib.resolve()) in inf_env["LD_LIBRARY_PATH"]
-        assert str(inf_bin.resolve()) not in vllm_env["LD_LIBRARY_PATH"]
-        assert str(torch_lib.resolve()) not in vllm_env["LD_LIBRARY_PATH"]
+            for name, value in previous_environment.items():
+                if value is None:
+                    os.environ.pop(name, None)
+                else:
+                    os.environ[name] = value
+        assert "LD_LIBRARY_PATH" not in vllm_env
+        assert "LD_LIBRARY_PATH" not in sg_env
+        assert "sentinel" not in json.dumps(inf_env)
+        assert "sentinel" not in json.dumps(vllm_env)
+        assert inf_env["LD_LIBRARY_PATH"] == os.pathsep.join(
+            [str(inf_bin.resolve()), str(torch_lib.resolve())])
+        assert inf_env["PYTHONSAFEPATH"] == "1"
+        assert vllm_env["PYTHONSAFEPATH"] == "1"
+        for name in SCRUBBED_LOADER_VARIABLES:
+            if name != "LD_LIBRARY_PATH":
+                assert name not in inf_env and name not in vllm_env
         assert inf_record["LD_LIBRARY_PATH_injected"] == [
             str(inf_bin.resolve()), str(torch_lib.resolve())]
         assert vllm_record["LD_LIBRARY_PATH_injected"] == []
+        assert inf_record["LD_LIBRARY_PATH_inherited"] == ""
+        assert vllm_record["LD_LIBRARY_PATH_inherited"] == ""
+        assert inf_record["PYTHONSAFEPATH"] == "1"
+        assert inf_record["loader_policy"] == loader_policy("infinity")
+        assert vllm_record["loader_policy"] == loader_policy("vllm")
+        assert "sentinel" not in json.dumps(inf_record)
+        assert "sentinel" not in json.dumps(vllm_record)
+        assert sentinel_probe_digest == sha256_bytes(integrity_marker.read_bytes())
         client_bin = str(Path(str(client_python)).absolute().parent)
         vllm_bin = str(Path(str(vllm_python)).absolute().parent)
         sg_bin = str(Path(str(sg_python)).absolute().parent)
@@ -1461,6 +2015,8 @@ def self_test() -> int:
             assert identity == runtime_python_identity_sha256(env_args, runtime, cache)
         assert vllm_settings["runtime_environment"]["python_identity_sha256"] \
             == vllm_record["python_identity_sha256"]
+        assert vllm_settings["runtime_environment"]["loader_policy"] \
+            == vllm_record["loader_policy"]
         switched_wrapper = make_wrapper(
             "vllm-switched", make_venv("vllm-env-switched"))
         switched_args = argparse.Namespace(
@@ -1472,9 +2028,57 @@ def self_test() -> int:
         assert set(files) == {
             "runner_sha256", "client_sha256", "binary_sha256",
             "native_library_sha256", "runtime_package_tree_sha256",
-            "torch_library_tree_sha256"}
+            "torch_library_tree_sha256", "python_environment_sha256",
+            "integrity_helper_sha256", "campaign_inspector_sha256"}
         assert set(files["native_library_sha256"]) == set(bridge_names)
-        assert files["torch_library_tree_sha256"] == library_tree_sha256(torch_lib)
+        bundle = torch_sdk_bundle(torch_lib)
+        assert set(bundle["roots"]) == {"torch_lib", "nvidia"}
+        assert files["torch_library_tree_sha256"] == bundle["digest_sha256"]
+        alias_lib = root / "sdk-libs-alias"
+        alias_lib.symlink_to(torch_lib, target_is_directory=True)
+        assert torch_sdk_bundle(alias_lib) == bundle
+        assert files["python_environment_sha256"] == sha256_bytes(
+            integrity_marker.read_bytes())
+        fake_integrity_b = root / "fake-integrity-b.py"
+        fake_integrity_b.write_text(
+            fake_integrity.read_text(encoding="utf-8") + "# source-only-change\n",
+            encoding="utf-8")
+        original_helper_for_source = INTEGRITY_HELPER
+        globals()["INTEGRITY_HELPER"] = fake_integrity
+        helper_a_files = runtime_files(env_args, "infinity", None, {})
+        globals()["INTEGRITY_HELPER"] = fake_integrity_b
+        helper_b_files = runtime_files(env_args, "infinity", None, {})
+        globals()["INTEGRITY_HELPER"] = original_helper_for_source
+        assert helper_a_files["python_environment_sha256"] \
+            == helper_b_files["python_environment_sha256"]
+        assert helper_a_files["integrity_helper_sha256"] \
+            != helper_b_files["integrity_helper_sha256"]
+        helper_anchor = {
+            "fingerprint_files": {"infinity": helper_a_files},
+            "method": {"runtime_python_identity_sha256": {
+                "infinity": inf_record["python_identity_sha256"]}}}
+        _expect(CampaignError, _verify_runtime_anchor, env_args, helper_anchor,
+                "infinity", helper_b_files, {})
+        inspector_a = root / "fake-inspector-a.py"
+        inspector_b = root / "fake-inspector-b.py"
+        inspector_a.write_text("# inspector-a\n", encoding="utf-8")
+        inspector_b.write_text("# inspector-b\n", encoding="utf-8")
+        original_inspector = CAMPAIGN_INSPECTOR
+        globals()["CAMPAIGN_INSPECTOR"] = inspector_a
+        inspector_a_files = runtime_files(env_args, "infinity", None, {})
+        globals()["CAMPAIGN_INSPECTOR"] = inspector_b
+        inspector_b_files = runtime_files(env_args, "infinity", None, {})
+        globals()["CAMPAIGN_INSPECTOR"] = original_inspector
+        assert inspector_a_files["campaign_inspector_sha256"] \
+            != inspector_b_files["campaign_inspector_sha256"]
+        assert inspector_a_files["python_environment_sha256"] \
+            == inspector_b_files["python_environment_sha256"]
+        inspector_anchor = {
+            "fingerprint_files": {"infinity": inspector_a_files},
+            "method": {"runtime_python_identity_sha256": {
+                "infinity": inf_record["python_identity_sha256"]}}}
+        _expect(CampaignError, _verify_runtime_anchor, env_args, inspector_anchor,
+                "infinity", inspector_b_files, {})
         fingerprint_values = [fingerprint(fingerprint_inputs(
             model, _checkpoint_identity(
                 {"id": model["id"], "revision": model["revision"]}, "f" * 64),
@@ -1483,15 +2087,28 @@ def self_test() -> int:
             model, _checkpoint_identity(
                 {"id": model["id"], "revision": model["revision"]}, "f" * 64),
             "infinity", 0, "0-7", "32-39", {"seconds": 10, "repeats": 3}, files))
-        moved_torch = root / "torch-relocated"
-        shutil.copytree(torch_lib, moved_torch, symlinks=True)
+        moved_site = root / "sdk-relocated"
+        shutil.copytree(sdk_site, moved_site, symlinks=True)
         moved_args = argparse.Namespace(
-            **{**vars(env_args), "torch_lib": str(moved_torch)})
+            **{**vars(env_args), "torch_lib": str(moved_site / "torch" / "lib")})
         assert runtime_files(moved_args, "infinity", None, {})[
             "torch_library_tree_sha256"] == files["torch_library_tree_sha256"]
+        standalone = root / "standalone-torch" / "lib"
+        standalone.mkdir(parents=True)
+        (standalone / "libtorch.so").write_bytes(b"standalone")
+        standalone_bundle = torch_sdk_bundle(standalone)
+        assert set(standalone_bundle["roots"]) == {"torch_lib"}
         no_sdk = argparse.Namespace(**{**vars(env_args), "torch_lib": None})
         assert runtime_files(no_sdk, "infinity", None, {})[
             "torch_library_tree_sha256"] is None
+        nvidia_bytes = (nvidia_lib / "libcudnn.so").read_bytes()
+        (nvidia_lib / "libcudnn.so").write_bytes(
+            b"X" + nvidia_bytes[1:])
+        nvidia_changed = runtime_files(env_args, "infinity", None, {})
+        assert nvidia_changed["torch_library_tree_sha256"] != files[
+            "torch_library_tree_sha256"]
+        assert torch_sdk_bundle(alias_lib)["digest_sha256"] != bundle["digest_sha256"]
+        (nvidia_lib / "libcudnn.so").write_bytes(nvidia_bytes)
         (torch_lib / "libtorch.so").write_bytes(b"torch-library-changed")
         changed = runtime_files(env_args, "infinity", None, {})
         assert changed["torch_library_tree_sha256"] != files["torch_library_tree_sha256"]
@@ -1507,6 +2124,219 @@ def self_test() -> int:
         (torch_lib / "nested" / "new.so").write_bytes(b"new-library")
         assert runtime_files(env_args, "infinity", None, {})[
             "torch_library_tree_sha256"] != changed["torch_library_tree_sha256"]
+
+        checkpoint = root / "checkpoint-weights"
+        checkpoint.mkdir()
+        shard_a = checkpoint / "model-00001-of-00002.safetensors"
+        shard_b = checkpoint / "model-00002-of-00002.safetensors"
+        shard_a.write_bytes(b"shard-a")
+        shard_b.write_bytes(b"shard-b")
+        (checkpoint / "model.safetensors.index.json").write_text(json.dumps(
+            {"weight_map": {"a": shard_a.name, "b": shard_b.name}}),
+            encoding="utf-8")
+        weight_info = checkpoint_weights(checkpoint, cache={})
+        assert set(weight_info["weight_files_sha256"]) == {shard_a.name, shard_b.name}
+        assert weight_info["weights_sha256"] == canonical_sha256(
+            weight_info["weight_files_sha256"])
+        missing = root / "weights-missing"
+        shutil.copytree(checkpoint, missing)
+        (missing / shard_b.name).unlink()
+        _expect(CampaignError, checkpoint_weights, missing, (), (), {})
+        escaping = root / "weights-escaping"
+        shutil.copytree(checkpoint, escaping)
+        (escaping / "model.safetensors.index.json").write_text(json.dumps(
+            {"weight_map": {"a": "../escape.safetensors"}}), encoding="utf-8")
+        _expect(CampaignError, checkpoint_weights, escaping, (), (), {})
+        single = root / "weights-single"
+        single.mkdir()
+        (single / "model.safetensors").write_bytes(b"single")
+        assert set(checkpoint_weights(single, cache={})["weight_files_sha256"]) \
+            == {"model.safetensors"}
+        nested = root / "weights-nested"
+        (nested / "1_Dense").mkdir(parents=True)
+        (nested / "model.safetensors").write_bytes(b"nested-main")
+        dense_weight = nested / "1_Dense" / "pytorch_model.bin"
+        dense_weight.write_bytes(b"dense-v1")
+        nested_info = checkpoint_weights(nested, cache={})
+        assert set(nested_info["weight_files_sha256"]) == {
+            "model.safetensors", "1_Dense/pytorch_model.bin"}
+        nested_identity = _checkpoint_identity(
+            {"id": model["id"], "revision": model["revision"]}, "f" * 64,
+            nested_info, [], [])
+        dense_weight.write_bytes(b"dense-v2")
+        nested_changed = checkpoint_weights(nested, cache={})
+        assert nested_changed["weights_sha256"] != nested_info["weights_sha256"]
+        assert _checkpoint_identity(
+            {"id": model["id"], "revision": model["revision"]}, "f" * 64,
+            nested_changed, [], [])["weights_sha256"] \
+            != nested_identity["weights_sha256"]
+        preferred_failure = root / "weights-preferred-safe-failure"
+        preferred_failure.mkdir()
+        (preferred_failure / "pytorch_model.bin").write_bytes(b"bin-valid")
+        (preferred_failure / "model.safetensors.index.json").write_text(json.dumps(
+            {"weight_map": {"a": "model-00001-of-00002.safetensors"}}),
+            encoding="utf-8")
+        _expect(CampaignError, checkpoint_weights, preferred_failure, (), (), {})
+        unused_bin_index = root / "weights-unused-bin-index"
+        unused_bin_index.mkdir()
+        (unused_bin_index / "model.safetensors").write_bytes(b"safe-main")
+        (unused_bin_index / "pytorch_model.bin.index.json").write_text(json.dumps(
+            {"weight_map": {"a": "pytorch_model-00001.bin",
+                            "b": "pytorch_model-00002.bin"}}), encoding="utf-8")
+        unused_info = checkpoint_weights(unused_bin_index, cache={})
+        assert set(unused_info["weight_files_sha256"]) == {"model.safetensors"}
+        bin_preferred_failure = root / "weights-preferred-bin-failure"
+        bin_preferred_failure.mkdir()
+        (bin_preferred_failure / "pytorch_model-00001.bin").write_bytes(b"bin-one")
+        (bin_preferred_failure / "pytorch_model.bin.index.json").write_text(
+            json.dumps({"weight_map": {
+                "a": "pytorch_model-00001.bin",
+                "b": "pytorch_model-00002.bin"}}), encoding="utf-8")
+        _expect(CampaignError, checkpoint_weights, bin_preferred_failure, (), (), {})
+        nested_preferred = root / "weights-nested-preferred"
+        (nested_preferred / "1_Dense").mkdir(parents=True)
+        (nested_preferred / "model.safetensors").write_bytes(b"nested-root")
+        (nested_preferred / "1_Dense" / "pytorch_model.bin").write_bytes(b"bin")
+        (nested_preferred / "1_Dense" / "model.safetensors.index.json").write_text(
+            json.dumps({"weight_map": {
+                "a": "model-00001-of-00002.safetensors"}}), encoding="utf-8")
+        _expect(CampaignError, checkpoint_weights, nested_preferred, (), (), {})
+        windows_escape = root / "weights-windows"
+        windows_escape.mkdir()
+        (windows_escape / "model.safetensors").write_bytes(b"safe")
+        (windows_escape / "model.safetensors.index.json").write_text(json.dumps(
+            {"weight_map": {"a": "C:\\escape.safetensors"}}), encoding="utf-8")
+        _expect(CampaignError, checkpoint_weights, windows_escape, (), (), {})
+        unc_escape = root / "weights-unc"
+        unc_escape.mkdir()
+        (unc_escape / "model.safetensors").write_bytes(b"safe")
+        (unc_escape / "model.safetensors.index.json").write_text(json.dumps(
+            {"weight_map": {"a": "\\\\server\\share\\model.safetensors"}}),
+            encoding="utf-8")
+        _expect(CampaignError, checkpoint_weights, unc_escape, (), (), {})
+        tokenizer_only = root / "weights-tokenizer"
+        tokenizer_only.mkdir()
+        (tokenizer_only / "tokenizer.bin").write_bytes(b"tokenizer")
+        _expect(CampaignError, checkpoint_weights, tokenizer_only, (), (), {})
+        empty_weights = root / "weights-empty"
+        empty_weights.mkdir()
+        _expect(CampaignError, checkpoint_weights, empty_weights, (), (), {})
+        mutable = root / "weights-mutable"
+        shutil.copytree(checkpoint, mutable)
+        before = checkpoint_weights(mutable, cache={})
+        before_identity = _checkpoint_identity(
+            {"id": model["id"], "revision": model["revision"]}, "f" * 64,
+            before, [], [])
+        before_fingerprint = fingerprint(fingerprint_inputs(
+            model, before_identity, "infinity", 0, "0-7", "32-39",
+            {"seconds": 10, "repeats": 3}, files))
+        original_shard = (mutable / shard_a.name).read_bytes()
+        (mutable / shard_a.name).write_bytes(
+            b"X" + original_shard[1:])
+        after = checkpoint_weights(mutable, cache={})
+        assert len((mutable / shard_a.name).read_bytes()) == len(original_shard)
+        assert after["weights_sha256"] != before["weights_sha256"]
+        after_fingerprint = fingerprint(fingerprint_inputs(
+            model, _checkpoint_identity(
+                {"id": model["id"], "revision": model["revision"]}, "f" * 64,
+                after, [], []), "infinity", 0, "0-7", "32-39",
+            {"seconds": 10, "repeats": 3}, files))
+        assert after_fingerprint != before_fingerprint
+        save_json(root / "weights-resume.json", {
+            "run_fingerprint": before_fingerprint, "status": "measured",
+            "measurement": {"ok": True}})
+        assert resume_decision(root / "weights-resume.json",
+                               after_fingerprint, False) == "archive"
+        shared_weights = {}
+        cached_before = checkpoint_weights(mutable, cache=shared_weights)
+        (mutable / shard_a.name).write_bytes(b"Y" + original_shard[1:])
+        assert checkpoint_weights(mutable, cache=shared_weights) == cached_before
+        freshened = checkpoint_weights(mutable, cache={})
+        assert freshened["weights_sha256"] != cached_before["weights_sha256"]
+        dependency = root / "weight-dependency"
+        dependency.mkdir()
+        (dependency / "model.safetensors").write_bytes(b"dependency-v1")
+        (dependency / "config.json").write_text('{"version":1}', encoding="utf-8")
+        dependency_items = [{"id": "org/dependency", "revision": "b" * 40,
+                             "path": str(dependency), "metadata_sha256": "stale"}]
+        dependency_weights = checkpoint_weights(
+            mutable, dependency_items, dependency_items, cache={})
+        assert any(name.startswith("dependencies/org--dependency@")
+                   for name in dependency_weights["weight_files_sha256"])
+        assert any(name.startswith("code_dependencies/org--dependency@")
+                   for name in dependency_weights["weight_files_sha256"])
+        malformed_dependency = root / "malformed-dependency"
+        malformed_dependency.mkdir()
+        (malformed_dependency / "pytorch_model.bin.index.json").write_text(
+            json.dumps({"weight_map": {"a": "missing.bin"}}), encoding="utf-8")
+        _expect(CampaignError, checkpoint_weights, mutable,
+                [{"id": "org/malformed", "revision": "c" * 40,
+                  "path": str(malformed_dependency)}], (), {})
+        duplicate_dependency = root / "duplicate-dependency"
+        duplicate_dependency.mkdir()
+        (duplicate_dependency / "model.safetensors").write_bytes(b"duplicate")
+        _expect(CampaignError, checkpoint_weights, mutable,
+                dependency_items,
+                [{"id": "org/dependency", "revision": "b" * 40,
+                  "path": str(duplicate_dependency)}], {})
+        dependency_descriptors = _refresh_dependency_descriptors(
+            dependency_items, {})
+        dependency_identity = _checkpoint_identity(
+            {"id": model["id"], "revision": model["revision"]}, "f" * 64,
+            dependency_weights, dependency_descriptors, dependency_descriptors)
+        (dependency / "model.safetensors").write_bytes(b"dependency-v2")
+        (dependency / "config.json").write_text('{"version":2}', encoding="utf-8")
+        changed_descriptors = _refresh_dependency_descriptors(
+            dependency_items, {})
+        changed_weights = checkpoint_weights(
+            mutable, changed_descriptors, changed_descriptors, cache={})
+        changed_identity = _checkpoint_identity(
+            {"id": model["id"], "revision": model["revision"]}, "f" * 64,
+            changed_weights, changed_descriptors, changed_descriptors)
+        assert dependency_identity["weights_sha256"] \
+            != changed_identity["weights_sha256"]
+        assert dependency_identity["dependencies"] \
+            != changed_identity["dependencies"]
+        metadata_only = root / "metadata-only-dependency"
+        metadata_only.mkdir()
+        (metadata_only / "config.json").write_text('{"metadata":1}', encoding="utf-8")
+        receipt = {"id": model["id"], "revision": model["revision"],
+                   "status": "ready", "path": str(single),
+                   "dependencies": [{"id": "org/meta", "revision": "d" * 40,
+                                     "path": str(metadata_only),
+                                     "metadata_sha256": "stale"}],
+                   "code_dependencies": [],
+                   "weight_files_sha256": {"stale.bin": "f" * 64},
+                   "weights_sha256": "f" * 64}
+        fresh = checkpoint_identity(receipt, {})
+        assert set(fresh) == {"checkpoint", "identity"}
+        assert fresh["checkpoint"]["weights_sha256"] \
+            != receipt["weights_sha256"]
+        assert "weight_files_sha256" in fresh["checkpoint"]
+        assert fresh["identity"]["weights_sha256"] \
+            == fresh["checkpoint"]["weights_sha256"]
+        assert fresh["identity"]["dependencies"][0]["metadata_sha256"] \
+            == metadata_sha256(metadata_only)
+        assert str(root) not in json.dumps(fresh["identity"])
+        shared_identity = {}
+        first_api = checkpoint_identity(receipt, shared_identity)
+        original_single = (single / "model.safetensors").read_bytes()
+        (single / "model.safetensors").write_bytes(b"X" + original_single[1:])
+        assert checkpoint_identity(receipt, shared_identity) == first_api
+        assert checkpoint_identity(receipt, {})["identity"]["weights_sha256"] \
+            != first_api["identity"]["weights_sha256"]
+        (single / "model.safetensors").write_bytes(original_single)
+        missing_dependency = root / "missing-dependency"
+        empty_dependency = root / "empty-dependency"
+        empty_dependency.mkdir()
+        broken = {**receipt,
+                  "dependencies": [{"id": "org/meta", "revision": "d" * 40,
+                                    "path": str(missing_dependency),
+                                    "metadata_sha256": "a" * 64}]}
+        _expect(CampaignError, checkpoint_identity, broken, {})
+        no_weights = {**receipt, "path": str(empty_weights),
+                      "dependencies": [], "code_dependencies": []}
+        _expect(CampaignError, checkpoint_identity, no_weights, {})
 
         site = root / "vllm-site"
         package = site / "vllm"
@@ -1572,9 +2402,9 @@ def self_test() -> int:
             == package_files
         original_probe = globals()["_run_probe"]
         calls = []
-        def counting_probe(command, label):
+        def counting_probe(command, label, **keywords):
             calls.append(label)
-            return original_probe(command, label)
+            return original_probe(command, label, **keywords)
         globals()["_run_probe"] = counting_probe
         try:
             shared = {}
@@ -1595,12 +2425,18 @@ def self_test() -> int:
                 "vllm": runtime_python_identity_sha256(package_args, "vllm", {}),
                 "sglang": runtime_python_identity_sha256(env_args, "sglang", {})}},
             "build": {"torch_library_tree_sha256":
-                      inf_files["torch_library_tree_sha256"]},
+                      inf_files["torch_library_tree_sha256"],
+                      "torch_library_roots": torch_sdk_bundle(torch_lib)["roots"]},
             "runtime_installations": {
                 "infinity": {"package_tree_sha256": canonical_sha256({
                     "binary_sha256": inf_files["binary_sha256"],
-                    "native_libraries": inf_files["native_library_sha256"]})},
-                **package_campaign["runtime_installations"]}}
+                    "native_libraries": inf_files["native_library_sha256"]}),
+                    "python_environment": {
+                        "digest_sha256": inf_files["python_environment_sha256"]}},
+                "vllm": {**package_campaign["runtime_installations"]["vllm"],
+                         "python_environment": {
+                             "digest_sha256": vllm_files[
+                                 "python_environment_sha256"]}}}}
         run_args = argparse.Namespace(
             **{**vars(env_args), "vllm_python": str(package_wrapper),
                "runtimes": ["infinity", "vllm"],
@@ -1636,11 +2472,172 @@ def self_test() -> int:
         assert all(Path(str(command[0])).name != "taskset"
                    for command in launch_commands if command)
 
+        original_marker = integrity_marker.read_bytes()
+        run_calls.clear()
+        launch_commands.clear()
+        globals()["run_one"] = fake_run_one
+        globals()["resume_decision"] = fake_resume
+        subprocess.Popen = recording_popen
+        integrity_marker.write_bytes(b"python-environment-v2")
+        try:
+            _expect(CampaignError, run, run_args, [model], run_campaign)
+            _expect(CampaignError, _preflight_runtimes, run_args, run_campaign,
+                    ["infinity", "vllm"], {})
+        finally:
+            subprocess.Popen = original_popen
+            globals()["run_one"] = original_run_one
+            globals()["resume_decision"] = original_resume
+            integrity_marker.write_bytes(original_marker)
+        assert run_calls == []
+        assert all(Path(str(command[0])).name != "taskset"
+                   for command in launch_commands if command)
+
+        run_one_output = root / "run-one-output"
+        run_one_receipt = run_one_output / "checkpoints" / "org--model.json"
+        bad_checkpoint = root / "bad-checkpoint"
+        bad_checkpoint.mkdir()
+        (bad_checkpoint / "model-00001-of-00002.safetensors").write_bytes(b"present")
+        (bad_checkpoint / "model.safetensors.index.json").write_text(json.dumps(
+            {"weight_map": {"a": "model-00001-of-00002.safetensors",
+                            "b": "model-00002-of-00002.safetensors"}}),
+            encoding="utf-8")
+        save_json(run_one_receipt, {
+            "id": model["id"], "revision": model["revision"],
+            "status": "ready", "path": str(bad_checkpoint)})
+        old_target = run_one_output / "runs" / "org--model--infinity.json"
+        save_json(old_target, {
+            "run_fingerprint": "old", "status": "measured",
+            "measurement": {"ok": True},
+            "checkpoint": {"weight_files_sha256": {"old.safetensors": "e" * 64},
+                           "weights_sha256": "e" * 64}})
+        run_one_args = argparse.Namespace(
+            **{**vars(run_args), "output": run_one_output,
+               "dtype": "bfloat16", "seconds": 10.0, "repeats": 3,
+               "warmup": 3.0, "concurrency": 32, "max_batch_tokens": 16384,
+               "max_sequence_length": 2048, "infinity_port_base": 18200,
+               "vllm_port_base": 18300, "sglang_port_base": 18400,
+               "prometheus_port_offset": 1000, "startup_timeout": 1.0,
+               "client_timeout": 1.0})
+        failed_resume_calls = []
+        original_resume_decision = globals()["resume_decision"]
+        def failing_resume(*arguments, **keywords):
+            failed_resume_calls.append("resume")
+            return "skip"
+        launch_commands.clear()
+        globals()["resume_decision"] = failing_resume
+        subprocess.Popen = recording_popen
+        try:
+            failed_raw = run_one(run_one_args, model, "infinity", 0,
+                                 "0-7", "32-39", run_campaign, {})
+        finally:
+            subprocess.Popen = original_popen
+            globals()["resume_decision"] = original_resume_decision
+        assert failed_raw["status"] == "checkpoint_unavailable"
+        assert "UnboundLocalError" not in failed_raw["error"]
+        assert "is missing" in failed_raw["error"]
+        assert failed_raw["checkpoint"]["weight_files_sha256"] == {}
+        assert failed_raw["checkpoint"]["weights_sha256"] is None
+        assert failed_raw["fingerprint_inputs"]["checkpoint"]["weights_sha256"] is None
+        assert failed_resume_calls == []
+        assert all(Path(str(command[0])).name != "taskset"
+                   for command in launch_commands if command)
+        archived = list((run_one_output / "previous" / "runs").glob("*.json"))
+        assert len(archived) == 1
+        assert _load_json(archived[0])["run_fingerprint"] == "old"
+        assert _load_json(old_target)["status"] == "checkpoint_unavailable"
+
+        valid_checkpoint = root / "valid-checkpoint"
+        valid_checkpoint.mkdir()
+        (valid_checkpoint / "config.json").write_text(
+            '{"hidden_size":64,"num_attention_heads":1}', encoding="utf-8")
+        (valid_checkpoint / "model.safetensors").write_bytes(b"valid-weight")
+        valid_output = root / "valid-run-one"
+        save_json(valid_output / "checkpoints" / "org--model.json", {
+            "id": model["id"], "revision": model["revision"],
+            "status": "ready", "path": str(valid_checkpoint)})
+        measured_raw = {"run_fingerprint": "measured-old", "status": "measured",
+                        "measurement": {"ok": True}}
+        save_json(valid_output / "runs" / "org--model--infinity.json",
+                  measured_raw)
+        valid_args = argparse.Namespace(
+            **{**vars(run_one_args), "output": valid_output})
+        identity_calls = []
+        original_identity = globals()["checkpoint_identity"]
+        original_settings = globals()["_settings"]
+        original_runtime_files = globals()["runtime_files"]
+        original_verify_anchor = globals()["_verify_runtime_anchor"]
+        def counting_identity(receipt, cache=None):
+            identity_calls.append(receipt)
+            return original_identity(receipt, cache)
+        def fake_settings(*arguments, **keywords):
+            return {"fake": "settings"}
+        def fake_runtime_files(*arguments, **keywords):
+            return {"fake": "runtime-files"}
+        def fake_anchor(*arguments, **keywords):
+            return None
+        def skip_resume(*arguments, **keywords):
+            return "skip"
+        globals()["checkpoint_identity"] = counting_identity
+        globals()["_settings"] = fake_settings
+        globals()["runtime_files"] = fake_runtime_files
+        globals()["_verify_runtime_anchor"] = fake_anchor
+        globals()["resume_decision"] = skip_resume
+        launch_commands.clear()
+        subprocess.Popen = recording_popen
+        try:
+            resumed = run_one(valid_args, model, "infinity", 0,
+                              "0-7", "32-39", run_campaign, {})
+        finally:
+            subprocess.Popen = original_popen
+            globals()["checkpoint_identity"] = original_identity
+            globals()["_settings"] = original_settings
+            globals()["runtime_files"] = original_runtime_files
+            globals()["_verify_runtime_anchor"] = original_verify_anchor
+            globals()["resume_decision"] = original_resume_decision
+        assert len(identity_calls) == 1
+        assert resumed == measured_raw
+        assert resumed["status"] == "measured"
+        assert "UnboundLocalError" not in json.dumps(resumed)
+        assert not (valid_output / "previous" / "runs").exists()
+        assert all(Path(str(command[0])).name != "taskset"
+                   for command in launch_commands if command)
+
+        preflight_output = root / "valid-preflight-failure"
+        save_json(preflight_output / "checkpoints" / "org--model.json", {
+            "id": model["id"], "revision": model["revision"],
+            "status": "ready", "path": str(valid_checkpoint)})
+        preflight_args = argparse.Namespace(
+            **{**vars(run_one_args), "output": preflight_output})
+        settings_calls = []
+        def flaky_settings(*arguments, **keywords):
+            settings_calls.append(arguments)
+            if len(settings_calls) == 1:
+                raise RuntimeError("settings preflight boom")
+            return {"fake": "settings"}
+        globals()["_settings"] = flaky_settings
+        globals()["runtime_files"] = fake_runtime_files
+        globals()["_verify_runtime_anchor"] = fake_anchor
+        launch_commands.clear()
+        subprocess.Popen = recording_popen
+        try:
+            preflight_failed = run_one(preflight_args, model, "infinity", 0,
+                                       "0-7", "32-39", run_campaign, {})
+        finally:
+            subprocess.Popen = original_popen
+            globals()["_settings"] = original_settings
+            globals()["runtime_files"] = original_runtime_files
+            globals()["_verify_runtime_anchor"] = original_verify_anchor
+        assert preflight_failed["status"] == "load_failed"
+        assert "settings preflight boom" in preflight_failed["error"]
+        assert "UnboundLocalError" not in preflight_failed["error"]
+        assert all(Path(str(command[0])).name != "taskset"
+                   for command in launch_commands if command)
+
         original_probe = globals()["_run_probe"]
         probe_calls = []
-        def counting_preflight_probe(command, label):
+        def counting_preflight_probe(command, label, **keywords):
             probe_calls.append(label)
-            return original_probe(command, label)
+            return original_probe(command, label, **keywords)
         globals()["_run_probe"] = counting_preflight_probe
         try:
             shared_preflight = {}
@@ -1731,6 +2728,7 @@ def self_test() -> int:
                 break
             time.sleep(0.01)
         assert not _process_running(child)
+        globals()["INTEGRITY_HELPER"] = original_integrity_helper
     print("self-test passed")
     return 0
 

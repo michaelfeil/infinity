@@ -73,6 +73,7 @@ jobs:
           TRANSFORMERS_OFFLINE: '1'
         run: |
           python scripts/benchmark-http.py --self-test --tokenizer "$BENCH_TOKENIZER_DIR"
+          python scripts/benchmark-integrity.py --self-test
           python scripts/benchmark-common.py --self-test
           python scripts/benchmark-campaign.py --self-test
           python scripts/benchmark-fp32-reference.py --self-test

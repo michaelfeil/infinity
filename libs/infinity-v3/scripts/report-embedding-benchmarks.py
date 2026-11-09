@@ -25,7 +25,8 @@ DTYPE = "bfloat16"
 SEM = {"embeddings": ("text",), "rerank": ("query", "document")}
 FILE_KEYS = {"runner_sha256", "client_sha256", "binary_sha256",
              "native_library_sha256", "runtime_package_tree_sha256",
-             "torch_library_tree_sha256"}
+             "torch_library_tree_sha256", "python_environment_sha256",
+             "integrity_helper_sha256", "campaign_inspector_sha256"}
 SET_KEYS = {"dtype", "seconds", "repeats", "warmup", "concurrency",
             "long_input_concurrency", "max_batch_tokens", "max_sequence_length",
             "lengths", "context", "input_context", "runtime_environment"}
@@ -243,7 +244,8 @@ def anchor(v, top_binary):
         e = v[r]
         require(isinstance(e, dict) and set(e) == FILE_KEYS,
             f"campaign.fingerprint_files[{r}] must have exactly {sorted(FILE_KEYS)}")
-        for k in ("runner_sha256", "client_sha256", "binary_sha256"):
+        for k in ("runner_sha256", "client_sha256", "binary_sha256",
+                  "python_environment_sha256", "integrity_helper_sha256", "campaign_inspector_sha256"):
             require(h64(e[k]), f"fingerprint_files[{r}].{k} invalid")
         lib = e["native_library_sha256"]
         require(isinstance(lib, dict), f"fingerprint_files[{r}].native_library_sha256 invalid")
@@ -266,6 +268,9 @@ def anchor(v, top_binary):
         "runner_sha256 must match across runtime anchors")
     require(len({out[r]["client_sha256"] for r in RT}) == 1,
         "client_sha256 must match across runtime anchors")
+    for key in ("integrity_helper_sha256", "campaign_inspector_sha256"):
+        require(len({out[r][key] for r in RT}) == 1,
+                f"{key} must match across runtime anchors")
     require(len({cjson(out[r]["native_library_sha256"]) for r in RT}) == 1,
         "native library hashes must match across runtime anchors")
     return out
@@ -355,6 +360,11 @@ def load_campaign(root):
         e = rawinst.get(r)
         require(isinstance(e, dict), f"runtime installation missing for {r}")
         tree = e.get("package_tree_sha256")
+        environment = e.get("python_environment")
+        require(isinstance(environment, dict) and
+                environment.get("digest_sha256") == files[r]["python_environment_sha256"] and
+                environment.get("integrity_source_sha256") == files[r]["integrity_helper_sha256"],
+                f"{r} Python environment does not match fingerprint anchors")
         if r in ("vllm", "sglang"):
             require(e.get("version") == vers[r], f"{r} installation version mismatch")
             require(h64(tree) and tree == files[r]["runtime_package_tree_sha256"],
@@ -374,6 +384,7 @@ def load_campaign(root):
                     "Infinity package tree does not match fingerprint anchor")
             stock = "source_clean" if e.get("source_clean") is True else "unverified"
         inst[r] = {"version": e.get("version"),
+                   "python_environment": clean(environment),
                    "torch_version": clean(e.get("torch_version")),
                    "transformers_version": clean(e.get("transformers_version")),
                    "package_tree_sha256": clean(tree),
@@ -516,7 +527,7 @@ def taskset(cmd, label):
     require(i + 2 < len(cmd) and cmd[i + 1] == "-c", f"{label} taskset invalid")
     return cmd[i + 2]
 
-def deps(v, label):
+def deps(v, label, content=False):
     if v is None:
         return []
     require(isinstance(v, list), f"{label} invalid")
@@ -524,8 +535,26 @@ def deps(v, label):
     for x in v:
         require(isinstance(x, dict) and isinstance(x.get("id"), str) and x["id"] and revok(x.get("revision")),
             f"{label} entry invalid")
-        out.append({"id": x["id"], "revision": x["revision"]})
+        item = {"id": x["id"], "revision": x["revision"]}
+        if content:
+            require(h64(x.get("metadata_sha256")), f"{label} content metadata missing")
+            item["metadata_sha256"] = x["metadata_sha256"]
+        out.append(item)
     return out
+
+def loader_policy(runtime):
+    return {"version": 1,
+            "ld_library_path": "infinity_selected_only" if runtime == "infinity" else "empty",
+            "ld_preload": "unset", "ld_audit": "unset", "pythonpath": "unset",
+            "pythonhome": "unset", "python_safe_path": True}
+
+def weight_map(value, label):
+    require(isinstance(value, dict), f"{label} weight file map missing")
+    for name, digest in value.items():
+        require(isinstance(name, str) and name and not name.startswith("/") and
+                "\\" not in name and all(part not in ("", ".", "..") for part in name.split("/"))
+                and h64(digest), f"{label} weight file entry invalid")
+    return value
 
 def validate_fingerprint(camp, model, raw, cp, revision, status):
     x = raw.get("fingerprint_inputs")
@@ -535,7 +564,8 @@ def validate_fingerprint(camp, model, raw, cp, revision, status):
         f"{model['id']}: fingerprint model mismatch")
     require(x["runtime"] == raw["runtime"], f"{model['id']}: fingerprint runtime mismatch")
     c = x["checkpoint"]
-    require(isinstance(c, dict) and set(c) >= {"id", "revision", "metadata_sha256", "code_dependencies"},
+    require(isinstance(c, dict) and set(c) >= {"id", "revision", "metadata_sha256", "code_dependencies",
+                                            "dependencies", "weights_sha256"},
         f"{model['id']}: fingerprint checkpoint invalid")
     require(c["id"] == model["id"] == cp.get("id"), f"{model['id']}: checkpoint id must equal model id")
     require(c["revision"] == revision, f"{model['id']}: checkpoint revision mismatch")
@@ -543,13 +573,24 @@ def validate_fingerprint(camp, model, raw, cp, revision, status):
     if not (status == "checkpoint_unavailable" and meta in (None, "")):
         require(h64(meta), f"{model['id']}: checkpoint metadata_sha256 invalid")
     require(cp.get("metadata_sha256") in (None, meta), f"{model['id']}: raw metadata mismatch")
-    cd = deps(c["code_dependencies"], "fingerprint dependencies")
+    weights = weight_map(cp.get("weight_files_sha256"), model["id"])
+    if status == "checkpoint_unavailable" and c["weights_sha256"] is None:
+        require(not weights and cp.get("weights_sha256") is None,
+                f"{model['id']}: unavailable checkpoint has weight content")
+    else:
+        require(weights and h64(c["weights_sha256"]) and
+                c["weights_sha256"] == sha(cjson(weights).encode()) == cp.get("weights_sha256"),
+                f"{model['id']}: checkpoint weight content mismatch")
+    cd = deps(c["code_dependencies"], "fingerprint dependencies", True)
     if cp.get("code_dependencies") is not None:
-        require(cjson(cd) == cjson(deps(cp["code_dependencies"], "raw dependencies")),
+        require(cjson(cd) == cjson(deps(cp["code_dependencies"], "raw dependencies", True)),
             f"{model['id']}: dependency projection mismatch")
     if model["raw"].get("code_dependencies") is not None:
-        require(cjson(cd) == cjson(deps(model["raw"]["code_dependencies"], "manifest dependencies")),
+        require(cjson(deps(cd, "fingerprint identities")) == cjson(deps(model["raw"]["code_dependencies"], "manifest dependencies")),
             f"{model['id']}: manifest dependency mismatch")
+    require(cjson(deps(c["dependencies"], "fingerprint tokenizer dependencies", True)) ==
+            cjson(deps(cp.get("dependencies"), "raw tokenizer dependencies", True)),
+            f"{model['id']}: tokenizer dependency content mismatch")
     lane = x["lane"]
     require(isinstance(lane, dict), f"{model['id']}: lane missing")
     for k in ("gpu", "cpus", "client_cpus"):
@@ -576,6 +617,8 @@ def validate_fingerprint(camp, model, raw, cp, revision, status):
         require(ictx <= m["max_sequence_length"], f"{model['id']}: input_context exceeds declared max")
     require(isinstance(s["runtime_environment"], dict), f"{model['id']}: runtime_environment invalid")
     runtime_environment = dict(s["runtime_environment"])
+    policy = runtime_environment.pop("loader_policy", None)
+    require(policy == loader_policy(raw["runtime"]), f"{model['id']}: runtime_environment policy loader mismatch")
     python_identity = runtime_environment.pop("python_identity_sha256", None)
     require(h64(python_identity), f"{model['id']}: runtime_environment policy identity invalid")
     recorded_environment = raw.get("environment_overrides")
@@ -585,6 +628,10 @@ def validate_fingerprint(camp, model, raw, cp, revision, status):
         require(isinstance(recorded_environment, dict) and
                 python_identity == recorded_environment.get("python_identity_sha256"),
                 f"{model['id']}: runtime Python identity does not match recorded environment")
+        require(recorded_environment.get("loader_policy") == policy and
+                recorded_environment.get("PYTHONSAFEPATH") == "1" and
+                recorded_environment.get("LD_LIBRARY_PATH_inherited") == "",
+                f"{model['id']}: recorded loader policy mismatch")
     require(python_identity == m["runtime_python_identity_sha256"][raw["runtime"]],
             f"{model['id']}: runtime Python identity does not match campaign anchor")
     require(cjson(runtime_environment) == cjson(REQUIRED_ENV[raw["runtime"]]),
@@ -916,8 +963,16 @@ def load_fp32(path, camp, models, runs, helper_path):
     require(isinstance(sh, dict), "FP32 source_hashes missing")
     require(sh.get("reference_source") == helper_sha
             and sh.get("http_client_helper") == client_sha
-            and sh.get("manifest") == manifest_sha,
+            and sh.get("manifest") == manifest_sha
+            and sh.get("checkpoint_helper") == camp["files"]["infinity"]["runner_sha256"]
+            and sh.get("integrity_helper") == camp["files"]["infinity"]["integrity_helper_sha256"],
             "FP32 source_hashes are inconsistent")
+    reference_environment = d.get("python_environment")
+    require(h64(d.get("python_environment_sha256")) and isinstance(reference_environment, dict) and
+            reference_environment.get("digest_sha256") == d["python_environment_sha256"] and
+            reference_environment.get("integrity_source_sha256") == sh["integrity_helper"],
+            "FP32 Python environment content identity invalid")
+    require(d.get("loader_policy") == loader_policy("sglang"), "FP32 loader policy invalid")
     require(d.get("dtype") == "float32", "FP32 reference dtype must be float32")
     byid = {m["id"]: m for m in models}
     expected_keys = {(m["id"], m["revision"], m["task"], n)
@@ -978,7 +1033,12 @@ def load_fp32(path, camp, models, runs, helper_path):
                     "FP32 checkpoint identity/status mismatch")
             for k in ("receipt_sha256", "metadata_sha256"):
                 require(h64(cp.get(k)), f"FP32 checkpoint {k} invalid")
-            dep_list = deps(cp.get("code_dependencies"), "FP32 dependencies")
+            reference_weights = weight_map(cp.get("weight_files_sha256"), "FP32 checkpoint")
+            require(reference_weights and h64(cp.get("weights_sha256")) and
+                    cp["weights_sha256"] == sha(cjson(reference_weights).encode()),
+                    "FP32 checkpoint weight content identity invalid")
+            dep_list = deps(cp.get("code_dependencies"), "FP32 dependencies", True)
+            tokenizer_deps = deps(cp.get("dependencies"), "FP32 tokenizer dependencies", True)
             matches = []
             for r in RT:
                 run = runs.get((mid, r))
@@ -990,12 +1050,19 @@ def load_fp32(path, camp, models, runs, helper_path):
                 rcp = run["doc"].get("checkpoint") or {}
                 require(rcp.get("id") == mid and rcp.get("metadata_sha256") == cp["metadata_sha256"],
                         "FP32 checkpoint metadata does not match current run")
-                require(cjson(deps(rcp.get("code_dependencies"), "raw deps")) == cjson(dep_list),
+                require(cjson(deps(rcp.get("code_dependencies"), "raw deps", True)) == cjson(dep_list),
                         "FP32 dependencies do not match current run")
                 fcp = ((run["doc"].get("fingerprint_inputs") or {}).get("checkpoint") or {})
                 require(fcp.get("metadata_sha256") == cp["metadata_sha256"]
-                        and cjson(deps(fcp.get("code_dependencies"), "fp deps")) == cjson(dep_list),
+                        and cjson(deps(fcp.get("code_dependencies"), "fp deps", True)) == cjson(dep_list),
                         "FP32 identity does not match fingerprint")
+                require(fcp.get("weights_sha256") == cp["weights_sha256"] == rcp.get("weights_sha256")
+                        and cjson(rcp.get("weight_files_sha256")) == cjson(reference_weights),
+                        "FP32 weights do not match current serving checkpoint")
+                require(cjson(deps(fcp.get("dependencies"), "fp tokenizer deps", True)) ==
+                        cjson(tokenizer_deps) ==
+                        cjson(deps(rcp.get("dependencies"), "raw tokenizer deps", True)),
+                        "FP32 tokenizer dependencies do not match current run")
             ref = dict(rawrec)
             ref["_flat"], ref["_norm"] = rec["flat"], rec["norm"]
             ref["_match"] = "matched" if matches else "no_current_case"
@@ -1021,6 +1088,8 @@ def load_fp32(path, camp, models, runs, helper_path):
             "transformers_version": clean(d.get("transformers_version")),
             "device": clean(d.get("device")), "threads": d.get("threads"),
             "dtype": "float32", "source_hashes": clean(sh),
+            "python_environment_sha256": d["python_environment_sha256"],
+            "python_environment": clean(reference_environment), "loader_policy": clean(d["loader_policy"]),
             "reference_count": len(rawrefs), "failure_count": len(rawfails)}
     return {"provenance": prov, "references": refs, "issues": issues, "failures": failures}
 
@@ -1134,6 +1203,7 @@ def public_campaign(camp):
         e = camp["runtime_installations"].get(r) or {}
         inst[r] = {k: clean(e.get(k)) for k in
                    ("version", "package_tree_sha256", "record_sha256",
+                    "python_environment",
                     "torch_version", "transformers_version",
                     "record_mismatch_count", "unrecorded_count", "missing_record_count", "stock")
                    if e.get(k) is not None}
@@ -1147,6 +1217,7 @@ def public_campaign(camp):
                       "native_library_count": len(b.get("native_library_sha256") or {}),
                       "native_library_sha256": clean(b.get("native_library_sha256") or {}),
                       "torch_library_tree_sha256": clean(b.get("torch_library_tree_sha256")),
+                      "torch_library_roots": clean(b.get("torch_library_roots") or {}),
                       "command": clean(b.get("command")),
                       "providers": clean(b.get("providers") or {})},
             "runtime_installations": inst,
@@ -1273,7 +1344,10 @@ def report(camp, models, runs, allow, refctx=None):
            "completeness": comp, "runtime_status": st,
            "models": modelrecords(camp, runs, comps, models), "comparisons": comps,
            "raw_runs": [{"path": x["path"], "sha256": x["sha"], "model": x["model"],
-                         "runtime": x["runtime"], "status": x["status"]}
+                         "runtime": x["runtime"], "status": x["status"],
+                         "run_fingerprint": x["fingerprint"],
+                         "fingerprint_inputs": clean(x["doc"]["fingerprint_inputs"]),
+                         "weight_files_sha256": clean(x["doc"]["checkpoint"].get("weight_files_sha256"))}
                         for _, x in sorted(runs.items())],
            "notes": ["No aggregate winner or ranking.",
                      "Token rates recomputed from per-window count==ok means.",
@@ -1644,6 +1718,9 @@ def fixture(root, *, short=False, client_failed=False, unavailable=False,
                    "runtime_package_tree_sha256": "5" * 64,
                    "torch_library_tree_sha256": None},
     }
+    for runtime, entry in files.items():
+        entry.update(python_environment_sha256={"infinity": "a", "vllm": "b", "sglang": "c"}[runtime] * 64,
+                     integrity_helper_sha256="d" * 64, campaign_inspector_sha256="e" * 64)
     lanes = [{"gpu": 0, "server_cpus": "0-7", "client_cpus": "32-39"},
              {"gpu": 1, "server_cpus": "8-15", "client_cpus": "40-47"}]
     camp = {"schema_version": 1, "id": "fixture", "date_local": "2026-11-08",
@@ -1677,6 +1754,10 @@ def fixture(root, *, short=False, client_failed=False, unavailable=False,
                 "sglang": {"version": "0.5.23", "package_tree_sha256": "5" * 64,
                            "record_sha256": "8" * 64, "record_mismatches": [],
                            "unrecorded_files": [], "missing_record_files": [], "stock": True}}}
+    for runtime, entry in camp["runtime_installations"].items():
+        entry["python_environment"] = {"digest_sha256": files[runtime]["python_environment_sha256"],
+                                       "integrity_source_sha256": files[runtime]["integrity_helper_sha256"],
+                                       "scope": "fixture"}
     (root / "campaign.json").write_text(json.dumps(camp, indent=2) + "\n")
 
     def led(c, start=0):
@@ -1704,7 +1785,10 @@ def fixture(root, *, short=False, client_failed=False, unavailable=False,
                   "revision": rev, "path": "/root/private/checkpoint",
                   "metadata_sha256": "" if rev is None else "9" * 64,
                   "code_dependencies": [{"id": "dep", "revision": "8" * 40,
-                                         "path": "/root/private/dep"}]}
+                                         "path": "/root/private/dep", "metadata_sha256": "7" * 64}] if rev else [],
+                  "dependencies": [],
+                  "weight_files_sha256": {"main/model.safetensors": "6" * 64} if rev else {}}
+            cp["weights_sha256"] = sha(cjson(cp["weight_files_sha256"]).encode()) if rev else None
             context = None if rev is None else (2049 if r == "sglang" else 2048)
             settings = {"dtype": "bfloat16", "seconds": 10.0, "repeats": 3, "warmup": 3.0,
                         "concurrency": 32, "long_input_concurrency": 8,
@@ -1717,6 +1801,7 @@ def fixture(root, *, short=False, client_failed=False, unavailable=False,
                             else {"SGLANG_ALLOW_OVERWRITE_LONGER_CONTEXT_LEN": "1"}
                             if r == "sglang" else {})}
             settings["runtime_environment"]["python_identity_sha256"] = {"infinity": "a", "vllm": "b", "sglang": "c"}[r] * 64
+            settings["runtime_environment"]["loader_policy"] = loader_policy(r)
             if placement and r != "infinity":
                 lane_gpu, lane_cpus, lane_client = 1, "8-15", "40-47"
             else:
@@ -1724,7 +1809,9 @@ def fixture(root, *, short=False, client_failed=False, unavailable=False,
             fpv = {"model": portable(model), "runtime": r,
                    "checkpoint": {"id": model["id"], "revision": rev,
                                   "metadata_sha256": cp["metadata_sha256"],
-                                  "code_dependencies": [{"id": "dep", "revision": "8" * 40}]},
+                                  "weights_sha256": cp["weights_sha256"],
+                                  "dependencies": [],
+                                  "code_dependencies": deps(cp["code_dependencies"], "fixture dependencies", True)},
                    "lane": {"gpu": lane_gpu, "cpus": lane_cpus,
                             "client_cpus": lane_client},
                    "settings": settings, "files": files[r]}
@@ -1820,6 +1907,7 @@ def fixture(root, *, short=False, client_failed=False, unavailable=False,
                    "checkpoint": cp, "command": command, "client_command": client_command,
                    "environment_overrides": {"CUDA_VISIBLE_DEVICES": str(lane_gpu),
                                              **settings["runtime_environment"],
+                                             "PYTHONSAFEPATH": "1", "LD_LIBRARY_PATH_inherited": "",
                                              "LD_LIBRARY_PATH_injected": ["/root/private/lib"]},
                    "fingerprint_inputs": fpv, "run_fingerprint": fp(fpv),
                    "startup_s": 1.0, "status": st}
@@ -1892,7 +1980,10 @@ def make_fp32_ref(root, *, omit=(), mutate=None, failures=None, duplicate=False)
                     "checkpoint": {"id": cp["id"], "revision": cp["revision"],
                                    "status": "ready", "receipt_sha256": "a" * 64,
                                    "metadata_sha256": cp["metadata_sha256"],
-                                   "code_dependencies": deps(fcp.get("code_dependencies"), "fixture fp deps")}}
+                                   "weights_sha256": cp["weights_sha256"],
+                                   "weight_files_sha256": cp["weight_files_sha256"],
+                                   "dependencies": deps(fcp.get("dependencies"), "fixture tokenizer deps", True),
+                                   "code_dependencies": deps(fcp.get("code_dependencies"), "fixture fp deps", True)}}
             if item["task"] == "rerank":
                 item.pop("pooling_source")
             if mutate:
@@ -1919,7 +2010,12 @@ def make_fp32_ref(root, *, omit=(), mutate=None, failures=None, duplicate=False)
            "torch_version": "fixture", "transformers_version": "fixture",
            "device": "cpu", "threads": 8, "dtype": "float32",
            "source_hashes": {"reference_source": helper, "http_client_helper": client,
-                             "manifest": msha},
+                             "manifest": msha,
+                             "checkpoint_helper": camp["fingerprint_files"]["infinity"]["runner_sha256"],
+                             "integrity_helper": camp["fingerprint_files"]["infinity"]["integrity_helper_sha256"]},
+           "python_environment_sha256": camp["fingerprint_files"]["infinity"]["python_environment_sha256"],
+           "python_environment": camp["runtime_installations"]["infinity"]["python_environment"],
+           "loader_policy": loader_policy("sglang"),
            "input_layout": {"manifest": "manifest.json", "checkpoints": "checkpoints"},
            "model_counts": {"selected": len(manifest["models"]), "embeddings": 1, "rerank": 1},
            "counts": {"references": len(refs), "failures": len(fails),
@@ -2001,6 +2097,23 @@ def mutate(root, kind):
     elif kind == "installation_version":
         p = root / "campaign.json"; d = json.loads(p.read_text())
         d["runtime_installations"]["vllm"]["version"] = "different-version"
+        p.write_text(json.dumps(d))
+    elif kind in ("environment_content", "integrity_source", "campaign_source"):
+        p = root / "campaign.json"; d = json.loads(p.read_text())
+        key = {"environment_content": "python_environment_sha256",
+               "integrity_source": "integrity_helper_sha256",
+               "campaign_source": "campaign_inspector_sha256"}[kind]
+        d["fingerprint_files"]["vllm"][key] = "f" * 64
+        p.write_text(json.dumps(d))
+    elif kind in ("weight_content", "loader_policy", "ambient_loader"):
+        p = root / "runs" / "acme--dense-a--vllm.json"; d = json.loads(p.read_text())
+        if kind == "weight_content":
+            d["checkpoint"]["weight_files_sha256"]["main/model.safetensors"] = "f" * 64
+        elif kind == "loader_policy":
+            d["fingerprint_inputs"]["settings"]["runtime_environment"]["loader_policy"]["ld_preload"] = "inherited"
+            d["run_fingerprint"] = fp(d["fingerprint_inputs"])
+        else:
+            d["environment_overrides"]["LD_LIBRARY_PATH_inherited"] = "/root/private/override"
         p.write_text(json.dumps(d))
     elif kind in ("build_torch", "python_anchor_missing", "torch_invalid"):
         p = root / "campaign.json"; d = json.loads(p.read_text())
@@ -2298,6 +2411,12 @@ def selftest():
         ("stock_record", "stock claim rejected"), ("budget", "max_batch_tokens must be 16384"),
         ("stock_missing", "stock claim rejected"), ("stock_false", "stock claim rejected"),
         ("installation_version", "installation version mismatch"),
+        ("environment_content", "Python environment does not match fingerprint anchors"),
+        ("integrity_source", "integrity_helper_sha256 must match"),
+        ("campaign_source", "campaign_inspector_sha256 must match"),
+        ("weight_content", "checkpoint weight content mismatch"),
+        ("loader_policy", "runtime_environment policy loader mismatch"),
+        ("ambient_loader", "recorded loader policy mismatch"),
         ("build_torch", "Torch library tree"), ("torch_invalid", "torch_library_tree_sha256 invalid"),
         ("python_anchor_missing", "runtime_python_identity_sha256 invalid"),
         ("python_identity", "runtime Python identity does not match campaign anchor"),
@@ -2346,6 +2465,38 @@ def selftest():
                 assert shafile(out / x["path"]) == x["sha256"]
             for x in refs:
                 assert "/root/" not in cjson(x)
+
+    @add
+    def fp32_weight_and_environment_provenance_is_required():
+        t, root, out = prep()
+        with t:
+            path = make_fp32_ref(root)
+            document = json.loads(path.read_text())
+            checkpoint = document["references"][0]["checkpoint"]
+            checkpoint["weight_files_sha256"] = {"main/model.safetensors": "f" * 64}
+            checkpoint["weights_sha256"] = sha(cjson(checkpoint["weight_files_sha256"]).encode())
+            path.write_text(json.dumps(document))
+            export(root, out, reference=path)
+            case = dense(json.loads((out / "results.json").read_text()), "vllm", 128)
+            assert case["fp32"]["status"] != "pass"
+        for field in ("python_environment_sha256", "loader_policy", "source_hashes"):
+            t, root, out = prep()
+            with t:
+                path = make_fp32_ref(root)
+                document = json.loads(path.read_text())
+                if field == "python_environment_sha256":
+                    document[field] = "f" * 64
+                elif field == "loader_policy":
+                    document[field]["ld_preload"] = "inherited"
+                else:
+                    document[field]["checkpoint_helper"] = "f" * 64
+                path.write_text(json.dumps(document))
+                try:
+                    export(root, out, reference=path)
+                except ReportError:
+                    pass
+                else:
+                    raise AssertionError(f"unbound FP32 {field} accepted")
 
     @add
     def fp32_invalid_records_are_diagnostic():

@@ -20,8 +20,9 @@ CUDA architecture `100` and pinned FA4 AOT and GDN provider locations supplied
 through `FA4_ROOT` and `GDN_ROOT`. The published
 [results.json](benchmarks/b200-20261108/results.json) `campaign.build`
 metadata preserves the recorded portable build command, provider
-recipes/manifests, native-library hashes and the selected Torch library tree
-hash. Build commands and provider recipes are operator-provided
+recipes/manifests, native-library hashes and a content hash of the selected
+Torch/native CUDA bundle. This includes `torch/lib` and packaged SDK-local
+NVIDIA dependencies. Build commands and provider recipes are operator-provided
 provenance declarations, not a standalone cryptographic source-to-binary
 attestation. This identifies a configured source build, rather than a published
 container image.
@@ -45,6 +46,13 @@ checked against the installed wheel records, including missing files. The runner
 rechecks package contents, recorded dependency versions, the selected Torch
 libraries and Python identities before launching or resuming a campaign.
 It selects each serving runtime's own Python environment for executable lookup.
+Checkpoint identities include the contents of weight shards and dependency
+metadata. Python environment fingerprints cover the interpreter, standard
+library and active import roots, including dependency metadata and native files;
+derived Python bytecode is excluded. Helper source hashes are also bound.
+Inherited library and Python import overrides are removed. Python safe-path
+mode excludes implicit working-directory imports; the explicit stock-vLLM
+wrapper override remains part of the captured import roots.
 vLLM uses Torch `2.14.0`; Infinity
 and SGLang use `2.14.1`. Runtime versions and content hashes are included in
 the results.
@@ -85,8 +93,8 @@ percentiles, rather than percentiles of pooled latency samples.
 
 The report marks cases whose three window request rates differ by more than
 twofold as `timing=variable`. This is a descriptive check of observed variation,
-separate from workload validity and numerical eligibility. Six cases in this
-sweep receive the flag. Their measured aggregates are retained, with individual
+separate from workload validity and numerical eligibility. Flagged
+aggregates are retained, with individual
 window rates shown; they do not support controlled speedup claims. The cause of
 the variation is not established.
 
@@ -109,9 +117,10 @@ input and the checkpoint's saved CLS, mean or last-token pooling, followed by L2
 normalization. Reranker references retain raw logits. Unsupported pipelines or
 missing references are reported explicitly; they supply no numerical pass.
 These probes are limited numerical checks, not evidence about task quality.
-The guarded FP32 vectors are reused in the corrected serving sweep. Their
-helper, client and manifest hashes, checkpoint metadata and exact semantic
-inputs remain unchanged.
+The FP32 run records fresh weight/dependency and Python environment identities
+before inference. Accepted reference probes must have the same weight-content
+digest as the serving checkpoint. Reference, checkpoint and integrity helper
+sources, the client and manifest are identified by content hashes.
 
 The result directory contains a readable report, compact JSON, a CSV and
 `evidence.jsonl.gz`. Compressed evidence includes complete saved runtime and
@@ -119,7 +128,9 @@ FP32 probe vectors, semantic inputs, per-window counters and latency summaries.
 It is a portable subset of the experiment, excluding individual timing samples
 and full server logs. Original raw-record hashes are provenance references;
 they do not imply that omitted original files can be reconstructed.
-`artifacts.json` records the published files' sizes and SHA256 hashes.
+`artifacts.json` records the published files' sizes and SHA256 hashes. JSON
+`raw_runs` retains complete portable fingerprint inputs and weight-file hashes,
+so recorded run fingerprints can be independently recomputed.
 
 ## Reproduction
 
@@ -169,7 +180,8 @@ physical topology.
   --server-cpus 0-7,8-15,24-31,64-71,72-79,80-87 \
   --client-cpus 32-39,40-47,56-63,88-95,96-103,104-111
 
-CUDA_VISIBLE_DEVICES=7 taskset -c 112-119 "$CLIENT_PYTHON" \
+env -u LD_LIBRARY_PATH -u LD_PRELOAD -u LD_AUDIT -u PYTHONPATH -u PYTHONHOME \
+  PYTHONSAFEPATH=1 CUDA_VISIBLE_DEVICES=7 taskset -c 112-119 "$CLIENT_PYTHON" \
   libs/infinity-v3/scripts/benchmark-fp32-reference.py \
   --input "$BENCH_OUTPUT" --output "$BENCH_OUTPUT/fp32-reference.json" \
   --device cuda:0

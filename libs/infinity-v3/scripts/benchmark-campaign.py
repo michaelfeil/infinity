@@ -121,21 +121,20 @@ def infinity_binary(infinity_bin, torch_lib):
     if not binary.is_file():
         raise CampaignError(f"--infinity-bin is not a file: {infinity_bin}")
     libraries = {path.name: sha256_file(path) for path in sorted(binary.parent.glob("*.so"))}
-    torch_tree = None
+    common = load_common()
+    bundle = None
     if torch_lib is not None:
         if not Path(torch_lib).is_dir():
             raise CampaignError(f"--torch-lib is not a directory: {torch_lib}")
-        common = load_common()
         try:
-            torch_tree = common.library_tree_sha256(torch_lib)
+            bundle = common.torch_sdk_bundle(torch_lib)
         except common.CampaignError as exc:
             raise CampaignError(str(exc)) from exc
-    injected = [str(binary.parent)]
-    if torch_lib is not None:
-        injected.append(str(Path(torch_lib).resolve()))
-    environment = os.environ.copy()
-    inherited = environment.get("LD_LIBRARY_PATH", "")
-    environment["LD_LIBRARY_PATH"] = os.pathsep.join(injected + ([inherited] if inherited else []))
+    try:
+        environment, _ = common.runtime_loader_environment(
+            "infinity", infinity_bin, torch_lib)
+    except common.CampaignError as exc:
+        raise CampaignError(str(exc)) from exc
     try:
         result = subprocess.run([str(binary), "--version"], capture_output=True, text=True,
                                 env=environment, timeout=60, check=False)
@@ -153,7 +152,8 @@ def infinity_binary(infinity_bin, torch_lib):
             "version": match.group(1) if match else lines[-1].strip(), "version_output": output,
             "package_tree_sha256": canonical_sha256(
                 {"binary_sha256": digest, "native_libraries": libraries}),
-            "torch_library_tree_sha256": torch_tree}
+            "torch_library_tree_sha256": (bundle["digest_sha256"] if bundle else None),
+            "torch_library_roots": (bundle["roots"] if bundle else None)}
 
 def torch_version_from_lib(torch_lib):
     if torch_lib is None:
@@ -506,9 +506,13 @@ def private_main(argv):
     print(json.dumps(payload, sort_keys=True))
     return 0
 
-def run_private(python, *arguments):
+def run_private(python, *arguments, env=None):
+    common = load_common()
+    if env is None:
+        env = common.sanitized_environment()
     result = subprocess.run([str(python), str(Path(__file__).resolve()), *arguments],
-                            capture_output=True, text=True, check=False, timeout=600)
+                            capture_output=True, text=True, check=False, timeout=600,
+                            env=env)
     if result.returncode:
         raise CampaignError(
             f"runtime probe failed ({python}): {(result.stdout or result.stderr).strip()[:500]}")
@@ -635,12 +639,19 @@ def create_campaign(args, common):
         raise CampaignError(f"manifest not found: {manifest}")
     extra = load_extra(args.extra_metadata)
     values = declared(extra)
-    vllm_probe = run_private(args.vllm_python, "--inspect-package", "vllm")
-    sglang_probe = run_private(args.sglang_python, "--inspect-package", "sglang")
+    vllm_env, _ = common.runtime_loader_environment("vllm")
+    sglang_env, _ = common.runtime_loader_environment("sglang")
+    infinity_client_env, _ = common.runtime_loader_environment(
+        "infinity", args.infinity_bin, args.torch_lib)
+    vllm_probe = run_private(
+        args.vllm_python, "--inspect-package", "vllm", env=vllm_env)
+    sglang_probe = run_private(
+        args.sglang_python, "--inspect-package", "sglang", env=sglang_env)
     vllm = installation(vllm_probe, "vLLM", args.allow_modified_runtimes)
     sglang = installation(sglang_probe, "SGLang", args.allow_modified_runtimes)
     infinity = infinity_binary(args.infinity_bin, args.torch_lib)
-    client_versions = run_private(client_python, "--inspect-versions")
+    client_versions = run_private(
+        client_python, "--inspect-versions", env=infinity_client_env)
     client_identity = probe_python_identity(client_versions, "client Python")
     vllm_identity = probe_python_identity(vllm_probe, "vLLM")
     sglang_identity = probe_python_identity(sglang_probe, "SGLang")
@@ -656,9 +667,21 @@ def create_campaign(args, common):
     identifier = args.id or default_id(resolved_hardware["gpu_name"], date_local)
     if re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*", identifier) is None:
         raise CampaignError("--id must contain only letters, digits, dot, underscore or dash")
+    fingerprint_args = argparse.Namespace(
+        infinity_bin=str(args.infinity_bin), vllm_python=str(args.vllm_python),
+        sglang_python=str(args.sglang_python), client_python=str(client_python),
+        torch_lib=str(args.torch_lib) if args.torch_lib else None)
+    cache = {}
+    common.seed_package_probe(cache, str(args.vllm_python), "vllm", vllm_probe)
+    common.seed_package_probe(cache, str(args.sglang_python), "sglang", sglang_probe)
+    common.seed_python_identity(cache, str(client_python), client_identity)
+    python_environments = {
+        runtime: common.python_environment_probe(fingerprint_args, runtime, cache)
+        for runtime in common.RUNTIMES}
     build = {"version": infinity["version"], "binary_sha256": infinity["binary_sha256"],
              "native_library_sha256": infinity["native_library_sha256"],
              "torch_library_tree_sha256": infinity["torch_library_tree_sha256"],
+             "torch_library_roots": infinity["torch_library_roots"],
              "command": values["command"], "providers": values["providers"],
              "libraries": values["libraries"], "source_commit": source["commit"],
              "binary_version_output": infinity["version_output"],
@@ -667,8 +690,12 @@ def create_campaign(args, common):
              "provenance_note": PROVENANCE_NOTE, "declared_extra": values["extra"]}
     installations = {"infinity": {"package_tree_sha256": infinity["package_tree_sha256"],
                                  "source_clean": True, "torch_version": sdk_version,
-                                 "torch_version_source": sdk_source},
-                     "vllm": vllm, "sglang": sglang}
+                                 "torch_version_source": sdk_source,
+                                 "python_environment": python_environments["infinity"]},
+                     "vllm": {**vllm,
+                              "python_environment": python_environments["vllm"]},
+                     "sglang": {**sglang,
+                                "python_environment": python_environments["sglang"]}}
     campaign = {"schema_version": 1, "id": identifier, "date_local": date_local,
                 "timezone": args.timezone,
                 "created_utc": datetime.datetime.now(datetime.timezone.utc).isoformat(),
@@ -689,14 +716,6 @@ def create_campaign(args, common):
                            "lanes": lanes},
                 "manifest_sha256": sha256_file(manifest), "fingerprint_files": {},
                 "interference_note": extra.get("interference_note", "No interference note supplied.")}
-    fingerprint_args = argparse.Namespace(
-        infinity_bin=str(args.infinity_bin), vllm_python=str(args.vllm_python),
-        sglang_python=str(args.sglang_python), client_python=str(client_python),
-        torch_lib=str(args.torch_lib) if args.torch_lib else None)
-    cache = {}
-    common.seed_package_probe(cache, str(args.vllm_python), "vllm", vllm_probe)
-    common.seed_package_probe(cache, str(args.sglang_python), "sglang", sglang_probe)
-    common.seed_python_identity(cache, str(client_python), client_identity)
     campaign["fingerprint_files"] = {
         runtime: common.runtime_files(fingerprint_args, runtime, campaign, cache)
         for runtime in common.RUNTIMES}
@@ -899,10 +918,27 @@ def self_test():
         for index in range(5):
             (infinity_dir / f"libinfinity_bridge_{index}.so").write_bytes(
                 f"bridge-{index}".encode())
-        torch_lib = root / "campaign-torch"
+        sdk_site = root / "campaign-sdk"
+        torch_lib = sdk_site / "torch" / "lib"
         (torch_lib / "nested").mkdir(parents=True)
         (torch_lib / "libtorch.so").write_bytes(b"torch")
         (torch_lib / "nested" / "libc10.so").write_bytes(b"c10")
+        nvidia_lib = sdk_site / "nvidia" / "cudnn" / "lib"
+        nvidia_lib.mkdir(parents=True)
+        (nvidia_lib / "libcudnn.so").write_bytes(b"cudnn")
+        integrity_marker = root / "campaign-integrity-marker"
+        integrity_marker.write_bytes(b"campaign-python-environment")
+        fake_integrity = root / "campaign-fake-integrity.py"
+        fake_integrity.write_text(
+            "import hashlib, json\n"
+            f"data = open({str(integrity_marker)!r}, 'rb').read()\n"
+            "print(json.dumps({'schema_version': 1, 'scope': 'fixture', "
+            "'digest_sha256': hashlib.sha256(data).hexdigest(), "
+            "'file_count': 1, 'byte_count': len(data), 'distributions': [], "
+            "'content_roots': [], 'interpreter': {}}, sort_keys=True))\n",
+            encoding="utf-8")
+        original_integrity_helper = common.INTEGRITY_HELPER
+        common.INTEGRITY_HELPER = fake_integrity
         fake_lanes = [{"gpu": 0, "server_cpus": "0-7", "client_cpus": "8-15"}]
         fake_hardware = {"gpu_name": "Fake GPU", "gpu_memory_mib": 1,
                          "gpu_devices": [{"index": 0, "name": "Fake GPU",
@@ -913,6 +949,12 @@ def self_test():
         original_hardware = globals()["hardware"]
         globals()["hardware"] = lambda *arguments, **keywords: (
             fake_hardware, fake_lanes)
+        original_run_private = globals()["run_private"]
+        recorded_probes = []
+        def recording_run_private(python, *arguments, env=None):
+            recorded_probes.append((list(arguments), env))
+            return original_run_private(python, *arguments, env=env)
+        globals()["run_private"] = recording_run_private
         try:
             campaign_args = argparse.Namespace(
                 output=root / "campaign-output", source_dir=repo,
@@ -926,21 +968,48 @@ def self_test():
             campaign = create_campaign(campaign_args, common)
         finally:
             globals()["hardware"] = original_hardware
+            globals()["run_private"] = original_run_private
         files = campaign["fingerprint_files"]
+        client_probes = [env for arguments, env in recorded_probes
+                         if arguments == ["--inspect-versions"]]
+        assert len(client_probes) == 1
+        assert client_probes[0]["LD_LIBRARY_PATH"] == os.pathsep.join([
+            str(infinity_dir.resolve()), str(torch_lib.resolve())])
+        assert client_probes[0]["PYTHONSAFEPATH"] == "1"
+        for arguments, env in recorded_probes:
+            if arguments and arguments[0] == "--inspect-package":
+                assert "LD_LIBRARY_PATH" not in env
+                assert env["PYTHONSAFEPATH"] == "1"
         expected_keys = {"runner_sha256", "client_sha256", "binary_sha256",
                          "native_library_sha256", "runtime_package_tree_sha256",
-                         "torch_library_tree_sha256"}
+                         "torch_library_tree_sha256",
+                         "python_environment_sha256",
+                         "integrity_helper_sha256",
+                         "campaign_inspector_sha256"}
         assert set(files) == set(common.RUNTIMES)
         assert all(set(files[runtime]) == expected_keys for runtime in common.RUNTIMES)
+        for key in ("integrity_helper_sha256", "campaign_inspector_sha256"):
+            values = {files[runtime][key] for runtime in common.RUNTIMES}
+            assert len(values) == 1
+            assert re.fullmatch(r"[0-9a-f]{64}", values.pop())
+        assert files["infinity"]["campaign_inspector_sha256"] \
+            == sha256_file(Path(__file__).resolve())
+        sdk_bundle = common.torch_sdk_bundle(torch_lib)
         assert files["infinity"]["torch_library_tree_sha256"] \
-            == common.library_tree_sha256(torch_lib)
+            == sdk_bundle["digest_sha256"]
         assert campaign["build"]["torch_library_tree_sha256"] \
             == files["infinity"]["torch_library_tree_sha256"]
+        assert campaign["build"]["torch_library_roots"] == sdk_bundle["roots"]
         assert files["vllm"]["torch_library_tree_sha256"] is None
         assert files["sglang"]["torch_library_tree_sha256"] is None
         for runtime in common.RUNTIMES:
-            assert campaign["runtime_installations"][runtime]["package_tree_sha256"] \
+            entry = campaign["runtime_installations"][runtime]
+            assert entry["package_tree_sha256"] \
                 == files[runtime]["runtime_package_tree_sha256"]
+            assert entry["python_environment"]["digest_sha256"] \
+                == files[runtime]["python_environment_sha256"]
+            assert files[runtime]["python_environment_sha256"] \
+                == hashlib.sha256(integrity_marker.read_bytes()).hexdigest()
         assert files["infinity"]["native_library_sha256"] \
             == files["vllm"]["native_library_sha256"] \
             == files["sglang"]["native_library_sha256"]
@@ -966,6 +1035,10 @@ def self_test():
         (vllm_site / "vllm/model.py").unlink()
         expect(common.CampaignError, common.runtime_files, fingerprint_args, "vllm",
                campaign, {})
+        integrity_marker.write_bytes(b"campaign-python-environment-v2")
+        expect(common.CampaignError, common.runtime_files, fingerprint_args, "infinity",
+               campaign, {})
+        common.INTEGRITY_HELPER = original_integrity_helper
     print("self-test passed")
     return 0
 
