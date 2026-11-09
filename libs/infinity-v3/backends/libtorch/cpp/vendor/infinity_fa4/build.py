@@ -32,7 +32,6 @@ phase.add_argument("--export-only", action="store_true", help="Export kernels be
 phase.add_argument("--link-only", action="store_true", help="Link existing exports; no Python GPU packages required")
 p.add_argument("--deberta", action="store_true", help="Also export packed DeBERTa relative attention")
 p.add_argument("--compile-only", action="store_true", help="Export using fake tensors without a build GPU; runtime validation is still required")
-p.add_argument("--paged-only", action="store_true", help="Export only paged kernels into an existing bundle manifest; preserves unpaged objects")
 p.add_argument("--arch", choices=["sm_80", "sm_86", "sm_89", "sm_90a", "sm_100a", "sm_120"], default="sm_90a", help="Target architecture; one native bundle per architecture")
 a = p.parse_args()
 if a.compile_only and a.link_only:
@@ -61,21 +60,6 @@ if not a.link_only:
         raise RuntimeError("The private export API is validated with cutlass-dsl 4.7.1 only")
     a.output.mkdir(parents=True, exist_ok=True)
     objects, kernels = [], []
-    prior = {}
-    if a.paged_only:
-        # Prototype/update path: keep the existing unpaged objects and append only
-        # the paged exports to the manifest. The caller copies the bundle first.
-        existing = a.output / "manifest.json"
-        if not existing.exists():
-            raise RuntimeError("--paged-only requires an existing manifest.json to preserve unpaged exports")
-        prior = json.loads(existing.read_text())
-        if prior.get("architecture") != a.arch:
-            raise RuntimeError("--paged-only bundle architecture must match --arch")
-        kernels = [k for k in prior["kernels"] if not k.get("paged")]
-        objects = [str(a.output / (k["symbol"] + ".o")) for k in kernels]
-        missing = [obj for obj in objects if not pathlib.Path(obj).exists()]
-        if missing:
-            raise RuntimeError(f"--paged-only is missing existing objects: {missing[0]}")
     from torch._subclasses.fake_tensor import FakeTensorMode
     with FakeTensorMode() if a.compile_only else contextlib.nullcontext():
         cu = torch.tensor([0, 127, 256], device="cuda", dtype=torch.int32)
@@ -90,7 +74,7 @@ if not a.link_only:
             return profiles
 
         for dtype_name, dtype in [("fp16", torch.float16), ("bf16", torch.bfloat16)]:
-            profiles = [] if a.paged_only else load_profiles("profiles.inc", "FA4_PROFILE")
+            profiles = load_profiles("profiles.inc", "FA4_PROFILE")
             for name, h, hk, d, causal, window in profiles:
                 q = torch.zeros((256, h, d), device="cuda", dtype=dtype)
                 k = torch.zeros((256, hk, d), device="cuda", dtype=dtype)
@@ -150,7 +134,7 @@ if not a.link_only:
                     kernels.append(dict(symbol=symbol, heads=h, kv_heads=hk, d=d,
                                         causal=False, window=[None, None], dtype=dtype_name,
                                         paged=True, page_size=page_size))
-        if a.deberta and not a.paged_only:
+        if a.deberta:
             # SM90 varlen scheduling derives its grid from runtime tensor sizes and
             # cumulative lengths. The 129 below is an export example, not a bound
             # baked into FlashAttentionForwardSm90.__call__. See the long-sequence
@@ -182,7 +166,7 @@ if not a.link_only:
         "architecture": a.arch,
         "executed_during_export": not a.compile_only,
         "target_sm_count": int(os.environ["FLASH_ATTENTION_NUM_SMS"]) if a.compile_only else torch.cuda.get_device_properties(torch.cuda.current_device()).multi_processor_count,
-        "deberta_score_sha256": digest(pathlib.Path(__file__).with_name("deberta_score.py")) if a.deberta else prior.get("deberta_score_sha256"),
+        "deberta_score_sha256": digest(pathlib.Path(__file__).with_name("deberta_score.py")) if a.deberta else None,
         "kernels": kernels,
         "fa4_python_sources": {str(f.relative_to(pathlib.Path(interface.__file__).parent)): digest(f)
                                for f in sorted(pathlib.Path(interface.__file__).parent.rglob("*.py"))},
