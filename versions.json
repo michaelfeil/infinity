@@ -34,11 +34,16 @@
     ]
   },
   {
-    "version": "0.0.79",
-    "title": "0.0.79",
+    "version": "0.0.80",
+    "title": "0.0.80",
     "aliases": [
       "latest-v2"
     ]
+  },
+  {
+    "version": "0.0.79",
+    "title": "0.0.79",
+    "aliases": []
   },
   {
     "version": "0.0.78",
