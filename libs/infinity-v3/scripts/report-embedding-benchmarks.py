@@ -2307,12 +2307,16 @@ def selftest():
             assert rep["campaign"]["source_commit"] == alt
 
     @add
-    def manifest_actual_schema_read_only():
-        p = Path("/root/infinity-benchmark-upstream-20261108/manifest.json")
-        if p.is_file():
-            d = json.loads(p.read_text())
-            assert len(d["models"]) == 30
-            assert any(x["id"] == "microsoft/harrier-oss-v1-27b" and x["parameters"] for x in d["models"])
+    def checked_in_manifest_loads_without_private_campaign():
+        source = Path(__file__).with_name("benchmark-common-models.json")
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "manifest.json").write_bytes(source.read_bytes())
+            manifest = load_manifest(root, {})
+            assert len(manifest["models"]) == 30
+            assert sum(len(model["lengths"]) for model in manifest["models"]) == 69
+            assert any(model["id"] == "microsoft/harrier-oss-v1-27b" and
+                       model["parameters"] for model in manifest["models"])
 
     bad = []
     for fn in tests:
