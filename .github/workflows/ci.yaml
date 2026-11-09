@@ -97,6 +97,8 @@ jobs:
         variant: [cpu, nvidia]
     steps:
       - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
       - name: Free disk space
         uses: ./.github/actions/disk_cleanup
         with:

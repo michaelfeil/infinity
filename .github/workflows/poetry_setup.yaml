@@ -27,6 +27,8 @@ jobs:
         python-version: ['3.11', '3.13']
     steps:
       - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
       - uses: ./.github/actions/poetry_setup
         with:
           python-version: ${{ matrix.python-version }}

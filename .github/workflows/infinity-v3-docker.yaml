@@ -37,6 +37,8 @@ jobs:
       version: ${{ steps.release.outputs.version }}
     steps:
       - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
       - name: Validate release version
         id: release
         env:
@@ -84,6 +86,8 @@ jobs:
       matrix: ${{ fromJSON(needs.matrix.outputs.matrix) }}
     steps:
       - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
       - name: Free build space
         if: matrix.name != 'cpu'
         uses: ./.github/actions/disk_cleanup

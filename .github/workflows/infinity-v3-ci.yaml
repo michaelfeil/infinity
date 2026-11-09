@@ -32,6 +32,8 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
@@ -55,6 +57,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
@@ -72,6 +76,8 @@ jobs:
       CFLAGS: -std=gnu17
     steps:
       - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
       - name: Read Rust toolchain
         id: toolchain
         run: |
@@ -128,6 +134,8 @@ jobs:
       CFLAGS: -std=gnu17
     steps:
       - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
       - name: Read Rust toolchain
         id: toolchain
         run: |
