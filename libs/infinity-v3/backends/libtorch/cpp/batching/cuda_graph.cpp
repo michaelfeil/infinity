@@ -539,8 +539,10 @@ at::Tensor CudaGraphCache::forward(const Model& model,
     const auto& layout = *input.block_layout;
     inputs_fit = inputs_fit && fits(layout.prefix_cumulative) && fits(layout.suffix_cumulative) &&
                  fits(layout.kv_cumulative) && fits(layout.history_cumulative) &&
-                 fits(layout.cache_sources) && fits(layout.pages.gather) &&
-                 fits(layout.pages.table) && fits(layout.pages.subpage_table);
+                 fits(layout.cache_sources) && fits(layout.prefix_rows) &&
+                 fits(layout.suffix_rows) && fits(layout.suffix_kv_rows) &&
+                 fits(layout.pages.gather) && fits(layout.pages.table) &&
+                 fits(layout.pages.subpage_table);
   }
   if (!inputs_fit)
     return run(input);
@@ -767,6 +769,9 @@ at::Tensor CudaGraphCache::forward(const Model& model,
     charge(layout.kv_cumulative);
     charge(layout.history_cumulative);
     charge(layout.cache_sources);
+    charge(layout.prefix_rows);
+    charge(layout.suffix_rows);
+    charge(layout.suffix_kv_rows);
     charge(layout.pages.gather);
     charge(layout.pages.table);
     charge(layout.pages.subpage_table);

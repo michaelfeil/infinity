@@ -689,9 +689,145 @@ void gemma_low_precision_pointwise(c10::Device device) {
 }
 #endif
 
+void gemma_block_attention_test() {
+  const auto cpu = c10::Device("cpu");
+  Fixture f("gemma4", 8, 4, 2);
+  auto block_cfg = f.cfg;
+  block_cfg.values["_decision.kind"] = "option_tokens";
+  block_cfg.values["_decision_attention_mode"] = "block_bidirectional";
+  Weights block_weights = f.weights;
+  auto block = create_gemma(block_cfg, block_weights, cpu, at::kFloat);
+  block->ready();
+  TORCH_CHECK(!block->supports_radix() && !block->supports_prefix_cache(0),
+              "Block-bidirectional Gemma enabled causal radix/prefix state");
+  // Row0: 6 tokens, 3-token prefix. Row1: 4 tokens, 2-token prefix.
+  // Row2: 3 tokens, prefix-only row (no suffix).
+  std::vector<int64_t> ids{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13};
+  std::vector<int32_t> offsets{0, 6, 10, 13};
+  auto packed = input(ids, offsets);
+  packed.block_prefix_lengths = {3, 2, 3};
+  packed.block_prefix_sources = {0, 1, 2};
+  auto output = block->forward(packed);
+  auto changed_future = packed;
+  changed_future.ids = packed.ids.clone();
+  changed_future.ids.index_put_({5}, 42);
+  auto future = block->forward(changed_future);
+  TORCH_CHECK(at::allclose(output.narrow(0, 0, 3), future.narrow(0, 0, 3), 1e-6, 1e-6),
+              "Block Gemma prefix attended to its question suffix");
+  TORCH_CHECK((output.narrow(0, 3, 2) - future.narrow(0, 3, 2)).abs().max().item<float>() >
+                  1e-5,
+              "Block Gemma suffix lost bidirectional attention");
+  TORCH_CHECK(at::allclose(output.narrow(0, 6, 7), future.narrow(0, 6, 7), 1e-5, 1e-6),
+              "Changing one block row leaked into another row or a prefix-only row");
+  auto changed_prefix = packed;
+  changed_prefix.ids = packed.ids.clone();
+  changed_prefix.ids.index_put_({1}, 42);
+  auto prefixed = block->forward(changed_prefix);
+  TORCH_CHECK((output.narrow(0, 3, 3) - prefixed.narrow(0, 3, 3)).abs().max().item<float>() >
+                  1e-5,
+              "Block Gemma suffix ignored its prefix");
+  // The prefix-only execution is the explicit reference for the block prefix mask.
+  std::vector<int64_t> prefix_ids(ids.begin(), ids.begin() + 3);
+  std::vector<int32_t> prefix_offsets{0, 3};
+  auto prefix_only = input(prefix_ids, prefix_offsets);
+  prefix_only.block_prefix_lengths = {3};
+  prefix_only.block_prefix_sources = {0};
+  TORCH_CHECK(at::allclose(output.narrow(0, 0, 3), block->forward(prefix_only), 1e-5, 1e-6),
+              "Block Gemma prefix differs from an isolated prefix forward");
+  for (size_t row = 0; row + 1 < offsets.size(); ++row) {
+    const auto length = offsets[row + 1] - offsets[row];
+    std::vector<int64_t> row_ids(ids.begin() + offsets[row], ids.begin() + offsets[row + 1]);
+    std::vector<int32_t> row_offsets{0, length};
+    auto single = input(row_ids, row_offsets);
+    single.block_prefix_lengths = {packed.block_prefix_lengths[row]};
+    single.block_prefix_sources = {0};
+    TORCH_CHECK(at::allclose(output.narrow(0, offsets[row], length),
+                             block->forward(single),
+                             1e-5,
+                             1e-6),
+                "Mixed-length block Gemma row crossed its prefix or batch boundary: row=",
+                row);
+  }
+  // Shared prefix witnesses must not change the result.
+  std::vector<int64_t> shared_ids{1, 2, 3, 4, 5, 1, 2, 3, 8, 9};
+  std::vector<int32_t> shared_offsets{0, 5, 10};
+  auto shared = input(shared_ids, shared_offsets);
+  shared.block_prefix_lengths = {3, 3};
+  shared.block_prefix_sources = {0, 0};
+  auto shared_output = block->forward(shared);
+  shared.block_prefix_sources = {0, 1};
+  TORCH_CHECK(at::allclose(shared_output, block->forward(shared), 1e-6, 1e-6),
+              "Shared block-prefix witnesses changed Gemma outputs");
+
+  // All-sliding block mode must stay exactly causal.
+  Fixture sliding("gemma4", 8, 4, 2);
+  auto sliding_cfg = sliding.cfg;
+  for (int64_t layer = 0; layer < 4; ++layer)
+    sliding_cfg.values["layer_types." + std::to_string(layer)] = "sliding_attention";
+  auto sliding_block_cfg = sliding_cfg;
+  sliding_block_cfg.values["_decision.kind"] = "option_tokens";
+  sliding_block_cfg.values["_decision_attention_mode"] = "block_bidirectional";
+  Weights sliding_weights = sliding.weights;
+  auto sliding_block = create_gemma(sliding_block_cfg, sliding_weights, cpu, at::kFloat);
+  sliding_block->ready();
+  auto causal_cfg = sliding_cfg;
+  causal_cfg.values["_decision.kind"] = "option_tokens";
+  Weights causal_weights = sliding.weights;
+  auto causal = create_gemma(causal_cfg, causal_weights, cpu, at::kFloat);
+  causal->ready();
+  auto sliding_input = input(ids, offsets);
+  sliding_input.block_prefix_lengths = packed.block_prefix_lengths;
+  sliding_input.block_prefix_sources = packed.block_prefix_sources;
+  TORCH_CHECK(at::allclose(sliding_block->forward(sliding_input),
+                           causal->forward(input(ids, offsets)),
+                           1e-6,
+                           1e-6),
+              "Block-mode sliding layers diverged from causal attention");
+
+  // All-full block mode is bidirectional inside the question suffix.
+  Fixture full("gemma4", 8, 4, 2);
+  auto full_cfg = full.cfg;
+  for (int64_t layer = 0; layer < 4; ++layer)
+    full_cfg.values["layer_types." + std::to_string(layer)] = "full_attention";
+  auto full_block_cfg = full_cfg;
+  full_block_cfg.values["_decision.kind"] = "option_tokens";
+  full_block_cfg.values["_decision_attention_mode"] = "block_bidirectional";
+  Weights full_weights = full.weights;
+  auto full_block = create_gemma(full_block_cfg, full_weights, cpu, at::kFloat);
+  full_block->ready();
+  auto full_causal_cfg = full_cfg;
+  full_causal_cfg.values["_decision.kind"] = "option_tokens";
+  Weights full_causal_weights = full.weights;
+  auto full_causal = create_gemma(full_causal_cfg, full_causal_weights, cpu, at::kFloat);
+  full_causal->ready();
+  auto full_input = input({1, 2, 3, 4, 5}, {0, 5});
+  full_input.block_prefix_lengths = {2};
+  full_input.block_prefix_sources = {0};
+  auto bidirectional = full_block->forward(full_input);
+  auto full_future = full_input;
+  full_future.ids = full_input.ids.clone();
+  full_future.ids.index_put_({4}, 42);
+  auto future_bidirectional = full_block->forward(full_future);
+  TORCH_CHECK(at::allclose(
+                  bidirectional.narrow(0, 0, 2), future_bidirectional.narrow(0, 0, 2), 1e-6, 1e-6),
+              "Full-attention block prefix observed its suffix");
+  TORCH_CHECK((bidirectional.narrow(0, 2, 2) - future_bidirectional.narrow(0, 2, 2))
+                      .abs()
+                      .max()
+                      .item<float>() > 1e-5,
+              "Full-attention block suffix was not bidirectional");
+  auto causal_output = full_causal->forward(input({1, 2, 3, 4, 5}, {0, 5}));
+  auto causal_future = full_causal->forward(input({1, 2, 3, 4, 42}, {0, 5}));
+  TORCH_CHECK(at::allclose(causal_output.narrow(0, 2, 2), causal_future.narrow(0, 2, 2), 1e-6, 1e-6),
+              "Causal reference observed a future token");
+  std::cout << "gemma4: block prefix isolation, suffix bidirectionality, causal sliding and mixed "
+               "lengths passed\n";
+}
+
 int main(int argc, char** argv) {
   embedding_layer_key_aliases();
   feature_cache_bounds();
+  gemma_block_attention_test();
 #ifdef INFINITY_TORCH_CUDA_KERNELS
   if (argc > 1) {
     gemma_low_precision_pointwise(c10::Device(argv[1]));

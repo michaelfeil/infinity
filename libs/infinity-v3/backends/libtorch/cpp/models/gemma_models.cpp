@@ -24,6 +24,7 @@
 #include <ATen/ops/_flash_attention_forward.h>
 #include <ATen/ops/_efficient_attention_forward.h>
 #include <ATen/ops/_cudnn_attention_forward.h>
+#include <algorithm>
 #include <charconv>
 #include <cmath>
 #include <string_view>
@@ -50,7 +51,7 @@ class Gemma final : public Model {
   std::string prefix, family;
   int64_t hidden, heads, layers, ple_width;
   double epsilon;
-  bool legacy, embedding2, causal;
+  bool legacy, embedding2, causal, block_bidirectional;
   bool publisher_sequence = false;
   bool embedding2_reference_cuda = false;
   bool fused_legacy_residual = false;
@@ -873,6 +874,71 @@ class Gemma final : public Model {
     return at::cat({a * cos - b * sin, b * cos + a * sin}, -1).to(x.scalar_type());
   }
 
+  /// Full-attention block mask: prefix queries attend only their row's prefix; suffix queries
+  /// attend the row's prefix and suffix; both are noncausal. CPU evaluates rows directly; CUDA
+  /// uses two packed varlen noncausal calls over request-local row gathers.
+  at::Tensor block_full_attention(const at::Tensor& q,
+                                  const at::Tensor& k,
+                                  const at::Tensor& v,
+                                  const PackedInput& input,
+                                  double scale) const {
+    TORCH_CHECK(input.block_layout, "Missing Gemma block layout");
+    const auto& layout = *input.block_layout;
+    if (!device.is_cuda()) {
+      std::vector<at::Tensor> outputs;
+      outputs.reserve(input.batch);
+      auto attend = [&](int64_t q_start, int64_t q_len, int64_t k_start, int64_t k_len) {
+        return at::scaled_dot_product_attention(
+                   q.narrow(0, q_start, q_len).transpose(0, 1).unsqueeze(0),
+                   k.narrow(0, k_start, k_len).transpose(0, 1).unsqueeze(0),
+                   v.narrow(0, k_start, k_len).transpose(0, 1).unsqueeze(0),
+                   std::nullopt,
+                   0.,
+                   false,
+                   scale,
+                   true)
+            .squeeze(0)
+            .transpose(0, 1);
+      };
+      for (int64_t row = 0; row < input.batch; ++row) {
+        const auto start = input.offsets[row];
+        const auto length = input.offsets[row + 1] - start;
+        const auto prefix = input.block_prefix_lengths[row];
+        outputs.push_back(attend(start, prefix, start, prefix));
+        if (length > prefix)
+          outputs.push_back(attend(start + prefix, length - prefix, start, length));
+      }
+      return at::cat(outputs, 0);
+    }
+    TORCH_CHECK(layout.prefix_rows.defined() && layout.suffix_rows.defined() &&
+                    layout.suffix_kv_rows.defined(),
+                "Missing Gemma block row gathers");
+    auto output = at::empty_like(q);
+    auto prefix = packed_cuda_attention(q.index_select(0, layout.prefix_rows),
+                                        k.index_select(0, layout.prefix_rows),
+                                        v.index_select(0, layout.prefix_rows),
+                                        layout.prefix_cumulative,
+                                        layout.prefix_cumulative,
+                                        layout.max_prefix,
+                                        layout.max_prefix,
+                                        scale,
+                                        false);
+    output.index_copy_(0, layout.prefix_rows, prefix);
+    if (layout.suffix_rows.numel() > 0) {
+      auto suffix = packed_cuda_attention(q.index_select(0, layout.suffix_rows),
+                                          k.index_select(0, layout.suffix_kv_rows),
+                                          v.index_select(0, layout.suffix_kv_rows),
+                                          layout.suffix_cumulative,
+                                          layout.kv_cumulative,
+                                          layout.max_suffix,
+                                          layout.max_kv,
+                                          scale,
+                                          false);
+      output.index_copy_(0, layout.suffix_rows, suffix);
+    }
+    return output;
+  }
+
   /// Apply the layer's local/global attention recipe over full logical sequence context. Prefix and
   /// compact execution must preserve the same token visibility and numerical provider.
   at::Tensor attention(const at::Tensor& q,
@@ -882,12 +948,19 @@ class Gemma final : public Model {
                        const Layer& layer,
                        bool use_causal,
                        int64_t cache_layer = -1) const {
-    const bool causal = use_causal;
+    const bool causal = use_causal || block_bidirectional;
     // Sliding causal layers see window-1 preceding tokens; bidirectional layers use a symmetric
     // half-window. Legacy query scaling is explicit, while newer layers use a scale of one.
     auto left = layer.sliding ? (causal ? layer.window - 1 : layer.window / 2) : -1;
     auto right = layer.sliding ? (causal ? 0 : layer.window / 2) : -1;
     auto scale = legacy ? 1.0 / std::sqrt(real("query_pre_attn_scalar", layer.dim)) : 1.0;
+    if (block_bidirectional) {
+      TORCH_CHECK(!input.prefix && !input.capture_prefix,
+                  "Block-bidirectional Gemma cannot reuse prefix state");
+      // Only full-attention layers take the block mask; sliding layers stay causal.
+      if (!layer.sliding)
+        return block_full_attention(q, k, v, input, scale);
+    }
     if (input.capture_prefix && !layer.shared)
       prefix_capture_attention(input, cache_layer, k, v);
     if (input.prefix) {
@@ -1139,6 +1212,65 @@ class Gemma final : public Model {
     return fallback;
   }
 
+  /// Validate the request's block boundaries and publish request-local row gathers. Each row keeps
+  /// its own prefix; representative-prefix reuse is a later optimization.
+  void prepare_block_layout(PackedInput& input) const {
+    if (!block_bidirectional || input.block_layout)
+      return;
+    TORCH_CHECK(!radix_enabled(input) && !input.prefix && !input.capture_prefix,
+                "Block-bidirectional Gemma cannot reuse radix or prefix state");
+    TORCH_CHECK(input.block_prefix_lengths.size() == size_t(input.batch),
+                "Missing OneJev block boundaries");
+    TORCH_CHECK(input.block_prefix_sources.empty() ||
+                    input.block_prefix_sources.size() == size_t(input.batch),
+                "Invalid OneJev block prefix sources");
+    auto layout = std::make_shared<BlockLayout>();
+    std::vector<int32_t> prefixes{0}, suffixes{0}, kv{0};
+    std::vector<int64_t> prefix_rows, suffix_rows, suffix_kv_rows;
+    for (int64_t row = 0; row < input.batch; ++row) {
+      const auto start = input.offsets[row], length = input.offsets[row + 1] - start;
+      const auto prefix = input.block_prefix_lengths[row];
+      TORCH_CHECK(prefix > 0 && prefix <= length, "Invalid OneJev prefix boundary");
+      if (!input.block_prefix_sources.empty()) {
+        const auto source = input.block_prefix_sources[row];
+        TORCH_CHECK(source >= 0 && source <= row &&
+                        input.block_prefix_sources[source] == source &&
+                        input.block_prefix_lengths[source] == prefix,
+                    "Invalid shared OneJev prefix");
+      }
+      for (int64_t token = start; token < start + prefix; ++token)
+        prefix_rows.push_back(token);
+      prefixes.push_back(prefixes.back() + prefix);
+      layout->max_prefix = std::max(layout->max_prefix, int64_t(prefix));
+      if (length > prefix) {
+        for (int64_t token = start + prefix; token < start + length; ++token)
+          suffix_rows.push_back(token);
+        for (int64_t token = start; token < start + length; ++token)
+          suffix_kv_rows.push_back(token);
+        suffixes.push_back(suffixes.back() + length - prefix);
+        kv.push_back(kv.back() + length);
+        layout->max_suffix = std::max(layout->max_suffix, int64_t(length - prefix));
+        layout->max_kv = std::max(layout->max_kv, length);
+      }
+    }
+    for (const auto& image : input.images) {
+      auto it = std::upper_bound(input.offsets, input.offsets + input.batch + 1, image.token_start);
+      auto row = it - input.offsets - 1;
+      TORCH_CHECK(row >= 0 && row < input.batch, "Invalid OneJev image row");
+      const auto boundary = input.offsets[row] + input.block_prefix_lengths[row];
+      TORCH_CHECK(image.token_start + image.token_count <= boundary ||
+                      image.token_start >= boundary,
+                  "OneJev image span crosses a block boundary");
+    }
+    layout->prefix_cumulative = at::tensor(prefixes, input.cumulative.options());
+    layout->suffix_cumulative = at::tensor(suffixes, input.cumulative.options());
+    layout->kv_cumulative = at::tensor(kv, input.cumulative.options());
+    layout->prefix_rows = at::tensor(prefix_rows, input.ids.options().dtype(at::kLong));
+    layout->suffix_rows = at::tensor(suffix_rows, input.ids.options().dtype(at::kLong));
+    layout->suffix_kv_rows = at::tensor(suffix_kv_rows, input.ids.options().dtype(at::kLong));
+    input.block_layout = std::move(layout);
+  }
+
 public:
   /// Prepare immutable vision features and data-dependent valid audio frame indices before graph
   /// capture. Only cache misses enter the vision tower; prepared feature rows
@@ -1181,12 +1313,14 @@ public:
       TORCH_CHECK(audio.selected_frames.numel() == audio.token_count,
                   "Gemma selected audio frame count does not match token span");
     }
+    prepare_block_layout(input);
   }
 
   bool supports_radix() const override {
     // Both option decisions and a loaded sequence score head use causal states.
     // forward_impl still rejects folding for bidirectional embedding requests.
-    return (causal || (boolean("_classifier", false) && classification_width() > 0)) && !legacy &&
+    return !block_bidirectional &&
+           (causal || (boolean("_classifier", false) && classification_width() > 0)) && !legacy &&
            !embedding2;
   }
 
@@ -1214,7 +1348,8 @@ public:
   }
 
   bool supports_prefix_cache(int operation) const override {
-    return !embedding2 && operation != 2 && (operation == 1 ? classification_width() > 0 : causal);
+    return !block_bidirectional && !embedding2 && operation != 2 &&
+           (operation == 1 ? classification_width() > 0 : causal);
   }
 
   int64_t output_width() const override {
@@ -1246,6 +1381,7 @@ public:
     // hidden states; embedding requests retain their bidirectional contract.
     causal = legacy ? !boolean("use_bidirectional_attention", false)
                     : !embedding2 && cfg.string("_decision.kind") == "option_tokens";
+    block_bidirectional = cfg.string("_decision_attention_mode") == "block_bidirectional";
     for (const auto& p : {"model.language_model.", "language_model.", "model.", ""}) {
       if (weights.count(std::string(p) + "embed_tokens.weight")) {
         prefix = p;
@@ -1298,6 +1434,8 @@ public:
         layers == 24 && ple_width == 512 && integer("intermediate_size", 0) == 2048 &&
         integer("head_dim", 0) == 256 && integer("num_key_value_heads", 0) == 2 && epsilon == 1e-6;
     TORCH_CHECK(hidden > 0 && heads > 0 && layers > 0, "Invalid Gemma architecture dimensions");
+    TORCH_CHECK(!block_bidirectional || (!legacy && !embedding2 && causal),
+                "Block-bidirectional attention requires a causal Gemma4 option-token model");
     if (boolean("enable_moe_block", false))
       TORCH_CHECK(!legacy && !embedding2, "Gemma4 expert routing requires Gemma4 architecture");
     TORCH_CHECK(device.is_cpu() || device.is_cuda(),
@@ -1598,7 +1736,15 @@ public:
   /// residuals. Causal Gemma4 may compact identical prefixes; restored rows
   /// retain the caller's full logical order.
   at::Tensor
-  forward_impl(const PackedInput& input, bool is_causal, const at::Tensor& output_rows = {}) const {
+  forward_impl(const PackedInput& source, bool is_causal, const at::Tensor& output_rows = {}) const {
+    PackedInput prepared;
+    const PackedInput* input_ptr = &source;
+    if (block_bidirectional) {
+      prepared = source;
+      prepare_block_layout(prepared);
+      input_ptr = &prepared;
+    }
+    const PackedInput& input = *input_ptr;
 #ifdef INFINITY_TORCH_CUDA_KERNELS
     // The synchronous call owns the device guard; the session owns no guard.
     c10::cuda::OptionalCUDAGuard ordinary_guard;
@@ -1608,6 +1754,9 @@ public:
     // Reuse this call's stream/context/policy snapshot for all Wi/Wo pairs.
     auto ordinary_session = ordinary_ffn ? ordinary_ffn->prepare(w("embed_tokens.weight"))
                                          : OrdinaryLinearExecutor::Session{};
+    TORCH_CHECK(!block_bidirectional || (is_causal && !radix_enabled(input) && !input.prefix &&
+                                         !input.capture_prefix),
+                "Block-bidirectional Gemma requires causal non-full layers without radix or prefix state");
     TORCH_CHECK(!radix_enabled(input) || (is_causal && !legacy && !embedding2),
                 "Gemma radix folding requires causal Gemma4 hidden states");
     const auto& ids = radix_ids(input);
