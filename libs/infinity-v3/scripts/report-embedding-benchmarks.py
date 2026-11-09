@@ -922,6 +922,9 @@ def load_fp32(path, camp, models, runs, helper_path):
             require(rawrec.get("local_tokens") == length, "FP32 local_tokens mismatch")
             require(rawrec.get("dtype") == "float32" and rawrec.get("all_finite") is True,
                     "FP32 record dtype/all_finite invalid")
+            loading = rawrec.get("loading")
+            require(isinstance(loading, dict) and loading.get("validated") is True,
+                    "FP32 model loading was not validated")
             rec, err = probe(task, rawrec)
             require(err is None, f"FP32 values invalid: {err}")
             require(isinstance(rawrec.get("device"), str), "FP32 device missing")
@@ -1309,6 +1312,7 @@ def evidence(camp, models, runs, refctx=None):
                 "all_finite": ref.get("all_finite"), "dtype": ref.get("dtype"),
                 "device": clean(ref.get("device")),
                 "checkpoint": clean(ref.get("checkpoint")),
+                "loading": clean(ref.get("loading")),
                 "semantic_input": None if not ref.get("_semantic") else {
                     "sha256": ref["sample_sha256"], "fields": ref["_semantic"]},
                 "evidence_note": "Independent HF float32 numerical smoke vector; not training, "
@@ -1791,6 +1795,10 @@ def make_fp32_ref(root, *, omit=(), mutate=None, failures=None, duplicate=False)
                     "normalization": "l2" if model["task"] == "embeddings" else "none",
                     "values": rec["values"], "shape": rec["shape"],
                     "all_finite": True, "dtype": "float32", "device": "cpu",
+                    "loading": {"model_class": "fixture.Model", "validated": True,
+                                "missing_keys": [], "unexpected_keys": [],
+                                "mismatched_keys": [], "error_msgs": [],
+                                "allowed_unused_pooler_keys": []},
                     "checkpoint": {"id": cp["id"], "revision": cp["revision"],
                                    "status": "ready", "receipt_sha256": "a" * 64,
                                    "metadata_sha256": cp["metadata_sha256"],
@@ -2139,6 +2147,8 @@ def selftest():
             assert any(x["record_kind"] == "hf_fp32_reference_provenance" for x in ev)
             refs = [x for x in ev if x["record_kind"] == "hf_fp32_reference"]
             assert refs and all(isinstance(x["values"], list) and x["values"] for x in refs)
+            assert all(x["loading"]["validated"] is True and
+                       x["loading"]["model_class"] == "fixture.Model" for x in refs)
             art = json.loads((out / "artifacts.json").read_text())
             for x in art["artifacts"]:
                 assert shafile(out / x["path"]) == x["sha256"]
@@ -2154,6 +2164,8 @@ def selftest():
             lambda x: x["checkpoint"].__setitem__("metadata_sha256", "0" * 64),
             lambda x: x["checkpoint"].__setitem__("status", "unavailable"),
             lambda x: x.__setitem__("dtype", "float64"),
+            lambda x: x.pop("loading"),
+            lambda x: x["loading"].__setitem__("validated", False),
         ]
         for fn in mutations:
             t, root, out = prep()
