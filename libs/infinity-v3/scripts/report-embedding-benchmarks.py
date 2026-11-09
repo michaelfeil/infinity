@@ -568,6 +568,28 @@ def weight_map(value, label):
                 and h64(digest), f"{label} weight file entry invalid")
     return value
 
+def unavailable_prelaunch_checkpoint(raw, cp, fp_checkpoint, status, weights):
+    """Match common.run_one's failed pre-launch checkpoint-hash form.
+
+    benchmark-common clears every verified dependency and weight projection when
+    checkpoint_identity fails before a launch. The manifest declarations remain
+    exact-bound in fingerprint_inputs.model, so an empty verified projection is
+    acceptable here without inventing dependency content.
+    """
+    return (status == "checkpoint_unavailable"
+            and fp_checkpoint.get("weights_sha256") is None
+            and cp.get("weights_sha256") is None
+            and weights == {}
+            and fp_checkpoint.get("code_dependencies") == []
+            and cp.get("code_dependencies") == []
+            and fp_checkpoint.get("dependencies") == []
+            and cp.get("dependencies") == []
+            and raw.get("command") is None
+            and raw.get("client_command") is None
+            and raw.get("startup_s") is None
+            and raw.get("measurement") is None
+            and raw.get("environment_overrides") is None)
+
 def validate_fingerprint(camp, model, raw, cp, revision, status):
     x = raw.get("fingerprint_inputs")
     require(isinstance(x, dict) and set(x) >= {"model", "checkpoint", "runtime", "lane", "settings", "files"},
@@ -599,7 +621,8 @@ def validate_fingerprint(camp, model, raw, cp, revision, status):
     if cp.get("code_dependencies") is not None:
         require(cjson(cd) == cjson(deps(cp["code_dependencies"], "raw dependencies", True)),
             f"{model['id']}: dependency projection mismatch")
-    if model["raw"].get("code_dependencies") is not None:
+    if model["raw"].get("code_dependencies") is not None and not (
+            unavailable_prelaunch_checkpoint(raw, cp, c, status, weights)):
         require(cjson(deps(cd, "fingerprint identities")) == cjson(deps(model["raw"]["code_dependencies"], "manifest dependencies")),
             f"{model['id']}: manifest dependency mismatch")
     require(cjson(deps(c["dependencies"], "fingerprint tokenizer dependencies", True)) ==
@@ -2176,6 +2199,52 @@ def selftest():
         tests.append(fn)
         return fn
 
+    def declared_dependency_fixture():
+        t, root, out = prep()
+        manifest_path = root / "manifest.json"
+        manifest = json.loads(manifest_path.read_text())
+        for m in manifest["models"]:
+            m["code_dependencies"] = [{"id": "dep", "revision": "8" * 40}]
+            m["dependencies"] = [{"id": "org/tokenizer", "revision": "9" * 40}]
+        manifest_path.write_text(json.dumps(manifest, indent=2) + "\n")
+        campaign_path = root / "campaign.json"
+        campaign = json.loads(campaign_path.read_text())
+        campaign["manifest_sha256"] = shafile(manifest_path)
+        campaign_path.write_text(json.dumps(campaign, indent=2) + "\n")
+        by_id = {m["id"]: m for m in manifest["models"]}
+        for p in (root / "runs").glob("*.json"):
+            d = json.loads(p.read_text())
+            d["fingerprint_inputs"]["model"] = portable(by_id[d["model"]])
+            d["run_fingerprint"] = fp(d["fingerprint_inputs"])
+            p.write_text(json.dumps(d) + "\n")
+        return t, root, out, by_id
+
+    def run_path(root, model_id, runtime):
+        return root / "runs" / f"{model_id.replace('/', '--')}--{runtime}.json"
+
+    def save_run(path, doc):
+        path.write_text(json.dumps(doc) + "\n")
+        return doc
+
+    def failed_hash_fixture():
+        """Exact common ready-checkpoint hash-failure form for acme/dense-a vllm."""
+        t, root, out, by_id = declared_dependency_fixture()
+        path = run_path(root, "acme/dense-a", "vllm")
+        d = json.loads(path.read_text())
+        environment = d["environment_overrides"]
+        d["status"] = "checkpoint_unavailable"
+        d["checkpoint"].update(weights_sha256=None, weight_files_sha256={},
+                               code_dependencies=[], dependencies=[])
+        d["fingerprint_inputs"]["checkpoint"].update(
+            weights_sha256=None, code_dependencies=[], dependencies=[])
+        d["command"] = d["client_command"] = None
+        for key in ("startup_s", "measurement", "environment_overrides"):
+            d.pop(key, None)
+        d["error"] = "CheckpointError: declared shard missing"
+        d["run_fingerprint"] = fp(d["fingerprint_inputs"])
+        save_run(path, d)
+        return t, root, out, by_id, environment, path
+
     @add
     def complete_export_matrix_anchor_and_size():
         t, root, out = prep()
@@ -2445,6 +2514,105 @@ def selftest():
             art = json.loads((out / "artifacts.json").read_text())
             for x in art["artifacts"]:
                 assert shafile(out / x["path"]) == x["sha256"]
+
+    @add
+    def unavailable_prelaunch_accepts_declared_dependencies_without_verified_content():
+        t, root, out, by_id, environment, path = failed_hash_fixture()
+        with t:
+            run = json.loads(path.read_text())
+            assert run["checkpoint"]["status"] == "ready"
+            assert run["checkpoint"]["revision"] == by_id["acme/dense-a"]["revision"]
+            assert h64(run["checkpoint"]["metadata_sha256"])
+            assert run["checkpoint"]["weights_sha256"] is None
+            assert run["checkpoint"]["weight_files_sha256"] == {}
+            assert run["checkpoint"]["code_dependencies"] == []
+            assert run["checkpoint"]["dependencies"] == []
+            assert run["fingerprint_inputs"]["checkpoint"]["weights_sha256"] is None
+            assert run["fingerprint_inputs"]["checkpoint"]["code_dependencies"] == []
+            assert run["fingerprint_inputs"]["checkpoint"]["dependencies"] == []
+            assert run["fingerprint_inputs"]["model"]["code_dependencies"] == \
+                by_id["acme/dense-a"]["code_dependencies"]
+            assert run["command"] is None and run["client_command"] is None
+            for key in ("startup_s", "measurement", "environment_overrides"):
+                assert key not in run
+            for allow in (False, True):
+                summary = export(root, out, allow)
+                assert summary["status"] == "complete" and summary["numerical_passes"] > 0
+            rep = json.loads((out / "results.json").read_text())
+            attempt = next(a for m in rep["models"] if m["id"] == "acme/dense-a"
+                           for a in m["attempts"] if a["runtime"] == "vllm")
+            assert attempt["terminal_status"] == "checkpoint_unavailable"
+            assert attempt["checkpoint_revision"] == by_id["acme/dense-a"]["revision"]
+            assert attempt["failure_reason"] and "/root/" not in attempt["failure_reason"]
+            assert all(not c["present"] for c in attempt["cases"])
+            measured = json.loads(run_path(root, "acme/dense-a", "infinity").read_text())
+            assert measured["checkpoint"]["code_dependencies"][0]["id"] == "dep"
+            assert measured["fingerprint_inputs"]["model"]["code_dependencies"] == \
+                by_id["acme/dense-a"]["code_dependencies"]
+
+    @add
+    def unavailable_prelaunch_exception_stays_narrow():
+        def expect_manifest_rejection(name, root, out):
+            try:
+                export(root, out, True)
+            except ReportError as error:
+                assert "manifest dependency mismatch" in str(error), (name, str(error))
+            else:
+                raise AssertionError(f"{name} accepted")
+
+        for name, status in (("measured_missing_deps", "measured"),
+                             ("client_failed_missing_deps", "client_failed"),
+                             ("load_failed_missing_deps", "load_failed")):
+            t, root, out, by_id = declared_dependency_fixture()
+            with t:
+                path = run_path(root, "acme/dense-a", "vllm")
+                d = json.loads(path.read_text())
+                d["status"] = status
+                d["checkpoint"]["code_dependencies"] = []
+                d["checkpoint"]["dependencies"] = []
+                d["fingerprint_inputs"]["checkpoint"]["code_dependencies"] = []
+                d["fingerprint_inputs"]["checkpoint"]["dependencies"] = []
+                d["run_fingerprint"] = fp(d["fingerprint_inputs"])
+                save_run(path, d)
+                expect_manifest_rejection(name, root, out)
+
+        for name, key, value in (("unavailable_command", "command", ["server"]),
+                                 ("unavailable_environment", "environment_overrides", {}),
+                                 ("unavailable_startup", "startup_s", 1.0),
+                                 ("unavailable_measurement", "measurement", {})):
+            t, root, out, by_id, environment, path = failed_hash_fixture()
+            with t:
+                d = json.loads(path.read_text())
+                d[key] = dict(environment) if key == "environment_overrides" else value
+                if key != "environment_overrides":
+                    d["environment_overrides"] = dict(environment)
+                save_run(path, d)
+                expect_manifest_rejection(name, root, out)
+
+        t, root, out, by_id, environment, path = failed_hash_fixture()
+        with t:
+            d = json.loads(path.read_text())
+            d["checkpoint"]["code_dependencies"] = [
+                {"id": "other", "revision": "7" * 40, "metadata_sha256": "6" * 64}]
+            d["fingerprint_inputs"]["checkpoint"]["code_dependencies"] = [
+                {"id": "other", "revision": "7" * 40, "metadata_sha256": "6" * 64}]
+            d["run_fingerprint"] = fp(d["fingerprint_inputs"])
+            save_run(path, d)
+            expect_manifest_rejection("unavailable_partial_verified_deps", root, out)
+
+        t, root, out, by_id, environment, path = failed_hash_fixture()
+        with t:
+            d = json.loads(path.read_text())
+            d["fingerprint_inputs"]["model"]["code_dependencies"] = [
+                {"id": "other", "revision": "7" * 40}]
+            d["run_fingerprint"] = fp(d["fingerprint_inputs"])
+            save_run(path, d)
+            try:
+                export(root, out, True)
+            except ReportError as error:
+                assert "fingerprint model mismatch" in str(error), str(error)
+            else:
+                raise AssertionError("mismatching fp.model declarations accepted")
 
     rejects = [
         ("dirty", "source_clean"), ("malformed_commit", "source_commit"),
