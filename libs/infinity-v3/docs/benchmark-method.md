@@ -20,7 +20,8 @@ CUDA architecture `100` and pinned FA4 AOT and GDN provider locations supplied
 through `FA4_ROOT` and `GDN_ROOT`. The published
 [results.json](benchmarks/b200-20261108/results.json) `campaign.build`
 metadata preserves the recorded portable build command, provider
-recipes/manifests and native-library hashes. Those are operator-provided
+recipes/manifests, native-library hashes and the selected Torch library tree
+hash. Build commands and provider recipes are operator-provided
 provenance declarations, not a standalone cryptographic source-to-binary
 attestation. This identifies a configured source build, rather than a published
 container image.
@@ -40,14 +41,18 @@ from the runtime library directory `TORCH_LIB`. `FA4_ROOT` and `GDN_ROOT` are
 the pinned operator-provided provider locations.
 
 The comparators are vLLM `0.33.0` and SGLang `0.5.23`. Their package files were
-checked against the installed wheel records. vLLM uses Torch `2.14.0`; Infinity
+checked against the installed wheel records, including missing files. The runner
+rechecks package contents, recorded dependency versions, the selected Torch
+libraries and Python identities before launching or resuming a campaign.
+It selects each serving runtime's own Python environment for executable lookup.
+vLLM uses Torch `2.14.0`; Infinity
 and SGLang use `2.14.1`. Runtime versions and content hashes are included in
 the results.
 
 Each checkpoint runs the three runtimes sequentially on the same B200 and
 server CPU allocation. Six GPU lanes run concurrently. Each lane has eight
 physical server cores and eight separate client cores. GPUs 0, 1, 3, 4, 5 and 6
-are used; GPU 2 is excluded because another job occupied it. Reference inference
+are used; GPU 2 is outside the serving allocation. Reference inference
 uses GPU 7. Other host activity remains uncontrolled.
 
 ## Workloads and units
@@ -97,6 +102,9 @@ input and the checkpoint's saved CLS, mean or last-token pooling, followed by L2
 normalization. Reranker references retain raw logits. Unsupported pipelines or
 missing references are reported explicitly; they supply no numerical pass.
 These probes are limited numerical checks, not evidence about task quality.
+The guarded FP32 vectors are reused in the corrected serving sweep. Their
+helper, client and manifest hashes, checkpoint metadata and exact semantic
+inputs remain unchanged.
 
 The result directory contains a readable report, compact JSON, a CSV and
 `evidence.jsonl.gz`. Compressed evidence includes complete saved runtime and

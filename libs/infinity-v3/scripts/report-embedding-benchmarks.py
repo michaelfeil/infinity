@@ -283,7 +283,8 @@ def load_campaign(root):
     require(shafile(mpath) == d["manifest_sha256"], "campaign.manifest_sha256 does not match manifest bytes")
     versions = d.get("runtime_versions")
     require(isinstance(versions, dict), "campaign.runtime_versions missing")
-    vers = {}
+    vers = {key: clean(value) for key, value in versions.items()
+            if key not in RTS and isinstance(value, str)}
     for r in RT:
         v = versions.get(r)
         if isinstance(v, dict):
@@ -355,6 +356,7 @@ def load_campaign(root):
         require(isinstance(e, dict), f"runtime installation missing for {r}")
         tree = e.get("package_tree_sha256")
         if r in ("vllm", "sglang"):
+            require(e.get("version") == vers[r], f"{r} installation version mismatch")
             require(h64(tree) and tree == files[r]["runtime_package_tree_sha256"],
                 f"{r} package tree does not match fingerprint anchor")
             require(h64(e.get("record_sha256")), f"{r} record_sha256 missing")
@@ -372,6 +374,8 @@ def load_campaign(root):
                     "Infinity package tree does not match fingerprint anchor")
             stock = "source_clean" if e.get("source_clean") is True else "unverified"
         inst[r] = {"version": e.get("version"),
+                   "torch_version": clean(e.get("torch_version")),
+                   "transformers_version": clean(e.get("transformers_version")),
                    "package_tree_sha256": clean(tree),
                    "record_sha256": clean(e.get("record_sha256")),
                    "record_mismatch_count": len(e.get("record_mismatches") or []),
@@ -574,8 +578,13 @@ def validate_fingerprint(camp, model, raw, cp, revision, status):
     runtime_environment = dict(s["runtime_environment"])
     python_identity = runtime_environment.pop("python_identity_sha256", None)
     require(h64(python_identity), f"{model['id']}: runtime_environment policy identity invalid")
-    require(python_identity == (raw.get("environment_overrides") or {}).get("python_identity_sha256"),
-            f"{model['id']}: runtime Python identity does not match recorded environment")
+    recorded_environment = raw.get("environment_overrides")
+    attempted_launch = status in ("measured", "client_failed") or any(
+        raw.get(key) is not None for key in ("command", "client_command", "startup_s", "measurement"))
+    if recorded_environment is not None or attempted_launch:
+        require(isinstance(recorded_environment, dict) and
+                python_identity == recorded_environment.get("python_identity_sha256"),
+                f"{model['id']}: runtime Python identity does not match recorded environment")
     require(python_identity == m["runtime_python_identity_sha256"][raw["runtime"]],
             f"{model['id']}: runtime Python identity does not match campaign anchor")
     require(cjson(runtime_environment) == cjson(REQUIRED_ENV[raw["runtime"]]),
@@ -1125,6 +1134,7 @@ def public_campaign(camp):
         e = camp["runtime_installations"].get(r) or {}
         inst[r] = {k: clean(e.get(k)) for k in
                    ("version", "package_tree_sha256", "record_sha256",
+                    "torch_version", "transformers_version",
                     "record_mismatch_count", "unrecorded_count", "missing_record_count", "stock")
                    if e.get(k) is not None}
     return {"id": clean(camp["id"]), "date_local": clean(camp["date_local"]),
@@ -1482,7 +1492,11 @@ def markdown(camp, models, runs, rep):
                      f"{x['clean_cases']}/{x['expected_cases']} |")
     lines += ["", "## Full model × length matrix (larger parameters first)", "",
               ("Cells: recomputed server input tok/s / successful req/s and explicit tag. "
-               "Latency is per-window p50/p95 medians in results.csv/results.json."), "",
+               "Latency is per-window p50/p95 medians in results.csv/results.json."),
+              ("C is HTTP concurrency. `rel` compares a runtime with Infinity; `fp32` is the "
+               "independent reference check. `ELIGIBLE` requires both applicable checks and "
+               "a clean workload. Infinity's `baseline` flag records its FP32 eligibility. "
+               "Missing parameter counts and unavailable token rates are labeled n/a."), "",
               "| Model | Parameters (B) | Tokens | C | Infinity | vLLM | SGLang |",
               "|---|---|---|---|---|---|---|"]
     for m in sorted(models, key=lambda z: (-(z["parameters"] or 0), z["id"])):
@@ -1493,7 +1507,7 @@ def markdown(camp, models, runs, rep):
                 rr = runs.get((m["id"], r))
                 c = rr["cases"].get((n, None)) if rr else None
                 cells.append(cell(rr, c, ci.get((m["id"], r, n)), r))
-            p = f"{m['parameters'] / 1e9:,.2f}" if m["parameters"] is not None else ""
+            p = f"{m['parameters'] / 1e9:,.2f}" if m["parameters"] is not None else "n/a"
             tag = f" · {m['selection']}" if m.get("selection") else ""
             lines.append(f"| `{m['id']}` {m['task']}{tag} | {p} | {n} | {concurrency(camp, n)} | "
                          + " | ".join(cells) + " |")
@@ -1772,6 +1786,10 @@ def fixture(root, *, short=False, client_failed=False, unavailable=False,
                                              "LD_LIBRARY_PATH_injected": ["/root/private/lib"]},
                    "fingerprint_inputs": fpv, "run_fingerprint": fp(fpv),
                    "startup_s": 1.0, "status": st}
+            if st == "checkpoint_unavailable":
+                doc.pop("environment_overrides")
+                doc.pop("startup_s")
+                doc["command"] = doc["client_command"] = None
             if measurement is not None:
                 doc["measurement"] = measurement
             if st != "measured":
@@ -1943,6 +1961,10 @@ def mutate(root, kind):
         else:
             entry["stock"] = False
         p.write_text(json.dumps(d))
+    elif kind == "installation_version":
+        p = root / "campaign.json"; d = json.loads(p.read_text())
+        d["runtime_installations"]["vllm"]["version"] = "different-version"
+        p.write_text(json.dumps(d))
     elif kind in ("build_torch", "python_anchor_missing", "torch_invalid"):
         p = root / "campaign.json"; d = json.loads(p.read_text())
         if kind == "build_torch":
@@ -2023,6 +2045,57 @@ def selftest():
             for key in ("command", "providers", "native_library_sha256"):
                 assert build[key] == campaign["build"][key], key
             assert build["native_library_count"] == len(build["native_library_sha256"])
+
+    @add
+    def prelaunch_failures_need_no_unexecuted_environment():
+        t, root, out = prep()
+        with t:
+            path = root / "runs" / "acme--dense-a--vllm.json"
+            record = json.loads(path.read_text())
+            record["status"] = "load_failed"
+            record["command"] = record["client_command"] = None
+            for key in ("environment_overrides", "startup_s", "measurement"):
+                record.pop(key, None)
+            record["error"] = "configuration rejected before launch"
+            path.write_text(json.dumps(record))
+            export(root, out)
+            result = json.loads((out / "results.json").read_text())
+            assert result["runtime_status"]["vllm"]["load_failed"] == 1
+            assert not dense(result, "vllm", 128)["present"]
+
+    @add
+    def attempted_launch_requires_recorded_environment_identity():
+        for failed in (False, True):
+            t, root, out = prep(client_failed=failed)
+            with t:
+                path = root / "runs" / "acme--dense-a--vllm.json"
+                record = json.loads(path.read_text())
+                record.pop("environment_overrides")
+                path.write_text(json.dumps(record))
+                try:
+                    export(root, out)
+                except ReportError as error:
+                    assert "runtime Python identity does not match recorded environment" in str(error)
+                else:
+                    raise AssertionError("launch without environment identity accepted")
+
+    @add
+    def dependency_and_client_versions_remain_public():
+        t, root, out = prep()
+        with t:
+            path = root / "campaign.json"
+            campaign = json.loads(path.read_text())
+            recorded = {"infinity_torch": "2.14.1", "vllm_torch": "2.14.0",
+                        "sglang_transformers": "5.19.0", "client_aiohttp": "3.14.5"}
+            campaign["runtime_versions"].update(recorded)
+            campaign["runtime_installations"]["vllm"].update(
+                torch_version="2.14.0", transformers_version="5.20.2")
+            path.write_text(json.dumps(campaign))
+            export(root, out)
+            public = json.loads((out / "results.json").read_text())["campaign"]
+            assert all(public["runtime_versions"][key] == value for key, value in recorded.items())
+            assert public["runtime_installations"]["vllm"]["torch_version"] == "2.14.0"
+            assert public["runtime_installations"]["vllm"]["transformers_version"] == "5.20.2"
 
     @add
     def provisional_and_default_reject():
@@ -2169,6 +2242,7 @@ def selftest():
         ("deps", "dependency"), ("env_empty", "runtime_environment policy"),
         ("stock_record", "stock claim rejected"), ("budget", "max_batch_tokens must be 16384"),
         ("stock_missing", "stock claim rejected"), ("stock_false", "stock claim rejected"),
+        ("installation_version", "installation version mismatch"),
         ("build_torch", "Torch library tree"), ("torch_invalid", "torch_library_tree_sha256 invalid"),
         ("python_anchor_missing", "runtime_python_identity_sha256 invalid"),
         ("python_identity", "runtime Python identity does not match campaign anchor"),
