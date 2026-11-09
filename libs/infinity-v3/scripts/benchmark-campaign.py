@@ -7,7 +7,7 @@ a server, loads a model or modifies an installed runtime.
 """
 from __future__ import annotations
 import argparse, ast, base64, datetime, errno, hashlib, importlib.metadata, importlib.util
-import json, os, re, subprocess, sys, tempfile, tomllib, types
+import json, os, re, shlex, subprocess, sys, tempfile, tomllib, types
 from pathlib import Path
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
@@ -34,6 +34,18 @@ def sha256_file(path):
 def canonical_sha256(value):
     text = json.dumps(value, sort_keys=True, separators=(",", ":"), allow_nan=False)
     return hashlib.sha256(text.encode()).hexdigest()
+
+def runtime_identity():
+    executable = os.path.abspath(sys.executable)
+    prefix = os.path.abspath(sys.prefix)
+    try:
+        interpreter = sha256_file(Path(sys.executable))
+    except OSError as exc:
+        raise CampaignError(f"cannot hash runtime Python {sys.executable}: {exc}") from exc
+    identity = {"executable": executable, "prefix": prefix,
+                "interpreter_sha256": interpreter}
+    identity["sha256"] = canonical_sha256(identity)
+    return identity
 
 def load_common():
     path = Path(__file__).resolve().parent / "benchmark-common.py"
@@ -109,10 +121,17 @@ def infinity_binary(infinity_bin, torch_lib):
     if not binary.is_file():
         raise CampaignError(f"--infinity-bin is not a file: {infinity_bin}")
     libraries = {path.name: sha256_file(path) for path in sorted(binary.parent.glob("*.so"))}
-    injected = [str(binary.parent)]
+    torch_tree = None
     if torch_lib is not None:
         if not Path(torch_lib).is_dir():
             raise CampaignError(f"--torch-lib is not a directory: {torch_lib}")
+        common = load_common()
+        try:
+            torch_tree = common.library_tree_sha256(torch_lib)
+        except common.CampaignError as exc:
+            raise CampaignError(str(exc)) from exc
+    injected = [str(binary.parent)]
+    if torch_lib is not None:
         injected.append(str(Path(torch_lib).resolve()))
     environment = os.environ.copy()
     inherited = environment.get("LD_LIBRARY_PATH", "")
@@ -133,7 +152,8 @@ def infinity_binary(infinity_bin, torch_lib):
     return {"binary_sha256": digest, "native_library_sha256": libraries,
             "version": match.group(1) if match else lines[-1].strip(), "version_output": output,
             "package_tree_sha256": canonical_sha256(
-                {"binary_sha256": digest, "native_libraries": libraries})}
+                {"binary_sha256": digest, "native_libraries": libraries}),
+            "torch_library_tree_sha256": torch_tree}
 
 def torch_version_from_lib(torch_lib):
     if torch_lib is None:
@@ -479,6 +499,7 @@ def private_main(argv):
         payload = ({"torch_version": metadata_version("torch"),
                     "transformers_version": metadata_version("transformers")}
                    if arguments.inspect_versions else inspect_package(arguments.inspect_package))
+        payload["python_identity"] = runtime_identity()
     except Exception as exc:
         print(json.dumps({"error": f"{type(exc).__name__}: {exc}"}))
         return 1
@@ -498,6 +519,20 @@ def run_private(python, *arguments):
     if "error" in payload:
         raise CampaignError(f"runtime probe failed ({python}): {payload['error']}")
     return payload
+
+def probe_python_identity(payload, label):
+    identity = payload.get("python_identity")
+    if not isinstance(identity, dict):
+        raise CampaignError(f"{label} probe returned no Python identity")
+    base = {key: identity.get(key)
+            for key in ("executable", "prefix", "interpreter_sha256")}
+    if not all(isinstance(value, str) and value for value in base.values()) \
+            or not os.path.isabs(base["executable"]) or not os.path.isabs(base["prefix"]) \
+            or not re.fullmatch(r"[0-9a-f]{64}", base["interpreter_sha256"]):
+        raise CampaignError(f"{label} probe returned an invalid Python identity")
+    if identity.get("sha256") != canonical_sha256(base):
+        raise CampaignError(f"{label} probe returned an inconsistent Python identity")
+    return identity
 
 def installation(payload, label, allow_modified):
     problems = ((payload.get("record_mismatches") or []) + (payload.get("missing_record_files") or [])
@@ -606,6 +641,9 @@ def create_campaign(args, common):
     sglang = installation(sglang_probe, "SGLang", args.allow_modified_runtimes)
     infinity = infinity_binary(args.infinity_bin, args.torch_lib)
     client_versions = run_private(client_python, "--inspect-versions")
+    client_identity = probe_python_identity(client_versions, "client Python")
+    vllm_identity = probe_python_identity(vllm_probe, "vLLM")
+    sglang_identity = probe_python_identity(sglang_probe, "SGLang")
     sdk_version, sdk_source = sdk_torch_version(args.torch_lib)
     versions = runtime_version_metadata(vllm_probe, sglang_probe, client_versions,
                                         infinity["version"], sdk_version, sdk_source)
@@ -620,6 +658,7 @@ def create_campaign(args, common):
         raise CampaignError("--id must contain only letters, digits, dot, underscore or dash")
     build = {"version": infinity["version"], "binary_sha256": infinity["binary_sha256"],
              "native_library_sha256": infinity["native_library_sha256"],
+             "torch_library_tree_sha256": infinity["torch_library_tree_sha256"],
              "command": values["command"], "providers": values["providers"],
              "libraries": values["libraries"], "source_commit": source["commit"],
              "binary_version_output": infinity["version_output"],
@@ -643,13 +682,21 @@ def create_campaign(args, common):
                            "runtimes": list(common.RUNTIMES), "request_batch_size": 1,
                            "encoding": "JSON float", "prefix_cache": False,
                            "radix_cache": False, "infinity_radix_mlp_threshold": 0,
+                           "runtime_python_identity_sha256": {
+                               "infinity": client_identity["sha256"],
+                               "vllm": vllm_identity["sha256"],
+                               "sglang": sglang_identity["sha256"]},
                            "lanes": lanes},
                 "manifest_sha256": sha256_file(manifest), "fingerprint_files": {},
                 "interference_note": extra.get("interference_note", "No interference note supplied.")}
-    fingerprint_args = argparse.Namespace(infinity_bin=str(args.infinity_bin),
-                                          vllm_python=str(args.vllm_python),
-                                          sglang_python=str(args.sglang_python))
+    fingerprint_args = argparse.Namespace(
+        infinity_bin=str(args.infinity_bin), vllm_python=str(args.vllm_python),
+        sglang_python=str(args.sglang_python), client_python=str(client_python),
+        torch_lib=str(args.torch_lib) if args.torch_lib else None)
     cache = {}
+    common.seed_package_probe(cache, str(args.vllm_python), "vllm", vllm_probe)
+    common.seed_package_probe(cache, str(args.sglang_python), "sglang", sglang_probe)
+    common.seed_python_identity(cache, str(client_python), client_identity)
     campaign["fingerprint_files"] = {
         runtime: common.runtime_files(fingerprint_args, runtime, campaign, cache)
         for runtime in common.RUNTIMES}
@@ -663,6 +710,7 @@ def expect(error, function, *arguments):
     raise AssertionError(f"{function.__name__} did not raise {error.__name__}")
 
 def self_test():
+    common = load_common()
     with tempfile.TemporaryDirectory() as temporary:
         root, repo = Path(temporary), Path(temporary) / "repo"
         native = repo / "libs" / "infinity-v3"
@@ -791,6 +839,133 @@ def self_test():
         finally:
             os.link = original_link
         expect(CampaignError, load_extra, '{"source_commit": "f" * 40}')
+
+        def make_venv(name):
+            base = root / name
+            bin_dir = base / "bin"
+            bin_dir.mkdir(parents=True)
+            python = bin_dir / "python"
+            python.symlink_to(sys.executable)
+            (base / "pyvenv.cfg").write_text(
+                f"home = {Path(sys.executable).resolve().parent}\n"
+                "include-system-site-packages = false\n", encoding="utf-8")
+            return python
+
+        def make_wrapper(name, python, pythonpath):
+            path = root / "wrappers" / name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(
+                f"#!/bin/sh\nPYTHONPATH={shlex.quote(str(pythonpath))} "
+                f"exec {shlex.quote(str(python))} \"$@\"\n", encoding="utf-8")
+            path.chmod(0o755)
+            return path
+
+        def make_package(site, module):
+            package = site / module
+            package.mkdir(parents=True)
+            (package / "__init__.py").write_text("VALUE = 1\n", encoding="utf-8")
+            (package / "model.py").write_text("MODEL = 1\n", encoding="utf-8")
+            dist_info = site / f"{module}-0.0.1.dist-info"
+            dist_info.mkdir()
+            (dist_info / "METADATA").write_text(
+                f"Metadata-Version: 2.1\nName: {module}\nVersion: 0.0.1\n\n",
+                encoding="utf-8")
+            def record_line(relative):
+                data = (site / relative).read_bytes()
+                encoded = base64.urlsafe_b64encode(
+                    hashlib.sha256(data).digest()).decode().rstrip("=")
+                return f"{relative},sha256={encoded},{len(data)}\n"
+            (dist_info / "RECORD").write_text(
+                "".join(record_line(item)
+                        for item in (f"{module}/__init__.py", f"{module}/model.py")),
+                encoding="utf-8")
+            return package
+
+        vllm_site = root / "fake-vllm-site"
+        vllm_site.mkdir()
+        make_package(vllm_site, "vllm")
+        sglang_site = root / "fake-sglang-site"
+        sglang_site.mkdir()
+        make_package(sglang_site, "sglang")
+        vllm_wrapper = make_wrapper(
+            "campaign-vllm", make_venv("campaign-vllm-env"), vllm_site)
+        sglang_wrapper = make_wrapper(
+            "campaign-sglang", make_venv("campaign-sglang-env"), sglang_site)
+        infinity_dir = root / "infinity-runtime"
+        infinity_dir.mkdir()
+        infinity = infinity_dir / "infinity"
+        infinity.write_text("#!/bin/sh\necho 'Infinity 3.0.2-beta.3'\n", encoding="utf-8")
+        infinity.chmod(0o755)
+        for index in range(5):
+            (infinity_dir / f"libinfinity_bridge_{index}.so").write_bytes(
+                f"bridge-{index}".encode())
+        torch_lib = root / "campaign-torch"
+        (torch_lib / "nested").mkdir(parents=True)
+        (torch_lib / "libtorch.so").write_bytes(b"torch")
+        (torch_lib / "nested" / "libc10.so").write_bytes(b"c10")
+        fake_lanes = [{"gpu": 0, "server_cpus": "0-7", "client_cpus": "8-15"}]
+        fake_hardware = {"gpu_name": "Fake GPU", "gpu_memory_mib": 1,
+                         "gpu_devices": [{"index": 0, "name": "Fake GPU",
+                                          "memory_mib": 1}],
+                         "gpu_lanes": fake_lanes, "cpu": "fixture",
+                         "server_cores_per_lane": 8, "client_cores_per_lane": 8,
+                         "shared_host": True}
+        original_hardware = globals()["hardware"]
+        globals()["hardware"] = lambda *arguments, **keywords: (
+            fake_hardware, fake_lanes)
+        try:
+            campaign_args = argparse.Namespace(
+                output=root / "campaign-output", source_dir=repo,
+                infinity_bin=infinity, vllm_python=vllm_wrapper,
+                sglang_python=sglang_wrapper, client_python=Path(sys.executable),
+                torch_lib=torch_lib, gpus="0", server_cpus="0-7",
+                client_cpus="8-15", timezone="UTC", id="fixture-campaign",
+                extra_metadata=None,
+                manifest=Path(__file__).resolve().parent / "benchmark-common-models.json",
+                allow_modified_runtimes=False, overwrite=False)
+            campaign = create_campaign(campaign_args, common)
+        finally:
+            globals()["hardware"] = original_hardware
+        files = campaign["fingerprint_files"]
+        expected_keys = {"runner_sha256", "client_sha256", "binary_sha256",
+                         "native_library_sha256", "runtime_package_tree_sha256",
+                         "torch_library_tree_sha256"}
+        assert set(files) == set(common.RUNTIMES)
+        assert all(set(files[runtime]) == expected_keys for runtime in common.RUNTIMES)
+        assert files["infinity"]["torch_library_tree_sha256"] \
+            == common.library_tree_sha256(torch_lib)
+        assert campaign["build"]["torch_library_tree_sha256"] \
+            == files["infinity"]["torch_library_tree_sha256"]
+        assert files["vllm"]["torch_library_tree_sha256"] is None
+        assert files["sglang"]["torch_library_tree_sha256"] is None
+        for runtime in common.RUNTIMES:
+            assert campaign["runtime_installations"][runtime]["package_tree_sha256"] \
+                == files[runtime]["runtime_package_tree_sha256"]
+        assert files["infinity"]["native_library_sha256"] \
+            == files["vllm"]["native_library_sha256"] \
+            == files["sglang"]["native_library_sha256"]
+        identities = campaign["method"]["runtime_python_identity_sha256"]
+        assert set(identities) == set(common.RUNTIMES)
+        assert all(re.fullmatch(r"[0-9a-f]{64}", value)
+                   for value in identities.values())
+        fingerprint_args = argparse.Namespace(
+            infinity_bin=str(infinity), vllm_python=str(vllm_wrapper),
+            sglang_python=str(sglang_wrapper), client_python=str(sys.executable),
+            torch_lib=str(torch_lib))
+        for runtime in common.RUNTIMES:
+            assert common.runtime_files(fingerprint_args, runtime, campaign, {}) \
+                == files[runtime]
+            assert common.runtime_python_identity_sha256(
+                fingerprint_args, runtime, {}) == identities[runtime]
+        (vllm_site / "vllm/model.py").write_text("MODEL = 2\n", encoding="utf-8")
+        expect(common.CampaignError, common.runtime_files, fingerprint_args, "vllm",
+               campaign, {})
+        (vllm_site / "vllm/model.py").write_text("MODEL = 1\n", encoding="utf-8")
+        assert common.runtime_files(fingerprint_args, "vllm", campaign, {}) \
+            == files["vllm"]
+        (vllm_site / "vllm/model.py").unlink()
+        expect(common.CampaignError, common.runtime_files, fingerprint_args, "vllm",
+               campaign, {})
     print("self-test passed")
     return 0
 

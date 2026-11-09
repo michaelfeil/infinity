@@ -24,7 +24,8 @@ COS, RTOL, ATOL = 0.999, 0.02, 0.01
 DTYPE = "bfloat16"
 SEM = {"embeddings": ("text",), "rerank": ("query", "document")}
 FILE_KEYS = {"runner_sha256", "client_sha256", "binary_sha256",
-             "native_library_sha256", "runtime_package_tree_sha256"}
+             "native_library_sha256", "runtime_package_tree_sha256",
+             "torch_library_tree_sha256"}
 SET_KEYS = {"dtype", "seconds", "repeats", "warmup", "concurrency",
             "long_input_concurrency", "max_batch_tokens", "max_sequence_length",
             "lengths", "context", "input_context", "runtime_environment"}
@@ -249,6 +250,11 @@ def anchor(v, top_binary):
         for n, h in lib.items():
             require(isinstance(n, str) and n and "/" not in n and "\\" not in n and h64(h),
                 f"fingerprint_files[{r}] library hash invalid")
+        torch_tree = e["torch_library_tree_sha256"]
+        require(torch_tree is None or h64(torch_tree),
+                f"fingerprint_files[{r}].torch_library_tree_sha256 invalid")
+        require(r == "infinity" or torch_tree is None,
+                f"fingerprint_files[{r}] must not claim Infinity Torch libraries")
         tree = e["runtime_package_tree_sha256"]
         require(tree is None or h64(tree), f"fingerprint_files[{r}].runtime_package_tree_sha256 invalid")
         if r in ("vllm", "sglang"):
@@ -328,6 +334,10 @@ def load_campaign(root):
         require(cjson(hw["gpu_lanes"]) == cjson(lanes),
                 "campaign.hardware.gpu_lanes must match campaign.method.lanes")
     files = anchor(d.get("fingerprint_files"), d["binary_sha256"])
+    python_identities = meth.get("runtime_python_identity_sha256")
+    require(isinstance(python_identities, dict) and set(python_identities) == RTS
+            and all(h64(value) for value in python_identities.values()),
+            "campaign.method.runtime_python_identity_sha256 invalid")
     build = d.get("build") or {}
     if build.get("binary_sha256") is not None:
         require(build["binary_sha256"] == files["infinity"]["binary_sha256"],
@@ -335,6 +345,8 @@ def load_campaign(root):
     if build.get("native_library_sha256") is not None:
         require(cjson(build["native_library_sha256"]) == cjson(files["infinity"]["native_library_sha256"]),
             "build native libraries do not match Infinity fingerprint anchor")
+    require(build.get("torch_library_tree_sha256") == files["infinity"]["torch_library_tree_sha256"],
+            "build Torch library tree does not match Infinity fingerprint anchor")
     rawinst = d.get("runtime_installations")
     require(isinstance(rawinst, dict), "campaign.runtime_installations missing")
     inst = {}
@@ -350,6 +362,9 @@ def load_campaign(root):
                 f"{r} record mismatches present; stock claim rejected")
             require(isinstance(e.get("unrecorded_files"), list) and not e["unrecorded_files"],
                 f"{r} unrecorded files present; stock claim rejected")
+            require(isinstance(e.get("missing_record_files"), list) and not e["missing_record_files"],
+                f"{r} missing recorded files present; stock claim rejected")
+            require(e.get("stock") is True, f"{r} stock claim rejected")
             stock = "stock"
         else:
             if tree is not None and files[r]["runtime_package_tree_sha256"] is not None:
@@ -361,6 +376,7 @@ def load_campaign(root):
                    "record_sha256": clean(e.get("record_sha256")),
                    "record_mismatch_count": len(e.get("record_mismatches") or []),
                    "unrecorded_count": len(e.get("unrecorded_files") or []),
+                   "missing_record_count": len(e.get("missing_record_files") or []),
                    "stock": stock}
     return {"doc": d, "sha": shafile(Path(root) / "campaign.json"), "id": d.get("id"),
             "date_local": d.get("date_local"), "timezone": d.get("timezone"),
@@ -371,6 +387,7 @@ def load_campaign(root):
                 "max_batch_tokens": meth["max_batch_tokens"],
                 "max_sequence_length": meth["max_sequence_length"], "dtype": DTYPE,
                 "request_batch_size": 1, "prefix_cache": meth.get("prefix_cache"),
+                "runtime_python_identity_sha256": python_identities,
                 "lanes": clean(lanes)},
             "files": files, "build": build, "runtime_installations": inst,
             "lanes": lanes, "lane_keys": lane_keys}
@@ -554,7 +571,14 @@ def validate_fingerprint(camp, model, raw, cp, revision, status):
     if pint(ictx):
         require(ictx <= m["max_sequence_length"], f"{model['id']}: input_context exceeds declared max")
     require(isinstance(s["runtime_environment"], dict), f"{model['id']}: runtime_environment invalid")
-    require(cjson(s["runtime_environment"]) == cjson(REQUIRED_ENV[raw["runtime"]]),
+    runtime_environment = dict(s["runtime_environment"])
+    python_identity = runtime_environment.pop("python_identity_sha256", None)
+    require(h64(python_identity), f"{model['id']}: runtime_environment policy identity invalid")
+    require(python_identity == (raw.get("environment_overrides") or {}).get("python_identity_sha256"),
+            f"{model['id']}: runtime Python identity does not match recorded environment")
+    require(python_identity == m["runtime_python_identity_sha256"][raw["runtime"]],
+            f"{model['id']}: runtime Python identity does not match campaign anchor")
+    require(cjson(runtime_environment) == cjson(REQUIRED_ENV[raw["runtime"]]),
             f"{model['id']}: runtime_environment policy mismatch")
     require(cjson(x["files"]) == cjson(camp["files"][raw["runtime"]]),
         f"{model['id']}: fingerprint files do not match per-runtime anchor")
@@ -1101,7 +1125,7 @@ def public_campaign(camp):
         e = camp["runtime_installations"].get(r) or {}
         inst[r] = {k: clean(e.get(k)) for k in
                    ("version", "package_tree_sha256", "record_sha256",
-                    "record_mismatch_count", "unrecorded_count", "stock")
+                    "record_mismatch_count", "unrecorded_count", "missing_record_count", "stock")
                    if e.get(k) is not None}
     return {"id": clean(camp["id"]), "date_local": clean(camp["date_local"]),
             "timezone": clean(camp["timezone"]), "source_commit": camp["commit"],
@@ -1112,6 +1136,7 @@ def public_campaign(camp):
                       "binary_sha256": clean(b.get("binary_sha256")),
                       "native_library_count": len(b.get("native_library_sha256") or {}),
                       "native_library_sha256": clean(b.get("native_library_sha256") or {}),
+                      "torch_library_tree_sha256": clean(b.get("torch_library_tree_sha256")),
                       "command": clean(b.get("command")),
                       "providers": clean(b.get("providers") or {})},
             "runtime_installations": inst,
@@ -1434,9 +1459,11 @@ def markdown(camp, models, runs, rep):
               f"binary `{camp['binary']}`, native libraries `{len(b.get('native_library_sha256') or {})}`."),
              (f"- Stock runtimes: vLLM `{camp['versions']['vllm']}`, SGLang `{camp['versions']['sglang']}`."),
              (f"- Recorded packages: vLLM record `{vi.get('record_sha256')}` mismatches "
-              f"`{vi.get('record_mismatch_count')}` unrecorded `{vi.get('unrecorded_count')}`; "
+              f"`{vi.get('record_mismatch_count')}` unrecorded `{vi.get('unrecorded_count')}` "
+              f"missing `{vi.get('missing_record_count')}`; "
               f"SGLang record `{si.get('record_sha256')}` mismatches "
-              f"`{si.get('record_mismatch_count')}` unrecorded `{si.get('unrecorded_count')}`."),
+              f"`{si.get('record_mismatch_count')}` unrecorded `{si.get('unrecorded_count')}` "
+              f"missing `{si.get('missing_record_count')}`."),
              (f"- Hardware: `{clean(hw.get('gpu_name'))}` {hw.get('gpu_memory_mib')} MiB; "
               f"`{clean(hw.get('cpu'))}`; {hw.get('server_cores_per_lane')} server cores/lane; "
               f"{hw.get('client_cores_per_lane')} client cores/lane; shared host `{hw.get('shared_host')}`."),
@@ -1553,15 +1580,18 @@ def fixture(root, *, short=False, client_failed=False, unavailable=False,
         "infinity": {"runner_sha256": "1" * 64, "client_sha256": "2" * 64,
                      "binary_sha256": "a" * 64,
                      "native_library_sha256": {"libinfinity.so": "3" * 64},
-                     "runtime_package_tree_sha256": None},
+                     "runtime_package_tree_sha256": None,
+                     "torch_library_tree_sha256": "9" * 64},
         "vllm": {"runner_sha256": "1" * 64, "client_sha256": "2" * 64,
                  "binary_sha256": "b" * 64,
                  "native_library_sha256": {"libinfinity.so": "3" * 64},
-                 "runtime_package_tree_sha256": "4" * 64},
+                 "runtime_package_tree_sha256": "4" * 64,
+                 "torch_library_tree_sha256": None},
         "sglang": {"runner_sha256": "1" * 64, "client_sha256": "2" * 64,
                    "binary_sha256": "c" * 64,
                    "native_library_sha256": {"libinfinity.so": "3" * 64},
-                   "runtime_package_tree_sha256": "5" * 64},
+                   "runtime_package_tree_sha256": "5" * 64,
+                   "torch_library_tree_sha256": None},
     }
     lanes = [{"gpu": 0, "server_cpus": "0-7", "client_cpus": "32-39"},
              {"gpu": 1, "server_cpus": "8-15", "client_cpus": "40-47"}]
@@ -1578,20 +1608,24 @@ def fixture(root, *, short=False, client_failed=False, unavailable=False,
                        "concurrency": 32, "long_input_concurrency": 8,
                        "max_batch_tokens": 16384, "max_sequence_length": 2048,
                        "request_batch_size": 1, "dtype": "bfloat16",
+                       "runtime_python_identity_sha256": {"infinity": "a" * 64,
+                                                          "vllm": "b" * 64,
+                                                          "sglang": "c" * 64},
                        "prefix_cache": False, "radix_cache": False,
                        "infinity_radix_mlp_threshold": 0, "lanes": lanes},
             "fingerprint_files": files,
             "build": {"version": "3.0.2-beta.2", "binary_sha256": "a" * 64,
-                      "native_library_sha256": {"libinfinity.so": "3" * 64}},
+                      "native_library_sha256": {"libinfinity.so": "3" * 64},
+                      "torch_library_tree_sha256": "9" * 64},
             "runtime_installations": {
                 "infinity": {"version": "3.0.2-beta.2", "source_clean": True,
                              "package_tree_sha256": "6" * 64},
                 "vllm": {"version": "0.33.0", "package_tree_sha256": "4" * 64,
                          "record_sha256": "7" * 64, "record_mismatches": [],
-                         "unrecorded_files": []},
+                         "unrecorded_files": [], "missing_record_files": [], "stock": True},
                 "sglang": {"version": "0.5.23", "package_tree_sha256": "5" * 64,
                            "record_sha256": "8" * 64, "record_mismatches": [],
-                           "unrecorded_files": []}}}
+                           "unrecorded_files": [], "missing_record_files": [], "stock": True}}}
     (root / "campaign.json").write_text(json.dumps(camp, indent=2) + "\n")
 
     def led(c, start=0):
@@ -1631,6 +1665,7 @@ def fixture(root, *, short=False, client_failed=False, unavailable=False,
                              "INFINITY_TORCH_PREFIX_CACHE_SIZE": "0"} if r == "infinity"
                             else {"SGLANG_ALLOW_OVERWRITE_LONGER_CONTEXT_LEN": "1"}
                             if r == "sglang" else {})}
+            settings["runtime_environment"]["python_identity_sha256"] = {"infinity": "a", "vllm": "b", "sglang": "c"}[r] * 64
             if placement and r != "infinity":
                 lane_gpu, lane_cpus, lane_client = 1, "8-15", "40-47"
             else:
@@ -1900,6 +1935,30 @@ def mutate(root, kind):
         p = root / "campaign.json"; d = json.loads(p.read_text())
         d["runtime_installations"]["vllm"]["record_mismatches"] = ["changed.py"]
         p.write_text(json.dumps(d))
+    elif kind in ("stock_missing", "stock_false"):
+        p = root / "campaign.json"; d = json.loads(p.read_text())
+        entry = d["runtime_installations"]["vllm"]
+        if kind == "stock_missing":
+            entry["missing_record_files"] = ["vllm/deleted.py"]
+        else:
+            entry["stock"] = False
+        p.write_text(json.dumps(d))
+    elif kind in ("build_torch", "python_anchor_missing", "torch_invalid"):
+        p = root / "campaign.json"; d = json.loads(p.read_text())
+        if kind == "build_torch":
+            d["build"]["torch_library_tree_sha256"] = "e" * 64
+        elif kind == "python_anchor_missing":
+            d["method"].pop("runtime_python_identity_sha256")
+        else:
+            d["fingerprint_files"]["infinity"]["torch_library_tree_sha256"] = "invalid"
+        p.write_text(json.dumps(d))
+    elif kind == "python_identity":
+        p = root / "runs" / "acme--dense-a--vllm.json"
+        d = json.loads(p.read_text())
+        d["fingerprint_inputs"]["settings"]["runtime_environment"]["python_identity_sha256"] = "d" * 64
+        d["environment_overrides"]["python_identity_sha256"] = "d" * 64
+        d["run_fingerprint"] = fp(d["fingerprint_inputs"])
+        p.write_text(json.dumps(d))
     elif kind == "budget":
         p = root / "campaign.json"; d = json.loads(p.read_text())
         d["method"]["max_batch_tokens"] = 8192; p.write_text(json.dumps(d))
@@ -2109,6 +2168,10 @@ def selftest():
         ("pooler", "pooler"), ("settings", "settings"), ("fp", "run_fingerprint"),
         ("deps", "dependency"), ("env_empty", "runtime_environment policy"),
         ("stock_record", "stock claim rejected"), ("budget", "max_batch_tokens must be 16384"),
+        ("stock_missing", "stock claim rejected"), ("stock_false", "stock claim rejected"),
+        ("build_torch", "Torch library tree"), ("torch_invalid", "torch_library_tree_sha256 invalid"),
+        ("python_anchor_missing", "runtime_python_identity_sha256 invalid"),
+        ("python_identity", "runtime Python identity does not match campaign anchor"),
         ("lane_gpu", "declared campaign.method.lanes"),
         ("lane_client", "declared campaign.method.lanes"),
     ]

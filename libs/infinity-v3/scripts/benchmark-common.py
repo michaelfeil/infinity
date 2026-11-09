@@ -13,6 +13,7 @@ retried only with ``--retry-failures``.
 from __future__ import annotations
 
 import argparse
+import base64
 import concurrent.futures
 import datetime
 import hashlib
@@ -20,6 +21,7 @@ import json
 import os
 from pathlib import Path
 import re
+import shlex
 import shutil
 import signal
 import socket
@@ -67,6 +69,48 @@ def sha256_file(path: Path) -> str:
 
 def sha256_bytes(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
+
+
+def canonical_sha256(value) -> str:
+    text = json.dumps(value, sort_keys=True, separators=(",", ":"), allow_nan=False)
+    return sha256_bytes(text.encode())
+
+
+def library_tree_sha256(path: Path) -> str:
+    """Hash a library directory by portable relative filename and file content."""
+    path = Path(path)
+    if not path.is_dir():
+        raise CampaignError(f"library directory is not a directory: {path}")
+    files = {}
+
+    def visit(directory: Path, prefix: str, ancestors: frozenset) -> None:
+        try:
+            resolved = directory.resolve(strict=True)
+        except (OSError, RuntimeError) as exc:
+            raise CampaignError(f"cannot resolve library directory {directory}: {exc}") from exc
+        if resolved in ancestors:
+            return
+        ancestors = ancestors | {resolved}
+        try:
+            entries = sorted(directory.iterdir(), key=lambda item: item.name)
+        except OSError as exc:
+            raise CampaignError(f"cannot read library directory {directory}: {exc}") from exc
+        for item in entries:
+            relative = prefix + item.name
+            try:
+                if item.is_dir():
+                    visit(item, relative + "/", ancestors)
+                elif item.is_file():
+                    files[relative] = sha256_file(item)
+                elif item.is_symlink():
+                    raise CampaignError(f"library symlink {item} does not resolve to a file")
+            except OSError as exc:
+                raise CampaignError(f"cannot read library entry {item}: {exc}") from exc
+
+    visit(path, "", frozenset())
+    if not files:
+        raise CampaignError(f"library directory is empty: {path}")
+    return canonical_sha256(files)
 
 
 def save_json(path: Path, value) -> None:
@@ -558,51 +602,12 @@ def validate_campaign_method(campaign, args) -> None:
         raise CampaignError(f"campaign.method.dtype is {dtype!r}, not bfloat16")
 
 
-def _tree_sha256(path: Path) -> str:
-    digest = hashlib.sha256()
-    for root, directories, names in os.walk(path):
-        directories[:] = sorted(name for name in directories if name != "__pycache__")
-        for name in sorted(names):
-            file = Path(root) / name
-            if not file.is_file() or file.suffix in {".pyc", ".pyo"}:
-                continue
-            relative = file.relative_to(path).as_posix()
-            digest.update(relative.encode() + b"\0")
-            digest.update(bytes.fromhex(sha256_file(file)))
-    return digest.hexdigest()
-
-
 def runtime_tree_sha(campaign, runtime: str, cache: dict) -> str:
-    if runtime in cache:
-        return cache[runtime]
-    if campaign is None:
-        value = "campaign-unavailable"
-    else:
-        installations = campaign.get("runtime_installations")
-        if not isinstance(installations, dict):
-            value = "campaign-no-runtime-installations"
-        elif runtime not in installations:
-            raise CampaignError(f"campaign.runtime_installations lacks {runtime!r}")
-        else:
-            entry = installations[runtime]
-            if isinstance(entry, str):
-                value = entry
-            elif isinstance(entry, dict):
-                value = None
-                for key in ("runtime_package_tree_sha256", "package_tree_sha256",
-                            "tree_sha256", "sha256", "digest"):
-                    if isinstance(entry.get(key), str):
-                        value = entry[key]
-                        break
-                if value is None and entry.get("path"):
-                    value = _tree_sha256(Path(entry["path"]))
-                if value is None:
-                    raise CampaignError(
-                        f"campaign.runtime_installations[{runtime!r}] lacks a tree SHA")
-            else:
-                raise CampaignError(f"campaign.runtime_installations[{runtime!r}] is invalid")
-    cache[runtime] = value
-    return value
+    files = cache.get(("runtime_files", runtime))
+    if not isinstance(files, dict):
+        raise CampaignError(
+            f"actual {runtime!r} runtime files have not been probed in this invocation")
+    return files["runtime_package_tree_sha256"]
 
 
 def parse_lanes(value: str, label: str) -> list[str]:
@@ -671,7 +676,134 @@ def _runtime_context(args, path: Path, runtime: str) -> tuple[int, int]:
     return base, base
 
 
-def _settings(args, model: dict, runtime: str, path: Path | None) -> dict:
+_IDENTITY_PROGRAM = """
+import hashlib, json, os, sys
+executable = os.path.abspath(sys.executable)
+prefix = os.path.abspath(sys.prefix)
+with open(sys.executable, "rb") as handle:
+    interpreter = hashlib.file_digest(handle, "sha256").hexdigest()
+identity = {"executable": executable, "prefix": prefix,
+            "interpreter_sha256": interpreter}
+identity["sha256"] = hashlib.sha256(
+    json.dumps(identity, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+print(json.dumps(identity, sort_keys=True))
+"""
+
+
+def _runtime_python(args, runtime: str):
+    return {"infinity": args.client_python, "vllm": args.vllm_python,
+            "sglang": args.sglang_python}[runtime]
+
+
+def _invocation_cache(args, cache=None) -> dict:
+    if cache is not None:
+        return cache
+    existing = getattr(args, "_benchmark_cache", None)
+    if not isinstance(existing, dict):
+        existing = {}
+        setattr(args, "_benchmark_cache", existing)
+    return existing
+
+
+def _probe_path(path) -> str:
+    return os.path.abspath(str(path))
+
+
+def _identity_key(python) -> tuple:
+    return ("python_identity", _probe_path(python))
+
+
+def _package_key(python, module: str) -> tuple:
+    return ("package_probe", _probe_path(python), module)
+
+
+def _run_probe(command, label: str) -> dict:
+    try:
+        result = subprocess.run(command, capture_output=True, text=True,
+                                check=False, timeout=600)
+    except OSError as exc:
+        raise CampaignError(f"{label}: {exc}") from exc
+    try:
+        payload = json.loads(result.stdout)
+    except ValueError as exc:
+        detail = (result.stderr or result.stdout).strip()[:500]
+        raise CampaignError(f"{label} returned invalid JSON: {detail or exc}") from exc
+    if result.returncode or not isinstance(payload, dict):
+        detail = payload.get("error") if isinstance(payload, dict) else payload
+        raise CampaignError(f"{label} failed: {detail or result.stderr.strip()[:500]}")
+    if "error" in payload:
+        raise CampaignError(f"{label} failed: {payload['error']}")
+    return payload
+
+
+def _normalise_identity(identity) -> dict:
+    if not isinstance(identity, dict):
+        raise CampaignError("runtime Python identity probe returned no identity")
+    base = {key: identity.get(key)
+            for key in ("executable", "prefix", "interpreter_sha256")}
+    if not all(isinstance(value, str) and value for value in base.values()):
+        raise CampaignError("runtime Python identity probe returned invalid paths/hash")
+    if not os.path.isabs(base["executable"]) or not os.path.isabs(base["prefix"]):
+        raise CampaignError("runtime Python identity probe returned relative paths")
+    if not re.fullmatch(r"[0-9a-f]{64}", base["interpreter_sha256"]):
+        raise CampaignError("runtime Python identity probe returned invalid interpreter SHA")
+    base["sha256"] = canonical_sha256(base)
+    if identity.get("sha256") not in (None, base["sha256"]):
+        raise CampaignError("runtime Python identity probe returned inconsistent SHA")
+    return base
+
+
+def runtime_python_identity_info(args, runtime: str, cache=None) -> dict:
+    selected = _runtime_python(args, runtime)
+    cache = _invocation_cache(args, cache)
+    key = _identity_key(selected)
+    if key not in cache:
+        payload = _run_probe([str(selected), "-c", _IDENTITY_PROGRAM],
+                             f"runtime Python identity probe ({selected})")
+        cache[key] = _normalise_identity(payload)
+    return cache[key]
+
+
+def runtime_python_identity_sha256(args, runtime: str, cache=None) -> str:
+    return runtime_python_identity_info(args, runtime, cache)["sha256"]
+
+
+def runtime_package_probe(args, runtime: str, cache=None) -> dict:
+    if runtime not in {"vllm", "sglang"}:
+        raise CampaignError(f"no package probe is defined for {runtime!r}")
+    selected = _runtime_python(args, runtime)
+    cache = _invocation_cache(args, cache)
+    key = _package_key(selected, runtime)
+    if key not in cache:
+        payload = _run_probe(
+            [str(selected), str(HERE / "benchmark-campaign.py"),
+             "--inspect-package", runtime],
+            f"runtime package probe ({selected})")
+        cache[key] = payload
+        if payload.get("python_identity") is not None:
+            cache[_identity_key(selected)] = _normalise_identity(
+                payload["python_identity"])
+    return cache[key]
+
+
+def seed_python_identity(cache: dict, python, identity) -> None:
+    cache[_identity_key(python)] = _normalise_identity(identity)
+
+
+def seed_package_probe(cache: dict, python, module: str, payload: dict) -> None:
+    cache[_package_key(python, module)] = payload
+    if payload.get("python_identity") is not None:
+        cache[_identity_key(python)] = _normalise_identity(payload["python_identity"])
+
+
+def _library_tree_sha256(path, cache: dict) -> str:
+    key = ("library_tree", _probe_path(path))
+    if key not in cache:
+        cache[key] = library_tree_sha256(Path(path))
+    return cache[key]
+
+
+def _settings(args, model: dict, runtime: str, path: Path | None, cache=None) -> dict:
     context = None
     base = None
     if path is not None:
@@ -680,6 +812,8 @@ def _settings(args, model: dict, runtime: str, path: Path | None) -> dict:
                   "INFINITY_TORCH_PREFIX_CACHE_SIZE": "0"} if runtime == "infinity"
                  else {"SGLANG_ALLOW_OVERWRITE_LONGER_CONTEXT_LEN": "1"}
                  if runtime == "sglang" else {})
+    overrides["python_identity_sha256"] = runtime_python_identity_sha256(
+        args, runtime, cache)
     return {"dtype": args.dtype, "seconds": args.seconds, "repeats": args.repeats,
             "warmup": args.warmup, "concurrency": args.concurrency,
             "long_input_concurrency": args.long_input_concurrency,
@@ -728,7 +862,7 @@ def _server_command(args, model: dict, path: Path, runtime: str, gpu: int) -> li
     return command
 
 
-def _environment(args, runtime: str, gpu: int) -> tuple[dict, dict]:
+def _environment(args, runtime: str, gpu: int, cache=None) -> tuple[dict, dict]:
     env = os.environ.copy()
     overrides = {
         "CUDA_VISIBLE_DEVICES": str(gpu), "OMP_NUM_THREADS": "8",
@@ -742,9 +876,9 @@ def _environment(args, runtime: str, gpu: int) -> tuple[dict, dict]:
                           "INFINITY_TORCH_PREFIX_CACHE_SIZE": "0"})
     elif runtime == "sglang":
         overrides["SGLANG_ALLOW_OVERWRITE_LONGER_CONTEXT_LEN"] = "1"
+    identity = runtime_python_identity_info(args, runtime, cache)
+    python_bin = str(Path(identity["executable"]).absolute().parent)
     env.update(overrides)
-    ninja_python = getattr(args, "sglang_python", None) or args.client_python
-    python_bin = str(Path(ninja_python).absolute().parent)
     env["PATH"] = python_bin + os.pathsep + env.get("PATH", "")
     existing = env.get("LD_LIBRARY_PATH", "")
     injected = []
@@ -755,6 +889,9 @@ def _environment(args, runtime: str, gpu: int) -> tuple[dict, dict]:
         env["LD_LIBRARY_PATH"] = os.pathsep.join(
             injected + ([existing] if existing else []))
     recorded = dict(overrides)
+    recorded["python_identity_sha256"] = identity["sha256"]
+    recorded["python_executable"] = identity["executable"]
+    recorded["python_prefix"] = identity["prefix"]
     recorded["PATH_prepend"] = python_bin
     recorded["LD_LIBRARY_PATH_injected"] = injected
     recorded["LD_LIBRARY_PATH_inherited"] = existing
@@ -766,22 +903,128 @@ def _binary_path(args, runtime: str) -> str:
             "sglang": args.sglang_python}[runtime]
 
 
-def runtime_files(args, runtime: str, campaign, cache: dict) -> dict:
-    libraries = {}
+def _native_libraries(args, cache: dict) -> dict:
+    key = ("native_libraries",)
+    if key not in cache:
+        libraries = {}
+        for library in sorted(Path(args.infinity_bin).resolve().parent.glob("*.so")):
+            name = library.name
+            digest = sha256_file(library)
+            if name in libraries and libraries[name] != digest:
+                raise CampaignError(f"duplicate native library basename {name!r}")
+            libraries[name] = digest
+        cache[key] = libraries
+    return cache[key]
+
+
+def _campaign_installation(campaign, runtime: str):
+    if campaign is None:
+        return None
+    installations = campaign.get("runtime_installations")
+    if not isinstance(installations, dict) or runtime not in installations:
+        raise CampaignError(f"campaign.runtime_installations lacks {runtime!r}")
+    entry = installations[runtime]
+    if isinstance(entry, str):
+        return {"package_tree_sha256": entry}
+    if not isinstance(entry, dict):
+        raise CampaignError(f"campaign.runtime_installations[{runtime!r}] is invalid")
+    return entry
+
+
+def _verify_runtime_installation(campaign, runtime: str, package_tree: str, probe):
+    entry = _campaign_installation(campaign, runtime)
+    if entry is None:
+        return
+    expected_tree = entry.get("package_tree_sha256")
+    if expected_tree is not None and expected_tree != package_tree:
+        raise CampaignError(
+            f"current {runtime!r} runtime package tree differs from campaign")
+    if runtime not in {"vllm", "sglang"}:
+        return
+    if not isinstance(probe, dict):
+        raise CampaignError(f"no actual package probe is available for {runtime!r}")
+    for field in ("version", "torch_version", "transformers_version"):
+        if entry.get(field) is not None and entry[field] != probe.get(field):
+            raise CampaignError(f"current {runtime!r} {field} differs from campaign")
+    expected_record = entry.get("record_sha256")
+    if expected_record is not None and expected_record != probe.get("record_sha256"):
+        raise CampaignError(f"current {runtime!r} wheel RECORD differs from campaign")
+    for field in ("record_mismatches", "unrecorded_files", "missing_record_files"):
+        expected = sorted(entry.get(field) or [])
+        actual = sorted(probe.get(field) or [])
+        if expected != actual:
+            raise CampaignError(
+                f"current {runtime!r} {field} differ from campaign: "
+                f"{actual!r} != {expected!r}")
+
+
+def _verify_infinity_torch(campaign, torch_tree):
+    if campaign is None:
+        return
+    build = campaign.get("build")
+    if not isinstance(build, dict):
+        raise CampaignError("campaign.build is missing")
+    if build.get("torch_library_tree_sha256") != torch_tree:
+        raise CampaignError("current Infinity Torch library tree differs from campaign")
+
+
+def runtime_files(args, runtime: str, campaign, cache=None) -> dict:
+    cache = _invocation_cache(args, cache)
+    key = ("runtime_files", runtime)
+    if key in cache:
+        return cache[key]
     binary = Path(_binary_path(args, runtime)).resolve()
-    for library in sorted(Path(args.infinity_bin).resolve().parent.glob("*.so")):
-        name = library.name
-        digest = sha256_file(library)
-        if name in libraries and libraries[name] != digest:
-            raise CampaignError(f"duplicate native library basename {name!r}")
-        libraries[name] = digest
-    return {
+    libraries = _native_libraries(args, cache)
+    binary_sha = sha256_file(binary)
+    probe = None
+    torch_tree = None
+    if runtime == "infinity":
+        package_tree = canonical_sha256(
+            {"binary_sha256": binary_sha, "native_libraries": libraries})
+        if getattr(args, "torch_lib", None):
+            torch_tree = _library_tree_sha256(args.torch_lib, cache)
+        _verify_infinity_torch(campaign, torch_tree)
+    else:
+        probe = runtime_package_probe(args, runtime, cache)
+        package_tree = probe.get("package_tree_sha256")
+        if not isinstance(package_tree, str) \
+                or not re.fullmatch(r"[0-9a-f]{64}", package_tree):
+            raise CampaignError(
+                f"runtime package probe for {runtime!r} returned no package tree")
+    _verify_runtime_installation(campaign, runtime, package_tree, probe)
+    files = {
         "runner_sha256": sha256_file(Path(__file__)),
         "client_sha256": sha256_file(HERE / "benchmark-http.py"),
-        "binary_sha256": sha256_file(binary),
+        "binary_sha256": binary_sha,
         "native_library_sha256": libraries,
-        "runtime_package_tree_sha256": runtime_tree_sha(campaign, runtime, cache),
+        "runtime_package_tree_sha256": package_tree,
+        "torch_library_tree_sha256": torch_tree,
     }
+    cache[key] = files
+    return files
+
+
+def _verify_runtime_anchor(args, campaign, runtime: str, files: dict, cache) -> None:
+    if not isinstance(campaign, dict):
+        raise CampaignError("campaign.json must be an object")
+    expected = campaign.get("fingerprint_files")
+    if not isinstance(expected, dict) or runtime not in expected:
+        raise CampaignError(f"campaign.fingerprint_files lacks {runtime!r}")
+    if expected[runtime] != files:
+        raise CampaignError(
+            f"current {runtime!r} runtime files differ from campaign.fingerprint_files")
+    method = campaign.get("method")
+    identities = method.get("runtime_python_identity_sha256") \
+        if isinstance(method, dict) else None
+    if not isinstance(identities, dict) or runtime not in identities \
+            or not isinstance(identities[runtime], str) \
+            or not re.fullmatch(r"[0-9a-f]{64}", identities[runtime]):
+        raise CampaignError(
+            f"campaign.method.runtime_python_identity_sha256 lacks {runtime!r}")
+    actual = runtime_python_identity_sha256(args, runtime, cache)
+    if actual != identities[runtime]:
+        raise CampaignError(
+            f"current {runtime!r} runtime Python identity differs from campaign")
 
 
 def _checkpoint_identity(receipt: dict, metadata: str) -> dict:
@@ -913,11 +1156,12 @@ def run_one(args, model: dict, runtime: str, gpu: int, cpus: str, client_cpus: s
     preflight_error = None
     try:
         settings = _settings(args, model, runtime,
-                             path if path and path.is_dir() else None)
+                             path if path and path.is_dir() else None, tree_cache)
     except Exception as exc:
         preflight_error = f"{type(exc).__name__}: {exc}"
-        settings = _settings(args, model, runtime, None)
+        settings = _settings(args, model, runtime, None, tree_cache)
     files = runtime_files(args, runtime, campaign, tree_cache)
+    _verify_runtime_anchor(args, campaign, runtime, files, tree_cache)
     inputs = fingerprint_inputs(model, _checkpoint_identity(receipt, metadata), runtime,
                                 gpu, cpus, client_cpus, settings, files)
     current = fingerprint(inputs)
@@ -951,7 +1195,7 @@ def run_one(args, model: dict, runtime: str, gpu: int, cpus: str, client_cpus: s
     try:
         command = ["taskset", "-c", cpus,
                    *_server_command(args, model, path, runtime, gpu)]
-        environment, recorded_env = _environment(args, runtime, gpu)
+        environment, recorded_env = _environment(args, runtime, gpu, tree_cache)
         item["command"] = command
         item["environment_overrides"] = recorded_env
         port = _port(args, runtime, gpu)
@@ -1017,6 +1261,27 @@ def _placements(args, models: list[dict], gpus: list[int]) -> dict:
     return placements
 
 
+def _preflight_runtimes(args, campaign, runtimes, cache: dict) -> None:
+    method = campaign.get("method") if isinstance(campaign, dict) else None
+    identities = method.get("runtime_python_identity_sha256") \
+        if isinstance(method, dict) else None
+    if not isinstance(identities, dict) or set(identities) != set(RUNTIMES) \
+            or any(not isinstance(value, str)
+                   or not re.fullmatch(r"[0-9a-f]{64}", value)
+                   for value in identities.values()):
+        raise CampaignError(
+            "campaign.method.runtime_python_identity_sha256 must map exactly "
+            f"{list(RUNTIMES)} to 64-hex identities")
+    anchors = campaign.get("fingerprint_files")
+    if not isinstance(anchors, dict):
+        raise CampaignError("campaign.fingerprint_files must be an object")
+    for runtime in runtimes:
+        if runtime not in anchors:
+            raise CampaignError(f"campaign.fingerprint_files lacks {runtime!r}")
+        files = runtime_files(args, runtime, campaign, cache)
+        _verify_runtime_anchor(args, campaign, runtime, files, cache)
+
+
 def run(args, models: list[dict], campaign) -> None:
     gpus = parse_gpus(args.gpus)
     server_lanes = parse_lanes(args.server_cpus, "--server-cpus")
@@ -1025,9 +1290,11 @@ def run(args, models: list[dict], campaign) -> None:
         raise CampaignError("--server-cpus and --client-cpus must have equal counts")
     placements = _placements(args, models, gpus)
     tree_cache = {}
+    args._benchmark_cache = tree_cache
     if any(2048 in model["lengths"] for model in models) \
             and args.long_input_concurrency != 8:
         raise CampaignError("the client fixes 2048-token concurrency to 8")
+    _preflight_runtimes(args, campaign, args.runtimes, tree_cache)
     def lane(index: int, gpu: int) -> None:
         cpus, client_cpus = lane_placement(index, gpu, gpus, server_lanes, client_lanes)
         lane_models = [model for model in models if placements[model["id"]] == gpu]
@@ -1102,24 +1369,62 @@ def self_test() -> int:
         assert "id" in receipt_identity_error(model, {**ready, "id": "org/other"})
         assert "revision" in receipt_identity_error(
             model, {**ready, "revision": "c" * 40})
+        def make_venv(name):
+            base = root / name
+            bin_dir = base / "bin"
+            bin_dir.mkdir(parents=True)
+            python = bin_dir / "python"
+            python.symlink_to(sys.executable)
+            (base / "pyvenv.cfg").write_text(
+                f"home = {Path(sys.executable).resolve().parent}\n"
+                "include-system-site-packages = false\n", encoding="utf-8")
+            return python
+
+        def make_wrapper(name, python, pythonpath=None):
+            path = root / "wrappers" / name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            environment = ""
+            if pythonpath is not None:
+                environment = f"PYTHONPATH={shlex.quote(str(pythonpath))} "
+            path.write_text(
+                f"#!/bin/sh\n{environment}exec {shlex.quote(str(python))} \"$@\"\n",
+                encoding="utf-8")
+            path.chmod(0o755)
+            return path
+
         inf_bin = root / "infinity" / "bin"
         inf_bin.mkdir(parents=True)
+        infinity = inf_bin / "infinity"
+        infinity.write_bytes(b"infinity-binary")
+        bridge_names = ["libinfinity_backend.so", "libinfinity_fa4.so",
+                        "libinfinity_cuda.so", "libtorch_bridge.so", "libc10_bridge.so"]
+        for name in bridge_names:
+            (inf_bin / name).write_bytes(("bridge-" + name).encode())
         torch_lib = root / "torch"
-        torch_lib.mkdir()
-        sglang_bin = root / "sglang" / "bin"
-        sglang_bin.mkdir(parents=True)
-        client_bin = root / "client" / "bin"
-        client_bin.mkdir(parents=True)
+        (torch_lib / "nested").mkdir(parents=True)
+        (torch_lib / "libtorch.so").write_bytes(b"torch-library")
+        (torch_lib / "nested" / "libc10.so").write_bytes(b"c10-library")
+        client_python = make_venv("client-env")
+        vllm_python = make_venv("vllm-env")
+        sg_python = make_venv("sg-env")
+        vllm_wrapper = make_wrapper("vllm-python", vllm_python)
         env_args = argparse.Namespace(
-            infinity_bin=str(inf_bin / "infinity"), torch_lib=str(torch_lib),
-            sglang_python=str(sglang_bin / "python"),
-            client_python=str(client_bin / "python"))
+            infinity_bin=str(infinity), torch_lib=str(torch_lib),
+            vllm_python=str(vllm_wrapper), sglang_python=str(sg_python),
+            client_python=str(client_python))
         previous_ld = os.environ.get("LD_LIBRARY_PATH")
         os.environ["LD_LIBRARY_PATH"] = "sentinel"
         try:
-            inf_env, inf_record = _environment(env_args, "infinity", 0)
-            vllm_env, vllm_record = _environment(env_args, "vllm", 0)
-            sg_env, _ = _environment(env_args, "sglang", 0)
+            cache = {}
+            inf_env, inf_record = _environment(env_args, "infinity", 0, cache)
+            vllm_env, vllm_record = _environment(env_args, "vllm", 0, cache)
+            sg_env, sg_record = _environment(env_args, "sglang", 0, cache)
+            settings_args = argparse.Namespace(
+                **{**vars(env_args), "dtype": "bfloat16", "seconds": 10.0,
+                   "repeats": 3, "warmup": 3.0, "concurrency": 32,
+                   "long_input_concurrency": 8, "max_batch_tokens": 16384,
+                   "max_sequence_length": 2048})
+            vllm_settings = _settings(settings_args, model, "vllm", None, cache)
         finally:
             if previous_ld is None:
                 os.environ.pop("LD_LIBRARY_PATH", None)
@@ -1134,7 +1439,224 @@ def self_test() -> int:
         assert inf_record["LD_LIBRARY_PATH_injected"] == [
             str(inf_bin.resolve()), str(torch_lib.resolve())]
         assert vllm_record["LD_LIBRARY_PATH_injected"] == []
-        assert vllm_env["PATH"].startswith(str(sglang_bin.resolve()) + os.pathsep)
+        client_bin = str(Path(str(client_python)).absolute().parent)
+        vllm_bin = str(Path(str(vllm_python)).absolute().parent)
+        sg_bin = str(Path(str(sg_python)).absolute().parent)
+        assert inf_env["PATH"].startswith(client_bin + os.pathsep)
+        assert vllm_env["PATH"].startswith(vllm_bin + os.pathsep)
+        assert sg_env["PATH"].startswith(sg_bin + os.pathsep)
+        assert not vllm_env["PATH"].startswith(sg_bin + os.pathsep)
+        assert inf_record["PATH_prepend"] == client_bin
+        assert vllm_record["PATH_prepend"] == vllm_bin
+        assert sg_record["PATH_prepend"] == sg_bin
+        assert inf_record["python_executable"] == str(client_python)
+        assert vllm_record["python_executable"] == str(vllm_python)
+        assert inf_record["python_prefix"] == str(client_python.parent.parent)
+        assert vllm_record["python_prefix"] == str(vllm_python.parent.parent)
+        assert "python_identity_sha256" not in inf_env
+        for record, runtime in ((inf_record, "infinity"),
+                                (vllm_record, "vllm"), (sg_record, "sglang")):
+            identity = record["python_identity_sha256"]
+            assert re.fullmatch(r"[0-9a-f]{64}", identity)
+            assert identity == runtime_python_identity_sha256(env_args, runtime, cache)
+        assert vllm_settings["runtime_environment"]["python_identity_sha256"] \
+            == vllm_record["python_identity_sha256"]
+        switched_wrapper = make_wrapper(
+            "vllm-switched", make_venv("vllm-env-switched"))
+        switched_args = argparse.Namespace(
+            **{**vars(env_args), "vllm_python": str(switched_wrapper)})
+        assert runtime_python_identity_sha256(switched_args, "vllm", {}) \
+            != runtime_python_identity_sha256(env_args, "vllm", {})
+
+        files = runtime_files(env_args, "infinity", None, {})
+        assert set(files) == {
+            "runner_sha256", "client_sha256", "binary_sha256",
+            "native_library_sha256", "runtime_package_tree_sha256",
+            "torch_library_tree_sha256"}
+        assert set(files["native_library_sha256"]) == set(bridge_names)
+        assert files["torch_library_tree_sha256"] == library_tree_sha256(torch_lib)
+        fingerprint_values = [fingerprint(fingerprint_inputs(
+            model, _checkpoint_identity(
+                {"id": model["id"], "revision": model["revision"]}, "f" * 64),
+            "infinity", 0, "0-7", "32-39", {"seconds": 10, "repeats": 3}, files))]
+        assert str(root) not in json.dumps(fingerprint_inputs(
+            model, _checkpoint_identity(
+                {"id": model["id"], "revision": model["revision"]}, "f" * 64),
+            "infinity", 0, "0-7", "32-39", {"seconds": 10, "repeats": 3}, files))
+        moved_torch = root / "torch-relocated"
+        shutil.copytree(torch_lib, moved_torch, symlinks=True)
+        moved_args = argparse.Namespace(
+            **{**vars(env_args), "torch_lib": str(moved_torch)})
+        assert runtime_files(moved_args, "infinity", None, {})[
+            "torch_library_tree_sha256"] == files["torch_library_tree_sha256"]
+        no_sdk = argparse.Namespace(**{**vars(env_args), "torch_lib": None})
+        assert runtime_files(no_sdk, "infinity", None, {})[
+            "torch_library_tree_sha256"] is None
+        (torch_lib / "libtorch.so").write_bytes(b"torch-library-changed")
+        changed = runtime_files(env_args, "infinity", None, {})
+        assert changed["torch_library_tree_sha256"] != files["torch_library_tree_sha256"]
+        changed_fingerprint = fingerprint(fingerprint_inputs(
+            model, _checkpoint_identity(
+                {"id": model["id"], "revision": model["revision"]}, "f" * 64),
+            "infinity", 0, "0-7", "32-39", {"seconds": 10, "repeats": 3}, changed))
+        assert changed_fingerprint != fingerprint_values[0]
+        resume_raw = root / "torch-resume.json"
+        save_json(resume_raw, {"run_fingerprint": fingerprint_values[0],
+                               "status": "measured", "measurement": {"ok": True}})
+        assert resume_decision(resume_raw, changed_fingerprint, False) == "archive"
+        (torch_lib / "nested" / "new.so").write_bytes(b"new-library")
+        assert runtime_files(env_args, "infinity", None, {})[
+            "torch_library_tree_sha256"] != changed["torch_library_tree_sha256"]
+
+        site = root / "vllm-site"
+        package = site / "vllm"
+        package.mkdir(parents=True)
+        (package / "__init__.py").write_text("VALUE = 1\n", encoding="utf-8")
+        (package / "model.py").write_text("MODEL = 1\n", encoding="utf-8")
+        dist_info = site / "vllm-0.0.1.dist-info"
+        dist_info.mkdir()
+        (dist_info / "METADATA").write_text(
+            "Metadata-Version: 2.1\nName: vllm\nVersion: 0.0.1\n\n", encoding="utf-8")
+        dependency_metadata = []
+        for dependency in ("torch", "transformers"):
+            directory = site / f"{dependency}-0.0.1.dist-info"
+            directory.mkdir()
+            metadata = directory / "METADATA"
+            metadata.write_text(f"Metadata-Version: 2.1\nName: {dependency}\nVersion: 0.0.1\n\n")
+            dependency_metadata.append(metadata)
+        def record_line(relative):
+            data = (site / relative).read_bytes()
+            encoded = base64.urlsafe_b64encode(
+                hashlib.sha256(data).digest()).decode().rstrip("=")
+            return f"{relative},sha256={encoded},{len(data)}\n"
+        (dist_info / "RECORD").write_text(
+            "".join(record_line(item) for item in ("vllm/__init__.py",
+                                                    "vllm/model.py")),
+            encoding="utf-8")
+        package_wrapper = make_wrapper(
+            "vllm-package-python", make_venv("vllm-package-env"), site)
+        package_args = argparse.Namespace(
+            **{**vars(env_args), "vllm_python": str(package_wrapper)})
+        probe = runtime_package_probe(package_args, "vllm", {})
+        package_campaign = {"runtime_installations": {"vllm": {
+            "version": probe["version"],
+            "torch_version": probe["torch_version"],
+            "transformers_version": probe["transformers_version"],
+            "package_tree_sha256": probe["package_tree_sha256"],
+            "record_sha256": probe["record_sha256"],
+            "record_mismatches": [], "unrecorded_files": [],
+            "missing_record_files": []}}}
+        package_files = runtime_files(package_args, "vllm", package_campaign, {})
+        assert package_files["torch_library_tree_sha256"] is None
+        metadata = dist_info / "METADATA"
+        original_metadata = metadata.read_text()
+        metadata.write_text(original_metadata.replace("Version: 0.0.1", "Version: 0.0.2"))
+        _expect(CampaignError, runtime_files, package_args, "vllm", package_campaign, {})
+        metadata.write_text(original_metadata)
+        for metadata in dependency_metadata:
+            original_metadata = metadata.read_text()
+            metadata.write_text(original_metadata.replace("Version: 0.0.1", "Version: 0.0.2"))
+            _expect(CampaignError, runtime_files, package_args, "vllm", package_campaign, {})
+            metadata.write_text(original_metadata)
+        (package / "model.py").write_text("MODEL = 2\n", encoding="utf-8")
+        _expect(CampaignError, runtime_files, package_args, "vllm",
+                package_campaign, {})
+        (package / "model.py").write_text("MODEL = 1\n", encoding="utf-8")
+        assert runtime_files(package_args, "vllm", package_campaign, {}) \
+            == package_files
+        (package / "__init__.py").unlink()
+        _expect(CampaignError, runtime_files, package_args, "vllm",
+                package_campaign, {})
+        (package / "__init__.py").write_text("VALUE = 1\n", encoding="utf-8")
+        assert runtime_files(package_args, "vllm", package_campaign, {}) \
+            == package_files
+        original_probe = globals()["_run_probe"]
+        calls = []
+        def counting_probe(command, label):
+            calls.append(label)
+            return original_probe(command, label)
+        globals()["_run_probe"] = counting_probe
+        try:
+            shared = {}
+            runtime_package_probe(package_args, "vllm", shared)
+            runtime_package_probe(package_args, "vllm", shared)
+            assert len(calls) == 1
+            runtime_package_probe(package_args, "vllm", {})
+            assert len(calls) == 2
+        finally:
+            globals()["_run_probe"] = original_probe
+
+        inf_files = runtime_files(env_args, "infinity", None, {})
+        vllm_files = runtime_files(package_args, "vllm", package_campaign, {})
+        run_campaign = {
+            "fingerprint_files": {"infinity": inf_files, "vllm": vllm_files},
+            "method": {"runtime_python_identity_sha256": {
+                "infinity": runtime_python_identity_sha256(env_args, "infinity", {}),
+                "vllm": runtime_python_identity_sha256(package_args, "vllm", {}),
+                "sglang": runtime_python_identity_sha256(env_args, "sglang", {})}},
+            "build": {"torch_library_tree_sha256":
+                      inf_files["torch_library_tree_sha256"]},
+            "runtime_installations": {
+                "infinity": {"package_tree_sha256": canonical_sha256({
+                    "binary_sha256": inf_files["binary_sha256"],
+                    "native_libraries": inf_files["native_library_sha256"]})},
+                **package_campaign["runtime_installations"]}}
+        run_args = argparse.Namespace(
+            **{**vars(env_args), "vllm_python": str(package_wrapper),
+               "runtimes": ["infinity", "vllm"],
+               "output": root / "run-preflight", "gpus": "0",
+               "server_cpus": "0-7", "client_cpus": "8-15",
+               "model_lanes": None, "long_input_concurrency": 8,
+               "retry_failures": False})
+        run_calls, launch_commands = [], []
+        original_run_one = globals()["run_one"]
+        original_resume = globals()["resume_decision"]
+        original_popen = subprocess.Popen
+        def fake_run_one(*arguments, **keywords):
+            run_calls.append("run_one")
+            return {}
+        def fake_resume(*arguments, **keywords):
+            run_calls.append("resume_decision")
+            return "run"
+        def recording_popen(command, *arguments, **keywords):
+            launch_commands.append(command)
+            return original_popen(command, *arguments, **keywords)
+        globals()["run_one"] = fake_run_one
+        globals()["resume_decision"] = fake_resume
+        subprocess.Popen = recording_popen
+        try:
+            (package / "model.py").write_text("MODEL = 2\n", encoding="utf-8")
+            _expect(CampaignError, run, run_args, [model], run_campaign)
+        finally:
+            subprocess.Popen = original_popen
+            globals()["run_one"] = original_run_one
+            globals()["resume_decision"] = original_resume
+            (package / "model.py").write_text("MODEL = 1\n", encoding="utf-8")
+        assert run_calls == []
+        assert all(Path(str(command[0])).name != "taskset"
+                   for command in launch_commands if command)
+
+        original_probe = globals()["_run_probe"]
+        probe_calls = []
+        def counting_preflight_probe(command, label):
+            probe_calls.append(label)
+            return original_probe(command, label)
+        globals()["_run_probe"] = counting_preflight_probe
+        try:
+            shared_preflight = {}
+            _preflight_runtimes(run_args, run_campaign,
+                                ["infinity", "vllm"], shared_preflight)
+            first_invocation = len(probe_calls)
+            assert first_invocation
+            _preflight_runtimes(run_args, run_campaign,
+                                ["infinity", "vllm"], shared_preflight)
+            assert len(probe_calls) == first_invocation
+            _preflight_runtimes(run_args, run_campaign,
+                                ["infinity", "vllm"], {})
+            assert len(probe_calls) == first_invocation * 2
+        finally:
+            globals()["_run_probe"] = original_probe
+
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as listener:
             listener.bind(("127.0.0.1", 0))
             listener.listen(1)
@@ -1169,27 +1691,18 @@ def self_test() -> int:
         assert lane_placement(0, 0, list(range(6)), server, client) == ("0-7", "32-39")
         assert lane_placement(4, 4, list(range(6)), server, client) == ("64-71", "80-87")
         assert lane_placement(0, 2, [2], server, client) == ("16-23", "48-55")
-        campaign = {"runtime_installations": {"infinity": "9" * 64,
-                                              "vllm": "8" * 64,
-                                              "sglang": "7" * 64}}
-        cache = {}
-        fingerprint_values = []
-        for name in ("left", "right"):
-            base = root / name
-            (base / "runtime").mkdir(parents=True)
-            (base / "bin").write_bytes(b"binary")
-            (base / "runtime" / "libx.so").write_bytes(b"library")
-            fake = argparse.Namespace(infinity_bin=str(base / "bin"),
-                                      vllm_python=str(base / "bin"),
-                                      sglang_python=str(base / "bin"))
-            files = runtime_files(fake, "infinity", campaign, cache)
-            inputs = fingerprint_inputs(model, _checkpoint_identity(
-                {"id": model["id"], "revision": model["revision"]}, "f" * 64),
-                "infinity", 0, "0-7", "32-39",
-                {"seconds": 10, "repeats": 3}, files)
-            assert "/tmp/" not in json.dumps(inputs)
-            fingerprint_values.append(fingerprint(inputs))
-        assert fingerprint_values[0] == fingerprint_values[1]
+        anchor_campaign = {
+            "fingerprint_files": {"infinity": files},
+            "method": {"runtime_python_identity_sha256": {
+                "infinity": inf_record["python_identity_sha256"]}}}
+        _verify_runtime_anchor(env_args, anchor_campaign, "infinity", files, cache)
+        _expect(CampaignError, _verify_runtime_anchor, env_args, {},
+                "infinity", files, cache)
+        tampered = {**files, "binary_sha256": "0" * 64}
+        _expect(CampaignError, _verify_runtime_anchor, env_args, {
+            "fingerprint_files": {"infinity": tampered},
+            "method": anchor_campaign["method"]},
+            "infinity", files, cache)
         stale = root / "client.json"
         stale.write_text("{}")
         _clear_client_result(stale)
