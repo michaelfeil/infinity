@@ -263,20 +263,20 @@ int main() {
             auto misaligned_immutable = misaligned_provider.clone();
             TORCH_CHECK(reinterpret_cast<uintptr_t>(misaligned_provider.const_data_ptr()) % 16 != 0,
                         "Misaligned provider fixture is unexpectedly aligned");
-            auto misaligned_output = at::empty_like(output);
-            at::Tensor misaligned_state;
+            auto misaligned_provider_output = at::empty_like(output);
+            at::Tensor misaligned_provider_state;
             TORCH_CHECK(infinity::flashinfer_gdn_resume(values,
                                                         qk,
                                                         gates,
                                                         identity,
-                                                        misaligned_output,
+                                                        misaligned_provider_output,
                                                         kh,
                                                         heads,
-                                                        &misaligned_state,
+                                                        &misaligned_provider_state,
                                                         misaligned_provider),
                         "Misaligned identity provider-layout state was rejected");
-            TORCH_CHECK(at::equal(misaligned_output, gathered_output) &&
-                            at::equal(misaligned_state, gathered_state) &&
+            TORCH_CHECK(at::equal(misaligned_provider_output, gathered_output) &&
+                            at::equal(misaligned_provider_state, gathered_state) &&
                             at::equal(misaligned_provider, misaligned_immutable),
                         "Misaligned identity provider-layout state changed resume or prefix state");
           }
