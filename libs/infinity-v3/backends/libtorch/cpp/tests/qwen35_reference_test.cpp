@@ -6,6 +6,8 @@
 #include "kernels/qwen35_kernels.h"
 #include "batching/prefix_cache.h"
 #include <ATen/ATen.h>
+#include <ATen/CPUGeneratorImpl.h>
+#include <algorithm>
 #include <cmath>
 #include <iostream>
 #include <vector>
@@ -415,8 +417,39 @@ int main(int argc, char** argv) {
                     "GDN packing changed provider values, casts or alignment");
     }
   std::cout << "GDN provider packing values, casts, strides and alignment passed\n";
-  // Keep later reference fixtures independent of this comparison's random draws.
-  auto generator = at::globalContext().defaultGenerator(device).clone();
+  // Private CPU generator: this fixture must not perturb or depend on the
+  // default CPU/CUDA random streams consumed by later reference cases.
+  auto generator = at::detail::createCPUGenerator(0x47444e);
+  auto cpu_options = at::TensorOptions().dtype(at::kBFloat16);
+  auto fill_gates = [](at::Tensor ab, int64_t tokens, int64_t vh) {
+    for (int64_t t = 0; t < tokens; ++t) {
+      float a = 0.f, b = 0.f;
+      switch (t % 5) {
+      case 0:
+        a = 25.f;
+        b = 40.f;
+        break;
+      case 1:
+        a = 20.f;
+        b = -40.f;
+        break;
+      case 2:
+        a = -25.f;
+        b = 0.f;
+        break;
+      case 3:
+        a = 0.f;
+        b = 20.f;
+        break;
+      default:
+        a = 1e-3f;
+        b = -20.f;
+        break;
+      }
+      ab.select(0, t).narrow(0, 0, vh).fill_(a);
+      ab.select(0, t).narrow(0, vh, vh).fill_(b);
+    }
+  };
   // The fused fresh-prefix producer must match convolution, prepare, and pack
   // bit for bit, including padded strides, sequence boundaries, and both
   // softplus branches.
@@ -424,38 +457,13 @@ int main(int argc, char** argv) {
     for (int64_t tokens : {1, 257}) {
       auto options = at::TensorOptions().device(device).dtype(at::kBFloat16);
       const auto channels = (2 * kh + vh) * 128;
-      auto values_base = at::randn({tokens, channels + 8}, generator, options);
+      auto values_base = at::randn({tokens, channels + 8}, generator, cpu_options).to(device);
       auto values = values_base.narrow(1, 4, channels);
-      auto ab_base = at::randn({tokens, 2 * vh + 3}, generator, options);
+      auto ab_base = at::randn({tokens, 2 * vh + 3}, generator, cpu_options).to(device);
       auto ab = ab_base.narrow(1, tokens % 2, 2 * vh);
-      for (int64_t t = 0; t < tokens; ++t) {
-        float a = 0.f, b = 0.f;
-        switch (t % 5) {
-        case 0:
-          a = 25.f;
-          b = 40.f;
-          break;
-        case 1:
-          a = 20.f;
-          b = -40.f;
-          break;
-        case 2:
-          a = -25.f;
-          b = 0.f;
-          break;
-        case 3:
-          a = 0.f;
-          b = 20.f;
-          break;
-        default:
-          a = 1e-3f;
-          b = -20.f;
-          break;
-        }
-        ab.select(0, t).narrow(0, 0, vh).fill_(a);
-        ab.select(0, t).narrow(0, vh, vh).fill_(b);
-      }
-      auto weights = (at::randn({channels, 4}, generator, options) * .2).contiguous();
+      fill_gates(ab, tokens, vh);
+      auto weights =
+          (at::randn({channels, 4}, generator, cpu_options) * .2).contiguous().to(device);
       std::vector<int32_t> boundaries =
           tokens > 4 ? std::vector<int32_t>{0, 1, int32_t(tokens / 2), int32_t(tokens)}
                      : std::vector<int32_t>{0, int32_t(tokens)};
@@ -489,6 +497,148 @@ int main(int argc, char** argv) {
                     " buffer=",
                     i);
     }
+  // Cached suffixes must produce the same provider buffers from history/source
+  // mapping. The cases cover 1/57/185 suffix tokens, empty/partial history,
+  // multiple prefixes, repeated sources, padded QKV rows, and GQA 4/6.
+  auto check_cached = [&](int64_t kh,
+                          int64_t vh,
+                          const std::vector<int64_t>& lengths,
+                          const std::vector<int64_t>& history_lengths,
+                          const std::vector<int64_t>& source_ids) {
+    TORCH_CHECK(lengths.size() == source_ids.size() && !history_lengths.empty(),
+                "Invalid cached producer fixture");
+    const auto options = at::TensorOptions().device(device).dtype(at::kBFloat16);
+    const auto channels = (2 * kh + vh) * 128;
+    int64_t tokens = 0, max_sequence = 0;
+    std::vector<int32_t> cumulative{0};
+    for (const auto length : lengths) {
+      tokens += length;
+      max_sequence = std::max(max_sequence, length);
+      cumulative.push_back(cumulative.back() + int32_t(length));
+    }
+    std::vector<int32_t> prefix_cumulative{0};
+    for (const auto length : history_lengths)
+      prefix_cumulative.push_back(prefix_cumulative.back() + int32_t(length));
+    const auto values_base = at::randn({tokens, channels + 8}, generator, cpu_options).to(device);
+    auto values = values_base.narrow(1, 4, channels);
+    auto ab_base = at::randn({tokens, 2 * vh + 3}, generator, cpu_options).to(device);
+    auto ab = ab_base.narrow(1, tokens % 2, 2 * vh);
+    fill_gates(ab, tokens, vh);
+    auto history =
+        at::randn({prefix_cumulative.back(), channels}, generator, cpu_options).to(device);
+    auto weights = (at::randn({channels, 4}, generator, cpu_options) * .2).contiguous().to(device);
+    auto cumulative_tensor = at::tensor(cumulative, options.dtype(at::kInt));
+    auto history_cumulative = at::tensor(prefix_cumulative, options.dtype(at::kInt));
+    auto sources = at::tensor(source_ids, options.dtype(at::kLong));
+    auto a_log = at::linspace(-2.f, 2.f, vh, options.dtype(at::kFloat));
+    auto dt_bias = at::linspace(-.5f, .5f, vh, options.dtype(at::kFloat));
+    auto convolution = infinity::qwen35_conv_cuda(values,
+                                                  weights,
+                                                  cumulative_tensor,
+                                                  int64_t(lengths.size()),
+                                                  sources,
+                                                  history,
+                                                  history_cumulative);
+    auto [qk, decay] =
+        infinity::qwen35_gdn_prepare_cuda(convolution, ab.contiguous(), a_log, dt_bias, kh, vh);
+    auto qk_base = at::empty({tokens * kh, 264}, options.dtype(at::kFloat));
+    auto qk_strided = qk_base.narrow(1, 0, 256);
+    qk_strided.copy_(qk);
+    auto gate_base = at::empty({tokens, 2 * vh + 3}, options.dtype(at::kFloat));
+    auto gate_strided = gate_base.narrow(1, 0, 2 * vh);
+    gate_strided.copy_(decay);
+    auto expected =
+        infinity::flashinfer_gdn_pack_cuda(convolution, qk_strided, gate_strided, kh, vh);
+    auto fused = infinity::qwen35_gdn_prepare_pack_cuda(values,
+                                                        weights,
+                                                        cumulative_tensor,
+                                                        ab,
+                                                        a_log,
+                                                        dt_bias,
+                                                        kh,
+                                                        vh,
+                                                        sources,
+                                                        history,
+                                                        history_cumulative);
+    for (size_t i = 0; i < fused.size(); ++i)
+      TORCH_CHECK(fused[i].is_contiguous() &&
+                      reinterpret_cast<uintptr_t>(fused[i].const_data_ptr()) % 16 == 0 &&
+                      at::equal(fused[i].view(at::kByte), expected[i].view(at::kByte)),
+                  "Cached GDN convolution/prepare/pack changed provider buffers kh=",
+                  kh,
+                  " vh=",
+                  vh,
+                  " suffix=",
+                  tokens,
+                  " buffer=",
+                  i);
+    infinity::PackedInput input;
+    input.offsets = cumulative.data();
+    input.batch = int64_t(lengths.size());
+    input.max_sequence = max_sequence;
+    input.cumulative = cumulative_tensor;
+    input.block_cache_sources = sources;
+    input.block_prefix_sources.assign(source_ids.begin(), source_ids.end());
+    auto initial = at::randn({int64_t(history_lengths.size()), vh, 128, 128},
+                             generator,
+                             at::TensorOptions().dtype(at::kFloat))
+                       .to(device);
+    auto immutable = initial.clone();
+    auto packed_output = at::empty({tokens, vh, 128}, options);
+    auto legacy_output = at::empty_like(packed_output);
+    at::Tensor packed_state, legacy_state;
+    if (infinity::flashinfer_gdn_available(device)) {
+      TORCH_CHECK(
+          infinity::flashinfer_gdn_resume_packed(
+              fused, input, packed_output, kh, vh, &packed_state, initial) &&
+              infinity::flashinfer_gdn_resume(
+                  convolution, qk, decay, input, legacy_output, kh, vh, &legacy_state, initial) &&
+              at::equal(packed_output, legacy_output) && at::equal(packed_state, legacy_state) &&
+              at::equal(initial, immutable),
+          "Packed GDN resume changed provider output/state or initial state");
+    }
+    auto z_base = at::randn({tokens, vh * 128 + 8}, generator, cpu_options).to(device);
+    auto z = z_base.narrow(1, 4, vh * 128);
+    auto norm = at::ones({128}, options);
+    auto strided_output = infinity::qwen35_delta_cuda(values,
+                                                      z,
+                                                      ab.contiguous(),
+                                                      weights,
+                                                      a_log,
+                                                      dt_bias,
+                                                      norm,
+                                                      input,
+                                                      kh,
+                                                      vh,
+                                                      1e-6,
+                                                      initial,
+                                                      nullptr,
+                                                      history,
+                                                      history_cumulative,
+                                                      false);
+    auto contiguous_output = infinity::qwen35_delta_cuda(values.contiguous(),
+                                                         z.contiguous(),
+                                                         ab.contiguous(),
+                                                         weights,
+                                                         a_log,
+                                                         dt_bias,
+                                                         norm,
+                                                         input,
+                                                         kh,
+                                                         vh,
+                                                         1e-6,
+                                                         initial,
+                                                         nullptr,
+                                                         history,
+                                                         history_cumulative,
+                                                         false);
+    TORCH_CHECK(at::equal(strided_output, contiguous_output) && at::equal(initial, immutable),
+                "Cached suffix changed outputs for padded QKV/Z rows");
+  };
+  check_cached(1, 4, {1}, {0}, {0});
+  check_cached(1, 6, {30, 27}, {2, 3}, {1, 0});
+  check_cached(3, 18, {100, 85}, {2}, {0, 0});
+  std::cout << "Cached GDN convolution/prepare/pack matches the old route bit for bit\n";
   std::cout << "Fused GDN convolution/prepare/pack matches the old route bit for bit\n";
   for (int width : {1, 3, 4, 7, 8, 16, 32, 33, 64, 128, 256, 384, 1024, 2048, 4096, 5120, 8192})
     for (int layout : {0, 1, 2}) {

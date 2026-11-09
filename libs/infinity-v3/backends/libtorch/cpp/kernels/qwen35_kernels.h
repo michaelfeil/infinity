@@ -44,7 +44,10 @@ at::Tensor gemma_activation_cuda(const at::Tensor&, bool);
 at::Tensor qwen35_conv_cuda(const at::Tensor& qkv,
                             const at::Tensor& conv,
                             const at::Tensor& cumulative,
-                            int64_t sequences);
+                            int64_t sequences,
+                            const at::Tensor& sources = {},
+                            const at::Tensor& history = {},
+                            const at::Tensor& history_cumulative = {});
 /// Prepare native FP32 Q/K and gate buffers from a BF16 convolution result.
 std::pair<at::Tensor, at::Tensor> qwen35_gdn_prepare_cuda(const at::Tensor& convolution,
                                                           const at::Tensor& ab,
@@ -53,6 +56,8 @@ std::pair<at::Tensor, at::Tensor> qwen35_gdn_prepare_cuda(const at::Tensor& conv
                                                           int64_t key_heads,
                                                           int64_t value_heads);
 /// Fuse convolution/SiLU, provider Q/K normalization, gate preparation, and packing.
+/// Optional cached history/source mapping resumes suffixes without a BF16 convolution
+/// intermediate or FP32 Q/K staging buffers.
 std::array<at::Tensor, 5> qwen35_gdn_prepare_pack_cuda(const at::Tensor& qkv,
                                                        const at::Tensor& conv,
                                                        const at::Tensor& cumulative,
@@ -60,7 +65,10 @@ std::array<at::Tensor, 5> qwen35_gdn_prepare_pack_cuda(const at::Tensor& qkv,
                                                        const at::Tensor& a_log,
                                                        const at::Tensor& dt_bias,
                                                        int64_t key_heads,
-                                                       int64_t value_heads);
+                                                       int64_t value_heads,
+                                                       const at::Tensor& sources = {},
+                                                       const at::Tensor& history = {},
+                                                       const at::Tensor& history_cumulative = {});
 /// Compose packed depthwise convolution, F32 gated-delta state updates, and gated RMS output.
 /// QKV and Z may be column slices of merged projections with their original row strides.
 /// Optional initial/history buffers resume block execution;

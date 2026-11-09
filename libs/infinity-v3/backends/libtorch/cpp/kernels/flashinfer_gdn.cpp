@@ -146,4 +146,14 @@ bool flashinfer_gdn_resume(const at::Tensor& values,
                            const at::Tensor& initial) {
   return run_gdn(values, qk, gates, input, output, kh, vh, final_state, initial);
 }
+
+bool flashinfer_gdn_resume_packed(const std::array<at::Tensor, 5>& packed,
+                                  const PackedInput& input,
+                                  at::Tensor& output,
+                                  int64_t kh,
+                                  int64_t vh,
+                                  at::Tensor* final_state,
+                                  const at::Tensor& initial) {
+  return run_packed(packed, input, output, kh, vh, final_state, initial);
+}
 }
