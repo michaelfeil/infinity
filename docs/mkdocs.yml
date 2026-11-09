@@ -20,7 +20,12 @@ nav:
       - Quickstart: v3/quickstart.md
       - CLI and requests: v3/docs/cli.md
       - Supported models and configuration: v3/docs/supported-models.md
-      - Performance: v3/docs/performance.md
+      - Performance:
+          - Overview: v3/docs/performance.md
+          - B200 comparison: v3/docs/benchmarks/b200-20261108/results.md
+          - Benchmark method: v3/docs/benchmark-method.md
+          - Historical H100 results: v3/docs/h100-alpha19.md
+          - Startup study: v3/docs/modernbert-startup.md
       - API: v3/api.md
       - Embedding formats and clients: v3/docs/embedding-tensors.md
       - Licensing: v3/LICENSING.md
@@ -29,7 +34,6 @@ nav:
           - LibTorch backend: v3/docs/libtorch-backend.md
           - Build configuration: v3/docs/build-configuration.md
           - Prefix caching: v3/docs/libtorch-prefix-cache.md
-          - Startup performance: v3/docs/modernbert-startup.md
           - Development: v3/CONTRIBUTING.md
   - Python / v2:
       - Deployment: deploy.md
@@ -39,7 +43,7 @@ nav:
       - Client: client_infinity.md
       - API: swagger_ui.md
       - Integrations: integrations.md
-      - Benchmarks: benchmarking.md
+      - Historical benchmarks: benchmarking.md
       - Telemetry: telemetry.md
       - Contributing: contribution.md
 

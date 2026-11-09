@@ -38,19 +38,23 @@ See the [Python / v2 README](../infinity_emb/README.md) for the full earlier upd
 
 ## Performance highlights
 
-* **High throughput**: token-based dynamic batching and dedicated tokenization workers.
+See the [B200 comparison](docs/benchmarks/b200-20261108/results.md) for measured
+Infinity, vLLM and SGLang results across small encoders and larger embedding
+models, including 7B, 8B, 12B and 27B checkpoints. The report identifies the
+tested builds, input lengths, concurrency, numerical checks and failures.
+The [benchmark method](docs/benchmark-method.md) describes reproduction and the
+downloadable measurement evidence.
+
+* **Dynamic batching**: token-based batches and dedicated tokenization workers.
 * **Memory-efficient batches**: ragged attention avoids padding variable-length inputs, reducing memory waste and OOM risk.
 * **Less repeated computation**: from the authors of [RadixMLP](https://arxiv.org/abs/2601.15013), shared-prefix deduplication within a batch for supported decision models and rerankers.
-* **Low latency**: BERT-small runs in ~850 µs end-to-end through the Rust/C++ serving path, including ~250 µs HTTP/MessagePack, ~100 µs batching and ~500 µs inference with CUDA graphs.
-* **Fast startup**: ModernBERT-base **0.92 s**, Qwen3-8B **2.51 s** on one H100 80 GB.
 * **Optimized inference**: native LibTorch kernels, FlashAttention-4 and optional dynamic FP8 for supported models.
 
-Infinity aims to outperform vLLM and SGLang across embedding, reranking and
-decision models. Reported October 2026 benchmark highlights versus vLLM:
-**~2× throughput on Mammoth**, **~5× on ModernBERT** and **~1.1× on
-Qwen3-Embedding-0.6B**. Speedups depend on the workload and configuration.
-Startup timings above use local weights; see the
-[startup measurements](docs/modernbert-startup.md).
+The [October 2026 H100 measurements](docs/h100-alpha19.md) and
+[startup study](docs/modernbert-startup.md) are separate historical experiments.
+Their runtime versions, precision and workloads differ from the B200 comparison.
+Throughput, latency under concurrency, minimum serial latency and startup to
+health are reported separately; none is a task-quality evaluation.
 
 <details>
   <summary>CUDA support and attention kernels</summary>

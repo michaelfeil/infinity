@@ -1,0 +1,9 @@
+# Client/reference environment; keep serving runtimes in separate environments.
+# Install the appropriate CPU or CUDA wheel of torch==2.14.1 separately.
+aiohttp==3.14.5
+huggingface_hub==1.33.0
+numpy==2.3.5
+Pillow==13.0.0
+safetensors==0.8.0
+tokenizers==0.23.2
+transformers==5.19.0

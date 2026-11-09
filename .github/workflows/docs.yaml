@@ -21,7 +21,7 @@ permissions:
   contents: read
 
 env:
-  INFINITY_DOCS_REF: ${{ github.event_name == 'release' && github.event.release.tag_name || 'main' }}
+  INFINITY_DOCS_REF: ${{ github.event_name == 'release' && github.event.release.tag_name || github.event_name == 'pull_request' && github.event.pull_request.head.sha || 'main' }}
 
 jobs:
   build:
