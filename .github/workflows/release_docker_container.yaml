@@ -32,6 +32,9 @@ on:
       DOCKERHUB_TOKEN:
         required: true
 
+permissions:
+  contents: read
+
 env:
   TEST_TAG: ${{ inputs.image }}:test
   LATEST_TAG: ${{ inputs.image }}:latest

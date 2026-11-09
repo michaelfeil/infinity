@@ -23,6 +23,8 @@ on:
         description: 'Codecov upload token'
         required: false
 
+permissions:
+  contents: read
 
 env:
   POETRY_VERSION: "2.5.1"

@@ -6,6 +6,9 @@ on:
   release:
     types: [published]
 
+permissions:
+  contents: read
+
 env:
   POETRY_VERSION: "2.5.1"
   WORKDIR: "libs/infinity_emb"
