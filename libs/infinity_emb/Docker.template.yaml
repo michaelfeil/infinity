@@ -3,20 +3,20 @@
 # 1. Guide: pip install jinja2 jinja2-cli
 nvidia:
   # 2 .command: jinja2 Dockerfile.jinja2 Docker.template.yaml --format=yaml -s nvidia > Dockerfile.nvidia_auto
-  base_image: "nvidia/cuda:12.9.0-base-ubuntu22.04"
+  base_image: "nvidia/cuda:12.9.1-base-ubuntu24.04"
   main_install: 'RUN poetry install --no-interaction --no-ansi --no-root --extras "${EXTRAS}" --without lint,test && poetry cache clear pypi --all'
-  python_version: python3.10
+  python_version: python3.12
   extra_installs_main: |
-    # nvcc is not installed -> the following might break if the torch version or python version changes.
+    # Match the optional wheel to Python 3.12 and Torch 2.8's C++ ABI.
     RUN if [ "$(uname -m)" = "x86_64" ]; then \
-          poetry run $PYTHON -m pip install --no-cache-dir https://github.com/Dao-AILab/flash-attention/releases/download/v2.8.3/flash_attn-2.8.3+cu12torch2.8cxx11abiFALSE-cp310-cp310-linux_x86_64.whl; \
+          poetry run $PYTHON -m pip install --no-cache-dir https://github.com/Dao-AILab/flash-attention/releases/download/v2.8.3/flash_attn-2.8.3+cu12torch2.8cxx11abiTRUE-cp312-cp312-linux_x86_64.whl; \
         fi
   extra_env_variables: |
     RUN rm -rf /usr/local/cuda-12.9/compat
     ENV NVIDIA_DISABLE_REQUIRE=true
 cpu:
   # 2. command: jinja2 Dockerfile.jinja2 Docker.template.yaml --format=yaml -s cpu > Dockerfile.cpu_auto
-  base_image: "ubuntu:22.04"
+  base_image: "ubuntu:24.04"
   # pyproject_sed: |
   #   RUN sed -i 's|torch = "2.4.1"|torch = "2.5.0"|' pyproject.toml
   #   RUN sed -i 's|"pypi"|"pytorch_cpu"|' pyproject.toml
@@ -33,7 +33,7 @@ cpu:
 
 amd:
   # 2 . command: jinja2 Dockerfile.jinja2 Docker.template.yaml --format=yaml -s amd > Dockerfile.amd_auto
-  base_image: "rocm/pytorch:rocm6.2.3_ubuntu22.04_py3.10_pytorch_release_2.3.0"
+  base_image: "rocm/pytorch:rocm6.4.3_ubuntu24.04_py3.12_pytorch_release_2.6.0"
   # pyproject_sed: |
   #   RUN sed -i 's|"pypi"|"pytorch_rocm"|' pyproject.toml
   #   RUN sed -i 's|torch = "2.4.1"|torch = "2.4.1"|' pyproject.toml
@@ -42,7 +42,7 @@ amd:
   main_install: |
     # "RUN poetry install --no-interaction --no-ansi --no-root --extras \"${EXTRAS}\" --without lint,test && poetry cache clear pypi --all"
     COPY requirements_install_from_poetry.sh requirements_install_from_poetry.sh
-    RUN ./requirements_install_from_poetry.sh --no-root --without lint,test "https://download.pytorch.org/whl/rocm6.2"
+    RUN ./requirements_install_from_poetry.sh --no-root --without lint,test "https://download.pytorch.org/whl/rocm6.4"
   extra_installs_main: |
     ARG GPU_ARCH
     ENV GPU_ARCH=${GPU_ARCH}
@@ -69,7 +69,7 @@ amd:
         && python -m pip install -e .; \
     elif [ "$GPU_ARCH" = "gfx1100" ]; then \
         # OPTION2: Install onnxruntime-rocm from the wheel
-        . .venv/bin/activate && python -m pip uninstall onnxruntime onnxruntime-rocm -y && python -m pip install "numpy<2" https://repo.radeon.com/rocm/manylinux/rocm-rel-6.2.3/onnxruntime_rocm-1.18.0-cp310-cp310-linux_x86_64.whl \
+        . .venv/bin/activate && python -m pip uninstall onnxruntime onnxruntime-rocm -y && python -m pip install https://repo.radeon.com/rocm/manylinux/rocm-rel-6.4.3/onnxruntime_rocm-1.21.0-cp312-cp312-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl \
         && python -m pip install /install/*.whl \
         && git clone https://github.com/huggingface/optimum-amd.git /tmp-optimum \
         && cd /tmp-optimum \
@@ -78,7 +78,7 @@ amd:
         echo "NO GPU_ARCH, skip optium: ${GPU_ARCH}"; \
     fi
   poetry_extras: "all"
-  python_version: python3.10
+  python_version: python3.12
   extra_env_variables: |
     # RUN conda init --reverse --all
     # RUN rm -rf /opt/conda && rm -rf /var/lib/jenkins
@@ -86,18 +86,20 @@ amd:
     ENV INFINITY_BETTERTRANSFORMER="0"
 
 trt:
-  base_image: nvidia/cuda:12.9.0-cudnn-devel-ubuntu22.04
+  base_image: nvidia/cuda:12.9.1-cudnn-devel-ubuntu24.04
   poetry_extras: "all onnxruntime-gpu"
   extra_installs_main: |
     # Install utils for tensorrt
     RUN apt-get install -y --no-install-recommends openmpi-bin libopenmpi-dev git git-lfs python3-pip
     RUN poetry run $PYTHON -m pip install --no-cache-dir flash-attn --no-build-isolation
-    RUN poetry run $PYTHON -m pip install --no-cache-dir "tensorrt==10.3.0" "tensorrt_lean==10.3.0" "tensorrt_dispatch==10.3.0"
+    # Keep only the CUDA-12 ORT distribution; CPU and GPU wheels share Python files.
+    RUN poetry run $PYTHON -m pip uninstall -y onnxruntime onnxruntime-gpu \
+        && poetry run $PYTHON -m pip install --no-cache-dir "onnxruntime-gpu==1.23.2" "tensorrt==10.9.0.34" "tensorrt_lean==10.9.0.34" "tensorrt_dispatch==10.9.0.34"
   extra_env_variables: |
     # Set default to tensorrt
     ENV LD_LIBRARY_PATH=/app/.venv/lib/${PYTHON}/site-packages/tensorrt:/usr/lib/x86_64-linux-gnu:/app/.venv/lib/${PYTHON}/site-packages/tensorrt_libs:${LD_LIBRARY_PATH}
     ENV PATH=/app/.venv/lib/${PYTHON}/site-packages/tensorrt/bin:${PATH}
     RUN rm -rf /usr/local/cuda-12.9/compat
     ENV NVIDIA_DISABLE_REQUIRE=true
-  python_version: python3.10
-  main_install: 'RUN poetry install --no-interaction --no-ansi --no-root --extras "${EXTRAS}" --without lint,test && poetry cache clear pypi --all'    
+  python_version: python3.12
+  main_install: 'RUN poetry install --no-interaction --no-ansi --no-root --extras "${EXTRAS}" --without lint,test && poetry cache clear pypi --all'

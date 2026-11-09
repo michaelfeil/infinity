@@ -6,7 +6,7 @@ on:
     types: [published]
 
 env:
-  POETRY_VERSION: "1.8.4"
+  POETRY_VERSION: "2.5.1"
 
 jobs:
   publish-to-pypi:
@@ -19,18 +19,18 @@ jobs:
     defaults:
       run:
         working-directory: ${{ matrix.package.workdir }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     environment:
       name: publish
     permissions:
       id-token: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Set up Python + Poetry ${{ env.POETRY_VERSION }}
         uses: "./.github/actions/poetry_setup"
         with:
-          python-version: "3.10"
+          python-version: "3.12"
           poetry-version: ${{ env.POETRY_VERSION }}
           working-directory: ${{ matrix.package.workdir }}
           cache-key: release

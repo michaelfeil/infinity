@@ -23,14 +23,14 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest]
-        python-version: ['3.9', '3.12']
+        os: [ubuntu-24.04, windows-latest]
+        python-version: ['3.11', '3.13']
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: ./.github/actions/poetry_setup
         with:
           python-version: ${{ matrix.python-version }}
-          poetry-version: '1.8.4'
+          poetry-version: '2.5.1'
           working-directory: .github/actions/poetry_setup
           cache-key: poetry-setup-smoke
       - name: Verify Poetry and the project interpreter
@@ -45,13 +45,13 @@ jobs:
           import sys
 
           assert sys.prefix == sys.base_prefix, "Poetry setup must not shadow the selected Python"
-          assert subprocess.check_output(["poetry", "--version"], text=True).strip() == "Poetry (version 1.8.4)"
+          assert subprocess.check_output(["poetry", "--version"], text=True).strip() == "Poetry (version 2.5.1)"
           project = Path(os.environ["RUNNER_TEMP"]) / "poetry-smoke"
           project.mkdir(exist_ok=True)
           (project / "pyproject.toml").write_text(
               '[tool.poetry]\nname = "setup-smoke"\nversion = "0.1.0"\n'
               'description = ""\nauthors = []\npackage-mode = false\n'
-              '[tool.poetry.dependencies]\npython = ">=3.9,<4"\n',
+              '[tool.poetry.dependencies]\npython = ">=3.11,<4"\n',
               encoding="utf-8",
           )
           subprocess.run(["poetry", "env", "use", sys.executable], cwd=project, check=True)

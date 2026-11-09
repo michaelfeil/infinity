@@ -76,26 +76,18 @@ $PYTHON_COMMAND -m venv .venv
 # Activate the virtual environment
 source .venv/bin/activate
 
-# Step 4: Extract the version of torch from requirements.txt
-TORCH_VERSION=$(grep '^torch==' requirements.txt | awk -F'==' '{print $2}')
-
-# Check if torch version was found
-if [ -z "$TORCH_VERSION" ]; then
-    echo "Torch version not found in requirements.txt"
-    exit 1
-fi
-
-# Remove lines containing 'torch', 'nvidia', and 'triton' from requirements.txt
-sed -i '/^torch==/d' requirements.txt
-sed -i '/torchvision/d' requirements.txt
-sed -i '/nvidia/d' requirements.txt
-sed -i '/triton/d' requirements.txt
-
-# Step 5: Install torch with the extracted version and other dependencies
-
-python -m pip install -r requirements.txt --no-cache-dir --extra-index-url "$EXTRA_URL"
-python -m pip list --format=freeze | grep nvidia | xargs python -m  pip uninstall -y triton torch torchvision
-python -m pip install torch torchvision --index-url "$EXTRA_URL" --no-cache-dir
+# Install matching Torch and TorchVision wheels from the requested CPU/ROCm index
+# before the remaining requirements, so dependent packages cannot pull CUDA wheels.
+read -r TORCH_VERSION TORCHVISION_VERSION < <($PYTHON_COMMAND - <<'PYTHON'
+from pathlib import Path
+import tomllib
+packages = {p["name"]: p["version"] for p in tomllib.loads(Path("poetry.lock").read_text())["package"]}
+print(packages["torch"], packages["torchvision"])
+PYTHON
+)
+python -m pip install --no-cache-dir "torch==$TORCH_VERSION" "torchvision==$TORCHVISION_VERSION" --index-url "$EXTRA_URL"
+sed -i '/^torch==/d; /^torchvision==/d; /^nvidia-/d; /^triton==/d' requirements.txt
+python -m pip install --no-cache-dir -r requirements.txt
 
 # Step 6: Optionally install the current package
 if [[ $NO_ROOT -eq 0 ]]; then

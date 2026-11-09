@@ -8,6 +8,9 @@ cleanup() {
   if [[ -n "${INFINITY_PID:-}" ]]; then
     kill "$INFINITY_PID"
   fi
+  if [[ -n "${GENERATOR_ENV:-}" ]]; then
+    rm -rf "$GENERATOR_ENV"
+  fi
 }
 
 # Set up the trap to run the cleanup function on EXIT or any error
@@ -30,8 +33,10 @@ for i in {1..10}; do
 done
 
 # Run the tests
-python -m pip install openapi-python-client==0.21.1 && \
-	 openapi-python-client generate  \
+GENERATOR_ENV=$(mktemp -d)
+python -m venv "$GENERATOR_ENV"
+"$GENERATOR_ENV/bin/pip" install openapi-python-client==0.28.4
+"$GENERATOR_ENV/bin/openapi-python-client" generate  \
 	  --url http://0.0.0.0:7993/openapi.json \
 	  --config client_config.yaml \
 	  --meta poetry \

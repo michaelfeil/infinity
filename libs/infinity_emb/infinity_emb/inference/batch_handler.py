@@ -203,6 +203,7 @@ class BatchHandler:
                 "the loaded moded cannot fullyfill `rerank`. " f"Options are {self.capabilities}."
             )
         rerankables = [ReRankSingle(query=query, document=doc) for doc in docs]
+        scores: Union[list, np.ndarray]
         scores, usage = await self._schedule(rerankables)
 
         if not raw_scores:

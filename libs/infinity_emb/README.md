@@ -15,6 +15,8 @@
 
 # Infinity Python / v2 ♾️
 
+Requires Python 3.11–3.13. CPU and NVIDIA containers use Ubuntu 24.04 and Python 3.12.
+
 Looking for the native Rust/LibTorch server? See [Infinity v3](https://github.com/michaelfeil/infinity) and its [quickstart](https://michaelfeil.eu/infinity/main/v3/quickstart/). This page documents the Python / v2 server.
 
 [![codecov][codecov-shield]][codecov-url]
@@ -507,7 +509,7 @@ After startup, the Swagger Ui will be available under `{url}:{port}/docs`, in th
 
 ## Contribute and Develop
 
-Install via Poetry 1.8.1, Python3.11 on Ubuntu 22.04
+Install via Poetry 2.5.1, Python 3.12 on Ubuntu 24.04
 ```bash
 cd libs/infinity_emb
 poetry install --extras all --with lint,test

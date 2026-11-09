@@ -1,4 +1,6 @@
 # infinity_client
+
+Requires Python 3.11 or newer.
 A client library for accessing ♾️ Infinity - Embedding Inference Server
 
 ## Installation 

@@ -12,33 +12,44 @@ repository = "https://github.com/michaelfeil/infinity"
 keywords = ["vector", "embedding", "neural", "search", "sentence-transformers"]
 
 [tool.poetry.dependencies]
-python = ">=3.9,<3.14"
-# basics, pin numpy <2 for onnx
-numpy = ">=1.20.0,<2"
-huggingface_hub= {version = ">=0.32.0"}
+python = ">=3.11,<3.14"
+# NumPy 2 supports the Python 3.13 build and current ONNX Runtime.
+numpy = ">=2.2,<3"
+huggingface_hub= {version = ">=0.34,<2"}
+aiohttp = ">=3.13,<4"
 # logging
-rich = {version = "^13", optional=true}
+rich = {version = ">=14,<16", optional=true}
 # webserver-only
-fastapi = {version = ">=0.103.2", optional=true}
-orjson = {version = ">=3.9.8,!=3.10.0", optional=true} 
+fastapi = {version = ">=0.115.2,<1", optional=true}
+orjson = {version = ">=3.9.8,!=3.10.0", optional=true}
 prometheus-fastapi-instrumentator = {version = ">=6.1.0", optional=true}
-uvicorn = {version = "^0.32.0", optional=true, extras = ["standard"]}
+uvicorn = {version = ">=0.40,<1", optional=true, extras = ["standard"]}
 typer = {version = "^0.20.0", optional=true}
 click = {version = ">=8.0.0,<9", optional=true}
-pydantic = {version = ">=2.4.0,<3", optional=true} 
+pydantic = {version = ">=2.4.0,<3", optional=true}
 posthog = {version = "*", optional=true}
 # backend
-# pin torch to a specific source, but default to pypi. use sed to overwrite.
-torch = {version = ">=2.2.1", source = "pypi", optional=true}
-sentence-transformers = {version = "^3.0.1", optional=true} 
-transformers = {version = ">=4.47.0,<=5.0", optional=true, extras=["sentencepiece"]}
-ctranslate2 = {version = ">=4.0.0", optional=true}
-optimum = {version = ">=1.24.0", optional=true, extras=["onnxruntime"]}
+# CPU/ROCm containers install matching vendor wheels before the locked dependencies.
+torch = {version = ">=2.8,<3", optional=true}
+# ST 5 changes model-type detection for subclasses and falls back to mean pooling.
+sentence-transformers = {version = ">=4.1,<5", optional=true}
+# ColPali 0.3.8 retains ColIdefics2 support and requires Transformers 4.47.
+transformers = {version = ">=4.47,<4.48", optional=true, extras=["sentencepiece"]}
+# Declare tokenizer dependencies explicitly so Poetry keeps them in model extras.
+sentencepiece = {version = ">=0.2.1,<0.3", optional=true}
+protobuf = {version = ">=5,<8", optional=true}
+# Later converters require the newer Transformers dtype argument.
+ctranslate2 = {version = ">=4.6.2,<4.6.3", optional=true}
+# Optimum AMD and BetterTransformer require the 1.x package layout.
+optimum = {version = ">=1.27,<2", optional=true, extras=["onnxruntime"]}
+onnx = {version = ">=1.19.1,<2", optional=true}
+# Older datasets releases use PyArrow APIs removed by current wheels.
+datasets = {version = ">=4,<6", optional=true}
 einops = {version = "*", optional=true}
 # vision
 pillow = {version = "*", optional=true}
 timm = {version = "*", optional=true}
-colpali-engine = {version="^0.3.8", optional=true}
+colpali-engine = {version=">=0.3.8,<0.3.9", optional=true}
 # openvino
 # optimum-intel = {version=">=1.20.0", optional=true, extras=["openvino"]}
 # onnxruntime-openvino = {version=">=1.19.0", optional=true}
@@ -46,43 +57,42 @@ colpali-engine = {version="^0.3.8", optional=true}
 # openvino-tokenizers = {version="2024.4.0.0", optional=true}
 
 
-# pin torchvision to a specific source, but default to pypi. use sed to overwrite.
-torchvision = {version = "*", source = "pypi", optional=true}
+# TorchVision is resolved together with Torch.
+torchvision = {version = "*", optional=true}
 # cache
 diskcache = {version = "*", optional=true}
 # gpu
 # https://onnxruntime.ai/docs/execution-providers/TensorRT-ExecutionProvider.html:
 # Most combinations of onnxruntime and tensorrt are not compatible, and some are broken.
-onnxruntime-gpu = {version = "1.19.*", optional=true} 
-tensorrt = {version = "^10.6.0", optional=true}
-soundfile = {version="^0.12.1", optional=true}
+# Match CUDA 12 and TensorRT 10.9; newer ORT wheels can require CUDA 13.
+onnxruntime-gpu = {version = ">=1.23.2,<1.24", optional=true}
+tensorrt = {version = ">=10.9,<10.10", optional=true}
+soundfile = {version=">=0.13,<1", optional=true}
 
 
 [tool.poetry.scripts]
 infinity_emb = "infinity_emb.cli:cli"
 
 [tool.poetry.group.test.dependencies]
-pytest = "^8.0.0"
+pytest = ">=8.4,<10"
 pytest-mock = "*"
 httpx  = "*"
 asgi_lifespan = "*"
 anyio = "*"
 trio = "*"
 coverage = {extras = ["toml"], version = "^7.3.2"}
-mypy = "^1.12.0"
-requests = "2.32.3"
-types-requests = "2.28.1"
+mypy = ">=1.19,<2"
+requests = ">=2.32.5,<3"
+types-requests = ">=2.32,<3"
 openai = "*" # 1.51.0 works
-jinja2 = "*" 
+jinja2 = "*"
 jinja2-cli = "*"
 
 # preferred dev dependencies
-# 2.6.0 is also pinned in docker image with flash-attn build
-torch = "2.8.0" 
-prometheus-fastapi-instrumentator = "7.0.0"
-# sentence-transformers = "3.3.1"
-transformers = "4.47.0"
-fastapi = "0.115.2"
+# Preserve the Torch version used by the container FlashAttention wheel.
+torch = "2.8.0"
+prometheus-fastapi-instrumentator = ">=7,<9"
+fastapi = ">=0.115.2,<1"
 
 [tool.poetry.group.codespell.dependencies]
 codespell = "^2.2.0"
@@ -93,22 +103,22 @@ mike = "*"
 mkdocs-swagger-ui-tag = "*"
 
 [tool.poetry.group.lint.dependencies]
-ruff = "^0.7.0"
+ruff = ">=0.15,<0.18"
 types-toml = "^0.10.8.1"
 types-redis = "^4.3.21.6"
 types-pytz = "^2023.3.0.0"
-black = "^24.10.0"
+black = ">=26,<27"
 types-chardet = "^5.0.4.6"
 mypy-protobuf = "^3.0.0"
 
 [tool.poetry.extras]
-ct2=["ctranslate2","sentence-transformers","torch","transformers"]
-optimum=["optimum"]
-torch=["sentence-transformers","torch"]
+ct2=["ctranslate2","sentence-transformers","torch","transformers","sentencepiece","protobuf"]
+optimum=["optimum","onnx","datasets"]
+torch=["sentence-transformers","torch","sentencepiece","protobuf"]
 einops=["einops"]
 logging=["rich"]
 cache=["diskcache"]
-vision=["colpali-engine","pillow","timm","torchvision"]
+vision=["colpali-engine","pillow","timm","torchvision","sentencepiece","protobuf"]
 # openvino=["onnxruntime-openvino","openvino","openvino-tokenizers"]
 audio=["soundfile"]
 server=[
@@ -127,20 +137,24 @@ all=[
     "ctranslate2",
     "diskcache",
     "einops",
-    "fastapi", 
+    "fastapi",
     "optimum",
-    "orjson", 
+    "datasets",
+    "onnx",
+    "orjson",
     "pillow",
-    "prometheus-fastapi-instrumentator", 
+    "prometheus-fastapi-instrumentator",
     "posthog",
-    "pydantic", 
-    "rich", 
+    "pydantic",
+    "rich",
     "sentence-transformers",
+    "sentencepiece",
+    "protobuf",
     "timm",
-    "torch", 
+    "torch",
     "torchvision",
     "click",
-    "typer", 
+    "typer",
     "uvicorn",
     "soundfile"
 ]
@@ -149,11 +163,7 @@ tensorrt=["tensorrt"]
 onnxruntime-gpu=["onnxruntime-gpu"]
 
 [[tool.poetry.source]]
-name = "pypi"
-priority = "primary"
-
-[[tool.poetry.source]]
-# used for monkey-patching cpu onlu
+# Explicit vendor indices for local CPU and ROCm development.
 name = "pytorch_cpu"
 url = "https://download.pytorch.org/whl/cpu"
 priority = "explicit"
@@ -161,7 +171,7 @@ priority = "explicit"
 [[tool.poetry.source]]
 # used for monkey-patching rocm only
 name = "pytorch_rocm"
-url = "https://download.pytorch.org/whl/rocm6.1"
+url = "https://download.pytorch.org/whl/rocm6.4"
 priority = "explicit"
 
 [tool.pytest.ini_options]
@@ -171,6 +181,9 @@ markers = [
 
 [tool.ruff]
 line-length = 100
+
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F"]
 
 [tool.codespell]
 skip = "./tests/data/benchmark,*.lock"

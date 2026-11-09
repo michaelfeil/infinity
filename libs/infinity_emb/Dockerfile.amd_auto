@@ -2,7 +2,7 @@
 # This file is generated from Dockerfile.jinja2. Do not edit the Dockerfile.cuda|cpu|amd file directly.
 # Only contribute to the Dockerfile.jinja2 and dockerfile_template.yaml and regenerate the Dockerfile.cuda|cpu|amd
 
-FROM rocm/pytorch:rocm6.2.3_ubuntu22.04_py3.10_pytorch_release_2.3.0 AS base
+FROM rocm/pytorch:rocm6.4.3_ubuntu24.04_py3.12_pytorch_release_2.6.0 AS base
 
 ENV PYTHONUNBUFFERED=1 \
     # pip
@@ -16,9 +16,8 @@ ENV PYTHONUNBUFFERED=1 \
     POETRY_NO_INTERACTION=1 \
     # extras
     EXTRAS="all" \
-    PYTHON="python3" 
-    # "python3.10"
-RUN apt-get update && apt-get install --no-install-recommends -y build-essential python3-dev libsndfile1 $PYTHON-venv $PYTHON-pip $PYTHON curl
+    PYTHON="python3.12"
+RUN apt-get update && apt-get install --no-install-recommends -y build-essential $PYTHON-dev libsndfile1 $PYTHON-venv python3-pip $PYTHON curl
 # RUN conda init --reverse --all
 # RUN rm -rf /opt/conda && rm -rf /var/lib/jenkins
 # Bettertransformer is not supported on AMD
@@ -28,28 +27,26 @@ WORKDIR /app
 
 FROM base AS builder
 # Set the working directory for the app
-# Define the version of Poetry to install (default is 1.8.4)
-# Define the directory to install Poetry to (default is /opt/poetry)
-ARG POETRY_VERSION=1.8.4
+# Install release tooling in its own environment, preserving the application interpreter.
+ARG POETRY_VERSION=2.5.1
 ARG POETRY_HOME=/opt/poetry
-# Create a Python virtual environment for Poetry and install it
-RUN curl -sSL https://install.python-poetry.org | POETRY_HOME=$POETRY_HOME POETRY_VERSION=$POETRY_VERSION $PYTHON -
+RUN $PYTHON -m venv $POETRY_HOME \
+    && $POETRY_HOME/bin/pip install --no-cache-dir "poetry==$POETRY_VERSION" "poetry-plugin-export==1.10.1"
 ENV PATH=$POETRY_HOME/bin:$PATH
-# Test if Poetry is installed in the expected path
-RUN echo "Poetry version:" && poetry --version
+RUN poetry --version
 # Copy the rest of the app source code (this layer will be invalidated and rebuilt whenever the source code changes)
 COPY poetry.lock poetry.toml pyproject.toml README.md /app/
 # Install dependencies only
 #
 # "RUN poetry install --no-interaction --no-ansi --no-root --extras \"${EXTRAS}\" --without lint,test && poetry cache clear pypi --all"
 COPY requirements_install_from_poetry.sh requirements_install_from_poetry.sh
-RUN ./requirements_install_from_poetry.sh --no-root --without lint,test "https://download.pytorch.org/whl/rocm6.2"
+RUN ./requirements_install_from_poetry.sh --no-root --without lint,test "https://download.pytorch.org/whl/rocm6.4"
 
 COPY infinity_emb infinity_emb
 # Install dependency with infinity_emb package
 # "RUN poetry install --no-interaction --no-ansi  --extras \"${EXTRAS}\" --without lint,test && poetry cache clear pypi --all"
 COPY requirements_install_from_poetry.sh requirements_install_from_poetry.sh
-RUN ./requirements_install_from_poetry.sh  --without lint,test "https://download.pytorch.org/whl/rocm6.2"
+RUN ./requirements_install_from_poetry.sh  --without lint,test "https://download.pytorch.org/whl/rocm6.4"
 
 ARG GPU_ARCH
 ENV GPU_ARCH=${GPU_ARCH}
@@ -76,7 +73,7 @@ RUN if [ "$GPU_ARCH" = "gfx90a" ] || [ "$GPU_ARCH" = "gfx942" ]; then \
     && python -m pip install -e .; \
 elif [ "$GPU_ARCH" = "gfx1100" ]; then \
     # OPTION2: Install onnxruntime-rocm from the wheel
-    . .venv/bin/activate && python -m pip uninstall onnxruntime onnxruntime-rocm -y && python -m pip install "numpy<2" https://repo.radeon.com/rocm/manylinux/rocm-rel-6.2.3/onnxruntime_rocm-1.18.0-cp310-cp310-linux_x86_64.whl \
+    . .venv/bin/activate && python -m pip uninstall onnxruntime onnxruntime-rocm -y && python -m pip install https://repo.radeon.com/rocm/manylinux/rocm-rel-6.4.3/onnxruntime_rocm-1.21.0-cp312-cp312-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl \
     && python -m pip install /install/*.whl \
     && git clone https://github.com/huggingface/optimum-amd.git /tmp-optimum \
     && cd /tmp-optimum \
@@ -85,14 +82,13 @@ else \
     echo "NO GPU_ARCH, skip optium: ${GPU_ARCH}"; \
 fi
 
-# TODO: remove this line
-RUN apt-get install --no-install-recommends -y git && poetry run python -m pip install git+https://github.com/huggingface/transformers.git@7547f55e5d93245c0a013b50df976924f2d9e8b0 && rm -rf ~/.cache/ /tmp/*
+
 
 FROM builder AS testing
 # install lint and test dependencies
 # "RUN poetry install --no-interaction --no-ansi  --extras \"${EXTRAS}\" --with lint,test && poetry cache clear pypi --all"
 COPY requirements_install_from_poetry.sh requirements_install_from_poetry.sh
-RUN ./requirements_install_from_poetry.sh  --with lint,test "https://download.pytorch.org/whl/rocm6.2"
+RUN ./requirements_install_from_poetry.sh  --with lint,test "https://download.pytorch.org/whl/rocm6.4"
 
 # lint 
 RUN poetry run ruff check .

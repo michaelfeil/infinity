@@ -3,7 +3,9 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, Iterable, Optional, Union
+from typing import TYPE_CHECKING, Any, Iterator, Optional, Union
+
+import numpy as np
 
 from infinity_emb._optional_imports import (
     CHECK_COLPALI_ENGINE,
@@ -38,7 +40,7 @@ class TIMM(BaseTIMM):
     def __init__(self, *, engine_args: "EngineArgs"):
         CHECK_TORCH.mark_required()
         CHECK_TRANSFORMERS.mark_required()
-        base_config = dict(
+        base_config: dict[str, Any] = dict(
             pretrained_model_name_or_path=engine_args.model_name_or_path,
             revision=engine_args.revision,
             trust_remote_code=engine_args.trust_remote_code,
@@ -173,7 +175,7 @@ class TIMM(BaseTIMM):
 
         return (preprocessed, type_is_img)
 
-    def _normalize_cpu(self, tensor: Optional["Tensor"], normalize: bool) -> Iterable["Tensor"]:
+    def _normalize_cpu(self, tensor: Optional["Tensor"], normalize: bool) -> Iterator[np.ndarray]:
         if tensor is None:
             return iter([])
         tensor = tensor.to(torch.float32)
@@ -216,7 +218,7 @@ class TIMM(BaseTIMM):
         return text_embeds, image_embeds, type_is_img  # type: ignore
 
     @quant_embedding_decorator()
-    def encode_post(self, out_features) -> list[float]:
+    def encode_post(self, out_features) -> list[np.ndarray]:
         text_embeds, image_embeds, type_is_img = out_features
         text_embeds = self._normalize_cpu(text_embeds, normalize=not self.is_colipali)
         image_embeds = self._normalize_cpu(image_embeds, normalize=not self.is_colipali)

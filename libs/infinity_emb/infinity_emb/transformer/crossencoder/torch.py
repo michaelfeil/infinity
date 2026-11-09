@@ -4,7 +4,7 @@
 from __future__ import annotations
 
 import copy
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, cast
 
 from infinity_emb._optional_imports import CHECK_SENTENCE_TRANSFORMERS, CHECK_TORCH
 from infinity_emb.args import EngineArgs
@@ -60,9 +60,9 @@ class CrossEncoderPatched(CrossEncoder, BaseCrossEncoder):
             revision=engine_args.revision,
             trust_remote_code=engine_args.trust_remote_code,
             device=ls.device_placement,
-            automodel_args=model_kwargs,
+            model_kwargs=model_kwargs,
         )
-        self.model.to(ls.device_placement)
+        cast(Any, self.model).to(ls.device_placement)
 
         # make a copy of the tokenizer,
         # to be able to could the tokens in another thread
@@ -77,7 +77,7 @@ class CrossEncoderPatched(CrossEncoder, BaseCrossEncoder):
                 logger,
             )
 
-        self.model.to(ls.loading_dtype)
+        cast(Any, self.model).to(ls.loading_dtype)
 
         if ls.quantization_dtype is not None:
             self.model = quant_interface(  # TODO: add ls.quantization_dtype and ls.placement
@@ -86,7 +86,7 @@ class CrossEncoderPatched(CrossEncoder, BaseCrossEncoder):
 
         if engine_args.compile:
             logger.info("using torch.compile(dynamic=True)")
-            self.model = torch.compile(self.model, dynamic=True)
+            self.model = cast(Any, torch.compile(self.model, dynamic=True))
 
     def encode_pre(self, input_tuples: list[tuple[str, str]]):
         # return input_tuples
