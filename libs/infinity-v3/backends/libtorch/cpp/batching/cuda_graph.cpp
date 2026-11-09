@@ -540,7 +540,7 @@ at::Tensor CudaGraphCache::forward(const Model& model,
     inputs_fit = inputs_fit && fits(layout.prefix_cumulative) && fits(layout.suffix_cumulative) &&
                  fits(layout.kv_cumulative) && fits(layout.history_cumulative) &&
                  fits(layout.cache_sources) && fits(layout.pages.gather) &&
-                 fits(layout.pages.table);
+                 fits(layout.pages.table) && fits(layout.pages.subpage_table);
   }
   if (!inputs_fit)
     return run(input);
@@ -769,6 +769,7 @@ at::Tensor CudaGraphCache::forward(const Model& model,
     charge(layout.cache_sources);
     charge(layout.pages.gather);
     charge(layout.pages.table);
+    charge(layout.pages.subpage_table);
   }
   if (entry->prefix) {
     charge(entry->original.ids);
