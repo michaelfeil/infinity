@@ -40,8 +40,11 @@ sentencepiece = {version = ">=0.2.1,<0.3", optional=true}
 protobuf = {version = ">=5,<8", optional=true}
 # Later converters require the newer Transformers dtype argument.
 ctranslate2 = {version = ">=4.6.2,<4.6.3", optional=true}
-optimum = {version = ">=2.1,<2.2", optional=true, extras=["onnxruntime"]}
+# Optimum AMD and BetterTransformer require the 1.x package layout.
+optimum = {version = ">=1.27,<2", optional=true, extras=["onnxruntime"]}
 onnx = {version = ">=1.19.1,<2", optional=true}
+# Older datasets releases use PyArrow APIs removed by current wheels.
+datasets = {version = ">=4,<6", optional=true}
 einops = {version = "*", optional=true}
 # vision
 pillow = {version = "*", optional=true}
@@ -61,8 +64,9 @@ diskcache = {version = "*", optional=true}
 # gpu
 # https://onnxruntime.ai/docs/execution-providers/TensorRT-ExecutionProvider.html:
 # Most combinations of onnxruntime and tensorrt are not compatible, and some are broken.
-onnxruntime-gpu = {version = ">=1.23.2,<2", optional=true}
-tensorrt = {version = "^10.6.0", optional=true}
+# Match CUDA 12 and TensorRT 10.9; newer ORT wheels can require CUDA 13.
+onnxruntime-gpu = {version = ">=1.23.2,<1.24", optional=true}
+tensorrt = {version = ">=10.9,<10.10", optional=true}
 soundfile = {version=">=0.13,<1", optional=true}
 
 
@@ -109,7 +113,7 @@ mypy-protobuf = "^3.0.0"
 
 [tool.poetry.extras]
 ct2=["ctranslate2","sentence-transformers","torch","transformers","sentencepiece","protobuf"]
-optimum=["optimum","onnx"]
+optimum=["optimum","onnx","datasets"]
 torch=["sentence-transformers","torch","sentencepiece","protobuf"]
 einops=["einops"]
 logging=["rich"]
@@ -135,6 +139,7 @@ all=[
     "einops",
     "fastapi",
     "optimum",
+    "datasets",
     "onnx",
     "orjson",
     "pillow",

@@ -92,7 +92,9 @@ trt:
     # Install utils for tensorrt
     RUN apt-get install -y --no-install-recommends openmpi-bin libopenmpi-dev git git-lfs python3-pip
     RUN poetry run $PYTHON -m pip install --no-cache-dir flash-attn --no-build-isolation
-    RUN poetry run $PYTHON -m pip install --no-cache-dir "tensorrt==10.3.0" "tensorrt_lean==10.3.0" "tensorrt_dispatch==10.3.0"
+    # Keep only the CUDA-12 ORT distribution; CPU and GPU wheels share Python files.
+    RUN poetry run $PYTHON -m pip uninstall -y onnxruntime onnxruntime-gpu \
+        && poetry run $PYTHON -m pip install --no-cache-dir "onnxruntime-gpu==1.23.2" "tensorrt==10.9.0.34" "tensorrt_lean==10.9.0.34" "tensorrt_dispatch==10.9.0.34"
   extra_env_variables: |
     # Set default to tensorrt
     ENV LD_LIBRARY_PATH=/app/.venv/lib/${PYTHON}/site-packages/tensorrt:/usr/lib/x86_64-linux-gnu:/app/.venv/lib/${PYTHON}/site-packages/tensorrt_libs:${LD_LIBRARY_PATH}
