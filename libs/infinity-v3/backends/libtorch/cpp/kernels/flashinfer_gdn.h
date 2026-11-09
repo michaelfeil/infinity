@@ -13,6 +13,13 @@ std::array<at::Tensor, 5> flashinfer_gdn_pack_cuda(const at::Tensor& values,
                                                    int64_t key_heads,
                                                    int64_t value_heads);
 bool flashinfer_gdn_available(const c10::Device& device);
+/// Run the provider on buffers already produced by either packing route.
+bool flashinfer_gdn_prefill_packed(const std::array<at::Tensor, 5>& packed,
+                                   const PackedInput& input,
+                                   at::Tensor& output,
+                                   int64_t key_heads,
+                                   int64_t value_heads,
+                                   at::Tensor* final_state);
 bool flashinfer_gdn_prefill(const at::Tensor& values,
                             const at::Tensor& qk,
                             const at::Tensor& gates,

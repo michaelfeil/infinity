@@ -40,6 +40,27 @@ gemma3_legacy_residual_norm_cuda(const at::Tensor&, const at::Tensor&, const at:
 at::Tensor gemma_gated_cuda(const at::Tensor&, bool);
 /// Activate rows using the selected GELU or SiLU recipe without changing their shape.
 at::Tensor gemma_activation_cuda(const at::Tensor&, bool);
+/// Materialize the BF16 convolution/SiLU rows for convolution-route tests.
+at::Tensor qwen35_conv_cuda(const at::Tensor& qkv,
+                            const at::Tensor& conv,
+                            const at::Tensor& cumulative,
+                            int64_t sequences);
+/// Prepare native FP32 Q/K and gate buffers from a BF16 convolution result.
+std::pair<at::Tensor, at::Tensor> qwen35_gdn_prepare_cuda(const at::Tensor& convolution,
+                                                          const at::Tensor& ab,
+                                                          const at::Tensor& a_log,
+                                                          const at::Tensor& dt_bias,
+                                                          int64_t key_heads,
+                                                          int64_t value_heads);
+/// Fuse convolution/SiLU, provider Q/K normalization, gate preparation, and packing.
+std::array<at::Tensor, 5> qwen35_gdn_prepare_pack_cuda(const at::Tensor& qkv,
+                                                       const at::Tensor& conv,
+                                                       const at::Tensor& cumulative,
+                                                       const at::Tensor& ab,
+                                                       const at::Tensor& a_log,
+                                                       const at::Tensor& dt_bias,
+                                                       int64_t key_heads,
+                                                       int64_t value_heads);
 /// Compose packed depthwise convolution, F32 gated-delta state updates, and gated RMS output.
 /// QKV and Z may be column slices of merged projections with their original row strides.
 /// Optional initial/history buffers resume block execution;
