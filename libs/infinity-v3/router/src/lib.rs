@@ -435,9 +435,15 @@ async fn initialize_model(
         !onejev
             || matches!(
                 config.model_type.as_str(),
-                "qwen3_5" | "qwen3_5_moe" | "qwen3_5_text" | "qwen3_5_moe_text"
+                "qwen3_5"
+                    | "qwen3_5_moe"
+                    | "qwen3_5_text"
+                    | "qwen3_5_moe_text"
+                    | "gemma4"
+                    | "gemma4_text"
+                    | "gemma4_unified"
             ),
-        "OneJev protocol requires a Qwen3.5 model"
+        "OneJev protocol requires a Qwen3.5 or Gemma4 model"
     );
 
     anyhow::ensure!(

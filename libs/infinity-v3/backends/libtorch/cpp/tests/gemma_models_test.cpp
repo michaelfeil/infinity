@@ -3,6 +3,7 @@
 // Packed sequence isolation and geometry tests for native Gemma implementations.
 #include "models/gemma_models.h"
 #include "batching/radix.h"
+#include "batching/cuda_graph.h"
 #include "helpers/image_feature_cache.h"
 #include <iostream>
 #include <cstring>
@@ -971,6 +972,50 @@ void gemma_block_attention_test(const c10::Device& device, at::ScalarType dtype)
   auto causal_prefix = full_causal->forward(on_device(input(causal_prefix_ids, full_offsets)));
   TORCH_CHECK(at::equal(causal_output.narrow(0, 0, 1), causal_prefix.narrow(0, 0, 1)),
               "Causal reference observed a future prefix token");
+  if (!cpu) {
+    // Decision op3 pools last rows. The graph must replay mutated ids from the
+    // same storage and keep distinct entries for distinct block boundaries.
+    CudaGraphCache graphs(2, 4096, 1);
+    auto graph_input = packed;
+    const auto fresh = block->forward_pooled(graph_input, true);
+    auto captured = graphs.forward(*block, graph_input, 3);
+    TORCH_CHECK(at::allclose(captured, fresh, cross_shape, cross_shape),
+                "Block Gemma graph capture changed pooled outputs");
+    TORCH_CHECK(at::allclose(graphs.forward(*block, graph_input, 3),
+                             block->forward_pooled(graph_input, true),
+                             cross_shape,
+                             cross_shape),
+                "Block Gemma graph replay changed pooled outputs");
+    TORCH_CHECK(graphs.size() == 1 && graphs.stats().captures == 1,
+                "Block Gemma graph did not capture the block batch");
+    const auto ids_pointer = graph_input.ids.const_data_ptr();
+    graph_input.ids.add_(1).remainder_(64);
+    TORCH_CHECK(graph_input.ids.const_data_ptr() == ids_pointer,
+                "Block Gemma graph ids mutation replaced storage");
+    auto mutated = block->forward_pooled(graph_input, true);
+    TORCH_CHECK(
+        at::allclose(graphs.forward(*block, graph_input, 3), mutated, cross_shape, cross_shape),
+        "Block Gemma graph replay ignored in-place ids mutation");
+    auto changed = graph_input;
+    changed.block_prefix_lengths = {2, 3, 2};
+    changed.block_prefix_sources = {0, 1, 2};
+    auto changed_fresh = block->forward_pooled(changed, true);
+    TORCH_CHECK(
+        at::allclose(graphs.forward(*block, changed, 3), changed_fresh, cross_shape, cross_shape),
+        "Block Gemma graph changed the new prefix-layout outputs");
+    TORCH_CHECK(graphs.size() == 2 && graphs.stats().captures == 2,
+                "Block Gemma graph cache did not separate block layout entries");
+    TORCH_CHECK(at::allclose(graphs.forward(*block, graph_input, 3),
+                             block->forward_pooled(graph_input, true),
+                             cross_shape,
+                             cross_shape),
+                "Block Gemma graph replay reused the wrong block layout");
+    TORCH_CHECK(at::allclose(graphs.forward(*block, changed, 3),
+                             block->forward_pooled(changed, true),
+                             cross_shape,
+                             cross_shape),
+                "Block Gemma changed-layout graph replay was invalid");
+  }
   std::cout << "gemma4: block prefix isolation, suffix bidirectionality, causal sliding and mixed "
                "lengths passed on "
             << device << " " << at::toString(dtype) << "\n";

@@ -15,13 +15,18 @@ const SPLIT_LABELS: &[&str] = &[
     "GZ", "HJ", "IY", "JF", "JG", "JH", "JL", "JN", "JQ",
 ];
 
+enum OnejevImages {
+    Qwen(Qwen3VlProcessor),
+    Unsupported(&'static str),
+}
+
 pub struct Onejev {
     tokenizer: Tokenizer,
     chat: ChatProcessor,
     codes: Vec<String>,
     token_ids: Vec<u32>,
     max_input_length: usize,
-    images: Option<Qwen3VlProcessor>,
+    images: Option<OnejevImages>,
     block_attention: bool,
     reuse_prefix: bool,
 }
@@ -101,30 +106,57 @@ impl Onejev {
         config: infinity_v3_core::multimodal::MultimodalConfig,
     ) -> anyhow::Result<Self> {
         let model: Value = serde_json::from_slice(&std::fs::read(path.join("config.json"))?)?;
-        if model["vision_config"].is_object()
-            && (path.join("processor_config.json").exists()
+        let family = model["model_type"]
+            .as_str()
+            .or_else(|| model["text_config"]["model_type"].as_str())
+            .unwrap_or_default();
+        if matches!(family, "gemma4" | "gemma4_text" | "gemma4_unified") {
+            // Gemma4 block decisions are text-only. Do not load the Qwen image
+            // processor for a Gemma checkpoint, and reject image requests
+            // explicitly instead of silently dropping them.
+            self.images = Some(OnejevImages::Unsupported("Gemma4"));
+            return Ok(self);
+        }
+        if !model["vision_config"].is_object()
+            || !(path.join("processor_config.json").exists()
                 || path.join("preprocessor_config.json").exists())
         {
-            self.images = Some(
-                Qwen3VlProcessor::load_images_only(
-                    path,
-                    self.tokenizer.clone(),
-                    self.max_input_length,
-                    config,
-                )
-                .map_err(|e| anyhow::anyhow!(e.to_string()))?,
-            );
+            return Ok(self);
         }
+        if !family.starts_with("qwen3_5") {
+            self.images = Some(OnejevImages::Unsupported("this model"));
+            return Ok(self);
+        }
+        self.images = Some(OnejevImages::Qwen(
+            Qwen3VlProcessor::load_images_only(
+                path,
+                self.tokenizer.clone(),
+                self.max_input_length,
+                config,
+            )
+            .map_err(|e| anyhow::anyhow!(e.to_string()))?,
+        ));
         Ok(self)
     }
 
     pub(super) fn max_images(&self) -> usize {
-        self.images.as_ref().map_or(0, Qwen3VlProcessor::max_images)
+        match &self.images {
+            Some(OnejevImages::Qwen(images)) => images.max_images(),
+            Some(OnejevImages::Unsupported(_)) | None => 0,
+        }
+    }
+
+    pub(super) fn unsupported_images(&self) -> Option<&'static str> {
+        match &self.images {
+            Some(OnejevImages::Unsupported(family)) => Some(*family),
+            _ => None,
+        }
     }
 
     pub(super) fn image_sources(
         request: &mut SystemOneRequest,
         max_images: usize,
+        unsupported: Option<&str>,
     ) -> Result<Vec<String>, String> {
         let check_text = |text: &str| {
             if text.contains("<image:") || text.contains("<video:") {
@@ -150,6 +182,11 @@ impl Onejev {
                             ContentPart::ImageUrl { image_url }
                                 if matches!(message.role, MessageRole::User) =>
                             {
+                                if let Some(family) = unsupported {
+                                    return Err(format!(
+                                        "OneJev image inputs are unsupported for {family}"
+                                    ));
+                                }
                                 if !matches!(image_url.detail, None | Some(ImageDetail::Auto)) {
                                     return Err(
                                         "OneJev image detail must be auto or omitted".into()
@@ -176,15 +213,17 @@ impl Onejev {
         &self,
         sources: Vec<String>,
     ) -> Result<PreparedQwenImages, infinity_v3_core::TextEmbeddingsError> {
-        self.images
-            .as_ref()
-            .ok_or_else(|| {
-                infinity_v3_core::TextEmbeddingsError::Validation(
-                    "OneJev image processor unavailable".into(),
-                )
-            })?
-            .prepare_images(sources, 4096)
-            .await
+        match &self.images {
+            Some(OnejevImages::Qwen(images)) => images.prepare_images(sources, 4096).await,
+            Some(OnejevImages::Unsupported(family)) => {
+                Err(infinity_v3_core::TextEmbeddingsError::Validation(format!(
+                    "OneJev image inputs are unsupported for {family}"
+                )))
+            }
+            None => Err(infinity_v3_core::TextEmbeddingsError::Validation(
+                "OneJev image processor unavailable".into(),
+            )),
+        }
     }
 
     pub(super) fn attach_images(
@@ -468,7 +507,12 @@ mod tests {
             {"type":"image_url", "image_url":{"url":"https://example.com/second.png"}}
         ]}]});
         let mut with_images: SystemOneRequest = serde_json::from_value(request.clone())?;
-        assert_eq!(Onejev::image_sources(&mut with_images, 2).unwrap().len(), 2);
+        assert_eq!(
+            Onejev::image_sources(&mut with_images, 2, None)
+                .unwrap()
+                .len(),
+            2
+        );
         request["state"] = serde_json::to_value(with_images.state)?;
         compare_preparation(&mut model, request.clone())?;
         for reuse in [true, false] {
@@ -746,7 +790,7 @@ mod tests {
         ]}]},"questions":{"q":{"type":"noul"}}});
         let mut request = serde_json::from_value(value.clone()).unwrap();
         assert_eq!(
-            Onejev::image_sources(&mut request, 16).unwrap(),
+            Onejev::image_sources(&mut request, 16, None).unwrap(),
             [
                 "data:image/png;base64,first",
                 "data:image/png;base64,second"
@@ -766,7 +810,8 @@ mod tests {
                 }
             }
             assert!(
-                Onejev::image_sources(&mut serde_json::from_value(invalid).unwrap(), 16).is_err()
+                Onejev::image_sources(&mut serde_json::from_value(invalid).unwrap(), 16, None)
+                    .is_err()
             );
         }
         for limit in [1, 16] {
@@ -778,12 +823,61 @@ mod tests {
                         count
                     ]);
                 assert_eq!(
-                    Onejev::image_sources(&mut serde_json::from_value(request).unwrap(), limit)
-                        .is_ok(),
+                    Onejev::image_sources(
+                        &mut serde_json::from_value(request).unwrap(),
+                        limit,
+                        None
+                    )
+                    .is_ok(),
                     count == limit
                 );
             }
         }
+    }
+
+    #[test]
+    fn gemma4_images_reject_without_loading_the_qwen_processor() -> anyhow::Result<()> {
+        let path =
+            std::env::temp_dir().join(format!("onejev-gemma-images-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&path)?;
+        std::fs::write(
+            path.join("config.json"),
+            r#"{"model_type":"gemma4","vision_config":{"model_type":"gemma4_vision"}}"#,
+        )?;
+        std::fs::write(path.join("processor_config.json"), "{}")?;
+        std::fs::write(
+            path.join("chat_template.jinja"),
+            "{{ messages[0].content }}\n{{ messages[1].content }}",
+        )?;
+        let chat = ChatProcessor::load(&path)
+            .map_err(anyhow::Error::msg)?
+            .unwrap();
+        let model = Onejev {
+            tokenizer: prefix::tests::tokenizer(),
+            chat,
+            codes: vec!["A".into()],
+            token_ids: vec![1],
+            max_input_length: 64,
+            images: None,
+            block_attention: true,
+            reuse_prefix: false,
+        }
+        .with_images(&path, Default::default())?;
+        assert_eq!(model.unsupported_images(), Some("Gemma4"));
+        assert_eq!(model.max_images(), 0);
+        let mut request: SystemOneRequest = serde_json::from_value(json!({
+            "state": {"messages": [{"role": "user", "content": [
+                {"type": "text", "text": "Compare."},
+                {"type": "image_url", "image_url": {"url": "https://example.com/image.png"}}
+            ]}]},
+            "questions": {"q": {"type": "noul"}}
+        }))?;
+        let error =
+            Onejev::image_sources(&mut request, model.max_images(), model.unsupported_images())
+                .unwrap_err();
+        assert!(error.contains("unsupported for Gemma4"), "{error}");
+        std::fs::remove_dir_all(&path)?;
+        Ok(())
     }
 
     #[test]
@@ -836,8 +930,9 @@ mod tests {
         let runtime = tokio::runtime::Runtime::new()?;
         for case in fixtures {
             let mut request: SystemOneRequest = serde_json::from_value(case["request"].clone())?;
-            let sources = Onejev::image_sources(&mut request, model.max_images())
-                .map_err(anyhow::Error::msg)?;
+            let sources =
+                Onejev::image_sources(&mut request, model.max_images(), model.unsupported_images())
+                    .map_err(anyhow::Error::msg)?;
             let mut questions = model.prepare(request).map_err(anyhow::Error::msg)?;
             if !sources.is_empty() {
                 let images = runtime.block_on(model.prepare_images(sources))?;
