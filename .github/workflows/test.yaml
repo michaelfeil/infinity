@@ -15,6 +15,13 @@ on:
         required: false
         type: string
         default: "--extras all --with test"
+    secrets:
+      HFTOKEN_NOPERMISSIONS:
+        description: 'Hugging Face token used by the infinity_emb tests'
+        required: false
+      CODECOV_TOKEN:
+        description: 'Codecov upload token'
+        required: false
 
 
 env:

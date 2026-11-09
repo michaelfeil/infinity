@@ -53,7 +53,6 @@ jobs:
       ./.github/workflows/linting.yaml
     with:
       working-directory: libs/infinity_emb
-    secrets: inherit
 
   lint-embed_package:
     if: github.event_name != 'release' || startsWith(github.event.release.tag_name, '0.') || startsWith(github.event.release.tag_name, 'v0.')
@@ -62,7 +61,6 @@ jobs:
     with:
       working-directory: libs/embed_package
       extra_poetry: "--with test,lint,codespell"
-    secrets: inherit
 
   test-infinity_emb:
     if: github.event_name != 'release' || startsWith(github.event.release.tag_name, '0.') || startsWith(github.event.release.tag_name, 'v0.')
@@ -71,7 +69,9 @@ jobs:
     with:
       working-directory: libs/infinity_emb
       upload_coverage: true
-    secrets: inherit
+    secrets:
+      HFTOKEN_NOPERMISSIONS: ${{ secrets.HFTOKEN_NOPERMISSIONS }}
+      CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
   
   test-embed_package:
     if: github.event_name != 'release' || startsWith(github.event.release.tag_name, '0.') || startsWith(github.event.release.tag_name, 'v0.')
@@ -81,7 +81,9 @@ jobs:
       working-directory: libs/embed_package
       upload_coverage: false
       extra_poetry: "--with test"
-    secrets: inherit
+    secrets:
+      HFTOKEN_NOPERMISSIONS: ${{ secrets.HFTOKEN_NOPERMISSIONS }}
+      CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
 
   build-python-containers:
     if: github.event_name != 'release'

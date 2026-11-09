@@ -21,7 +21,9 @@ jobs:
       image: michaelf34/infinity
       appendix_tag: ""
       platforms: "linux/amd64,linux/arm64"
-    secrets: inherit
+    secrets:
+      DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+      DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
   
   docker-container-push-cpu:
     if: startsWith(github.event.release.tag_name, '0.') || startsWith(github.event.release.tag_name, 'v0.')
@@ -33,7 +35,9 @@ jobs:
       image: michaelf34/infinity
       appendix_tag: "-cpu"
       platforms: "linux/amd64"
-    secrets: inherit
+    secrets:
+      DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+      DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
   
   # Container to large for github action
   # docker-container-push-onnx-trt:
