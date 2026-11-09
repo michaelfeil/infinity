@@ -15,18 +15,18 @@ numerically mismatched cases remain diagnostic.
 
 End-to-end server-counted **input tokens/s**, BF16, one input per HTTP request.
 The examples below require qualified results from all three runtimes, including
-the independent FP32 probe check.
+the independent FP32 probe check. Cases with more than twofold variation
+between timing windows are excluded from these examples.
 
 <!-- benchmark-examples -->
 | Checkpoint (512 tokens, concurrency 32) | Infinity | vLLM | SGLang |
 |---|---:|---:|---:|
-| `tencent/KaLM-Embedding-Gemma3-12B-2511` | 44,006 | 54,423 | 43,725 |
-| `Qwen/Qwen3-Embedding-8B` | 87,340 | 86,891 | 87,494 |
-| `intfloat/e5-mistral-7b-instruct` | 84,607 | 88,168 | 89,724 |
-| `Qwen/Qwen3-Embedding-4B` | 145,580 | 144,776 | 151,701 |
-| `Snowflake/snowflake-arctic-embed-l-v2.0` | 1,158,054 | 804,860 | 442,940 |
-| `BAAI/bge-large-en-v1.5` | 1,171,726 | 723,959 | 362,903 |
-| `Snowflake/snowflake-arctic-embed-m-v1.5` | 2,808,520 | 731,576 | 379,896 |
+| `tencent/KaLM-Embedding-Gemma3-12B-2511` | 43,965 | 54,739 | 43,418 |
+| `Qwen/Qwen3-Embedding-8B` | 86,223 | 87,108 | 88,611 |
+| `intfloat/e5-mistral-7b-instruct` | 86,429 | 88,775 | 89,982 |
+| `Qwen/Qwen3-Embedding-4B` | 148,325 | 144,927 | 150,472 |
+| `Snowflake/snowflake-arctic-embed-l-v2.0` | 1,176,442 | 800,265 | 446,064 |
+| `BAAI/bge-large-en-v1.5` | 1,155,862 | 724,468 | 360,990 |
 <!-- /benchmark-examples -->
 
 Harrier 27B and both SFR 7B checkpoints completed measurements in all three

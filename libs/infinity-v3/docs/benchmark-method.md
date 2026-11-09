@@ -83,6 +83,13 @@ tokens/s is labeled separately. These rates combine the three windows by
 summing counts and elapsed time. p50/p95 are medians of the per-window
 percentiles, rather than percentiles of pooled latency samples.
 
+The report marks cases whose three window request rates differ by more than
+twofold as `timing=variable`. This is a descriptive check of observed variation,
+separate from workload validity and numerical eligibility. Six cases in this
+sweep receive the flag. Their measured aggregates are retained, with individual
+window rates shown; they do not support controlled speedup claims. The cause of
+the variation is not established.
+
 The minimum serial latency comes from 20 requests with an 8-token input at
 concurrency 1. Startup is one process-start-to-health sample with local weights,
 excluding downloads. Storage and kernel cache state is uncontrolled. Isolated,

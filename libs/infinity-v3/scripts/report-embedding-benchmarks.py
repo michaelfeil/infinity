@@ -1430,6 +1430,18 @@ def csvtext(camp, models, runs, rep):
                 w.writerow(row)
     return b.getvalue()
 
+def variable_window_rates(case):
+    windows = (case or {}).get("windows") or []
+    if len(windows) != WINDOWS:
+        return []
+    rates = []
+    for window in windows:
+        ok, elapsed = num(window.get("ok")), num(window.get("elapsed_seconds"))
+        if ok is None or elapsed is None or ok <= 0 or elapsed <= 0:
+            return []
+        rates.append(ok / elapsed)
+    return rates if max(rates) > 2 * min(rates) else []
+
 def cell(x, c, cm, r):
     if x is None:
         return "missing"
@@ -1449,6 +1461,8 @@ def cell(x, c, cm, r):
             tag += f" baseline={fp.get('fp32_baseline_eligible')}"
     else:
         tag = rel
+    if variable_window_rates(c):
+        tag += " timing=variable"
     return f"{s} [{tag}]"
 
 def markdown(camp, models, runs, rep):
@@ -1496,6 +1510,8 @@ def markdown(camp, models, runs, rep):
               ("C is HTTP concurrency. `rel` compares a runtime with Infinity; `fp32` is the "
                "independent reference check. `ELIGIBLE` requires both applicable checks and "
                "a clean workload. Infinity's `baseline` flag records its FP32 eligibility. "
+               "`timing=variable` marks more than twofold variation in window requests/s; "
+               "numerical eligibility does not establish timing stability. "
                "Missing parameter counts and unavailable token rates are labeled n/a."), "",
               "| Model | Parameters (B) | Tokens | C | Infinity | vLLM | SGLang |",
               "|---|---|---|---|---|---|---|"]
@@ -1526,6 +1542,27 @@ def markdown(camp, models, runs, rep):
                    f"statuses `{cv.get('status_counts')}`."),
                   ("- Independent HF float32 is an additional numerical smoke gate, not "
                    "task-quality, retrieval-quality, or ranking evidence."), ""]
+    variable = []
+    for model in sorted(models, key=lambda item: item["id"]):
+        for runtime in RT:
+            run = runs.get((model["id"], runtime))
+            for length in sorted(model["lengths"]):
+                case = run["cases"].get((length, None)) if run else None
+                rates = variable_window_rates(case)
+                if rates:
+                    variable.append((model["id"], runtime, length, rates))
+    if variable:
+        lines += ["", "## Observed timing variability", "",
+                  ("The following cases have more than twofold variation in requests/s across "
+                   "their three windows. This descriptive flag does not change numerical "
+                   "eligibility. Their aggregates retain the recorded slowdown and should not "
+                   "be used to claim a controlled speedup. The cause is not established; "
+                   "host activity was uncontrolled."), "",
+                  "| Model | Runtime | Tokens | Window requests/s (in order) |",
+                  "|---|---|---:|---|"]
+        for model, runtime, length, rates in variable:
+            lines.append(f"| `{model}` | {runtime} | {length} | " +
+                         " / ".join(f"{rate:,.2f}" for rate in rates) + " |")
     lines += ["", "## Diagnostics", "",
               f"- Comparison statuses `{dict(sorted({k: sum(1 for x in rep['comparisons'] if x['status'] == k) for k in {x['status'] for x in rep['comparisons']}}.items()))}`.",
               ("- Full per-case status, token rates and latency medians are in results.csv; "
@@ -2096,6 +2133,24 @@ def selftest():
             assert all(public["runtime_versions"][key] == value for key, value in recorded.items())
             assert public["runtime_installations"]["vllm"]["torch_version"] == "2.14.0"
             assert public["runtime_installations"]["vllm"]["transformers_version"] == "5.20.2"
+
+    @add
+    def large_timing_swings_are_visible_without_changing_numerical_gates():
+        t, root, out = prep()
+        with t:
+            path = root / "runs" / "acme--dense-a--vllm.json"
+            record = json.loads(path.read_text())
+            window = record["measurement"]["workloads"][0]["windows"][1]
+            window["elapsed_seconds"] = 80.0
+            window["throughput_rps"] = window["ok"] / 80.0
+            path.write_text(json.dumps(record))
+            summary = export(root, out)
+            assert summary["numerical_passes"] == 10
+            markdown_text = (out / "results.md").read_text()
+            assert "Observed timing variability" in markdown_text
+            assert "timing=variable" in markdown_text
+            assert "| `acme/dense-a` | vllm | 128 |" in markdown_text
+            assert "cause is not established" in markdown_text
 
     @add
     def provisional_and_default_reject():
