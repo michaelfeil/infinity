@@ -392,6 +392,65 @@ at::Tensor independent_norm(const at::Tensor& x, const at::Tensor& gamma, float 
   return result.to(at::kBFloat16);
 }
 
+void norm_rope_fixture(c10::Device device) {
+  auto generator = at::detail::createCPUGenerator(0x4e524f50);
+  auto cpu = at::TensorOptions().dtype(at::kBFloat16);
+
+  struct Case {
+    int64_t width, rotary, tokens, heads;
+    bool unaligned;
+  };
+
+  const std::vector<Case> cases = {
+      {64, 32, 5, 2, false},
+      {64, 64, 1, 3, false},
+      {128, 64, 7, 2, false},
+      {128, 128, 3, 4, false},
+      {256, 64, 17, 24, false},
+      {256, 128, 2, 3, true},
+      {256, 256, 4, 2, true},
+  };
+  constexpr int64_t table_rows = 19;
+  for (const auto& c : cases) {
+    const int64_t offset = c.unaligned ? 1 : 0;
+    const auto source_width = 2 * c.width + offset;
+    auto x_base = at::randn({c.tokens, c.heads, source_width}, generator, cpu).to(device);
+    auto x = x_base.narrow(-1, offset, c.width);
+    auto gamma_base = at::randn({c.width + offset}, generator, cpu).to(device);
+    auto gamma = gamma_base.narrow(0, offset, c.width);
+    auto cos = at::randn({table_rows, c.rotary / 2}, generator, cpu).to(device);
+    auto sin = at::randn({table_rows, c.rotary / 2}, generator, cpu).to(device);
+    std::vector<int64_t> position_values(c.tokens);
+    for (int64_t t = 0; t < c.tokens; ++t)
+      position_values[t] = (3 * t + 1) % table_rows;
+    auto positions = at::tensor(position_values, at::TensorOptions().dtype(at::kLong)).to(device);
+    auto frozen_x = x.clone(), frozen_gamma = gamma.clone();
+    auto normalized = infinity::qwen35_reference_norm_cuda(x, gamma, 1e-6);
+    auto rotated =
+        infinity::gemma_rotary_cuda(normalized.narrow(-1, 0, c.rotary), cos, sin, positions);
+    auto expected =
+        c.rotary == c.width
+            ? rotated
+            : at::cat({rotated, normalized.narrow(-1, c.rotary, c.width - c.rotary)}, -1);
+    auto actual =
+        infinity::qwen35_reference_norm_rope_cuda(x, gamma, cos, sin, positions, c.rotary, 1e-6);
+    TORCH_CHECK(at::equal(actual, expected) && actual.is_contiguous() &&
+                    actual.sizes() == expected.sizes() && at::equal(x, frozen_x) &&
+                    at::equal(gamma, frozen_gamma),
+                "Fused Qwen norm+rope changed bits width=",
+                c.width,
+                " rotary=",
+                c.rotary,
+                " tokens=",
+                c.tokens,
+                " heads=",
+                c.heads,
+                " unaligned=",
+                c.unaligned);
+  }
+  std::cout << "Fused Qwen norm+partial-RoPE matches norm then rotary bit for bit\n";
+}
+
 int main(int argc, char** argv) {
   c10::Device device(argc > 1 ? argv[1] : "cuda:0");
   at::manual_seed(717);
@@ -785,6 +844,7 @@ int main(int argc, char** argv) {
   }
   TORCH_CHECK(omitted_without_quantized,
               "Omitting normalized output without FP8 storage must reject before launch");
+  norm_rope_fixture(device);
   // Deterministic synthetic operands exercise packed recurrence isolation.
   auto q = at::randn({32, 384}, opts) * .2, z = at::randn({32, 128}, opts) * .2;
   auto ab = at::randn({32, 2}, opts) * .2, conv = at::randn({384, 4}, opts) * .2;

@@ -461,6 +461,20 @@ class Qwen35 final : public Model {
         .contiguous();
   }
 
+  /// Fuse leading partial-RoPE into the Q/K RMS norm when the existing CUDA
+  /// norm and rotary eligibility both hold. Every other case uses the original
+  /// norm-then-rotate route.
+  at::Tensor
+  norm_rotate(const at::Tensor& x, const std::string& name, const PackedInput& input) const {
+#ifdef INFINITY_TORCH_CUDA_KERNELS
+    if (device.is_cuda() && dtype == at::kBFloat16 && !input.multimodal_positions.defined() &&
+        x.dim() == 3 && x.size(-1) <= 8192)
+      return qwen35_reference_norm_rope_cuda(
+          x, w(name + ".weight"), cos_cache, sin_cache, radix_positions(input), rotary, epsilon);
+#endif
+    return rotate(norm(x, name), input);
+  }
+
   using AttentionProjections = std::array<at::Tensor, 3>;
 
   /// Produce attention projections from real compact/suffix rows while
@@ -591,8 +605,8 @@ class Qwen35 final : public Model {
     // Each query head packs [query | output gate], while K/V use kv_heads * dim features. Normalize
     // and rotate only query/key channels; the gate is applied after attention.
     auto qg = projections[0].view({tokens, heads, 2 * dim});
-    auto q = rotate(norm(qg.narrow(-1, 0, dim), p + "q_norm"), input);
-    auto k = rotate(norm(projections[1].view({tokens, kv_heads, dim}), p + "k_norm"), input);
+    auto q = norm_rotate(qg.narrow(-1, 0, dim), p + "q_norm", input);
+    auto k = norm_rotate(projections[1].view({tokens, kv_heads, dim}), p + "k_norm", input);
     auto v = projections[2].view({tokens, kv_heads, dim});
     auto unfolded = radix_unfold_qkv(q, k, v, input);
     q = unfolded[0];
