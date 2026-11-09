@@ -135,6 +135,32 @@ impl BackendPool {
     pub(crate) async fn acquire_replica(&self, id: usize) -> Result<Execution, BackendError> {
         self.acquire_matching(Some(id)).await
     }
+    /// Wait until a replica is idle without taking its lease. This keeps idle
+    /// backend tasks from repeatedly acquiring and releasing replicas while
+    /// they wait for the shared dispatch channel.
+    pub(crate) async fn wait_available(
+        &self,
+        id: usize,
+        changed: &mut watch::Receiver<()>,
+    ) -> Result<(), BackendError> {
+        loop {
+            changed.borrow_and_update();
+            {
+                let state = self.inner.state.lock().unwrap();
+                let replica = state.replicas.get(id).ok_or(BackendError::Unhealthy)?;
+                if state.closed || !replica.healthy {
+                    return Err(BackendError::Unhealthy);
+                }
+                if !replica.busy {
+                    return Ok(());
+                }
+            }
+            changed
+                .changed()
+                .await
+                .map_err(|_| BackendError::Unhealthy)?;
+        }
+    }
     async fn acquire_matching(&self, target: Option<usize>) -> Result<Execution, BackendError> {
         let mut changed = self.inner.changed.subscribe();
         let start = Instant::now();
@@ -231,6 +257,16 @@ impl BackendPool {
 }
 
 impl Execution {
+    async fn complete_submission<T>(
+        &mut self,
+        submission: Submission<T>,
+    ) -> Result<(T, Duration), BackendError> {
+        if matches!(submission, Submission::Deferred(_)) {
+            self.release();
+        }
+        submission.complete().await
+    }
+
     async fn run<T, F, Fut>(
         self,
         tokens: usize,
@@ -253,12 +289,7 @@ impl Execution {
             let backend = execution.pool.inner.backends[execution.id].clone();
             execution.started();
             let result = match call(backend).await {
-                Ok(submission) => {
-                    if matches!(submission, Submission::Deferred(_)) {
-                        execution.release();
-                    }
-                    submission.complete().await
-                }
+                Ok(submission) => execution.complete_submission(submission).await,
                 Err(error) => Err(error),
             };
             execution.finish(tokens, sequences, &result);
@@ -493,6 +524,32 @@ mod completion_tests {
         assert!(!state.replicas[0].busy);
         assert_eq!(state.idle.len(), 1);
     }
+    #[tokio::test]
+    async fn queued_work_keeps_replica_busy_until_response_completion() {
+        let mut execution = execution();
+        let pool = execution.pool.clone();
+        let (sender, receiver) = tokio::sync::oneshot::channel();
+        let completion = tokio::spawn(async move {
+            let result = execution
+                .complete_submission(Submission::Queued(receiver))
+                .await;
+            execution.finish(1, 1, &result);
+        });
+        tokio::task::yield_now().await;
+        {
+            let state = pool.inner.state.lock().unwrap();
+            assert!(state.replicas[0].busy);
+            assert!(state.idle.is_empty());
+        }
+        sender.send(Ok(((), Duration::from_millis(1)))).unwrap();
+        completion.await.unwrap();
+        let next = tokio::time::timeout(Duration::from_secs(1), pool.acquire_replica(0))
+            .await
+            .unwrap()
+            .unwrap();
+        next.finish(1, 1, &Ok(((), Duration::ZERO)));
+    }
+
     #[test]
     fn old_completion_does_not_release_the_next_model_lease() {
         let mut previous = execution();
@@ -524,5 +581,21 @@ mod completion_tests {
         assert!(!state.replicas[0].healthy);
         assert!(state.replicas[0].busy);
         assert!(state.idle.is_empty());
+    }
+    #[tokio::test]
+    async fn idle_waiter_neither_leases_nor_signals() {
+        let execution = execution();
+        let pool = execution.pool.clone();
+        execution.finish(0, 0, &Ok(((), Duration::ZERO)));
+        let mut changed = pool.changes();
+        pool.wait_available(0, &mut changed).await.unwrap();
+        assert!(
+            tokio::time::timeout(Duration::from_millis(50), changed.changed())
+                .await
+                .is_err()
+        );
+        let state = pool.inner.state.lock().unwrap();
+        assert!(!state.replicas[0].busy);
+        assert_eq!(state.idle, VecDeque::from([0]));
     }
 }

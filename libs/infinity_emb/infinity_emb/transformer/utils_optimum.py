@@ -106,6 +106,13 @@ def optimize_model(
         trust_remote_code (bool, optional): Whether to trust the remote code. Defaults to True.
     """
 
+    onnx_path = Path(file_name)
+    if onnx_path.is_absolute():
+        onnx_path = onnx_path.relative_to(Path(model_name_or_path).absolute())
+    elif Path(model_name_or_path).is_dir() and onnx_path.is_relative_to(model_name_or_path):
+        onnx_path = onnx_path.relative_to(model_name_or_path)
+    subfolder = onnx_path.parent.as_posix() if onnx_path.parent != Path(".") else ""
+
     ## If there is no need for optimization
     if execution_provider == "TensorrtExecutionProvider":
         return model_class.from_pretrained(
@@ -113,7 +120,8 @@ def optimize_model(
             revision=revision,
             trust_remote_code=trust_remote_code,
             provider=execution_provider,
-            file_name=file_name,
+            file_name=onnx_path.name,
+            subfolder=subfolder,
             provider_options={
                 "trt_fp16_enable": True,
                 "trt_layer_norm_fp32_fallback": True,
@@ -132,7 +140,8 @@ def optimize_model(
             revision=revision,
             trust_remote_code=trust_remote_code,
             provider=execution_provider,
-            file_name=file_name,
+            file_name=onnx_path.name,
+            subfolder=subfolder,
         )
 
     ## path to find if model has been optimized
@@ -160,7 +169,8 @@ def optimize_model(
         revision=revision,
         trust_remote_code=trust_remote_code,
         provider=execution_provider,
-        file_name=file_name,
+        file_name=onnx_path.name,
+        subfolder=subfolder,
     )
     if not optimize_model or execution_provider == "TensorrtExecutionProvider":
         return unoptimized_model
@@ -174,7 +184,7 @@ def optimize_model(
         )
         optimization_config = OptimizationConfig(
             optimization_level=99,
-            optimize_with_onnxruntime_only=False,
+            enable_transformers_specific_optimizations=True,
             optimize_for_gpu=is_gpu,
             fp16=is_gpu,
             # enable_gelu_approximation=True,

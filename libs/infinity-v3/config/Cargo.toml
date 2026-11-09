@@ -6,3 +6,9 @@ license-file.workspace = true
 authors.workspace = true
 
 [dependencies]
+clap = { workspace = true, optional = true }
+serde = { workspace = true, optional = true }
+
+[features]
+clap = ["dep:clap"]
+serde = ["dep:serde"]

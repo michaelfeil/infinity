@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "infinity_client"
-version = "0.0.78"
+version = "0.0.80"
 description = "A client library for accessing ♾️ Infinity - Embedding Inference Server"
 authors = []
 readme = "README.md"
@@ -14,7 +14,7 @@ include = ["CHANGELOG.md", "infinity_client/py.typed"]
 
 
 [tool.poetry.dependencies]
-python = "^3.8"
+python = "^3.11"
 httpx = ">=0.20.0,<0.29.0"
 attrs = ">=21.3.0"
 python-dateutil = "^2.8.0"

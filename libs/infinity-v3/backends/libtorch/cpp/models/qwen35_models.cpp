@@ -28,7 +28,7 @@
 #include <array>
 #include <map>
 #include <memory>
-#ifdef TEI_TORCH_CUDA_KERNELS
+#ifdef INFINITY_TORCH_CUDA_KERNELS
 #include <ATen/cuda/CUDAContext.h>
 #include <c10/cuda/CUDAStream.h>
 #include <c10/cuda/CUDAGuard.h>
@@ -75,7 +75,7 @@ class Qwen35 final : public Model {
   double epsilon;
   int64_t block_kv_chunk_tokens = 500000;
   bool block_paged = true;
-  bool delta_prefill = false, delta_suffix_prefill = false;
+  bool delta_prefill = false;
   at::Tensor cos_cache, sin_cache;
 
   /// Dense, routed, and shared-expert projections for one Qwen3.5 feed-forward block.
@@ -111,7 +111,7 @@ class Qwen35 final : public Model {
 
   // Choose the same accumulation tree as the original logical-row GEMM,
   // using descriptors only. Execute on actual compact rows, with no padding.
-#ifdef TEI_TORCH_CUDA_KERNELS
+#ifdef INFINITY_TORCH_CUDA_KERNELS
   /// Retained projection plan and workspace ownership for logical-row GEMMs.
   struct RadixLinearPlan {
     cublasLtMatmulDesc_t operation{};
@@ -150,7 +150,7 @@ class Qwen35 final : public Model {
                                      const PackedInput& packed) const {
     if (auto it = fp8_projections.find(name); it != fp8_projections.end())
       return it->second->forward(x);
-#ifdef TEI_TORCH_CUDA_KERNELS
+#ifdef INFINITY_TORCH_CUDA_KERNELS
     const auto& matrix = w(name + ".weight");
     // This profile qualifies logical-shape planning for the MoE output projection. Other matrices
     // deliberately unfold to their real logical rows in the fallback, preserving the
@@ -351,7 +351,7 @@ class Qwen35 final : public Model {
   /// Interpret the final dimension as [gate | up] and apply the reference SiLU/product stages,
   /// returning half as many features.
   at::Tensor gated(const at::Tensor& gu) const {
-#ifdef TEI_TORCH_CUDA_KERNELS
+#ifdef INFINITY_TORCH_CUDA_KERNELS
     if (device.is_cuda() && dtype == at::kBFloat16)
       return gemma_gated_cuda(gu, false);
 #endif
@@ -367,6 +367,10 @@ class Qwen35 final : public Model {
                           const PackedInput& input,
                           const QuantizedRows* quantized = nullptr) const {
     const auto& m = mlps[layer];
+    // Dense FP8 consumes the prepared rows directly and may omit its BF16 input.
+    TORCH_CHECK(x.defined() || (quantized && quantized->first.defined() &&
+                                quantized->second.defined() && !m.router.defined()),
+                "Missing Qwen3.5 feed-forward activations");
     MlpContext context;
     context.gemm = [&](const MlpProjection& projection, const at::Tensor& rows) {
       return prefix_linear(rows, projection.weight(), projection.gemm_bias(), input);
@@ -400,7 +404,7 @@ class Qwen35 final : public Model {
   /// Apply Qwen3.5 RMSNorm with an offset affine weight: scale is 1 + checkpoint weight. Statistics
   /// and affine scaling stay FP32 until the final cast back to model dtype.
   at::Tensor norm(const at::Tensor& x, const std::string& name) const {
-#ifdef TEI_TORCH_CUDA_KERNELS
+#ifdef INFINITY_TORCH_CUDA_KERNELS
     // Keep FP32 statistics and affine scaling in one CUDA kernel.
     if (device.is_cuda() && dtype == at::kBFloat16 && x.size(-1) <= 8192)
       return qwen35_reference_norm_cuda(x, w(name + ".weight"), epsilon);
@@ -414,11 +418,12 @@ class Qwen35 final : public Model {
   std::pair<at::Tensor, at::Tensor> residual_norm(const at::Tensor& x,
                                                   const at::Tensor& addition,
                                                   const std::string& name,
-                                                  QuantizedRows* quantized = nullptr) const {
-#ifdef TEI_TORCH_CUDA_KERNELS
+                                                  QuantizedRows* quantized = nullptr,
+                                                  bool materialize_norm = true) const {
+#ifdef INFINITY_TORCH_CUDA_KERNELS
     if (device.is_cuda() && dtype == at::kBFloat16 && x.size(-1) <= 8192)
       return qwen35_reference_residual_norm_cuda(
-          x, addition, w(name + ".weight"), epsilon, quantized);
+          x, addition, w(name + ".weight"), epsilon, quantized, materialize_norm);
 #endif
     auto updated = x + addition;
     return {updated, norm(updated, name)};
@@ -429,7 +434,7 @@ class Qwen35 final : public Model {
   /// match the input projection.
   at::Tensor rotate(const at::Tensor& x, const PackedInput& input) const {
     auto r = x.narrow(-1, 0, rotary);
-#ifdef TEI_TORCH_CUDA_KERNELS
+#ifdef INFINITY_TORCH_CUDA_KERNELS
     if (device.is_cuda() && dtype == at::kBFloat16 && !input.multimodal_positions.defined()) {
       auto rotated = gemma_rotary_cuda(r, cos_cache, sin_cache, radix_positions(input));
       return rotary == dim ? rotated : at::cat({rotated, x.narrow(-1, rotary, dim - rotary)}, -1);
@@ -781,7 +786,7 @@ class Qwen35 final : public Model {
     ab = radix_unfold(ab, input);
     at::Tensor output;
     if (device.is_cuda()) {
-#ifdef TEI_TORCH_CUDA_KERNELS
+#ifdef INFINITY_TORCH_CUDA_KERNELS
       auto conv = w(p + "conv1d.weight").view({qkv.size(1), -1}).contiguous();
       const auto& alog = w(p + "A_log");
       const auto& dt = w(p + "dt_bias");
@@ -825,8 +830,7 @@ class Qwen35 final : public Model {
                               chunks,
                               cache_layer,
                               delta_prefill && !cache,
-                              quantized_output,
-                              delta_suffix_prefill);
+                              quantized_output);
       }
 #else
       TORCH_CHECK(false, "Qwen3.5 requires the native DeltaNet CUDA kernel build");
@@ -1060,10 +1064,14 @@ class Qwen35 final : public Model {
         attended = prefix_projection(attended, output_name, input);
       }
       QuantizedRows mlp_rows;
+      const bool quantize_mlp = mlps[layer].dense_mlp.is_quantized() &&
+                                mlps[layer].dense_mlp.supports_rowwise_rms_input();
+      // Rowwise FP8 consumes the rounded norm through mlp_rows; no BF16 copy is needed.
       auto post = residual_norm(hidden,
                                 attended,
                                 p + "post_attention_layernorm",
-                                mlps[layer].dense_mlp.fp8() ? &mlp_rows : nullptr);
+                                quantize_mlp ? &mlp_rows : nullptr,
+                                !quantize_mlp);
       auto mlp =
           feed_forward(post.second, layer, input, mlp_rows.first.defined() ? &mlp_rows : nullptr);
       auto next = residual_norm(
@@ -1152,26 +1160,28 @@ public:
   }
 
   void ready() override {
+    const auto quantization = cfg.dynamic_quantization();
+    const auto scope = cfg.dynamic_quantization_scope(
+        quantization == Quantization::None ? QuantizationScope::Mlp : QuantizationScope::All);
     // Let the native provider select supported GPU families and GDN layouts.
-    delta_prefill = device.is_cuda() && !cfg.boolean("_fp8_dynamic", false);
-    const auto* suffix_policy = std::getenv(INFINITY_ENV("TORCH_GDN_SUFFIX_PREFILL"));
-    delta_suffix_prefill = !suffix_policy || std::string_view(suffix_policy) == "1";
-    const auto fp8 = cfg.boolean("_fp8_dynamic", false);
-    const auto scope = cfg.string("_fp8_scope", fp8 ? "all" : "mlp");
-    TORCH_CHECK(scope == "mlp" || scope == "all", "FP8 scope must be mlp or all");
-    TORCH_CHECK(scope != "all" || fp8, "All-linear FP8 requires dynamic FP8 enabled");
-    if (fp8) {
+    delta_prefill = device.is_cuda() && quantization == Quantization::None;
+    const bool quantized = quantization != Quantization::None;
+    TORCH_CHECK(scope != QuantizationScope::All || quantized,
+                "All-linear quantization requires a quantization format");
+    if (quantized) {
       TORCH_CHECK(device.is_cuda() && dtype == at::kBFloat16,
-                  "Dynamic FP8 Qwen3.5 requires CUDA BF16");
+                  quantization_name(quantization),
+                  " Qwen3.5 requires CUDA BF16");
       TORCH_CHECK(integer("num_experts", 0) == 0 && (cfg.string("model_type") == "qwen3_5" ||
                                                      cfg.string("model_type") == "qwen3_5_text"),
-                  "Dynamic FP8 Qwen3.5 supports dense models only");
+                  quantization_name(quantization),
+                  " Qwen3.5 supports dense models only");
       for (const auto& [name, value] : cfg.values)
         TORCH_CHECK(
             name != "quantization_config" && name.rfind("quantization_config.", 0) != 0 &&
                 name != "text_config.quantization_config" &&
                 name.rfind("text_config.quantization_config.", 0) != 0,
-            "Dynamic FP8 requires an unquantized checkpoint without supplied quantization scales");
+            "Quantized Qwen3.5 requires an unquantized checkpoint without supplied quantization scales");
     }
     TORCH_CHECK(!block_attention() || integer("num_experts", 0) == 0,
                 "OneJev block attention currently requires a dense Qwen3.5 model");
@@ -1239,8 +1249,8 @@ public:
         recipe.fusion = MlpFusion::RoundedSwiGlu;
         m.dense_mlp = DenseMlp({m.gate_up}, {m.down}, std::move(recipe));
         consumed = {mp + "gate_proj.weight", mp + "up_proj.weight", mp + "down_proj.weight"};
-        if (fp8) {
-          m.dense_mlp.prepare(MlpPrecision::Fp8);
+        if (quantized) {
+          m.dense_mlp.prepare(quantization);
           m.gate_up = at::Tensor();
           m.down = at::Tensor();
         }
@@ -1287,7 +1297,7 @@ public:
       // exclusively through mlps; keep all attention/embedding/vision/head keys.
       for (const auto& name : consumed)
         weights.erase(prefix + name);
-      if (fp8 && scope == "all") {
+      if (quantized && scope == QuantizationScope::All) {
         // Keep the small DeltaNet decay/update gates, convolution and recurrent
         // state in their original precision, along with vision and output heads.
         const std::vector<std::string> projections =

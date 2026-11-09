@@ -10,9 +10,13 @@
 #include <iostream>
 #include <vector>
 
-void resumed_delta(
-    c10::Device device, int64_t kh, int64_t vh, bool fma, bool quantization_only = false) {
-  constexpr int64_t tokens = 35;
+void resumed_delta(c10::Device device,
+                   int64_t kh,
+                   int64_t vh,
+                   bool fma,
+                   bool quantization_only = false,
+                   int32_t tokens = 35) {
+  TORCH_CHECK(tokens > 13, "Split/resume fixture requires at least 14 tokens");
   auto opts = at::TensorOptions().device(device).dtype(at::kBFloat16);
   auto qkv = (at::randn({tokens, (2 * kh + vh) * 128}, opts) * .2).contiguous();
   auto z = (at::randn({tokens, vh * 128}, opts) * .2).contiguous();
@@ -110,7 +114,7 @@ void resumed_delta(
   }
   if (quantization_only)
     return;
-  for (int64_t boundary : {1, 13, 34}) {
+  for (int64_t boundary : {1, 13, tokens - 1}) {
     if (fma) {
       auto prefill = full;
       int32_t prefix_offsets[] = {0, int32_t(boundary)};
@@ -386,7 +390,82 @@ int main(int argc, char** argv) {
                     "GDN packing changed provider values, casts or alignment");
     }
   std::cout << "GDN provider packing values, casts, strides and alignment passed\n";
-  for (int width : {1, 4, 7, 8, 16, 32, 33, 64, 128, 256, 384, 1024, 2048, 4096, 5120, 8192})
+  // Keep later reference fixtures independent of this comparison's random draws.
+  auto generator = at::globalContext().defaultGenerator(device).clone();
+  // The fused fresh-prefix producer must match convolution, prepare, and pack
+  // bit for bit, including padded strides, sequence boundaries, and both
+  // softplus branches.
+  for (auto [kh, vh] : {std::pair<int64_t, int64_t>{3, 3}, {16, 48}})
+    for (int64_t tokens : {1, 257}) {
+      auto options = at::TensorOptions().device(device).dtype(at::kBFloat16);
+      const auto channels = (2 * kh + vh) * 128;
+      auto values_base = at::randn({tokens, channels + 8}, generator, options);
+      auto values = values_base.narrow(1, 4, channels);
+      auto ab_base = at::randn({tokens, 2 * vh + 3}, generator, options);
+      auto ab = ab_base.narrow(1, tokens % 2, 2 * vh);
+      for (int64_t t = 0; t < tokens; ++t) {
+        float a = 0.f, b = 0.f;
+        switch (t % 5) {
+        case 0:
+          a = 25.f;
+          b = 40.f;
+          break;
+        case 1:
+          a = 20.f;
+          b = -40.f;
+          break;
+        case 2:
+          a = -25.f;
+          b = 0.f;
+          break;
+        case 3:
+          a = 0.f;
+          b = 20.f;
+          break;
+        default:
+          a = 1e-3f;
+          b = -20.f;
+          break;
+        }
+        ab.select(0, t).narrow(0, 0, vh).fill_(a);
+        ab.select(0, t).narrow(0, vh, vh).fill_(b);
+      }
+      auto weights = (at::randn({channels, 4}, generator, options) * .2).contiguous();
+      std::vector<int32_t> boundaries =
+          tokens > 4 ? std::vector<int32_t>{0, 1, int32_t(tokens / 2), int32_t(tokens)}
+                     : std::vector<int32_t>{0, int32_t(tokens)};
+      auto cumulative = at::tensor(boundaries, options.dtype(at::kInt));
+      auto convolution = infinity::qwen35_conv_cuda(
+          values.clone(), weights, cumulative, int64_t(boundaries.size()) - 1);
+      auto a_log = at::linspace(-2.f, 2.f, vh, options.dtype(at::kFloat));
+      auto dt_bias = at::linspace(-.5f, .5f, vh, options.dtype(at::kFloat));
+      auto fused = infinity::qwen35_gdn_prepare_pack_cuda(
+          values, weights, cumulative, ab, a_log, dt_bias, kh, vh);
+      auto [qk, decay] =
+          infinity::qwen35_gdn_prepare_cuda(convolution, ab.contiguous(), a_log, dt_bias, kh, vh);
+      auto qk_base = at::empty({tokens * kh, 264}, options.dtype(at::kFloat));
+      auto qk_strided = qk_base.narrow(1, 0, 256);
+      qk_strided.copy_(qk);
+      auto gate_base = at::empty({tokens, 2 * vh + 3}, options.dtype(at::kFloat));
+      auto gate_strided = gate_base.narrow(1, 0, 2 * vh);
+      gate_strided.copy_(decay);
+      auto expected =
+          infinity::flashinfer_gdn_pack_cuda(convolution, qk_strided, gate_strided, kh, vh);
+      for (size_t i = 0; i < fused.size(); ++i)
+        TORCH_CHECK(fused[i].is_contiguous() &&
+                        reinterpret_cast<uintptr_t>(fused[i].const_data_ptr()) % 16 == 0 &&
+                        at::equal(fused[i].view(at::kByte), expected[i].view(at::kByte)),
+                    "Fused GDN convolution/prepare/pack changed provider buffers kh=",
+                    kh,
+                    " vh=",
+                    vh,
+                    " tokens=",
+                    tokens,
+                    " buffer=",
+                    i);
+    }
+  std::cout << "Fused GDN convolution/prepare/pack matches the old route bit for bit\n";
+  for (int width : {1, 3, 4, 7, 8, 16, 32, 33, 64, 128, 256, 384, 1024, 2048, 4096, 5120, 8192})
     for (int layout : {0, 1, 2}) {
       bool strided = layout == 1;
       int offset = layout == 2;
@@ -419,6 +498,7 @@ int main(int argc, char** argv) {
             width,
             " offset=",
             offset);
+        auto residual_before = residual.clone(), addition_before = addition.clone();
         std::pair<at::Tensor, at::Tensor> quantized;
         auto with_quantization = infinity::qwen35_reference_residual_norm_cuda(
             residual, addition, cuda_gamma, 1e-6, &quantized);
@@ -427,10 +507,83 @@ int main(int argc, char** argv) {
             at::equal(with_quantization.first, fused.first) &&
                 at::equal(with_quantization.second, fused.second) &&
                 at::equal(quantized.first.view(at::kByte), separate.first.view(at::kByte)) &&
-                at::equal(quantized.second, separate.second),
-            "Fused Qwen norm quantization changed rounded rows, E4M3 bytes or row scales");
+                at::equal(quantized.second, separate.second) &&
+                at::equal(residual, residual_before) && at::equal(addition, addition_before),
+            "Fused Qwen norm quantization changed rounded rows, E4M3 bytes, row scales or inputs");
+        std::pair<at::Tensor, at::Tensor> omitted_quantized;
+        auto omitted = infinity::qwen35_reference_residual_norm_cuda(
+            residual, addition, cuda_gamma, 1e-6, &omitted_quantized, false);
+        TORCH_CHECK(
+            !omitted.second.defined() && at::equal(omitted.first, with_quantization.first) &&
+                at::equal(omitted_quantized.first.view(at::kByte),
+                          quantized.first.view(at::kByte)) &&
+                at::equal(omitted_quantized.second, quantized.second) &&
+                at::equal(omitted_quantized.first.view(at::kByte),
+                          separate.first.view(at::kByte)) &&
+                at::equal(omitted_quantized.second, separate.second) &&
+                at::equal(residual, residual_before) && at::equal(addition, addition_before),
+            "Omitted Qwen norm output changed updated rows, E4M3 bytes, row scales or inputs");
       }
     }
+  // Production hidden widths exercise the dynamic-shared staging path with zero,
+  // large-magnitude and BF16-subnormal operands. The unquantized kernel remains the oracle.
+  auto check_staged_quantization = [&](int64_t width,
+                                       const at::Tensor& residual_cpu,
+                                       const at::Tensor& addition_cpu,
+                                       const at::Tensor& gamma_cpu,
+                                       const char* label) {
+    auto cuda_gamma = gamma_cpu.to(device);
+    auto residual = residual_cpu.to(device), addition = addition_cpu.to(device);
+    auto residual_before = residual.clone(), addition_before = addition.clone();
+    auto expected = (residual + addition).cpu();
+    auto plain =
+        infinity::qwen35_reference_residual_norm_cuda(residual, addition, cuda_gamma, 1e-6);
+    TORCH_CHECK(at::equal(plain.first.cpu(), expected) &&
+                    at::equal(plain.second.cpu(), independent_norm(expected, gamma_cpu, 1e-6)),
+                "Staged-norm reference changed ",
+                label,
+                " width=",
+                width);
+    std::pair<at::Tensor, at::Tensor> quantized;
+    auto staged = infinity::qwen35_reference_residual_norm_cuda(
+        residual, addition, cuda_gamma, 1e-6, &quantized);
+    auto separate = infinity::fp8_quantize_rows(plain.second);
+    TORCH_CHECK(at::equal(staged.first, plain.first) && at::equal(staged.second, plain.second) &&
+                    at::equal(quantized.first.view(at::kByte), separate.first.view(at::kByte)) &&
+                    at::equal(quantized.second, separate.second),
+                "Shared-staged Qwen norm quantization changed ",
+                label,
+                " width=",
+                width);
+    std::pair<at::Tensor, at::Tensor> omitted_quantized;
+    auto omitted = infinity::qwen35_reference_residual_norm_cuda(
+        residual, addition, cuda_gamma, 1e-6, &omitted_quantized, false);
+    TORCH_CHECK(
+        !omitted.second.defined() && at::equal(omitted.first, staged.first) &&
+            at::equal(omitted_quantized.first.view(at::kByte), quantized.first.view(at::kByte)) &&
+            at::equal(omitted_quantized.second, quantized.second) &&
+            at::equal(omitted_quantized.first.view(at::kByte), separate.first.view(at::kByte)) &&
+            at::equal(omitted_quantized.second, separate.second) &&
+            at::equal(residual, residual_before) && at::equal(addition, addition_before),
+        "Omitted shared-staged Qwen norm changed ",
+        label,
+        " width=",
+        width);
+    TORCH_CHECK(at::equal(residual, residual_before) && at::equal(addition, addition_before),
+                "Shared-staged Qwen norm mutated an input ",
+                label,
+                " width=",
+                width);
+  };
+  for (int64_t width : {2048, 4096, 5120, 8192}) {
+    auto gamma = (at::randn({width}) * .2).to(at::kBFloat16);
+    auto zero = at::zeros({4, width}, gamma.options());
+    auto large = at::full({4, width}, 1e6f, gamma.options());
+    auto subnormal = at::full({4, width}, std::ldexp(1.f, -133), gamma.options());
+    check_staged_quantization(width, zero, at::zeros_like(zero), gamma, "zeros");
+    check_staged_quantization(width, large, large * .25, gamma, "large");
+    check_staged_quantization(width, subnormal, subnormal, gamma, "subnormal");
+  }
   auto rejects = [&](const at::Tensor& x, const at::Tensor& gamma) {
     bool rejected = false;
     try {
@@ -444,6 +597,19 @@ int main(int argc, char** argv) {
   rejects(at::empty({2, 0}, opts), at::empty({0}, opts));
   rejects(at::ones({2, 7}, opts), at::ones({7}, opts.device(at::kCPU)));
   rejects(at::ones({2, 7}, opts), at::ones({1, 7}, opts));
+  bool omitted_without_quantized = false;
+  try {
+    (void)infinity::qwen35_reference_residual_norm_cuda(at::zeros({2, 64}, opts),
+                                                        at::zeros({2, 64}, opts),
+                                                        at::ones({64}, opts),
+                                                        1e-6,
+                                                        nullptr,
+                                                        false);
+  } catch (const c10::Error&) {
+    omitted_without_quantized = true;
+  }
+  TORCH_CHECK(omitted_without_quantized,
+              "Omitting normalized output without FP8 storage must reject before launch");
   // Deterministic synthetic operands exercise packed recurrence isolation.
   auto q = at::randn({32, 384}, opts) * .2, z = at::randn({32, 128}, opts) * .2;
   auto ab = at::randn({32, 2}, opts) * .2, conv = at::randn({384, 4}, opts) * .2;
@@ -503,6 +669,9 @@ int main(int argc, char** argv) {
     }
   for (auto geometry : {std::pair<int64_t, int64_t>{16, 16}, {16, 48}, {32, 128}})
     resumed_delta(device, geometry.first, geometry.second, true, true);
+  // A lone 185-token suffix and eight copies must use the same arithmetic.
+  // Reuse the cache/state oracle with a real GVA geometry across the old gate.
+  resumed_delta(device, 16, 48, true, false, 198);
   std::cout << "Independent original norms and synthetic packed sequence isolation passed\n";
   std::cout << "DeltaNet cache isolation and split/resume passed in both arithmetic modes\n";
 }

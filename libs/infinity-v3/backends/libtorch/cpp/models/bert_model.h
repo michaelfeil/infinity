@@ -10,7 +10,7 @@
 #include "helpers/attention.h"
 #include "helpers/vendor_error.h"
 #include "helpers/workspace_admission.h"
-#ifdef TEI_TORCH_CUDA_KERNELS
+#ifdef INFINITY_TORCH_CUDA_KERNELS
 #include "kernels/fast_kernels.h"
 #include "kernels/encoder_norm.h"
 #include "kernels/encoder_activation.h"
@@ -35,7 +35,7 @@
 namespace {
 /// Packed BERT/RoBERTa backbone with native attention and optional task readouts.
 struct Bert : infinity::Model {
-  TeiConfig config;
+  InfinityTorchConfig config;
   c10::Device device;
   at::ScalarType dtype;
   std::unordered_map<std::string, at::Tensor> weights;
@@ -44,13 +44,14 @@ struct Bert : infinity::Model {
   std::unordered_map<std::string, infinity::DenseMlp> mlps;
   std::optional<infinity::DenseMlp> classifier_mlp;
   bool roberta = false;
+  bool quantized = false;
   bool cudnn_varlen = false;
   bool private_flash_embedding = false;
   bool native_bert_embedding = false;
   bool private_flash_roberta_embedding = false;
   bool private_flash_exact_classifier = false;
   bool exact_biased_norm = false;
-#ifdef TEI_TORCH_CUDA_KERNELS
+#ifdef INFINITY_TORCH_CUDA_KERNELS
   bool cached_classifier_gemm = false;
 
   /// Owns cuBLASLt descriptors and algorithm metadata for a cached classifier GEMM.
@@ -79,7 +80,7 @@ struct Bert : infinity::Model {
   mutable at::Tensor classifier_workspace;
   mutable std::map<std::array<int64_t, 5>, std::unique_ptr<ClassifierPlan>> classifier_plans;
 #endif
-  Bert(TeiConfig cfg, c10::Device dev, at::ScalarType type)
+  Bert(InfinityTorchConfig cfg, c10::Device dev, at::ScalarType type)
       : config(cfg), device(dev), dtype(type) {}
 
   const at::Tensor& w(const std::string& name) const {
@@ -94,7 +95,7 @@ struct Bert : infinity::Model {
                                    const at::Tensor& matrix,
                                    const at::Tensor& bias,
                                    bool gelu = false) const {
-#ifdef TEI_TORCH_CUDA_KERNELS
+#ifdef INFINITY_TORCH_CUDA_KERNELS
     // This cache stores GEMM+bias/activation descriptors. Feature multiples, operand alignment, and
     // the scalar-output exception bound that epilogue path; an ineligible projection still
     // uses its original operator.
@@ -268,9 +269,9 @@ struct Bert : infinity::Model {
   /// the unrounded sum; other CUDA and CPU paths retain their existing fused or composed recipe.
   at::Tensor
   residual_norm(const at::Tensor& x, const at::Tensor& residual, const std::string& name) const {
-#ifdef TEI_TORCH_CUDA_KERNELS
-    if (x.is_cuda() && (exact_biased_norm || config.hidden == 384 ||
-                        (private_flash_embedding && options.boolean("_fp8_dynamic", false))))
+#ifdef INFINITY_TORCH_CUDA_KERNELS
+    if (x.is_cuda() &&
+        (exact_biased_norm || config.hidden == 384 || (private_flash_embedding && quantized)))
       return infinity::encoder_layer_norm_only(
           x, w(name + ".weight"), config.epsilon, residual, w(name + ".bias"), false);
     if (x.is_cuda())
@@ -290,13 +291,17 @@ struct Bert : infinity::Model {
   /// kernels. This load-time qualification keeps per-request dispatch tied
   /// to the supported numerical profile.
   void ready() override {
+    const auto quantization = options.dynamic_quantization();
+    quantized = quantization != infinity::Quantization::None;
+    TORCH_CHECK(options.dynamic_quantization_scope() == infinity::QuantizationScope::Mlp,
+                "BERT quantization supports MLP scope only");
     TORCH_CHECK(
         device.is_cpu() || device.is_cuda(),
         "LibTorch 2.14.1 varlen Flash Attention requires CUDA. CPU supports an unpadded reference path; MPS/XPU are not implemented.");
     if (device.is_cuda()) {
       TORCH_CHECK(dtype == at::kHalf || dtype == at::kBFloat16,
                   "CUDA varlen attention requires float16 or bfloat16");
-#ifdef TEI_TORCH_CUDA_KERNELS
+#ifdef INFINITY_TORCH_CUDA_KERNELS
       const auto major = at::cuda::getDeviceProperties(device.index())->major;
       cudnn_varlen = options.boolean("_cudnn_varlen", false) && (major == 9 || major == 10) &&
                      at::detail::getCUDAHooks().versionRuntimeCuDNN() >= 91800;
@@ -313,7 +318,7 @@ struct Bert : infinity::Model {
         break;
       }
     }
-#ifdef TEI_TORCH_CUDA_KERNELS
+#ifdef INFINITY_TORCH_CUDA_KERNELS
     // Standard small/large BERT CLS embeddings use the same packed and biased
     // normalization contracts as the existing base-width implementation.
     native_bert_embedding =
@@ -322,17 +327,16 @@ struct Bert : infinity::Model {
          (config.hidden == 1024 && config.heads == 16)) &&
         config.intermediate == 4 * config.hidden && classification_width() == 0 &&
         options.string("_embedding_pool") == "cls" && !options.boolean("_multi_vector", false) &&
-        !options.boolean("_fp8_dynamic", false) &&
-        (config.activation == 0 || config.activation == 1) &&
+        !quantized && (config.activation == 0 || config.activation == 1) &&
         at::cuda::getDeviceProperties(device.index())->major >= 8;
     // Supported FP16 BERT embedding geometry. Dynamic FP8 also needs
     // the original Flash rounding before quantization, including trained heads.
     // BERT classifier backbones share this geometry; keep SPLADE and RoBERTa selectors unchanged.
-    private_flash_embedding =
-        device.is_cuda() && dtype == at::kHalf && !roberta && config.hidden == 768 &&
-        config.heads == 12 && (config.activation == 0 || config.activation == 1) &&
-        at::cuda::getDeviceProperties(device.index())->major >= 8 &&
-        (options.string("_pooling") != "splade" || options.boolean("_fp8_dynamic", false));
+    private_flash_embedding = device.is_cuda() && dtype == at::kHalf && !roberta &&
+                              config.hidden == 768 && config.heads == 12 &&
+                              (config.activation == 0 || config.activation == 1) &&
+                              at::cuda::getDeviceProperties(device.index())->major >= 8 &&
+                              (options.string("_pooling") != "splade" || quantized);
     // RoBERTa classifier projections use the same biased/GELU GEMM contract;
     // retain its existing attention selector while reusing projection plans.
     // BF16 RoBERTa retains its storage type throughout the same epilogue.
@@ -342,8 +346,7 @@ struct Bert : infinity::Model {
         (config.hidden == 768 || config.hidden == 384) && config.heads == 12 &&
         (config.activation == 0 || config.activation == 1) &&
         at::cuda::getDeviceProperties(device.index())->major >= 8 && classification_width() > 0 &&
-        !options.boolean("_fp8_dynamic", false) &&
-        at::globalContext().blasPreferredBackend() == at::BlasBackend::Cublaslt;
+        !quantized && at::globalContext().blasPreferredBackend() == at::BlasBackend::Cublaslt;
     // Reuse the bounded biased-GEMM plans for standard CLS embeddings too.
     // ATen's default addmm path already selects cuBLASLt for these layouts.
     cached_classifier_gemm |=
@@ -355,7 +358,7 @@ struct Bert : infinity::Model {
         (at::globalContext().blasPreferredBackend() == at::BlasBackend::Cublas ||
          at::globalContext().blasPreferredBackend() == at::BlasBackend::Cublaslt);
 #endif
-#ifdef TEI_TORCH_CUDA_KERNELS
+#ifdef INFINITY_TORCH_CUDA_KERNELS
     // BERT and its aliases share Candle's biased LayerNorm primitive: residual
     // statistics use the unrounded FP32 sum. Kernel eligibility is independent
     // of model alias, pooling and head architecture; other profiles retain their selectors.
@@ -371,8 +374,7 @@ struct Bert : infinity::Model {
         ((roberta && config.hidden == 384) ||
          (!roberta && dtype == at::kBFloat16 && config.hidden == 768)) &&
         (config.activation == 0 || config.activation == 1) &&
-        at::cuda::getDeviceProperties(device.index())->major >= 8 &&
-        !options.boolean("_fp8_dynamic", false);
+        at::cuda::getDeviceProperties(device.index())->major >= 8 && !quantized;
     // RoBERTa eager scope: SM80+ FP16 hidden768/head64 mean
     // embeddings. Keep dynamic FP8, trained heads and other pools unchanged.
     private_flash_roberta_embedding =
@@ -380,7 +382,7 @@ struct Bert : infinity::Model {
         config.hidden == 768 && config.heads == 12 &&
         (config.activation == 0 || config.activation == 1) &&
         at::cuda::getDeviceProperties(device.index())->major >= 8 && classification_width() == 0 &&
-        options.string("_embedding_pool") == "mean" && !options.boolean("_fp8_dynamic", false);
+        options.string("_embedding_pool") == "mean" && !quantized;
 #endif
     check("embeddings.word_embeddings.weight", {config.vocab, config.hidden});
     check("embeddings.position_embeddings.weight", {config.positions, config.hidden});
@@ -430,6 +432,9 @@ struct Bert : infinity::Model {
         activation.quantized_custom = [kind](const at::Tensor& rows) {
           return infinity::mlp_activation(rows, kind);
         };
+        activation.fp8_activation = kind == infinity::MlpActivation::RoundedSilu
+                                        ? infinity::Fp8Activation::RoundedSilu
+                                        : infinity::Fp8Activation::RoundedGelu;
         if (private_flash_embedding && config.activation != 3)
           activation.fusion = infinity::MlpFusion::RoundedBiasGelu;
       }
@@ -438,8 +443,8 @@ struct Bert : infinity::Model {
           infinity::DenseMlp({w(p + "intermediate.dense.weight"), w(p + "intermediate.dense.bias")},
                              {w(p + "output.dense.weight"), w(p + "output.dense.bias")},
                              std::move(activation));
-      if (options.boolean("_fp8_dynamic", false)) {
-        mlp.prepare(infinity::MlpPrecision::Fp8);
+      if (quantized) {
+        mlp.prepare(quantization);
         for (const auto& name : {p + "intermediate.dense", p + "output.dense"}) {
           weights.erase(prefix + name + ".weight");
         }
@@ -560,7 +565,7 @@ struct Bert : infinity::Model {
     const auto* ends = input.offsets;
     const auto batch = input.batch, max_sequence = input.max_sequence;
     at::Tensor h;
-#ifdef TEI_TORCH_CUDA_KERNELS
+#ifdef INFINITY_TORCH_CUDA_KERNELS
     if (private_flash_roberta_embedding && !exact_biased_norm) {
       h = infinity::fused_embedding_layer_norm(ids,
                                                types,
@@ -577,7 +582,7 @@ struct Bert : infinity::Model {
       auto word = at::embedding(w("embeddings.word_embeddings.weight"), ids);
       auto token_type = at::embedding(w("embeddings.token_type_embeddings.weight"), types);
       auto position = at::embedding(w("embeddings.position_embeddings.weight"), positions);
-#ifdef TEI_TORCH_CUDA_KERNELS
+#ifdef INFINITY_TORCH_CUDA_KERNELS
       if (word.is_cuda() && exact_biased_norm && config.hidden == 768 &&
           word.scalar_type() == at::kHalf)
         h = infinity::encoder_embedding_layer_norm(word,
@@ -586,8 +591,7 @@ struct Bert : infinity::Model {
                                                    w("embeddings.LayerNorm.weight"),
                                                    config.epsilon,
                                                    w("embeddings.LayerNorm.bias"));
-      else if (word.is_cuda() && (exact_biased_norm || (private_flash_embedding &&
-                                                        options.boolean("_fp8_dynamic", false))))
+      else if (word.is_cuda() && (exact_biased_norm || (private_flash_embedding && quantized)))
         h = infinity::encoder_layer_norm_only(word + token_type,
                                               w("embeddings.LayerNorm.weight"),
                                               config.epsilon,
@@ -689,7 +693,7 @@ struct Bert : infinity::Model {
         // Cumulative INT32 offsets are on-device. No padded batch or mask exists.
         // cuDNN helps long sequences; FlashAttention is faster on the measured
         // ragged batches with maximum length 256, despite a similar token total.
-#ifdef TEI_TORCH_CUDA_KERNELS
+#ifdef INFINITY_TORCH_CUDA_KERNELS
         // Native Torch packed Flash avoids cuDNN setup overhead for moderate
         // token totals. FP8 needs the fused Torch arithmetic at every total
         // to preserve quantization inputs; normal FP16 larger totals retain
@@ -709,8 +713,7 @@ struct Bert : infinity::Model {
               q, k, v, cumulative, max_sequence, 1.0 / std::sqrt(static_cast<double>(head)));
         } else if ((private_flash_exact_classifier ||
                     ((private_flash_embedding || private_flash_roberta_embedding) &&
-                     (tokens <= 4096 ||
-                      (private_flash_embedding && options.boolean("_fp8_dynamic", false))))) &&
+                     (tokens <= 4096 || (private_flash_embedding && quantized)))) &&
                    infinity::torch_flash_fma_supported(q, k, v)) {
           attended = infinity::torch_flash_fma(
               q, k, v, cumulative, max_sequence, 1.0 / std::sqrt(static_cast<double>(head)), false);

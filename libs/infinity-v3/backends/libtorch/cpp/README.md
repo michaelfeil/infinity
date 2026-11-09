@@ -7,16 +7,30 @@
 - `tests/`: existing native regression fixtures and reference data.
 - `vendor/`: pinned third-party sources and their licenses.
 - `bridge.cpp` and `bridge.h`: C ABI, model construction and request dispatch.
+- Shared `ServingLimits` reach native code through the `_max_batch_tokens`,
+  `_max_sequence_length` (effective `max_input_length`), and optional
+  `_max_batch_requests` options passed through `infinity_torch_option`. These communicate
+  resolved limits without changing scheduling or graph policy.
 
 Includes use paths relative to this directory, so dependencies between categories
 are explicit. `models/model.h` defines the model contract; packed request data
 belongs to `batching/packed_input.h`, options and checkpoint weights to
 `helpers/options.h`, and shared attention composition to `helpers/attention.h`.
 
-The CMake target and test names remain stable. CUDA sources keep their original
-compile flags and vendored kernel includes. BERT's existing implementation is
-in `models/bert_model.h`; its public configuration remains `TeiConfig` from the
-C ABI.
+The `infinity_torch` CMake target builds `libinfinity_torch.so`. The C ABI uses
+`infinity_torch_*` entry points and `InfinityTorch*` descriptors, including
+`InfinityTorchConfig` for BERT in `models/bert_model.h`. Native consumers must
+rebuild against these names; the former `tei_*` symbols are not exported.
+Build definitions and local kernel helpers use the `INFINITY_` and `infinity_`
+prefixes. Runtime settings retain the configured `ENV_VAR_BASE` (default `INFINITY`).
+
+Projection quantization is selected per model through the `_dynamic_quantization`
+(`none`, `fp8`, `mxfp8`, `nvfp4`) and `_dynamic_quantization_scope` (`mlp`, `all`)
+options, exposed by the CLI as `--dynamic-quantization` and
+`--dynamic-quantization-scope` (and the compiled-prefix
+`DYNAMIC_QUANTIZATION`/`DYNAMIC_QUANTIZATION_SCOPE` environment variables).
+`fp8` is rowwise, while `mxfp8`/`nvfp4` select those eligible MLP formats and
+keep all-scope non-MLP projections on rowwise FP8.
 
 ## Where to start
 

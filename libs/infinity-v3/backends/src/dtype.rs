@@ -5,13 +5,11 @@ use clap::ValueEnum;
 
 #[derive(Debug, PartialEq)]
 #[cfg_attr(feature = "clap", derive(Clone, ValueEnum))]
+/// Model dtype vocabulary is independent of compiled inference backends.
 pub enum DType {
     Auto,
-    #[cfg(feature = "libtorch")]
     Float16,
-    #[cfg(feature = "libtorch")]
     Float32,
-    #[cfg(feature = "libtorch")]
     Bfloat16,
 }
 
@@ -19,11 +17,8 @@ impl fmt::Display for DType {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
             DType::Auto => write!(f, "auto"),
-            #[cfg(feature = "libtorch")]
             DType::Float16 => write!(f, "float16"),
-            #[cfg(feature = "libtorch")]
             DType::Float32 => write!(f, "float32"),
-            #[cfg(feature = "libtorch")]
             DType::Bfloat16 => write!(f, "bfloat16"),
         }
     }
@@ -36,7 +31,11 @@ impl Default for DType {
         {
             DType::Float32
         }
-        #[cfg(not(feature = "libtorch"))]
+        #[cfg(all(feature = "python-backend", not(feature = "libtorch")))]
+        {
+            DType::Float32
+        }
+        #[cfg(not(any(feature = "libtorch", feature = "python-backend")))]
         {
             DType::Auto
         }

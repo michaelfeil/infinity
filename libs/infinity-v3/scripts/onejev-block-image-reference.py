@@ -48,38 +48,38 @@ def flatten(value, prefix=''):
 class Native:
     def __init__(self, library, model, device, dtype):
         self.lib = lib = C.CDLL(str(library.resolve()))
-        lib.tei_error.restype = C.c_char_p
-        lib.tei_create.argtypes = [C.POINTER(Config), C.c_char_p, C.c_int32]
-        lib.tei_create.restype = C.c_void_p
-        lib.tei_option.argtypes = [C.c_void_p, C.c_char_p, C.c_char_p]
-        lib.tei_weight.argtypes = [C.c_void_p, C.c_char_p, C.c_void_p, C.c_void_p, C.c_size_t, C.c_int32]
-        lib.tei_ready.argtypes = lib.tei_destroy.argtypes = [C.c_void_p]
-        lib.tei_decide.argtypes = [C.c_void_p] + [C.c_void_p] * 4 + [
+        lib.infinity_torch_error.restype = C.c_char_p
+        lib.infinity_torch_create.argtypes = [C.POINTER(Config), C.c_char_p, C.c_int32]
+        lib.infinity_torch_create.restype = C.c_void_p
+        lib.infinity_torch_option.argtypes = [C.c_void_p, C.c_char_p, C.c_char_p]
+        lib.infinity_torch_weight.argtypes = [C.c_void_p, C.c_char_p, C.c_void_p, C.c_void_p, C.c_size_t, C.c_int32]
+        lib.infinity_torch_ready.argtypes = lib.infinity_torch_destroy.argtypes = [C.c_void_p]
+        lib.infinity_torch_decide.argtypes = [C.c_void_p] + [C.c_void_p] * 4 + [
             C.c_int64, C.c_int64, C.c_void_p, C.c_void_p, C.c_size_t,
             C.c_void_p, C.c_void_p, C.c_void_p, C.c_size_t, C.c_void_p, C.c_size_t]
-        lib.tei_decide_radix.argtypes = lib.tei_decide.argtypes + [C.c_void_p]
+        lib.infinity_torch_decide_radix.argtypes = lib.infinity_torch_decide.argtypes + [C.c_void_p]
         cfg = model.config.to_dict()
         text = cfg['text_config']
         conf = Config(text['hidden_size'], text['num_attention_heads'], text['num_hidden_layers'],
                       text['intermediate_size'], text['vocab_size'], text['max_position_embeddings'], 1,
                       text['rms_norm_eps'], 0)
-        self.handle = lib.tei_create(C.byref(conf), device.encode(), 0 if dtype == 'float32' else 2)
+        self.handle = lib.infinity_torch_create(C.byref(conf), device.encode(), 0 if dtype == 'float32' else 2)
         if not self.handle:
-            raise RuntimeError(lib.tei_error().decode())
+            raise RuntimeError(lib.infinity_torch_error().decode())
         cfg.update(_decision={'kind': 'option_tokens', 'config': {}},
                    _decision_attention_mode='block_bidirectional', _pooling='decision', _dense_count=0)
         for key, value in flatten(cfg):
-            self.check(lib.tei_option(self.handle, key.encode(), value.encode()))
+            self.check(lib.infinity_torch_option(self.handle, key.encode(), value.encode()))
         for name, value in model.state_dict().items():
             tensor = value.detach().cpu().contiguous()
             shape = np.asarray(tensor.shape, np.int64)
-            self.check(lib.tei_weight(self.handle, name.encode(), tensor.data_ptr(), shape.ctypes.data,
+            self.check(lib.infinity_torch_weight(self.handle, name.encode(), tensor.data_ptr(), shape.ctypes.data,
                                      len(shape), {torch.float32: 0, torch.float16: 1, torch.bfloat16: 2}[tensor.dtype]))
-        self.check(lib.tei_ready(self.handle))
+        self.check(lib.infinity_torch_ready(self.handle))
 
     def check(self, code):
         if code:
-            raise RuntimeError(self.lib.tei_error().decode())
+            raise RuntimeError(self.lib.infinity_torch_error().decode())
 
     def prepare(self, cases, omit_media_positions=False, use_radix_api=False):
         ids = np.concatenate([case['ids'] for case in cases]).astype(np.int64)
@@ -109,13 +109,13 @@ class Native:
                 metadata, logits.ctypes.data, len(logits), actions.ctypes.data,
                 axes.ctypes.data if not omit_media_positions and (len(images) or not np.array_equal(axes, np.tile(positions, (3, 1)))) else None,
                 images, len(images), None, 0)
-            self.check(self.lib.tei_decide_radix(*arguments, None) if use_radix_api else self.lib.tei_decide(*arguments))
+            self.check(self.lib.infinity_torch_decide_radix(*arguments, None) if use_radix_api else self.lib.infinity_torch_decide(*arguments))
             assert np.isfinite(logits).all()
             return logits.reshape(len(cases), -1).copy()
         return forward
 
     def close(self):
-        self.lib.tei_destroy(self.handle)
+        self.lib.infinity_torch_destroy(self.handle)
 
 
 def cases_for(config, image_grid=4):
@@ -317,7 +317,7 @@ def main():
                 # One shared upload fits; eight independently owned pixel buffers
                 # exceed this same limit even if their contents are identical.
                 limit = 2 * cases[0]['images'][0]['pixels'].nbytes + 1024 * 1024
-                native.check(native.lib.tei_option(native.handle, b'_input_upload_max_bytes', str(limit).encode()))
+                native.check(native.lib.infinity_torch_option(native.handle, b'_input_upload_max_bytes', str(limit).encode()))
                 packed()
                 distinct_storage = [dict(case, images=[dict(image, pixels=image['pixels'].copy()) for image in case['images']]) for case in repeated]
                 try:
@@ -327,7 +327,7 @@ def main():
                 else:
                     raise AssertionError('Distinct pixel uploads escaped the input budget')
                 finally:
-                    native.check(native.lib.tei_option(native.handle, b'_input_upload_max_bytes', str(512 << 20).encode()))
+                    native.check(native.lib.infinity_torch_option(native.handle, b'_input_upload_max_bytes', str(512 << 20).encode()))
             result = dict(model=str(args.model or 'tiny-random-hybrid-vision'), device=args.device,
                 dtype=args.dtype, cases=report, timings=timings, profile=profile)
             args.output.write_text(json.dumps(result, indent=2)+'\n')

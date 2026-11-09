@@ -8,7 +8,10 @@ namespace infinity {
 // and its own pages; unused cells are masked by the true KV sequence lengths.
 struct BlockPages {
   static constexpr int64_t page_size = 256;
-  at::Tensor gather, table;
+  // FA4 paged KV consumes 128-row pages; each 256-row page is two subpages of
+  // the same gathered storage, so no copy is required.
+  static constexpr int64_t fa4_page_size = 128;
+  at::Tensor gather, table, subpage_table;
   int64_t max_k = 0;
 };
 

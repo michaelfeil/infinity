@@ -8,6 +8,7 @@
 mod radix;
 #[cfg(unix)]
 mod weight_reader;
+use infinity_v3_config::{DynamicQuantization, DynamicQuantizationScope};
 use radix::{NativeRadix, OwnedRadix};
 #[cfg(any(not(unix), test))]
 use safetensors::{Dtype, SafeTensors};
@@ -190,12 +191,16 @@ impl OwnedDecision {
     }
 }
 extern "C" {
-    fn tei_error() -> *const c_char;
-    fn tei_last_error_kind() -> i32;
-    fn tei_device_count(device: *const c_char) -> i64;
-    fn tei_device_preflight(device: *const c_char) -> i32;
-    fn tei_create(config: *const NativeConfig, device: *const c_char, dtype: i32) -> *mut c_void;
-    fn tei_weight(
+    fn infinity_torch_error() -> *const c_char;
+    fn infinity_torch_last_error_kind() -> i32;
+    fn infinity_torch_device_count(device: *const c_char) -> i64;
+    fn infinity_torch_device_preflight(device: *const c_char) -> i32;
+    fn infinity_torch_create(
+        config: *const NativeConfig,
+        device: *const c_char,
+        dtype: i32,
+    ) -> *mut c_void;
+    fn infinity_torch_weight(
         handle: *mut c_void,
         name: *const c_char,
         data: *const u8,
@@ -203,22 +208,24 @@ extern "C" {
         rank: usize,
         dtype: i32,
     ) -> i32;
-    fn tei_option(handle: *mut c_void, key: *const c_char, value: *const c_char) -> i32;
-    fn tei_output_width(handle: *mut c_void) -> i64;
-    fn tei_pooled_width(handle: *mut c_void) -> i64;
-    fn tei_classification_width(handle: *mut c_void) -> i64;
-    fn tei_supports_radix(handle: *mut c_void) -> i32;
-    fn tei_prefix_cache_supported(handle: *mut c_void, operation: i32) -> i32;
-    fn tei_prefix_cache_set_probe(handle: *mut c_void, enabled: i32) -> i32;
-    fn tei_graph_count(handle: *mut c_void) -> i64;
-    fn tei_ready(handle: *mut c_void) -> i32;
-    fn tei_decision_counts(
+    fn infinity_torch_option(handle: *mut c_void, key: *const c_char, value: *const c_char) -> i32;
+    #[cfg(test)]
+    fn infinity_torch_runtime_limits(handle: *mut c_void, limits: *mut i64, count: usize) -> i32;
+    fn infinity_torch_output_width(handle: *mut c_void) -> i64;
+    fn infinity_torch_pooled_width(handle: *mut c_void) -> i64;
+    fn infinity_torch_classification_width(handle: *mut c_void) -> i64;
+    fn infinity_torch_supports_radix(handle: *mut c_void) -> i32;
+    fn infinity_torch_prefix_cache_supported(handle: *mut c_void, operation: i32) -> i32;
+    fn infinity_torch_prefix_cache_set_probe(handle: *mut c_void, enabled: i32) -> i32;
+    fn infinity_torch_graph_count(handle: *mut c_void) -> i64;
+    fn infinity_torch_ready(handle: *mut c_void) -> i32;
+    fn infinity_torch_decision_counts(
         handle: *mut c_void,
         requests: *const NativeDecision,
         count: usize,
         counts: *mut i64,
     ) -> i32;
-    fn tei_decide_radix(
+    fn infinity_torch_decide_radix(
         handle: *mut c_void,
         ids: *const i64,
         types: *const i64,
@@ -237,7 +244,7 @@ extern "C" {
         audio_count: usize,
         radix: *const NativeRadix,
     ) -> i32;
-    fn tei_forward_radix(
+    fn infinity_torch_forward_radix(
         handle: *mut c_void,
         ids: *const i64,
         types: *const i64,
@@ -259,7 +266,7 @@ extern "C" {
         audio_count: usize,
         radix: *const NativeRadix,
     ) -> i32;
-    fn tei_forward_submit(
+    fn infinity_torch_forward_submit(
         handle: *mut c_void,
         ids: *const i64,
         types: *const i64,
@@ -280,18 +287,22 @@ extern "C" {
         audio_count: usize,
         radix: *const NativeRadix,
     ) -> *mut c_void;
-    fn tei_output_wait(handle: *mut c_void) -> *const f32;
-    fn tei_output_destroy(handle: *mut c_void);
-    fn tei_destroy(handle: *mut c_void);
+    fn infinity_torch_output_wait(handle: *mut c_void) -> *const f32;
+    fn infinity_torch_output_destroy(handle: *mut c_void);
+    fn infinity_torch_destroy(handle: *mut c_void);
 }
 
 fn native_error() -> String {
     // SAFETY: the bridge owns a thread-local, NUL-terminated string valid until the next call.
-    unsafe { CStr::from_ptr(tei_error()).to_string_lossy().into_owned() }
+    unsafe {
+        CStr::from_ptr(infinity_torch_error())
+            .to_string_lossy()
+            .into_owned()
+    }
 }
 fn native_failure() -> BackendError {
     // Read the structured thread-local kind before any subsequent bridge call.
-    let kind = unsafe { tei_last_error_kind() };
+    let kind = unsafe { infinity_torch_last_error_kind() };
     let message = native_error();
     match kind {
         2 => BackendError::Overloaded(message),
@@ -306,11 +317,11 @@ fn start(error: impl ToString) -> BackendError {
     BackendError::Start(error.to_string())
 }
 
-fn resolve_fp8_scope(
-    requested: Option<&str>,
-    enabled: bool,
+fn resolve_dynamic_quantization_scope(
+    requested: DynamicQuantizationScope,
+    dynamic_quantization: DynamicQuantization,
     family: &str,
-) -> Result<String, BackendError> {
+) -> Result<&'static str, BackendError> {
     let dense_decoder = matches!(
         family,
         "llama"
@@ -326,20 +337,77 @@ fn resolve_fp8_scope(
             | "ultrabert"
             | "ultravbert"
     );
-    let scope = requested.unwrap_or(if enabled && dense_decoder {
+    let scope = match requested {
+        DynamicQuantizationScope::Auto if dynamic_quantization.is_enabled() && dense_decoder => {
+            DynamicQuantizationScope::All
+        }
+        DynamicQuantizationScope::Auto => DynamicQuantizationScope::Mlp,
+        scope => scope,
+    };
+    if scope == DynamicQuantizationScope::All && !dynamic_quantization.is_enabled() {
+        return Err(start(
+            "All-linear dynamic quantization requires a format other than none",
+        ));
+    }
+    if scope == DynamicQuantizationScope::All && !dense_decoder {
+        return Err(start(
+            "All-linear dynamic quantization requires a supported dense decoder",
+        ));
+    }
+    Ok(if scope == DynamicQuantizationScope::All {
         "all"
     } else {
         "mlp"
-    });
-    if !matches!(scope, "mlp" | "all") {
-        return Err(start("TORCH_FP8_SCOPE must be mlp or all"));
+    })
+}
+
+fn resolve_device_with(
+    requested: &str,
+    cuda_available: impl FnOnce() -> bool,
+) -> Result<String, BackendError> {
+    match requested {
+        "auto" => Ok(if cuda_available() {
+            "cuda:0".into()
+        } else {
+            "cpu".into()
+        }),
+        "cpu" => Ok("cpu".into()),
+        device if device.starts_with("cuda:") => Ok(device.into()),
+        _ => Err(start("LibTorch 2.14.1 varlen attention requires CUDA; only CPU reference and CUDA are supported")),
     }
-    if scope == "all" && (!enabled || !dense_decoder) {
-        return Err(start(
-            "All-linear FP8 requires dynamic FP8 and a supported dense decoder",
-        ));
+}
+
+fn validate_dynamic_quantization(
+    dynamic_quantization: DynamicQuantization,
+    dtype: &str,
+    device: &str,
+) -> Result<(), BackendError> {
+    if !dynamic_quantization.is_enabled() {
+        return Ok(());
     }
-    Ok(scope.to_owned())
+    if !device.starts_with("cuda:") {
+        return Err(start(format!(
+            "{} dynamic quantization requires CUDA",
+            dynamic_quantization.as_str()
+        )));
+    }
+    let dtype_supported = if dynamic_quantization.requires_bfloat16() {
+        dtype == "bfloat16"
+    } else {
+        matches!(dtype, "float16" | "bfloat16")
+    };
+    if !dtype_supported {
+        return Err(start(format!(
+            "{} dynamic quantization requires {}",
+            dynamic_quantization.as_str(),
+            if dynamic_quantization.requires_bfloat16() {
+                "bfloat16"
+            } else {
+                "float16 or bfloat16"
+            }
+        )));
+    }
+    Ok(())
 }
 
 fn upload_weight(
@@ -368,7 +436,7 @@ fn upload_weight(
     // SAFETY: byte length matches the checked shape and dtype; native code copies
     // the data synchronously. The caller owns the live model handle.
     if unsafe {
-        tei_weight(
+        infinity_torch_weight(
             handle.as_ptr(),
             name.as_ptr(),
             data.as_ptr(),
@@ -445,7 +513,7 @@ fn host_output_bytes(
 pub fn device_count(device: &str) -> Result<usize, BackendError> {
     let device = CString::new(device).map_err(start)?;
     // SAFETY: the C string is valid for the duration of the synchronous call.
-    let count = unsafe { tei_device_count(device.as_ptr()) };
+    let count = unsafe { infinity_torch_device_count(device.as_ptr()) };
     usize::try_from(count).map_err(|_| start(native_error()))
 }
 
@@ -490,14 +558,14 @@ pub struct LibtorchBackend {
     host_result_pool: std::sync::Arc<text_embeddings_backend_core::result_memory::ResultPool>,
     prefix_cache: bool,
 }
-// SAFETY: the handle owns its tensors and is used by TEI's single backend worker.
+// SAFETY: the handle owns its tensors and is used by Infinity's backend worker.
 // It can move between threads; it is deliberately not Sync. InferenceMode is set per native call.
 unsafe impl Send for LibtorchBackend {}
 
 impl Drop for LibtorchBackend {
     fn drop(&mut self) {
         // SAFETY: this handle is uniquely owned and destroyed exactly once.
-        unsafe { tei_destroy(self.handle.as_ptr()) };
+        unsafe { infinity_torch_destroy(self.handle.as_ptr()) };
     }
 }
 
@@ -505,15 +573,16 @@ impl LibtorchBackend {
     /// Number of captured packed shapes; zero also covers eager fallback.
     pub fn cuda_graph_count(&self) -> usize {
         // SAFETY: this uniquely owned handle stays live throughout the synchronous query.
-        unsafe { tei_graph_count(self.handle.as_ptr()) as usize }
+        unsafe { infinity_torch_graph_count(self.handle.as_ptr()) as usize }
     }
     pub fn new(
         path: &Path,
         dtype: &str,
         model_type: ModelType,
         device: &str,
+        limits: text_embeddings_backend_core::ServingLimits,
     ) -> Result<Self, BackendError> {
-        Self::new_with_dense_paths(path, dtype, model_type, device, None)
+        Self::new_with_dense_paths(path, dtype, model_type, device, None, limits)
     }
     pub fn new_with_dense_paths(
         path: &Path,
@@ -521,27 +590,44 @@ impl LibtorchBackend {
         model_type: ModelType,
         device: &str,
         dense_paths: Option<Vec<String>>,
+        limits: text_embeddings_backend_core::ServingLimits,
     ) -> Result<Self, BackendError> {
-        Self::new_with_dense_paths_and_fp8(path, dtype, model_type, device, dense_paths, false)
+        Self::new_with_dense_paths_and_dynamic_quantization(
+            path,
+            dtype,
+            model_type,
+            device,
+            dense_paths,
+            DynamicQuantization::None,
+            DynamicQuantizationScope::Auto,
+            limits,
+        )
     }
+    #[allow(clippy::too_many_arguments)]
     #[tracing::instrument(
         name = "model_load", skip_all,
         fields(path = %path.display(), device = device, pid = std::process::id())
     )]
-    pub fn new_with_dense_paths_and_fp8(
+    pub fn new_with_dense_paths_and_dynamic_quantization(
         path: &Path,
         dtype: &str,
         model_type: ModelType,
         device: &str,
         dense_paths: Option<Vec<String>>,
-        enable_fp8_dynamic: bool,
+        dynamic_quantization: DynamicQuantization,
+        dynamic_quantization_scope: DynamicQuantizationScope,
+        runtime_limits: text_embeddings_backend_core::ServingLimits,
     ) -> Result<Self, BackendError> {
-        if device != "cpu" && device != "auto" && !device.starts_with("cuda:") {
-            return Err(start("LibTorch 2.14.1 varlen attention requires CUDA; only CPU reference and CUDA are supported"));
-        }
+        infinity_v3_config::validate_retired_dynamic_quantization_env(|name| {
+            std::env::var_os(name)
+        })
+        .map_err(start)?;
+        let device =
+            resolve_device_with(device, || device_count("cuda").is_ok_and(|count| count > 0))?;
         if device.starts_with("cuda:") && !matches!(dtype, "float16" | "bfloat16") {
             return Err(start("CUDA varlen attention requires float16 or bfloat16"));
         }
+        validate_dynamic_quantization(dynamic_quantization, dtype, &device)?;
         let pool = match &model_type {
             ModelType::Embedding(pool) => pool.clone(),
             ModelType::Classifier => Pool::Cls,
@@ -557,6 +643,20 @@ impl LibtorchBackend {
         } else {
             "config.json"
         })?;
+        {
+            let limits = runtime_limits;
+            if limits.max_input_length > limits.max_batch_tokens {
+                return Err(start("max_input_length cannot exceed max_batch_tokens"));
+            }
+            options["_max_batch_tokens"] =
+                serde_json::json!(i64::try_from(limits.max_batch_tokens).map_err(start)?);
+            options["_max_sequence_length"] =
+                serde_json::json!(i64::try_from(limits.max_input_length).map_err(start)?);
+            if let Some(requests) = limits.max_batch_requests {
+                options["_max_batch_requests"] =
+                    serde_json::json!(i64::try_from(requests).map_err(start)?);
+            }
+        }
         // Head tensors can also be present when the requested operation is embedding.
         options["_classifier"] = serde_json::json!(model_type == ModelType::Classifier);
         let colbert = options["architectures"]
@@ -683,14 +783,14 @@ impl LibtorchBackend {
         }
         .to_owned();
         options["model_type"] = normalized_family.clone().into();
-        if !enable_fp8_dynamic
+        if !dynamic_quantization.is_enabled()
             && (matches!(family.as_str(), "colqwen3" | "qwen3_vl_nemotron_embed")
                 || (family == "ministral3"
                     && options["is_causal"] == false
                     && options["pooling"] == "avg"))
         {
-            // Preserve reference rounding for frozen text encoders; dynamic
-            // FP8 uses the native decoder arithmetic contract.
+            // Preserve reference rounding for frozen text encoders; quantized
+            // models use the native decoder arithmetic contract.
             options["_transformers_math"] = true.into();
         }
         if family == "qwen3_vl_nemotron_embed" {
@@ -715,23 +815,20 @@ impl LibtorchBackend {
             }
             options["is_causal"] = false.into();
         }
-        if enable_fp8_dynamic {
-            if options
+        if dynamic_quantization.is_enabled()
+            && options
                 .get("quantization_config")
                 .is_some_and(|value| !value.is_null())
-            {
-                return Err(start("Dynamic FP8 requires an unquantized checkpoint"));
-            }
-            if !matches!(dtype, "float16" | "bfloat16") || device == "cpu" {
-                return Err(start("Dynamic FP8 requires CUDA float16/bfloat16"));
-            }
+        {
+            return Err(start(format!(
+                "{} dynamic quantization requires an unquantized checkpoint",
+                dynamic_quantization.as_str()
+            )));
         }
-        options["_fp8_dynamic"] = enable_fp8_dynamic.into();
-        let requested_scope =
-            std::env::var(infinity_v3_config::infinity_env!("TORCH_FP8_SCOPE")).ok();
-        options["_fp8_scope"] = resolve_fp8_scope(
-            requested_scope.as_deref(),
-            enable_fp8_dynamic,
+        options["_dynamic_quantization"] = dynamic_quantization.as_str().into();
+        options["_dynamic_quantization_scope"] = resolve_dynamic_quantization_scope(
+            dynamic_quantization_scope,
+            dynamic_quantization,
             &normalized_family,
         )?
         .into();
@@ -1106,12 +1203,12 @@ impl LibtorchBackend {
             _ => return Err(start("Unsupported LibTorch dtype")),
         };
         if device != "cpu" {
-            let name = CString::new(device).map_err(start)?;
+            let name = CString::new(device.as_str()).map_err(start)?;
             let started = std::time::Instant::now();
             tracing::info!("Starting LibTorch device check");
             // SAFETY: the device string outlives this synchronous call; native
             // code catches C++ exceptions and completes the CUDA check/readback.
-            if unsafe { tei_device_preflight(name.as_ptr()) } != 0 {
+            if unsafe { infinity_torch_device_preflight(name.as_ptr()) } != 0 {
                 return Err(start(format!(
                     "Device preflight failed for {device}: {}",
                     native_error()
@@ -1133,8 +1230,9 @@ impl LibtorchBackend {
         if host_output_max_bytes == 0 {
             return Err(start("Host output memory budget must be positive"));
         }
-        let handle = NonNull::new(unsafe { tei_create(&native, device.as_ptr(), dtype) })
-            .ok_or_else(|| start(native_error()))?;
+        let handle =
+            NonNull::new(unsafe { infinity_torch_create(&native, device.as_ptr(), dtype) })
+                .ok_or_else(|| start(native_error()))?;
         let mut model = Self {
             handle,
             config,
@@ -1144,8 +1242,7 @@ impl LibtorchBackend {
             classification_width: 0,
             supports_radix: false,
             prefix_cache: options["_prefix_cache_max_bytes"].as_i64().unwrap_or(0) > 0,
-            cuda: device.to_bytes().starts_with(b"cuda")
-                || (device.to_bytes() == b"auto" && device_count("cuda").unwrap_or(0) > 0),
+            cuda: device.to_bytes().starts_with(b"cuda"),
             decision,
             multi_vector,
             skip_tokens,
@@ -1182,7 +1279,8 @@ impl LibtorchBackend {
             let key = CString::new(key).map_err(start)?;
             let value = CString::new(value).map_err(start)?;
             // SAFETY: the bridge copies both NUL-terminated strings before returning.
-            if unsafe { tei_option(handle.as_ptr(), key.as_ptr(), value.as_ptr()) } != 0 {
+            if unsafe { infinity_torch_option(handle.as_ptr(), key.as_ptr(), value.as_ptr()) } != 0
+            {
                 return Err(start(native_error()));
             }
         }
@@ -1220,15 +1318,18 @@ impl LibtorchBackend {
             .collect::<Vec<_>>();
         if let Some(kind) = decision_kind {
             if matches!(kind, "pplx" | "d3") {
-                files.push(("readout.safetensors".into(), "__tei_decision.".into()));
+                files.push(("readout.safetensors".into(), "__infinity_decision.".into()));
             }
             if kind == "clef" {
-                files.push(("joint_head.safetensors".into(), "__tei_decision.".into()));
+                files.push((
+                    "joint_head.safetensors".into(),
+                    "__infinity_decision.".into(),
+                ));
             }
             if kind == "vela3_vision" {
                 files.push((
                     "decision_adapter.safetensors".into(),
-                    "__tei_decision.".into(),
+                    "__infinity_decision.".into(),
                 ));
             }
         }
@@ -1310,28 +1411,31 @@ impl LibtorchBackend {
             "Finished checkpoint load"
         );
         // SAFETY: the live handle is owned by model; this checks every required weight and its shape.
-        if unsafe { tei_ready(handle.as_ptr()) } != 0 {
+        if unsafe { infinity_torch_ready(handle.as_ptr()) } != 0 {
             return Err(start(native_error()));
         }
         // SAFETY: ready() has created and validated the concrete model.
-        model.output_width = usize::try_from(unsafe { tei_output_width(handle.as_ptr()) })
-            .map_err(|_| start(native_error()))?;
+        model.output_width =
+            usize::try_from(unsafe { infinity_torch_output_width(handle.as_ptr()) })
+                .map_err(|_| start(native_error()))?;
         // SAFETY: ready() has validated the projection chain and its output width.
-        model.pooled_width = usize::try_from(unsafe { tei_pooled_width(handle.as_ptr()) })
-            .map_err(|_| start(native_error()))?;
+        model.pooled_width =
+            usize::try_from(unsafe { infinity_torch_pooled_width(handle.as_ptr()) })
+                .map_err(|_| start(native_error()))?;
         // SAFETY: ready() has validated the concrete model and owns its weights.
         model.classification_width =
-            usize::try_from(unsafe { tei_classification_width(handle.as_ptr()) })
+            usize::try_from(unsafe { infinity_torch_classification_width(handle.as_ptr()) })
                 .map_err(|_| start(native_error()))?;
         if model_type == ModelType::Classifier && model.classification_width == 0 {
             return Err(start("Checkpoint has no supported classification head"));
         }
         // SAFETY: the initialized handle owns immutable model capability flags.
-        model.supports_radix = unsafe { tei_supports_radix(handle.as_ptr()) } == 1;
+        model.supports_radix = unsafe { infinity_torch_supports_radix(handle.as_ptr()) } == 1;
         if model.prefix_cache {
             let operation = i32::from(model_type == ModelType::Classifier);
             // SAFETY: the initialized handle owns the concrete model capability.
-            let supported = unsafe { tei_prefix_cache_supported(handle.as_ptr(), operation) };
+            let supported =
+                unsafe { infinity_torch_prefix_cache_supported(handle.as_ptr(), operation) };
             if supported < 0 {
                 return Err(start(native_error()));
             }
@@ -1367,7 +1471,7 @@ impl<'a> PrefixProbe<'a> {
     fn new(backend: &'a LibtorchBackend) -> Result<Self, BackendError> {
         let handle = backend.handle;
         // SAFETY: the backend worker serializes access to this live engine.
-        let previous = unsafe { tei_prefix_cache_set_probe(handle.as_ptr(), 1) };
+        let previous = unsafe { infinity_torch_prefix_cache_set_probe(handle.as_ptr(), 1) };
         if previous < 0 {
             return Err(inference(native_error()));
         }
@@ -1381,7 +1485,7 @@ impl<'a> PrefixProbe<'a> {
 impl Drop for PrefixProbe<'_> {
     fn drop(&mut self) {
         // SAFETY: this scope cannot outlive the borrowed backend; restore even on errors.
-        unsafe { tei_prefix_cache_set_probe(self.handle.as_ptr(), self.previous) };
+        unsafe { infinity_torch_prefix_cache_set_probe(self.handle.as_ptr(), self.previous) };
     }
 }
 // SAFETY: the uniquely owned lease is transferred once; it never calls the model.
@@ -1389,7 +1493,7 @@ unsafe impl Send for NativeOutput {}
 impl NativeOutput {
     fn values(&self) -> Result<&[f32], BackendError> {
         // SAFETY: wait synchronizes the lease's event before exposing its pinned output.
-        let values = unsafe { tei_output_wait(self.handle.as_ptr()) };
+        let values = unsafe { infinity_torch_output_wait(self.handle.as_ptr()) };
         if values.is_null() {
             return Err(native_failure());
         }
@@ -1400,7 +1504,7 @@ impl NativeOutput {
 impl Drop for NativeOutput {
     fn drop(&mut self) {
         // SAFETY: uniquely owned lease; destruction drains work before buffer reuse.
-        unsafe { tei_output_destroy(self.handle.as_ptr()) };
+        unsafe { infinity_torch_output_destroy(self.handle.as_ptr()) };
     }
 }
 
@@ -1603,7 +1707,7 @@ impl LibtorchBackend {
                 }
             }
         }
-        // Preserve TEI's packed layout: allocations scale with actual tokens, never B * max_length.
+        // Preserve the packed layout: allocations scale with actual tokens, never B * max_length.
         let ids = collect_fallible(batch.input_ids.iter().map(|&id| id as i64))?;
         let types = collect_fallible(batch.token_type_ids.iter().map(|&id| id as i64))?;
         let positions = collect_fallible(batch.position_ids.iter().map(|&id| id as i64))?;
@@ -1640,7 +1744,7 @@ impl LibtorchBackend {
             let mut counts = filled_vec(b, 0i64)?;
             // SAFETY: descriptors and their backing span/token buffers remain owned above.
             if unsafe {
-                tei_decision_counts(
+                infinity_torch_decision_counts(
                     self.handle.as_ptr(),
                     native.as_ptr(),
                     native.len(),
@@ -1677,7 +1781,7 @@ impl LibtorchBackend {
             // SAFETY: native output counts bound capacity, validated packed/media buffers stay live,
             // and all exceptions are caught by the bridge before returning across the C ABI.
             if unsafe {
-                tei_decide_radix(
+                infinity_torch_decide_radix(
                     self.handle.as_ptr(),
                     ids.as_ptr(),
                     types.as_ptr(),
@@ -1773,7 +1877,7 @@ impl LibtorchBackend {
             // SAFETY: all descriptors remain live during submission. Native code
             // copies staged inputs and owns every buffer needed after return.
             let handle = NonNull::new(unsafe {
-                tei_forward_submit(
+                infinity_torch_forward_submit(
                     self.handle.as_ptr(),
                     ids.as_ptr(),
                     types.as_ptr(),
@@ -1821,7 +1925,7 @@ impl LibtorchBackend {
         // SAFETY: validated dimensions and indices bound every native read/write. All buffers stay
         // live until this synchronous call returns; exceptions cannot cross the C ABI.
         if unsafe {
-            tei_forward_radix(
+            infinity_torch_forward_radix(
                 self.handle.as_ptr(),
                 ids.as_ptr(),
                 types.as_ptr(),
@@ -1981,6 +2085,46 @@ mod pytorch_checkpoint;
 #[cfg(test)]
 mod tests {
     use super::*;
+    fn limits() -> text_embeddings_backend_core::ServingLimits {
+        text_embeddings_backend_core::ServingLimits::new(16_384, 8_192, None).unwrap()
+    }
+    fn test_dynamic_quantization() -> DynamicQuantization {
+        match std::env::var("INFINITY_TEST_DYNAMIC_QUANTIZATION").as_deref() {
+            Ok("fp8") => DynamicQuantization::Fp8,
+            Ok("mxfp8") => DynamicQuantization::Mxfp8,
+            Ok("nvfp4") => DynamicQuantization::Nvfp4,
+            _ => DynamicQuantization::None,
+        }
+    }
+
+    #[test]
+    fn native_runtime_receives_the_resolved_limits() {
+        let fixture = fixture("", false);
+        let limits =
+            text_embeddings_backend_core::ServingLimits::new(10_003, 2_301, Some(37)).unwrap();
+        let model = LibtorchBackend::new_with_dense_paths_and_dynamic_quantization(
+            &fixture.0,
+            "float32",
+            ModelType::Embedding(Pool::Mean),
+            "cpu",
+            None,
+            DynamicQuantization::None,
+            DynamicQuantizationScope::Auto,
+            limits,
+        )
+        .unwrap();
+        let mut received = [0i64; 3];
+        // SAFETY: the initialized handle is live and the output has exactly three slots.
+        let status = unsafe {
+            infinity_torch_runtime_limits(
+                model.handle.as_ptr(),
+                received.as_mut_ptr(),
+                received.len(),
+            )
+        };
+        assert_eq!(status, 0, "{}", native_error());
+        assert_eq!(received, [10_003, 2_301, 37]);
+    }
 
     #[test]
     fn invalid_device_fails_before_weight_access() {
@@ -1991,6 +2135,7 @@ mod tests {
             "bfloat16",
             ModelType::Embedding(Pool::Mean),
             "cuda:999",
+            limits(),
         )
         .err()
         .expect("Invalid device must fail initialization");
@@ -2012,6 +2157,7 @@ mod tests {
             "float32",
             ModelType::Embedding(Pool::Mean),
             "cpu",
+            limits(),
         )
         .unwrap();
         let expected = model.embed(batch()).unwrap();
@@ -2048,9 +2194,10 @@ mod tests {
         )
         .unwrap();
         for dtype in ["float32", "float16"] {
-            let error = LibtorchBackend::new(&fixture.0, dtype, ModelType::Decision, "cpu")
-                .err()
-                .expect("D3 must reject unsupported precision");
+            let error =
+                LibtorchBackend::new(&fixture.0, dtype, ModelType::Decision, "cpu", limits())
+                    .err()
+                    .expect("D3 must reject unsupported precision");
             assert!(error.to_string().contains("D3 requires bfloat16"));
         }
     }
@@ -2063,13 +2210,14 @@ mod tests {
             "float32",
             ModelType::Embedding(Pool::Mean),
             "cpu",
+            limits(),
         )
         .unwrap();
         let mut output = [42.0f32; 20];
         // SAFETY: a valid two-token packed input and one 16-dimensional pooled
         // result; the caller intentionally supplies four unused output elements.
         let status = unsafe {
-            tei_forward_radix(
+            infinity_torch_forward_radix(
                 model.handle.as_ptr(),
                 [1i64, 2].as_ptr(),
                 [0i64, 0].as_ptr(),
@@ -2143,7 +2291,7 @@ mod tests {
     fn fixture_with_intermediate(prefix: &str, sharded: bool, intermediate: usize) -> Fixture {
         static NEXT: AtomicUsize = AtomicUsize::new(0);
         let path = std::env::temp_dir().join(format!(
-            "tei-libtorch-test-{}-{}",
+            "infinity-libtorch-test-{}-{}",
             std::process::id(),
             NEXT.fetch_add(1, Ordering::Relaxed)
         ));
@@ -2277,7 +2425,9 @@ mod tests {
     fn values(value: &Embedding) -> Vec<f32> {
         match value {
             Embedding::Pooled(v) => v.clone(),
+            Embedding::Shared(v) => v.to_vec(),
             Embedding::All(v) => v.iter().flatten().copied().collect(),
+            Embedding::SharedAll(v) => v.iter().flat_map(|row| row.iter().copied()).collect(),
         }
     }
 
@@ -2296,7 +2446,8 @@ mod tests {
         ));
         fs::write(&file, serialize(views, None).unwrap()).unwrap();
         let kind = ModelType::Embedding(Pool::Mean);
-        let baseline = LibtorchBackend::new(&fixture.0, "float32", kind.clone(), "cpu").unwrap();
+        let baseline =
+            LibtorchBackend::new(&fixture.0, "float32", kind.clone(), "cpu", limits()).unwrap();
         let mut input = batch();
         input.pooled_indices.clear();
         input.raw_indices = vec![0, 1];
@@ -2306,7 +2457,8 @@ mod tests {
             serde_json::from_slice(&fs::read(&config_file).unwrap()).unwrap();
         config["architectures"] = serde_json::json!(["HF_ColBERT"]);
         fs::write(config_file, serde_json::to_vec(&config).unwrap()).unwrap();
-        let model = LibtorchBackend::new(&fixture.0, "float32", kind.clone(), "cpu").unwrap();
+        let model =
+            LibtorchBackend::new(&fixture.0, "float32", kind.clone(), "cpu", limits()).unwrap();
         model.probe(batch(), &kind).unwrap();
         let actual = model.embed(input).unwrap();
         for index in [0, 1] {
@@ -2335,7 +2487,7 @@ mod tests {
             "pooled ColBERT output must be rejected"
         );
         fs::write(file, &bytes).unwrap();
-        let error = LibtorchBackend::new(&fixture.0, "float32", kind, "cpu")
+        let error = LibtorchBackend::new(&fixture.0, "float32", kind, "cpu", limits())
             .err()
             .unwrap();
         assert!(error.to_string().contains("missing its token projection"));
@@ -2388,10 +2540,11 @@ mod tests {
             let model_type = ModelType::Embedding(Pool::Mean);
             // Safetensors takes priority over a present incompatible fallback.
             fs::write(fixture.0.join("pytorch_model.bin"), b"invalid pickle").unwrap();
-            let baseline = LibtorchBackend::new(&fixture.0, "float32", model_type.clone(), "cpu")
-                .unwrap()
-                .embed(batch())
-                .unwrap();
+            let baseline =
+                LibtorchBackend::new(&fixture.0, "float32", model_type.clone(), "cpu", limits())
+                    .unwrap()
+                    .embed(batch())
+                    .unwrap();
             if base_bin {
                 pytorch_checkpoint::from_safetensors(
                     &fixture.0.join("model.safetensors"),
@@ -2409,7 +2562,7 @@ mod tests {
                     fs::remove_file(dir.join("model.safetensors")).unwrap();
                 }
             }
-            let actual = LibtorchBackend::new(&fixture.0, "float32", model_type, "cpu")
+            let actual = LibtorchBackend::new(&fixture.0, "float32", model_type, "cpu", limits())
                 .unwrap()
                 .embed(batch())
                 .unwrap();
@@ -2424,6 +2577,7 @@ mod tests {
                         "float32",
                         ModelType::Embedding(Pool::Mean),
                         "cpu",
+                        limits()
                     ),
                     Err(BackendError::Start(_))
                 ));
@@ -2436,13 +2590,15 @@ mod tests {
         let path = std::env::var("INFINITY_TEST_CHECKPOINT_PATH")
             .expect("Set INFINITY_TEST_CHECKPOINT_PATH to a supported local embedding checkpoint");
         let started = std::time::Instant::now();
-        let backend = LibtorchBackend::new_with_dense_paths_and_fp8(
+        let backend = LibtorchBackend::new_with_dense_paths_and_dynamic_quantization(
             Path::new(&path),
             "bfloat16",
             ModelType::Embedding(Pool::Mean),
             "cuda:0",
             None,
-            std::env::var("INFINITY_TEST_FP8_DYNAMIC").as_deref() == Ok("1"),
+            test_dynamic_quantization(),
+            DynamicQuantizationScope::Auto,
+            limits(),
         )
         .unwrap();
         let loaded = started.elapsed();
@@ -2470,6 +2626,7 @@ mod tests {
             "float16",
             ModelType::Embedding(Pool::Mean),
             "cuda:0",
+            limits(),
         )
         .unwrap();
         // The same CUDA path also accepts a valid batch with no requested rows.
@@ -2530,8 +2687,10 @@ mod tests {
         for pool in [Pool::Cls, Pool::Mean, Pool::LastToken] {
             let model_type = ModelType::Embedding(pool);
             let cpu =
-                LibtorchBackend::new(&fixture.0, "float32", model_type.clone(), "cpu").unwrap();
-            let gpu = LibtorchBackend::new(&fixture.0, "float16", model_type, "cuda:0").unwrap();
+                LibtorchBackend::new(&fixture.0, "float32", model_type.clone(), "cpu", limits())
+                    .unwrap();
+            let gpu = LibtorchBackend::new(&fixture.0, "float16", model_type, "cuda:0", limits())
+                .unwrap();
             let expected = cpu.embed(batch()).unwrap();
             let actual = gpu.embed(batch()).unwrap();
             for (row, embedding) in actual {
@@ -2541,7 +2700,9 @@ mod tests {
                 assert!(got.iter().zip(want).all(|(a, b)| (a - b).abs() < 0.02));
                 match embedding {
                     Embedding::Pooled(v) => assert_eq!(v.len(), 3),
+                    Embedding::Shared(v) => assert_eq!(v.len(), 3),
                     Embedding::All(v) => assert!(v.iter().all(|token| token.len() == 16)),
+                    Embedding::SharedAll(v) => assert!(v.iter().all(|token| token.len() == 16)),
                 }
             }
         }
@@ -2561,10 +2722,17 @@ mod tests {
             .unwrap();
             for pool in [Pool::Cls, Pool::Mean, Pool::LastToken, Pool::Splade] {
                 let model_type = ModelType::Embedding(pool);
-                let cpu =
-                    LibtorchBackend::new(&fixture.0, "float32", model_type.clone(), "cpu").unwrap();
+                let cpu = LibtorchBackend::new(
+                    &fixture.0,
+                    "float32",
+                    model_type.clone(),
+                    "cpu",
+                    limits(),
+                )
+                .unwrap();
                 let gpu =
-                    LibtorchBackend::new(&fixture.0, "float16", model_type, "cuda:0").unwrap();
+                    LibtorchBackend::new(&fixture.0, "float16", model_type, "cuda:0", limits())
+                        .unwrap();
                 let expected = cpu.embed(batch()).unwrap();
                 let actual = std::thread::spawn(move || gpu.embed(batch()).unwrap())
                     .join()
@@ -2582,7 +2750,12 @@ mod tests {
     }
 
     #[test]
-    fn dynamic_fp8_scope_defaults_and_overrides() {
+    fn dynamic_quantization_scope_defaults_and_overrides() {
+        let formats = [
+            DynamicQuantization::Fp8,
+            DynamicQuantization::Mxfp8,
+            DynamicQuantization::Nvfp4,
+        ];
         for family in [
             "llama",
             "llama_bidirec",
@@ -2597,9 +2770,35 @@ mod tests {
             "ultrabert",
             "ultravbert",
         ] {
-            assert_eq!(resolve_fp8_scope(None, true, family).unwrap(), "all");
-            assert_eq!(resolve_fp8_scope(Some("all"), true, family).unwrap(), "all");
-            assert_eq!(resolve_fp8_scope(Some("mlp"), true, family).unwrap(), "mlp");
+            for dynamic_quantization in formats {
+                assert_eq!(
+                    resolve_dynamic_quantization_scope(
+                        DynamicQuantizationScope::Auto,
+                        dynamic_quantization,
+                        family
+                    )
+                    .unwrap(),
+                    "all"
+                );
+                assert_eq!(
+                    resolve_dynamic_quantization_scope(
+                        DynamicQuantizationScope::All,
+                        dynamic_quantization,
+                        family
+                    )
+                    .unwrap(),
+                    "all"
+                );
+                assert_eq!(
+                    resolve_dynamic_quantization_scope(
+                        DynamicQuantizationScope::Mlp,
+                        dynamic_quantization,
+                        family
+                    )
+                    .unwrap(),
+                    "mlp"
+                );
+            }
         }
         for family in [
             "bert",
@@ -2610,8 +2809,23 @@ mod tests {
             "gemma4",
             "gemma4_text",
         ] {
-            assert_eq!(resolve_fp8_scope(None, true, family).unwrap(), "mlp");
-            assert!(resolve_fp8_scope(Some("all"), true, family).is_err());
+            for dynamic_quantization in formats {
+                assert_eq!(
+                    resolve_dynamic_quantization_scope(
+                        DynamicQuantizationScope::Auto,
+                        dynamic_quantization,
+                        family
+                    )
+                    .unwrap(),
+                    "mlp"
+                );
+                assert!(resolve_dynamic_quantization_scope(
+                    DynamicQuantizationScope::All,
+                    dynamic_quantization,
+                    family
+                )
+                .is_err());
+            }
         }
         for family in [
             "qwen3",
@@ -2621,29 +2835,133 @@ mod tests {
             "qwen3_moe",
             "gemma4",
         ] {
-            assert_eq!(resolve_fp8_scope(None, false, family).unwrap(), "mlp");
             assert_eq!(
-                resolve_fp8_scope(Some("mlp"), false, family).unwrap(),
+                resolve_dynamic_quantization_scope(
+                    DynamicQuantizationScope::Auto,
+                    DynamicQuantization::None,
+                    family
+                )
+                .unwrap(),
                 "mlp"
             );
-            assert!(resolve_fp8_scope(Some("all"), false, family).is_err());
+            assert_eq!(
+                resolve_dynamic_quantization_scope(
+                    DynamicQuantizationScope::Mlp,
+                    DynamicQuantization::None,
+                    family
+                )
+                .unwrap(),
+                "mlp"
+            );
+            assert!(resolve_dynamic_quantization_scope(
+                DynamicQuantizationScope::All,
+                DynamicQuantization::None,
+                family
+            )
+            .is_err());
         }
-        assert!(resolve_fp8_scope(Some("unknown"), true, "qwen3").is_err());
-        assert!(resolve_fp8_scope(Some("all"), true, "qwen3_moe").is_err());
-        assert!(resolve_fp8_scope(Some("all"), true, "qwen3_5_moe").is_err());
-        assert!(resolve_fp8_scope(Some("all"), true, "qwen3_5_moe_text").is_err());
+        assert!(resolve_dynamic_quantization_scope(
+            DynamicQuantizationScope::All,
+            DynamicQuantization::Fp8,
+            "qwen3_moe"
+        )
+        .is_err());
+        assert!(resolve_dynamic_quantization_scope(
+            DynamicQuantizationScope::All,
+            DynamicQuantization::Fp8,
+            "qwen3_5_moe"
+        )
+        .is_err());
+        assert!(resolve_dynamic_quantization_scope(
+            DynamicQuantizationScope::All,
+            DynamicQuantization::Fp8,
+            "qwen3_5_moe_text"
+        )
+        .is_err());
     }
 
     #[test]
-    fn dynamic_fp8_rejects_cpu_and_requantized_checkpoints() {
+    fn device_resolution_preserves_auto_and_explicit_errors_without_gpu_queries() {
+        let resolve = |requested, cuda_available| resolve_device_with(requested, || cuda_available);
+        assert_eq!(resolve("auto", true).unwrap(), "cuda:0");
+        assert_eq!(resolve("auto", false).unwrap(), "cpu");
+        assert_eq!(resolve("cuda:0", false).unwrap(), "cuda:0");
+        assert_eq!(resolve("cuda:3", true).unwrap(), "cuda:3");
+        assert_eq!(resolve("cpu", true).unwrap(), "cpu");
+        assert!(resolve("tpu", true)
+            .unwrap_err()
+            .to_string()
+            .contains("only CPU reference and CUDA are supported"));
+        assert!(validate_dynamic_quantization(
+            DynamicQuantization::Fp8,
+            "bfloat16",
+            &resolve("auto", false).unwrap()
+        )
+        .is_err());
+        assert!(validate_dynamic_quantization(
+            DynamicQuantization::Fp8,
+            "bfloat16",
+            &resolve("auto", true).unwrap()
+        )
+        .is_ok());
+    }
+
+    #[test]
+    fn requested_dynamic_quantization_rejects_cpu_and_unsupported_dtypes() {
+        assert!(validate_dynamic_quantization(DynamicQuantization::None, "float32", "cpu").is_ok());
+        for dynamic_quantization in [
+            DynamicQuantization::Fp8,
+            DynamicQuantization::Mxfp8,
+            DynamicQuantization::Nvfp4,
+        ] {
+            for (dtype, device) in [
+                ("float32", "cpu"),
+                ("float32", "cuda:0"),
+                ("auto", "cuda:0"),
+            ] {
+                assert!(
+                    validate_dynamic_quantization(dynamic_quantization, dtype, device).is_err()
+                );
+            }
+            assert!(
+                validate_dynamic_quantization(dynamic_quantization, "float32", "cpu")
+                    .unwrap_err()
+                    .to_string()
+                    .contains("requires CUDA")
+            );
+        }
+        assert!(
+            validate_dynamic_quantization(DynamicQuantization::Fp8, "float16", "cuda:0").is_ok()
+        );
+        assert!(
+            validate_dynamic_quantization(DynamicQuantization::Fp8, "bfloat16", "cuda:0").is_ok()
+        );
+        assert!(
+            validate_dynamic_quantization(DynamicQuantization::Mxfp8, "float16", "cuda:0").is_err()
+        );
+        assert!(
+            validate_dynamic_quantization(DynamicQuantization::Nvfp4, "float16", "cuda:0").is_err()
+        );
+        assert!(
+            validate_dynamic_quantization(DynamicQuantization::Mxfp8, "bfloat16", "cuda:0").is_ok()
+        );
+        assert!(
+            validate_dynamic_quantization(DynamicQuantization::Nvfp4, "bfloat16", "cuda:0").is_ok()
+        );
+    }
+
+    #[test]
+    fn requested_dynamic_quantization_rejects_cpu_and_requantized_checkpoints() {
         let fixture = fixture_with_intermediate("", false, 32);
-        let cpu = LibtorchBackend::new_with_dense_paths_and_fp8(
+        let cpu = LibtorchBackend::new_with_dense_paths_and_dynamic_quantization(
             &fixture.0,
             "float32",
             ModelType::Embedding(Pool::Mean),
             "cpu",
             None,
-            true,
+            DynamicQuantization::Fp8,
+            DynamicQuantizationScope::Auto,
+            limits(),
         )
         .err()
         .unwrap();
@@ -2656,13 +2974,15 @@ mod tests {
             serde_json::to_vec(&config).unwrap(),
         )
         .unwrap();
-        let quantized = LibtorchBackend::new_with_dense_paths_and_fp8(
+        let quantized = LibtorchBackend::new_with_dense_paths_and_dynamic_quantization(
             &fixture.0,
             "float16",
             ModelType::Embedding(Pool::Mean),
             "cuda:0",
             None,
-            true,
+            DynamicQuantization::Fp8,
+            DynamicQuantizationScope::Auto,
+            limits(),
         )
         .err()
         .unwrap();
@@ -2709,12 +3029,20 @@ mod tests {
             input.max_length = second.len() as u32;
             input.pooled_indices.clear();
             input.raw_indices = vec![0, 1];
-            let baseline = LibtorchBackend::new(&path, "bfloat16", kind.clone(), "cuda:0")
-                .unwrap()
-                .embed(input.clone())
-                .unwrap();
-            let fp8 = LibtorchBackend::new_with_dense_paths_and_fp8(
-                &path, "bfloat16", kind, "cuda:0", None, true,
+            let baseline =
+                LibtorchBackend::new(&path, "bfloat16", kind.clone(), "cuda:0", limits())
+                    .unwrap()
+                    .embed(input.clone())
+                    .unwrap();
+            let fp8 = LibtorchBackend::new_with_dense_paths_and_dynamic_quantization(
+                &path,
+                "bfloat16",
+                kind,
+                "cuda:0",
+                None,
+                DynamicQuantization::Fp8,
+                DynamicQuantizationScope::Auto,
+                limits(),
             )
             .unwrap()
             .embed(input)
@@ -2765,12 +3093,20 @@ mod tests {
         });
         fs::write(&file, serialize(renamed, None).unwrap()).unwrap();
         let kind = ModelType::Embedding(Pool::Mean);
-        let baseline = LibtorchBackend::new(&fixture.0, "bfloat16", kind.clone(), "cuda:0")
-            .unwrap()
-            .embed(batch())
-            .unwrap();
-        let fp8 = LibtorchBackend::new_with_dense_paths_and_fp8(
-            &fixture.0, "bfloat16", kind, "cuda:0", None, true,
+        let baseline =
+            LibtorchBackend::new(&fixture.0, "bfloat16", kind.clone(), "cuda:0", limits())
+                .unwrap()
+                .embed(batch())
+                .unwrap();
+        let fp8 = LibtorchBackend::new_with_dense_paths_and_dynamic_quantization(
+            &fixture.0,
+            "bfloat16",
+            kind,
+            "cuda:0",
+            None,
+            DynamicQuantization::Fp8,
+            DynamicQuantizationScope::Auto,
+            limits(),
         )
         .unwrap()
         .embed(batch())
@@ -2807,15 +3143,18 @@ mod tests {
                     dtype,
                     ModelType::Embedding(pool.clone()),
                     "cuda:0",
+                    limits(),
                 )
                 .unwrap();
-                let quantized = LibtorchBackend::new_with_dense_paths_and_fp8(
+                let quantized = LibtorchBackend::new_with_dense_paths_and_dynamic_quantization(
                     &fixture.0,
                     dtype,
                     ModelType::Embedding(pool),
                     "cuda:0",
                     None,
-                    true,
+                    DynamicQuantization::Fp8,
+                    DynamicQuantizationScope::Auto,
+                    limits(),
                 )
                 .unwrap();
                 let expected = dense.embed(batch()).unwrap();
@@ -2837,13 +3176,15 @@ mod tests {
                 let replay = quantized.embed(different).unwrap();
                 assert_ne!(values(&actual[&0]), values(&replay[&0]));
             }
-            let classifier = LibtorchBackend::new_with_dense_paths_and_fp8(
+            let classifier = LibtorchBackend::new_with_dense_paths_and_dynamic_quantization(
                 &fixture.0,
                 dtype,
                 ModelType::Classifier,
                 "cuda:0",
                 None,
-                true,
+                DynamicQuantization::Fp8,
+                DynamicQuantizationScope::Auto,
+                limits(),
             )
             .unwrap();
             let mut classifier_batch = batch();
@@ -2865,6 +3206,7 @@ mod tests {
             "float32",
             ModelType::Embedding(Pool::Mean),
             "cpu",
+            limits(),
         )
         .unwrap();
         assert!(
@@ -2899,6 +3241,7 @@ mod tests {
             "float32",
             ModelType::Embedding(Pool::Mean),
             "cpu",
+            limits(),
         )
         .err()
         .unwrap();

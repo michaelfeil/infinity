@@ -5,7 +5,7 @@
 
 #include "kernels/infinity_fa4.h"
 
-#if defined(TEI_TORCH_CUDA_KERNELS) && defined(INFINITY_FA4_ROOT)
+#if defined(INFINITY_TORCH_CUDA_KERNELS) && defined(INFINITY_FA4_ROOT)
 #include "env_config.h"
 #include <ATen/cuda/CUDAContext.h>
 #include <c10/cuda/CUDAGuard.h>
@@ -57,14 +57,37 @@ using Deberta = int (*)(int,
                         int64_t,
                         int64_t,
                         int);
+using PagedForward = int (*)(int,
+                             int,
+                             int,
+                             void*,
+                             void*,
+                             void*,
+                             void*,
+                             void*,
+                             void*,
+                             void*,
+                             void*,
+                             int64_t,
+                             int64_t,
+                             int64_t,
+                             int64_t,
+                             int64_t,
+                             int64_t,
+                             int64_t,
+                             double,
+                             const int64_t*,
+                             int);
 
 /// Loaded bundle handle and exported attention/error entry points kept resident.
 struct Bundle {
   void* handle;
   Forward forward;
   Deberta deberta;
+  PagedForward paged;
   const char* (*error)();
-  int modes; // Optional capability mask; older portable bundles retain the first four modes.
+  int modes;       // Optional capability mask; older portable bundles retain the first four modes.
+  int paged_modes; // Optional paged capability mask; zero for bundles predating paged.
   // Keep loaded code alive for CUDA graphs and concurrent in-flight requests.
 };
 
@@ -123,13 +146,20 @@ Bundle* bundle(const at::Tensor& q, std::optional<at::ScalarType> dtype = std::n
       reinterpret_cast<int (*)()>(dlsym(handle, "infinity_fa4_compute_capability_v1"));
   auto forward = reinterpret_cast<Forward>(dlsym(handle, "infinity_fa4_forward_v1"));
   auto deberta = reinterpret_cast<Deberta>(dlsym(handle, "infinity_fa4_deberta_v1"));
+  auto paged = reinterpret_cast<PagedForward>(dlsym(handle, "infinity_fa4_paged_forward_v1"));
   auto error = reinterpret_cast<const char* (*)()>(dlsym(handle, "infinity_fa4_error_v1"));
   TORCH_CHECK(capability && forward && error && capability() == sm,
               "Incompatible InfinityFA4 bundle: ",
               path.string());
   auto modes = reinterpret_cast<int (*)()>(dlsym(handle, "infinity_fa4_modes_v1"));
-  auto result =
-      std::make_unique<Bundle>(Bundle{handle, forward, deberta, error, modes ? modes() : 0xf});
+  auto paged_modes = reinterpret_cast<int (*)()>(dlsym(handle, "infinity_fa4_paged_modes_v1"));
+  auto result = std::make_unique<Bundle>(Bundle{handle,
+                                                forward,
+                                                deberta,
+                                                paged,
+                                                error,
+                                                modes ? modes() : 0xf,
+                                                paged && paged_modes ? paged_modes() : 0});
   auto* ptr = result.get();
   bundles.emplace(sm, std::move(result));
   return ptr;
@@ -146,11 +176,47 @@ void check_offsets(const at::Tensor& q, const at::Tensor& cu) {
                   cu.numel() > 1 && cu.is_contiguous(),
               "InfinityFA4 requires CUDA int32 cumulative lengths");
 }
+
+struct PagedProfile {
+  int width, group;
+};
+
+constexpr PagedProfile paged_profiles[] = {
+#define FA4_PAGED_PROFILE(name, h, hk, d, causal, local) {d, h / hk},
+#include "vendor/infinity_fa4/paged_profiles.inc"
+#undef FA4_PAGED_PROFILE
+};
+
+int paged_mode(const at::Tensor& q, int64_t kv_heads) {
+  if (q.dim() != 3 || q.size(1) <= 0 || q.size(2) <= 0 || kv_heads <= 0)
+    return -1;
+  for (size_t index = 0; index < std::size(paged_profiles); ++index) {
+    const auto& profile = paged_profiles[index];
+    if (q.size(2) == profile.width && q.size(1) == profile.group * kv_heads)
+      return static_cast<int>(index);
+  }
+  return -1;
+}
 }
 
 int infinity_fa4_modes(const at::Tensor& reference) {
   auto* native = bundle(reference);
   return native ? native->modes : 0;
+}
+
+int infinity_fa4_paged_modes(const at::Tensor& reference) {
+  auto* native = bundle(reference);
+  return native ? native->paged_modes : 0;
+}
+
+bool infinity_fa4_paged_supported(const at::Tensor& q, int64_t kv_heads) {
+  if (!layout(q))
+    return false;
+  const int mode = paged_mode(q, kv_heads);
+  if (mode < 0)
+    return false;
+  auto* native = bundle(q);
+  return native && native->paged && (native->paged_modes & (1 << mode));
 }
 
 /// Map eligible geometry/masks to exported kernel modes; undefined means no compatible export.
@@ -252,6 +318,82 @@ at::Tensor infinity_fa4(const at::Tensor& query,
   return output;
 }
 
+at::Tensor infinity_fa4_paged(const at::Tensor& query,
+                              const at::Tensor& key,
+                              const at::Tensor& value,
+                              const at::Tensor& cu_q,
+                              const at::Tensor& seqused_k,
+                              const at::Tensor& page_table,
+                              int64_t max_q,
+                              double scale) {
+  constexpr int64_t page_size = 128;
+  if (query.dim() != 3 || key.dim() != 4 || value.dim() != 4 || query.size(0) <= 0 ||
+      query.size(1) <= 0 || query.size(2) <= 0 || key.size(0) <= 0 || key.size(1) != page_size ||
+      key.size(2) <= 0 || key.sizes() != value.sizes() || query.size(2) != key.size(3) ||
+      query.device() != key.device() || query.device() != value.device() ||
+      query.scalar_type() != key.scalar_type() || query.scalar_type() != value.scalar_type() ||
+      !layout(query) || !key.is_contiguous() || !value.is_contiguous() || !std::isfinite(scale) ||
+      scale <= 0)
+    return {};
+  if (cu_q.dim() != 1 || cu_q.scalar_type() != at::kInt || cu_q.numel() < 2 ||
+      !cu_q.is_contiguous() || cu_q.device() != query.device())
+    return {};
+  const auto batch = cu_q.numel() - 1;
+  if (seqused_k.dim() != 1 || seqused_k.numel() != batch || seqused_k.scalar_type() != at::kInt ||
+      !seqused_k.is_contiguous() || seqused_k.device() != query.device())
+    return {};
+  if (page_table.dim() != 2 || page_table.size(0) != batch || page_table.size(1) <= 0 ||
+      page_table.scalar_type() != at::kInt || !page_table.is_contiguous() ||
+      page_table.device() != query.device())
+    return {};
+
+  const int mode = paged_mode(query, key.size(2));
+  if (mode < 0)
+    return {};
+  auto* native = bundle(query);
+  // Paged routing falls back to the existing provider when the bundle or
+  // profile was not exported. A selected launch error propagates below.
+  if (!native || !native->paged || !(native->paged_modes & (1 << mode)))
+    return {};
+  c10::cuda::CUDAGuard guard(query.device());
+  TORCH_CHECK(cu_q.numel() == batch + 1 && max_q > 0 && max_q <= INT32_MAX &&
+                  query.size(0) <= INT32_MAX && key.size(0) <= INT32_MAX &&
+                  page_table.size(1) <= INT32_MAX,
+              "Invalid InfinityFA4 paged geometry");
+  auto output = at::empty(query.sizes(), query.options());
+  std::array<int64_t, 6> strides{query.stride(0),
+                                 query.stride(1),
+                                 query.stride(2),
+                                 output.stride(0),
+                                 output.stride(1),
+                                 output.stride(2)};
+  auto ptr = [](const at::Tensor& t) { return const_cast<void*>(t.const_data_ptr()); };
+  auto stream = at::cuda::getCurrentCUDAStream(query.get_device()).stream();
+  int status = native->paged(mode,
+                             query.scalar_type() == at::kHalf ? 0 : 1,
+                             query.get_device(),
+                             stream,
+                             ptr(query),
+                             ptr(key),
+                             ptr(value),
+                             ptr(output),
+                             ptr(cu_q),
+                             ptr(seqused_k),
+                             ptr(page_table),
+                             query.size(0),
+                             batch,
+                             query.size(1),
+                             key.size(2),
+                             key.size(0),
+                             key.size(1),
+                             page_table.size(1),
+                             scale,
+                             strides.data(),
+                             static_cast<int>(max_q));
+  TORCH_CHECK(status == 0, "InfinityFA4 paged attention failed: ", native->error());
+  return output;
+}
+
 bool infinity_fa4_deberta_supported(const at::Tensor& q, int64_t head_dim) {
   if (head_dim != 64 || q.numel() == 0)
     return false;
@@ -314,6 +456,14 @@ int infinity_fa4_modes(const at::Tensor&) {
   return 0;
 }
 
+int infinity_fa4_paged_modes(const at::Tensor&) {
+  return 0;
+}
+
+bool infinity_fa4_paged_supported(const at::Tensor&, int64_t) {
+  return false;
+}
+
 at::Tensor infinity_fa4(const at::Tensor&,
                         const at::Tensor&,
                         const at::Tensor&,
@@ -325,6 +475,17 @@ at::Tensor infinity_fa4(const at::Tensor&,
                         int64_t,
                         int64_t,
                         std::optional<at::ScalarType>) {
+  return {};
+}
+
+at::Tensor infinity_fa4_paged(const at::Tensor&,
+                              const at::Tensor&,
+                              const at::Tensor&,
+                              const at::Tensor&,
+                              const at::Tensor&,
+                              const at::Tensor&,
+                              int64_t,
+                              double) {
   return {};
 }
 

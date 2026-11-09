@@ -3,7 +3,9 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, Iterable, Optional, Union
+from typing import TYPE_CHECKING, Any, Iterator, Optional, Union
+
+import numpy as np
 
 from infinity_emb._optional_imports import CHECK_TORCH, CHECK_TRANSFORMERS
 from infinity_emb.args import EngineArgs
@@ -92,7 +94,7 @@ class TorchAudioModel(BaseAudioEmbedModel):
 
         return (preprocessed, type_is_audio)
 
-    def _normalize_cpu(self, tensor: Optional["Tensor"]) -> Iterable["Tensor"]:
+    def _normalize_cpu(self, tensor: Optional["Tensor"]) -> Iterator[np.ndarray]:
         if tensor is None:
             return iter([])
         return iter((tensor / tensor.norm(p=2, dim=-1, keepdim=True)).cpu().numpy())
@@ -124,7 +126,7 @@ class TorchAudioModel(BaseAudioEmbedModel):
         return text_embeds, audio_embeds, type_is_audio
 
     @quant_embedding_decorator()
-    def encode_post(self, out_features) -> list[float]:
+    def encode_post(self, out_features) -> list[np.ndarray]:
         text_embeds, audio_embeds, type_is_audio = out_features
         text_embeds = self._normalize_cpu(text_embeds)
         audio_embeds = self._normalize_cpu(audio_embeds)

@@ -1,7 +1,7 @@
 // Adapter to the pinned Torch Flash implementation; vendor BSD notices retained.
 #include "kernels/torch_flash_alibi64.h"
 #include <cuda_runtime_api.h>
-#define FLASH_NAMESPACE tei_torch_flash_alibi64
+#define FLASH_NAMESPACE infinity_torch_flash_alibi64
 #include "vendor/torch_flash_attention/flash.h"
 #include <ATen/cuda/CUDAContext.h>
 #include <c10/cuda/CUDAGuard.h>
@@ -9,7 +9,7 @@
 #include <cmath>
 #include <limits>
 
-namespace tei_torch_flash_alibi64 {
+namespace infinity_torch_flash_alibi64 {
 void launch_alibi64(Flash_fwd_params&, cudaStream_t);
 }
 
@@ -52,7 +52,7 @@ at::Tensor torch_flash_alibi64(const at::Tensor& q,
               "Packed Torch FMA requires CUDA compute capability >=8.0");
   auto out = at::empty(q.sizes(), q.options());
   auto lse = at::empty({q.size(1), q.size(0)}, q.options().dtype(at::kFloat));
-  tei_torch_flash_alibi64::Flash_fwd_params p{};
+  infinity_torch_flash_alibi64::Flash_fwd_params p{};
   p.q_ptr = q.data_ptr();
   p.k_ptr = k.data_ptr();
   p.v_ptr = v.data_ptr();
@@ -94,7 +94,7 @@ at::Tensor torch_flash_alibi64(const at::Tensor& q,
   p.num_splits = 1;
   p.alibi_slopes_ptr = slopes.data_ptr<float>();
   p.alibi_slopes_batch_stride = 0;
-  tei_torch_flash_alibi64::launch_alibi64(p, at::cuda::getCurrentCUDAStream());
+  infinity_torch_flash_alibi64::launch_alibi64(p, at::cuda::getCurrentCUDAStream());
   C10_CUDA_KERNEL_LAUNCH_CHECK();
   return out;
 }

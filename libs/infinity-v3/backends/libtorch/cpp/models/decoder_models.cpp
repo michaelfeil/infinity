@@ -8,7 +8,7 @@
 #include "helpers/dense_mlp.h"
 #include "kernels/moe_kernels.h"
 #include "kernels/infinity_fa4.h"
-#ifdef TEI_TORCH_CUDA_KERNELS
+#ifdef INFINITY_TORCH_CUDA_KERNELS
 #include "kernels/fast_kernels.h"
 #include "helpers/fp8_linear.h"
 #include "kernels/fp8_fusions.h"
@@ -43,7 +43,7 @@ struct DecoderLayer {
   at::Tensor qkv, qkv_bias, out, out_bias, input_norm, post_norm, q_norm, k_norm;
   at::Tensor gate_up, gate_up_bias, down, down_bias, router;
   DenseMlp dense_mlp;
-#ifdef TEI_TORCH_CUDA_KERNELS
+#ifdef INFINITY_TORCH_CUDA_KERNELS
   std::unique_ptr<Fp8Linear> fp8_qkv, fp8_out;
 #endif
   /// Per-expert matrices use [2I,H] and [H,I]. Prepared grouped tensors use transposed GEMM
@@ -54,26 +54,27 @@ struct DecoderLayer {
 
 /// Packed decoder-family backbone with dense/MoE layers and optional task heads.
 class Decoder final : public Model {
-#ifdef TEI_TORCH_CUDA_KERNELS
+#ifdef INFINITY_TORCH_CUDA_KERNELS
   mutable CachedNoBiasLt no_bias_cache;
 #endif
   /// Attempt qualified bias-free decoder GEMMs while retaining ordinary ATen linear for all other
   /// shapes, biases, precision policies, and model families.
   at::Tensor
   cached_linear(const at::Tensor& x, const at::Tensor& w, const at::Tensor& b = {}) const {
-#ifdef TEI_TORCH_CUDA_KERNELS
+#ifdef INFINITY_TORCH_CUDA_KERNELS
     // These family/width checks select the validated alternate prefill recipe, rather than defining
     // which decoder shapes can execute. Widening this call site also requires widening and checking
     // CachedNoBiasLt's prefill guard.
-    if (!b.defined() && !fp8_dynamic && !transformers_math() && dtype == at::kBFloat16 &&
+    if (!b.defined() && quantization == Quantization::None && !transformers_math() &&
+        dtype == at::kBFloat16 &&
         ((hidden == 4096 && (family == "qwen3" || family == "llama") && w.size(1) == 4096 &&
           (w.size(0) == 24576 || w.size(0) == 28672)) ||
          (hidden == 2048 && family == "qwen3" && w.size(1) == 2048 && w.size(0) == 12288)))
       return no_bias_cache.forward(x, w, true);
     // This second profile uses ordinary heuristic caching, not the alternate prefill tactic. Other
     // decoder shapes retain ATen even when their matrix layout could be represented by the cache.
-    if (!b.defined() && !fp8_dynamic && dtype == at::kBFloat16 && family == "qwen2" &&
-        hidden == 896 && head_dim == 64)
+    if (!b.defined() && quantization == Quantization::None && dtype == at::kBFloat16 &&
+        family == "qwen2" && hidden == 896 && head_dim == 64)
       return no_bias_cache.forward(x, w);
 #endif
     return at::linear(x, w, b);
@@ -105,7 +106,7 @@ class Decoder final : public Model {
   std::vector<int64_t> rotary_indices, attention_windows;
   bool cudnn_varlen = false;
   bool transformers_fused_norm = false;
-  bool fp8_dynamic = false;
+  Quantization quantization = Quantization::None;
   bool fp8_all_linear = false;
   bool qwen_half_exact = false;
   int64_t left_window = -1, right_window = -1, top_k;
@@ -159,7 +160,7 @@ class Decoder final : public Model {
   /// activations to model dtype before the affine multiply; ordinary paths use their
   /// existing ATen norm operator.
   at::Tensor norm(const at::Tensor& x, const at::Tensor& w) const {
-#ifdef TEI_TORCH_CUDA_KERNELS
+#ifdef INFINITY_TORCH_CUDA_KERNELS
     if (transformers_fused_norm)
       return transformers_rms_norm(x, {}, w, epsilon).first;
 #endif
@@ -171,7 +172,7 @@ class Decoder final : public Model {
       return std::get<0>(at::_fused_rms_norm(x.contiguous(), {w.numel()}, w, epsilon));
     return at::rms_norm(x, {w.numel()}, w, epsilon);
   }
-#ifdef TEI_TORCH_CUDA_KERNELS
+#ifdef INFINITY_TORCH_CUDA_KERNELS
   bool exact_mistral_math() const {
     // The original Candle RMS launcher registers BF16 width 3072 with a
     // 1x4 warp layout. Learned causal Mistral operands independently prove
@@ -202,7 +203,8 @@ class Decoder final : public Model {
     // The explicit cuDNN option permits its different softmax reduction for
     // BF16 Llama-8B as well as all-linear FP8. Normalization stays unchanged.
     return fp8_all_linear || !exact_decoder_math() ||
-           (!fp8_dynamic && dtype == at::kBFloat16 && family == "llama" && hidden == 4096);
+           (quantization == Quantization::None && dtype == at::kBFloat16 && family == "llama" &&
+            hidden == 4096);
   }
 
   /// Return normalized rows and the residual stream used by the next sublayer. Select the
@@ -411,7 +413,7 @@ class Decoder final : public Model {
                                    (right_window < 0 || (causal && right_window == 0) ||
                                     right_window >= input.max_sequence - 1);
       bool use_cudnn = cudnn_varlen && input.max_sequence >= 512 && window_inactive;
-#ifdef TEI_TORCH_CUDA_KERNELS
+#ifdef INFINITY_TORCH_CUDA_KERNELS
       use_cudnn = use_cudnn && allow_cudnn_attention();
       if (!use_cudnn && exact_decoder_math() &&
           torch_flash_fma_supported(q, k, v, causal, left_window, right_window))
@@ -514,7 +516,7 @@ class Decoder final : public Model {
     }
     bool exact = false;
     bool allow_cudnn = true;
-#ifdef TEI_TORCH_CUDA_KERNELS
+#ifdef INFINITY_TORCH_CUDA_KERNELS
     exact = exact_decoder_math();
     allow_cudnn = allow_cudnn_attention();
 #endif
@@ -570,7 +572,7 @@ class Decoder final : public Model {
     if (!layer.router.defined()) {
       MlpContext context;
       context.gemm = [&](const MlpProjection& projection, const at::Tensor& rows) {
-#ifdef TEI_TORCH_CUDA_KERNELS
+#ifdef INFINITY_TORCH_CUDA_KERNELS
         if (projection.role() == MlpProjectionRole::Input) {
           if (transformers_math() && !rows.is_cuda())
             return separate_linear(
@@ -595,7 +597,7 @@ class Decoder final : public Model {
         return native;
     }
     at::Tensor probabilities;
-#ifdef TEI_TORCH_CUDA_KERNELS
+#ifdef INFINITY_TORCH_CUDA_KERNELS
     if (qwen_half_exact && family == "qwen3_moe" && logits.is_cuda())
       probabilities = decoder_half_moe_probabilities(logits);
     else
@@ -604,7 +606,7 @@ class Decoder final : public Model {
     // Stable sorting gives Candle's lower-expert-index tie break. Routing remains on-device.
     auto ids = at::argsort(probabilities, true, -1, true).narrow(-1, 0, top_k);
     auto routing = probabilities.gather(-1, ids);
-#ifdef TEI_TORCH_CUDA_KERNELS
+#ifdef INFINITY_TORCH_CUDA_KERNELS
     if (qwen_half_exact && family == "qwen3_moe" && routing.is_cuda())
       routing = decoder_half_moe_route_weights(routing, renormalize);
     else
@@ -628,7 +630,7 @@ class Decoder final : public Model {
       auto both = at::_grouped_mm(selected, layer.grouped_gate_up, ends);
       auto width = both.size(-1) / 2;
       at::Tensor activated;
-#ifdef TEI_TORCH_CUDA_KERNELS
+#ifdef INFINITY_TORCH_CUDA_KERNELS
       activated = fused_gated_activation(both, 0);
 #else
       activated = at::silu(both.narrow(-1, 0, width)) * both.narrow(-1, width, width);
@@ -678,7 +680,7 @@ class Decoder final : public Model {
       auto both = at::linear(input, layer.expert_gate_up[expert]);
       auto width = both.size(-1) / 2;
       at::Tensor activated;
-#ifdef TEI_TORCH_CUDA_KERNELS
+#ifdef INFINITY_TORCH_CUDA_KERNELS
       // Original Candle Half MoE rounds exp, denominator, SiLU and product
       // separately in model dtype, including Half exp overflow.
       if (qwen_half_exact && family == "qwen3_moe" && both.is_cuda())
@@ -691,6 +693,155 @@ class Decoder final : public Model {
       result.index_add_(0, tokens, output * route);
     }
     return result;
+  }
+
+  /// Run this layer's normalized input through attention and the output projection.
+  /// Keeping the attention locals in this frame releases packed QKV, Q/K/V views, and
+  /// attended rows before the caller prepares the feed-forward input.
+  at::Tensor attention_projection(const PackedInput& input,
+                                  const DecoderLayer& layer,
+                                  at::Tensor& h,
+                                  at::Tensor& residual,
+                                  size_t layer_index,
+                                  const at::Tensor& layer_cosine,
+                                  const at::Tensor& layer_sine,
+                                  const at::Tensor& query_scales,
+                                  const at::Tensor& output_rows) const {
+    at::Tensor normalized, normalized_scales;
+#ifdef INFINITY_TORCH_CUDA_KERNELS
+    if (h.is_cuda() && (!transformers_math() || transformers_fused_norm)) {
+      if (layer.fp8_qkv && dtype == at::kBFloat16 && hidden <= 8192 && hidden % 256 == 0 &&
+          !exact_decoder_math() && h.is_contiguous() &&
+          (!residual.defined() || residual.is_contiguous())) {
+        auto [quantized, summed, scales] =
+            fp8_add_rms_quantize(h, residual, layer.input_norm, epsilon);
+        normalized = std::move(quantized);
+        residual = std::move(summed);
+        normalized_scales = std::move(scales);
+      } else {
+        auto pair = residual_norm(h, residual, layer.input_norm);
+        normalized = pair.first;
+        residual = pair.second;
+      }
+    } else
+#endif
+      normalized = norm(h, layer.input_norm);
+    at::Tensor qkv;
+#ifdef INFINITY_TORCH_CUDA_KERNELS
+    if (layer.fp8_qkv)
+      qkv = normalized_scales.defined()
+                ? layer.fp8_qkv->forward_quantized(normalized, normalized_scales, layer.qkv_bias)
+                : layer.fp8_qkv->forward(normalized, layer.qkv_bias);
+    else
+#endif
+      qkv = transformers_math() && !normalized.is_cuda()
+                ? separate_linear(normalized,
+                                  layer.qkv,
+                                  layer.qkv_bias,
+                                  {heads * head_dim, kvheads * head_dim, kvheads * head_dim})
+                : at::linear(normalized, layer.qkv, layer.qkv_bias);
+    // Projection layout is [Q heads | K heads | V heads]. GQA preserves fewer K/V heads rather
+    // than expanding the checkpoint projections to the query-head count.
+    qkv = qkv.view({h.size(0), heads + 2 * kvheads, head_dim});
+    auto q = qkv.narrow(1, 0, heads), k = qkv.narrow(1, heads, kvheads),
+         v = qkv.narrow(1, heads + kvheads, kvheads);
+#ifdef INFINITY_TORCH_CUDA_KERNELS
+    if (q.is_cuda() && layer.q_norm.defined() && head_dim == 128) {
+      if (input.prefix && input.prefix->collect_graph && !radix_enabled(input) &&
+          (q.scalar_type() == at::kHalf || q.scalar_type() == at::kBFloat16)) {
+        // Write normalized/rotated suffix K and raw V directly into full-context arenas. Cached
+        // prefix rows stay intact; a validated row map handles mixed sequence lengths.
+        auto& packed = input.prefix->prepare_graph_layer(layer_index, k, v);
+        if (input.batch == 1) {
+          auto key_target = packed.key.narrow(0, input.prefix->hits[0], k.size(0));
+          auto value_target = packed.value.narrow(0, input.prefix->hits[0], v.size(0));
+          q = fused_qkv_norm_rope_into(q,
+                                       k,
+                                       v,
+                                       layer.q_norm,
+                                       layer.k_norm,
+                                       layer_cosine,
+                                       layer_sine,
+                                       epsilon,
+                                       key_target,
+                                       value_target);
+          k = key_target;
+          v = value_target;
+        } else {
+          const auto& rows = input.prefix->prepare_graph_rows(q.device());
+          q = fused_qkv_norm_rope_into(q,
+                                       k,
+                                       v,
+                                       layer.q_norm,
+                                       layer.k_norm,
+                                       layer_cosine,
+                                       layer_sine,
+                                       epsilon,
+                                       packed.key,
+                                       packed.value,
+                                       rows);
+          k = packed.key;
+          v = packed.value;
+        }
+      } else {
+        auto pair =
+            fused_qk_norm_rope(q, k, layer.q_norm, layer.k_norm, layer_cosine, layer_sine, epsilon);
+        q = pair.first;
+        k = pair.second;
+      }
+    } else
+#endif
+    {
+      if (layer.q_norm.defined()) {
+        q = norm(q, layer.q_norm);
+        k = norm(k, layer.k_norm);
+      }
+#ifdef INFINITY_TORCH_CUDA_KERNELS
+      if (q.is_cuda()) {
+        // Preserve Llama's path; learned causal BF16 Mistral operands prove
+        // the same contract with the registered exact RMS geometry.
+        if (transformers_math()) {
+          auto pair = fused_rotary(q, k, layer_cosine, layer_sine, false);
+          q = pair.first;
+          k = pair.second;
+        } else if ((dtype == at::kBFloat16 || qwen_half_exact) && family == "qwen2" &&
+                   hidden == 896 && head_dim == 64) {
+          // The fresh packed QKV projection gives disjoint Q/K/V views.
+          // Preserve original model-dtype HFMA and leave V unchanged.
+          encoder_rotary_inplace(q, k, layer_cosine, layer_sine);
+        } else {
+          auto pair = fused_rotary(
+              q, k, layer_cosine, layer_sine, family == "llama" || exact_mistral_math());
+          q = pair.first;
+          k = pair.second;
+        }
+      }
+
+      else
+#endif
+      {
+        q = rotate(q, layer_cosine, layer_sine);
+        k = rotate(k, layer_cosine, layer_sine);
+      }
+    }
+    if (query_scales.defined())
+      q = q * query_scales;
+    auto attended =
+        attend(q, k, v, input, layer_index, layer).contiguous().view({h.size(0), heads * head_dim});
+    if (output_rows.defined() && layer_index + 1 == layers.size()) {
+      attended = attended.index_select(0, output_rows);
+      h = h.index_select(0, output_rows);
+      if (residual.defined())
+        residual = residual.index_select(0, output_rows);
+    }
+    at::Tensor projected;
+#ifdef INFINITY_TORCH_CUDA_KERNELS
+    if (layer.fp8_out)
+      projected = layer.fp8_out->forward(attended, layer.out_bias);
+    else
+#endif
+      projected = cached_prefix_linear(attended, layer.out, layer.out_bias, input);
+    return projected;
   }
 
 public:
@@ -721,29 +872,33 @@ public:
   /// Validate layer/head geometry and cache loaded projections, norms,
   /// rotary tables, and optional task heads.
   void ready() override {
-    fp8_dynamic = options.boolean("_fp8_dynamic", false);
+    quantization = options.dynamic_quantization();
     // Scope controls which original floating-point checkpoint matrices are quantized during
     // preparation. It is separate from loading an already quantized checkpoint,
     // which this adapter rejects.
-    const auto fp8_scope = options.string("_fp8_scope", fp8_dynamic ? "all" : "mlp");
-    TORCH_CHECK(fp8_scope == "mlp" || fp8_scope == "all", "FP8 scope must be mlp or all");
-    fp8_all_linear = fp8_scope == "all";
-    TORCH_CHECK(!fp8_all_linear || fp8_dynamic, "All-linear FP8 requires dynamic FP8 enabled");
-    if (fp8_dynamic) {
-      TORCH_CHECK(!transformers_math(), "Dynamic FP8 requires native decoder arithmetic");
+    const auto scope = options.dynamic_quantization_scope(
+        quantization == Quantization::None ? QuantizationScope::Mlp : QuantizationScope::All);
+    fp8_all_linear = scope == QuantizationScope::All;
+    TORCH_CHECK(!fp8_all_linear || quantization != Quantization::None,
+                "All-linear quantization requires a quantization format");
+    if (quantization != Quantization::None) {
+      TORCH_CHECK(!transformers_math(), "Quantized decoder requires native decoder arithmetic");
       TORCH_CHECK(device.is_cuda() && (dtype == at::kHalf || dtype == at::kBFloat16),
-                  "Dynamic FP8 decoder MLPs require CUDA float16/bfloat16");
+                  quantization_name(quantization),
+                  " decoder MLPs require CUDA float16/bfloat16");
       TORCH_CHECK(
           (family == "llama" || family == "mistral" || family == "qwen2" || family == "qwen3" ||
            family == "ultrabert") &&
               options.integer("num_experts", 0) == 0,
-          "Dynamic FP8 decoder MLPs require a supported dense checkpoint; routed experts are unsupported");
+          quantization_name(quantization),
+          " decoder MLPs require a supported dense checkpoint; routed experts are unsupported");
       for (const auto& [key, value] : options.values)
         TORCH_CHECK(
             key != "quantization_config" && key.rfind("quantization_config.", 0) != 0,
-            "Dynamic FP8 requires an unquantized checkpoint without supplied quantization scales");
-#ifndef TEI_TORCH_CUDA_KERNELS
-      TORCH_CHECK(false, "Dynamic FP8 decoder MLPs require native CUDA kernels");
+            "Quantized decoders require an unquantized checkpoint without supplied quantization scales");
+#ifndef INFINITY_TORCH_CUDA_KERNELS
+      TORCH_CHECK(
+          false, quantization_name(quantization), " decoder MLPs require native CUDA kernels");
 #endif
     }
     TORCH_CHECK(activation == "silu" || activation == "swish" || activation == "relu" ||
@@ -768,12 +923,12 @@ public:
                     "Scaled Qwen3 MoE RoPE is unsupported");
     TORCH_CHECK(!options.boolean("use_sliding_window", false) || family == "mistral",
                 "Qwen sliding-window configuration is unsupported");
-#ifdef TEI_TORCH_CUDA_KERNELS
+#ifdef INFINITY_TORCH_CUDA_KERNELS
     if (device.is_cuda()) {
       const auto* properties = at::cuda::getDeviceProperties(device.index());
       auto major = properties->major;
       // These native half-precision operators support SM80 and newer.
-      qwen_half_exact = !fp8_dynamic && dtype == at::kHalf && major >= 8 &&
+      qwen_half_exact = quantization == Quantization::None && dtype == at::kHalf && major >= 8 &&
                         ((family == "qwen3" && hidden == 1024 && head_dim == 128) ||
                          (family == "qwen2" && hidden == 896 && head_dim == 64) ||
                          (family == "qwen3_moe" && hidden == 2048 && head_dim == 128 &&
@@ -889,7 +1044,7 @@ public:
                                                 : (transformers_math() ? 2 : 4);
         auto recipe = MlpActivationRecipe::numerical(
             [this, code](const at::Tensor& both) {
-#ifdef TEI_TORCH_CUDA_KERNELS
+#ifdef INFINITY_TORCH_CUDA_KERNELS
               if (both.is_cuda())
                 return fused_gated_activation(both, code);
 #endif
@@ -901,11 +1056,9 @@ public:
           recipe.fusion = MlpFusion::RoundedSwiGlu;
         layer.dense_mlp = DenseMlp(
             {layer.gate_up, layer.gate_up_bias}, {layer.down, layer.down_bias}, std::move(recipe));
-#ifdef TEI_TORCH_CUDA_KERNELS
-        if (fp8_dynamic) {
-          // Shape checks above precede one-time row quantization. Bias and the
-          // gated activation retain their existing model-dtype arithmetic.
-          layer.dense_mlp.prepare(MlpPrecision::Fp8);
+#ifdef INFINITY_TORCH_CUDA_KERNELS
+        if (quantization != Quantization::None) {
+          layer.dense_mlp.prepare(quantization);
           if (fp8_all_linear) {
             layer.fp8_qkv = std::make_unique<Fp8Linear>(layer.qkv);
             layer.fp8_out = std::make_unique<Fp8Linear>(layer.out);
@@ -1168,7 +1321,7 @@ public:
       auto starts = input.cumulative.narrow(0, 0, input.batch).to(at::kLong);
       return at::linear(hidden_states.index_select(0, starts), score, score_bias);
     }
-#ifdef TEI_TORCH_CUDA_KERNELS
+#ifdef INFINITY_TORCH_CUDA_KERNELS
     if (hidden_states.is_cuda() && hidden_states.dim() == 2 && hidden_states.is_contiguous() &&
         (hidden_states.scalar_type() == at::kBFloat16 || hidden_states.scalar_type() == at::kHalf ||
          hidden_states.scalar_type() == at::kFloat) &&
@@ -1310,161 +1463,44 @@ public:
           layer.rotary_index < 0 ? cosine : selected_rotary[layer.rotary_index].first;
       const auto& layer_sine =
           layer.rotary_index < 0 ? sine : selected_rotary[layer.rotary_index].second;
-      at::Tensor normalized, normalized_scales;
-#ifdef TEI_TORCH_CUDA_KERNELS
-      if (h.is_cuda() && (!transformers_math() || transformers_fused_norm)) {
-        if (layer.fp8_qkv && dtype == at::kBFloat16 && hidden <= 8192 && hidden % 256 == 0 &&
-            !exact_decoder_math() && h.is_contiguous() &&
-            (!residual.defined() || residual.is_contiguous())) {
-          auto [quantized, summed, scales] =
-              fp8_add_rms_quantize(h, residual, layer.input_norm, epsilon);
-          normalized = std::move(quantized);
-          residual = std::move(summed);
-          normalized_scales = std::move(scales);
-        } else {
-          auto pair = residual_norm(h, residual, layer.input_norm);
-          normalized = pair.first;
-          residual = pair.second;
-        }
-      } else
-#endif
-        normalized = norm(h, layer.input_norm);
-      at::Tensor qkv;
-#ifdef TEI_TORCH_CUDA_KERNELS
-      if (layer.fp8_qkv)
-        qkv = normalized_scales.defined()
-                  ? layer.fp8_qkv->forward_quantized(normalized, normalized_scales, layer.qkv_bias)
-                  : layer.fp8_qkv->forward(normalized, layer.qkv_bias);
-      else
-#endif
-        qkv = transformers_math() && !normalized.is_cuda()
-                  ? separate_linear(normalized,
-                                    layer.qkv,
-                                    layer.qkv_bias,
-                                    {heads * head_dim, kvheads * head_dim, kvheads * head_dim})
-                  : at::linear(normalized, layer.qkv, layer.qkv_bias);
-      // Projection layout is [Q heads | K heads | V heads]. GQA preserves fewer K/V heads rather
-      // than expanding the checkpoint projections to the query-head count.
-      qkv = qkv.view({h.size(0), heads + 2 * kvheads, head_dim});
-      auto q = qkv.narrow(1, 0, heads), k = qkv.narrow(1, heads, kvheads),
-           v = qkv.narrow(1, heads + kvheads, kvheads);
-#ifdef TEI_TORCH_CUDA_KERNELS
-      if (q.is_cuda() && layer.q_norm.defined() && head_dim == 128) {
-        if (input.prefix && input.prefix->collect_graph && !radix_enabled(input) &&
-            (q.scalar_type() == at::kHalf || q.scalar_type() == at::kBFloat16)) {
-          // Write normalized/rotated suffix K and raw V directly into full-context arenas. Cached
-          // prefix rows stay intact; a validated row map handles mixed sequence lengths.
-          auto& packed = input.prefix->prepare_graph_layer(layer_index, k, v);
-          if (input.batch == 1) {
-            auto key_target = packed.key.narrow(0, input.prefix->hits[0], k.size(0));
-            auto value_target = packed.value.narrow(0, input.prefix->hits[0], v.size(0));
-            q = fused_qkv_norm_rope_into(q,
-                                         k,
-                                         v,
-                                         layer.q_norm,
-                                         layer.k_norm,
-                                         layer_cosine,
-                                         layer_sine,
-                                         epsilon,
-                                         key_target,
-                                         value_target);
-            k = key_target;
-            v = value_target;
-          } else {
-            const auto& rows = input.prefix->prepare_graph_rows(q.device());
-            q = fused_qkv_norm_rope_into(q,
-                                         k,
-                                         v,
-                                         layer.q_norm,
-                                         layer.k_norm,
-                                         layer_cosine,
-                                         layer_sine,
-                                         epsilon,
-                                         packed.key,
-                                         packed.value,
-                                         rows);
-            k = packed.key;
-            v = packed.value;
-          }
-        } else {
-          auto pair = fused_qk_norm_rope(
-              q, k, layer.q_norm, layer.k_norm, layer_cosine, layer_sine, epsilon);
-          q = pair.first;
-          k = pair.second;
-        }
-      } else
-#endif
+      at::Tensor mlp_input, mlp_scales;
+      bool add_mlp_to_residual = false;
       {
-        if (layer.q_norm.defined()) {
-          q = norm(q, layer.q_norm);
-          k = norm(k, layer.k_norm);
-        }
-#ifdef TEI_TORCH_CUDA_KERNELS
-        if (q.is_cuda()) {
-          // Preserve Llama's path; learned causal BF16 Mistral operands prove
-          // the same contract with the registered exact RMS geometry.
-          if (transformers_math()) {
-            auto pair = fused_rotary(q, k, layer_cosine, layer_sine, false);
-            q = pair.first;
-            k = pair.second;
-          } else if ((dtype == at::kBFloat16 || qwen_half_exact) && family == "qwen2" &&
-                     hidden == 896 && head_dim == 64) {
-            // The fresh packed QKV projection gives disjoint Q/K/V views.
-            // Preserve original model-dtype HFMA and leave V unchanged.
-            encoder_rotary_inplace(q, k, layer_cosine, layer_sine);
+        auto projected = attention_projection(input,
+                                              layer,
+                                              h,
+                                              residual,
+                                              layer_index,
+                                              layer_cosine,
+                                              layer_sine,
+                                              query_scales,
+                                              output_rows);
+#ifdef INFINITY_TORCH_CUDA_KERNELS
+        if (h.is_cuda() && (!transformers_math() || transformers_fused_norm)) {
+          if (layer.dense_mlp.is_quantized() && layer.dense_mlp.supports_rowwise_rms_input() &&
+              dtype == at::kBFloat16 && hidden <= 8192 && hidden % 256 == 0 &&
+              !exact_decoder_math() && projected.is_contiguous() &&
+              (!residual.defined() || residual.is_contiguous())) {
+            auto [quantized, summed, scales] =
+                fp8_add_rms_quantize(projected, residual, layer.post_norm, epsilon);
+            residual = std::move(summed);
+            mlp_input = std::move(quantized);
+            mlp_scales = std::move(scales);
           } else {
-            auto pair = fused_rotary(
-                q, k, layer_cosine, layer_sine, family == "llama" || exact_mistral_math());
-            q = pair.first;
-            k = pair.second;
+            auto pair = residual_norm(projected, residual, layer.post_norm);
+            residual = pair.second;
+            mlp_input = std::move(pair.first);
           }
-        }
-
-        else
+        } else
 #endif
         {
-          q = rotate(q, layer_cosine, layer_sine);
-          k = rotate(k, layer_cosine, layer_sine);
+          h = h + projected;
+          mlp_input = norm(h, layer.post_norm);
+          add_mlp_to_residual = true;
         }
       }
-      if (query_scales.defined())
-        q = q * query_scales;
-      auto attended = attend(q, k, v, input, layer_index, layer)
-                          .contiguous()
-                          .view({h.size(0), heads * head_dim});
-      if (output_rows.defined() && layer_index + 1 == layers.size()) {
-        attended = attended.index_select(0, output_rows);
-        h = h.index_select(0, output_rows);
-        if (residual.defined())
-          residual = residual.index_select(0, output_rows);
-      }
-      at::Tensor projected;
-#ifdef TEI_TORCH_CUDA_KERNELS
-      if (layer.fp8_out)
-        projected = layer.fp8_out->forward(attended, layer.out_bias);
-      else
-#endif
-        projected = cached_prefix_linear(attended, layer.out, layer.out_bias, input);
-#ifdef TEI_TORCH_CUDA_KERNELS
-      if (h.is_cuda() && (!transformers_math() || transformers_fused_norm)) {
-        if (layer.dense_mlp.fp8() && dtype == at::kBFloat16 && hidden <= 8192 &&
-            hidden % 256 == 0 && !exact_decoder_math() && projected.is_contiguous() &&
-            (!residual.defined() || residual.is_contiguous())) {
-          auto [quantized, summed, scales] =
-              fp8_add_rms_quantize(projected, residual, layer.post_norm, epsilon);
-          residual = std::move(summed);
-          h = mlp(quantized, layer, input, scales);
-        } else {
-          auto pair = residual_norm(projected, residual, layer.post_norm);
-          residual = pair.second;
-          h = mlp(pair.first, layer, input);
-        }
-      } else
-#endif
-      {
-        h = h + projected;
-        h = h + mlp(norm(h, layer.post_norm), layer, input);
-      }
+      auto mlp_output = mlp(mlp_input, layer, input, mlp_scales);
+      h = add_mlp_to_residual ? h + mlp_output : mlp_output;
       // Deepstack additions operate on the complete residual stream at selected visual rows.
       // Consolidate any deferred residual before injecting that layer's vision features.
       if (visual_indices.defined() && layer_index < deepstack.size()) {
@@ -1486,7 +1522,7 @@ public:
       if (residual.defined())
         h = h + residual;
     } else {
-#ifdef TEI_TORCH_CUDA_KERNELS
+#ifdef INFINITY_TORCH_CUDA_KERNELS
       if (h.is_cuda() && (!transformers_math() || transformers_fused_norm))
         h = residual_norm(h, residual, final_norm).first;
       else
@@ -1523,7 +1559,7 @@ at::Tensor decoder_moe_forward(const at::Tensor& x,
     routing = routing / routing.sum(-1, true);
   routing = routing.to(x.scalar_type());
   auto activate = [](const at::Tensor& both) {
-#ifdef TEI_TORCH_CUDA_KERNELS
+#ifdef INFINITY_TORCH_CUDA_KERNELS
     if (both.is_cuda())
       return fused_gated_activation(both, 0);
 #endif

@@ -14,6 +14,7 @@ thiserror = { workspace = true }
 clap = { workspace = true, optional = true }
 nohash-hasher = { workspace = true }
 serde = { workspace = true }
+bytes = "1"
 serde_json = { workspace = true }
 
 [features]

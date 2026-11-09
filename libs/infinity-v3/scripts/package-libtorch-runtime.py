@@ -128,7 +128,7 @@ def package_fa4(root, output, expected):
 
 
 def package(native, site_packages, output):
-    bridge = native / "lib/libtei_torch.so"
+    bridge = native / "lib/libinfinity_torch.so"
     cuda = (site_packages / "torch/lib/libtorch_cuda.so").is_file()
     architectures = os.environ["LIBTORCH_CUDA_ARCHITECTURES"] if cuda else ""
     expected = {
@@ -152,7 +152,7 @@ def package(native, site_packages, output):
         destination = output / "lib" / source.name
         shutil.copy2(source, destination)
         subprocess.run(["strip", "--strip-unneeded", str(destination)], check=True)
-    shutil.copytree(native / "share/licenses/tei_torch", output / "licenses/native")
+    shutil.copytree(native / "share/licenses/infinity_torch", output / "licenses/native")
     for distribution in sorted(site_packages.glob("*.dist-info")):
         notices = distribution / "licenses"
         if notices.is_dir():

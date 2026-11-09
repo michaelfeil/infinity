@@ -6,7 +6,7 @@
 #ifdef UNFUSE_FMA
 #undef UNFUSE_FMA
 #endif
-#define FLASH_NAMESPACE tei_torch_flash
+#define FLASH_NAMESPACE infinity_torch_flash
 #include "vendor/torch_flash_attention/flash.h"
 #include <ATen/cuda/CUDAContext.h>
 #include <c10/cuda/CUDAGuard.h>
@@ -14,7 +14,7 @@
 #include <cmath>
 #include <limits>
 
-namespace tei_torch_flash {
+namespace infinity_torch_flash {
 void launch_alibi32(Flash_fwd_params&, cudaStream_t);
 void launch_72(Flash_fwd_params&, cudaStream_t);
 void launch_64(Flash_fwd_params&, cudaStream_t);
@@ -23,7 +23,7 @@ void launch_256(Flash_fwd_params&, cudaStream_t);
 void launch_512(Flash_fwd_params&, cudaStream_t);
 }
 
-namespace tei_torch_flash_unfused {
+namespace infinity_torch_flash_unfused {
 void launch(const void*, size_t, cudaStream_t);
 }
 
@@ -120,7 +120,7 @@ static at::Tensor torch_flash_fma_impl(const at::Tensor& q,
               "Packed Torch FMA requires CUDA compute capability >=8.0");
   auto out = at::empty(q.sizes(), q.options());
   auto lse = at::empty({q.size(1), q.size(0)}, q.options().dtype(at::kFloat));
-  tei_torch_flash::Flash_fwd_params p{};
+  infinity_torch_flash::Flash_fwd_params p{};
   p.q_ptr = q.data_ptr();
   p.k_ptr = k.data_ptr();
   p.v_ptr = v.data_ptr();
@@ -168,17 +168,17 @@ static at::Tensor torch_flash_fma_impl(const at::Tensor& q,
   p.num_splits = 1;
   const auto stream = at::cuda::getCurrentCUDAStream();
   if (unfused)
-    tei_torch_flash_unfused::launch(&p, sizeof(p), stream);
+    infinity_torch_flash_unfused::launch(&p, sizeof(p), stream);
   else if (p.d == 64)
-    tei_torch_flash::launch_64(p, stream);
+    infinity_torch_flash::launch_64(p, stream);
   else if (p.d == 72)
-    tei_torch_flash::launch_72(p, stream);
+    infinity_torch_flash::launch_72(p, stream);
   else if (p.d == 128)
-    tei_torch_flash::launch_128(p, stream);
+    infinity_torch_flash::launch_128(p, stream);
   else if (p.d == 256)
-    tei_torch_flash::launch_256(p, stream);
+    infinity_torch_flash::launch_256(p, stream);
   else
-    tei_torch_flash::launch_512(p, stream);
+    infinity_torch_flash::launch_512(p, stream);
   C10_CUDA_KERNEL_LAUNCH_CHECK();
   return out;
 }
@@ -285,7 +285,7 @@ at::Tensor torch_flash_fma_alibi32(const at::Tensor& q,
               "Packed Torch FMA requires CUDA compute capability >=8.0");
   auto out = at::empty(q.sizes(), q.options());
   auto lse = at::empty({q.size(1), q.size(0)}, q.options().dtype(at::kFloat));
-  tei_torch_flash::Flash_fwd_params p{};
+  infinity_torch_flash::Flash_fwd_params p{};
   p.q_ptr = q.data_ptr();
   p.k_ptr = k.data_ptr();
   p.v_ptr = v.data_ptr();
@@ -327,7 +327,7 @@ at::Tensor torch_flash_fma_alibi32(const at::Tensor& q,
   p.num_splits = 1;
   p.alibi_slopes_ptr = slopes.data_ptr<float>();
   p.alibi_slopes_batch_stride = 0;
-  tei_torch_flash::launch_alibi32(p, at::cuda::getCurrentCUDAStream());
+  infinity_torch_flash::launch_alibi32(p, at::cuda::getCurrentCUDAStream());
   C10_CUDA_KERNEL_LAUNCH_CHECK();
   return out;
 }

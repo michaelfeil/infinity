@@ -15,6 +15,8 @@
 
 # Infinity Python / v2 ♾️
 
+Requires Python 3.11–3.13. CPU and NVIDIA containers use Ubuntu 24.04 and Python 3.12.
+
 Looking for the native Rust/LibTorch server? See [Infinity v3](https://github.com/michaelfeil/infinity) and its [quickstart](https://michaelfeil.eu/infinity/main/v3/quickstart/). This page documents the Python / v2 server.
 
 [![codecov][codecov-shield]][codecov-url]
@@ -107,7 +109,7 @@ The cache path inside the docker container is set by the environment variable `H
   <summary>Docker container for CPU</summary>
   Use the `latest-cpu` image or `x.x.x-cpu` for slimer image.
   Run like any other cpu-only docker image.
-  Optimum/Onnx is often the prefered engine.
+  Optimum/Onnx is often the preferred engine.
 
   ```
   docker run -it \
@@ -201,7 +203,7 @@ docker run -it   -v /tmp/models:/models  -p 8081:8081  michaelf34/infinity:lates
 </details>
 
 <details>
-  <summary>Chosing the fastest engine</summary>
+  <summary>Choosing the fastest engine</summary>
 
   With the command `--engine torch` the model must be compatible with https://github.com/UKPLab/sentence-transformers/ and AutoModel
 
@@ -499,7 +501,7 @@ https://github.com/michaelfeil/infinity/tree/main/libs/client_infinity/infinity_
 - [gpt_server - gpt_server is an open-source framework designed for production-level deployment of LLMs (Large Language Models) or Embeddings.](https://github.com/shell-nlp/gpt_server)
 - [KubeAI: Kubernetes AI Operator for inferencing](https://github.com/substratusai/kubeai)
 - [LangChain](https://python.langchain.com/docs/integrations/text_embedding/infinity)
-- [Batched, modification of the Batching algoritm in Infinity](https://github.com/mixedbread-ai/batched)
+- [Batched, modification of the Batching algorithm in Infinity](https://github.com/mixedbread-ai/batched)
 
 ## Documentation
 View the docs at [https:///michaelfeil.github.io/infinity](https://michaelfeil.github.io/infinity) on how to get started.
@@ -507,7 +509,7 @@ After startup, the Swagger Ui will be available under `{url}:{port}/docs`, in th
 
 ## Contribute and Develop
 
-Install via Poetry 1.8.1, Python3.11 on Ubuntu 22.04
+Install via Poetry 2.5.1, Python 3.12 on Ubuntu 24.04
 ```bash
 cd libs/infinity_emb
 poetry install --extras all --with lint,test

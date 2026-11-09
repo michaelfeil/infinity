@@ -14,8 +14,8 @@ int main() {
       positions{0, 1, 2, 3, 4, 0, 1, 2, 3, 4};
   std::array<int64_t, 30> axes{};
   std::array<float, 24> pixels{}, copy{};
-  std::vector<TeiImage> images{{pixels.data(), 4, 6, {1, 2, 2}, 2, 1, 1, 0},
-                               {copy.data(), 4, 6, {1, 2, 2}, 2, 6, 1, 5}};
+  std::vector<InfinityTorchImage> images{{pixels.data(), 4, 6, {1, 2, 2}, 2, 1, 1, 0},
+                                         {copy.data(), 4, 6, {1, 2, 2}, 2, 6, 1, 5}};
   auto same = [&] {
     return infinity::same_block_prefix(0,
                                        1,

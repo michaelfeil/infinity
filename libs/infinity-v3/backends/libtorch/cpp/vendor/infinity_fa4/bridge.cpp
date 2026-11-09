@@ -15,6 +15,13 @@ int __tvm_ffi_fa4_##name##_fp16(void*, const TVMFFIAny*, int32_t, TVMFFIAny*); \
 int __tvm_ffi_fa4_##name##_bf16(void*, const TVMFFIAny*, int32_t, TVMFFIAny*);
 #include "profiles.inc"
 #undef FA4_PROFILE
+#ifdef FA4_PAGED
+#define FA4_PAGED_PROFILE(name, h, hk, d, causal, local) \
+int __tvm_ffi_fa4_##name##_paged_fp16(void*, const TVMFFIAny*, int32_t, TVMFFIAny*); \
+int __tvm_ffi_fa4_##name##_paged_bf16(void*, const TVMFFIAny*, int32_t, TVMFFIAny*);
+#include "paged_profiles.inc"
+#undef FA4_PAGED_PROFILE
+#endif
 }
 struct Profile { int width, group; bool causal, local; };
 constexpr Profile profiles[] = {
@@ -23,6 +30,12 @@ constexpr Profile profiles[] = {
 #undef FA4_PROFILE
 };
 constexpr int attention_modes = sizeof(profiles) / sizeof(profiles[0]);
+constexpr Profile paged_profiles[] = {
+#define FA4_PAGED_PROFILE(name, h, hk, d, causal, local) {d, h / hk, bool(causal), bool(local)},
+#include "paged_profiles.inc"
+#undef FA4_PAGED_PROFILE
+};
+constexpr int paged_mode_count = sizeof(paged_profiles) / sizeof(paged_profiles[0]);
 #ifndef FA4_COMPUTE_CAPABILITY
 #define FA4_COMPUTE_CAPABILITY 90
 #endif
@@ -42,7 +55,7 @@ struct StreamScope {
 // only the first successful call to each export; warm calls stay concurrent.
 namespace {
 std::mutex export_init_mutex;
-std::atomic<bool> export_initialized[2 * attention_modes + 2]{};
+std::atomic<bool> export_initialized[2 * attention_modes + 2 + 2 * paged_mode_count]{};
 std::exception_ptr export_init_failure;
 
 template <typename F>
@@ -114,6 +127,80 @@ extern "C" int infinity_fa4_forward_v1(int mode,int dtype,int device,void* strea
 #endif
   });
   last_error.clear();return 0;
+ }catch(const std::exception& e){last_error=e.what();return -1;}
+}
+
+extern "C" int infinity_fa4_paged_modes_v1(){
+#ifdef FA4_PAGED
+  return (1 << paged_mode_count) - 1;
+#else
+  return 0;
+#endif
+}
+
+// Paged exports: Q is packed [total,heads,d]; K/V are [num_pages,page_size,kv_heads,d];
+// seqused_k is the true per-sequence KV length and page_table indexes 128-row pages.
+// cu_seqlens_k is intentionally absent because the pinned provider rejects it with
+// page_table. Pointers remain owned by the caller; no allocation or synchronization here.
+extern "C" int infinity_fa4_paged_forward_v1(int mode,int dtype,int device,void* stream,
+ void* q,void* k,void* v,void* o,void* cu_q,void* seqused_k,void* page_table,
+ int64_t total,int64_t batch,int64_t h,int64_t hk,int64_t num_pages,int64_t page_size,
+ int64_t table_pages,double scale,const int64_t* strides,int max_q){
+ try{
+#ifdef FA4_PAGED
+  if(dtype<0||dtype>1||mode<0||mode>=paged_mode_count||total<=0||batch<=0||h<=0||hk<=0||
+     num_pages<=0||page_size<=0||table_pages<=0||max_q<=0||
+     total>INT32_MAX||num_pages>INT32_MAX||table_pages>INT32_MAX)
+    throw std::runtime_error("unsupported paged attention geometry");
+  static tvm::ffi::Function functions[2][paged_mode_count] = {
+    {
+#define FA4_PAGED_PROFILE(name, h, hk, d, causal, local) tvm::ffi::Function::FromExternC(nullptr, __tvm_ffi_fa4_##name##_paged_fp16, nullptr),
+#include "paged_profiles.inc"
+#undef FA4_PAGED_PROFILE
+    }, {
+#define FA4_PAGED_PROFILE(name, h, hk, d, causal, local) tvm::ffi::Function::FromExternC(nullptr, __tvm_ffi_fa4_##name##_paged_bf16, nullptr),
+#include "paged_profiles.inc"
+#undef FA4_PAGED_PROFILE
+    }
+  };
+  const auto& profile = paged_profiles[mode];
+  if(h!=profile.group*hk||profile.causal||profile.local||!std::isfinite(scale)||scale<=0)
+    throw std::runtime_error("unsupported paged attention parameters");
+  auto& fn=functions[dtype][mode];
+  DLDataType data_type{static_cast<uint8_t>(dtype==0?kDLFloat:kDLBfloat),16,1};
+  int64_t d=profile.width;
+  int64_t qs[]={total,h,d},ks[]={num_pages,page_size,hk,d},cs[]={batch+1},
+          ss[]={batch},ps[]={batch,table_pages};
+  int64_t qst[]={strides[0],strides[1],strides[2]},ost[]={strides[3],strides[4],strides[5]},
+          kst[]={page_size*hk*d,hk*d,d,1},cst[]={1},sst[]={1},pst[]={table_pages,1};
+  auto tensor=[&](void* p,int n,int64_t* sh,int64_t* stride,DLDataType dt){return DLTensor{p,{kDLCUDA,device},n,dt,sh,stride,0};};
+  DLTensor qt=tensor(q,3,qs,qst,data_type),kt=tensor(k,4,ks,kst,data_type),
+           vt=tensor(v,4,ks,kst,data_type),ot=tensor(o,3,qs,ost,data_type),
+           ct=tensor(cu_q,1,cs,cst,{kDLInt,32,1}),
+           st=tensor(seqused_k,1,ss,sst,{kDLInt,32,1}),
+           pt=tensor(page_table,2,ps,pst,{kDLInt,32,1});
+  tvm::ffi::Array<tvm::ffi::Any> aux{nullptr,nullptr};
+  StreamScope scope(device,stream);
+  invoke_export(2 * attention_modes + 2 + dtype * paged_mode_count + mode, [&] {
+#if FA4_COMPUTE_CAPABILITY == 100
+  if (profile.width == 256)
+    fn(&qt,&kt,&vt,&ot,nullptr,scale,&ct,nullptr,nullptr,&st,&pt,nullptr,nullptr,nullptr,
+       nullptr,nullptr,aux,int64_t(max_q));
+  else
+    fn(&qt,&kt,&vt,&ot,nullptr,scale,&ct,nullptr,nullptr,&st,&pt,nullptr,nullptr,nullptr,
+       nullptr,nullptr,aux,nullptr,nullptr,nullptr,nullptr,nullptr,nullptr,nullptr,int64_t(max_q));
+#else
+  fn(&qt,&kt,&vt,&ot,nullptr,scale,&ct,nullptr,nullptr,&st,&pt,nullptr,nullptr,nullptr,
+     nullptr,aux,nullptr,nullptr);
+#endif
+  });
+  last_error.clear();return 0;
+#else
+  (void)mode;(void)dtype;(void)device;(void)stream;(void)q;(void)k;(void)v;(void)o;
+  (void)cu_q;(void)seqused_k;(void)page_table;(void)total;(void)batch;(void)h;(void)hk;
+  (void)num_pages;(void)page_size;(void)table_pages;(void)scale;(void)strides;(void)max_q;
+  throw std::runtime_error("InfinityFA4 paged bundle not exported");
+#endif
  }catch(const std::exception& e){last_error=e.what();return -1;}
 }
 

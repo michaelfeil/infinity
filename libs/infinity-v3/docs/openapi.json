@@ -9,7 +9,7 @@
     "license": {
       "name": "Infinity Restricted MIT License 1.0 (see scope and retained licenses)"
     },
-    "version": "3.0.2-beta.1"
+    "version": "3.0.2-beta.3"
   },
   "paths": {
     "/decode": {
@@ -1851,7 +1851,8 @@
           "tokenization_workers",
           "tokenization_queue_capacity",
           "radix_mlp_threshold",
-          "enable_fp8_dynamic",
+          "dynamic_quantization",
+          "dynamic_quantization_scope",
           "version"
         ],
         "properties": {
@@ -1929,9 +1930,15 @@
             "description": "Router Info",
             "example": "0.5.0"
           },
-          "enable_fp8_dynamic": {
-            "type": "boolean",
-            "description": "Experimental per-token activation and per-row weight FP8 MLP quantization."
+          "dynamic_quantization": {
+            "type": "string",
+            "description": "Requested dynamic quantization format.",
+            "example": "none"
+          },
+          "dynamic_quantization_scope": {
+            "type": "string",
+            "description": "Requested dynamic quantization scope.",
+            "example": "auto"
           },
           "max_decision_questions": {
             "type": "integer",

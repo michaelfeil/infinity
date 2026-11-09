@@ -27,6 +27,7 @@ IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.
 */
 #include "helpers/fp8_linear.h"
+#include "kernels/dependent_launch.cuh"
 #include <ATen/cuda/CUDAContext.h>
 #include <c10/cuda/CUDAGuard.h>
 #include <c10/cuda/CUDAException.h>
@@ -41,7 +42,7 @@ DEALINGS IN THE SOFTWARE.
 namespace infinity {
 namespace {
 template <typename T>
-__device__ void tei_fp8_quant_row(const T* x, __nv_fp8_e4m3* y, float* scales, int k) {
+__device__ void infinity_fp8_quant_row(const T* x, __nv_fp8_e4m3* y, float* scales, int k) {
   __shared__ float partial[4];
   int row = blockIdx.x, lane = threadIdx.x % 32, warp = threadIdx.x / 32;
   float mx = 0;
@@ -61,16 +62,25 @@ __device__ void tei_fp8_quant_row(const T* x, __nv_fp8_e4m3* y, float* scales, i
   }
   __syncthreads();
   float s = partial[0];
+  const float reciprocal = __frcp_rn(s);
+  const bool fast = isfinite(s);
 
   if (threadIdx.x == 0)
     scales[row] = s;
+  if (fast) {
+    for (int i = threadIdx.x; i < k; i += 128)
+      y[size_t(row) * k + i] =
+          fp8_quantize_value_recip(float(x[size_t(row) * k + i]), s, reciprocal);
+    return;
+  }
   for (int i = threadIdx.x; i < k; i += 128)
     y[size_t(row) * k + i] = __nv_fp8_e4m3(__fdiv_rn(float(x[size_t(row) * k + i]), s));
 }
 
 template <typename T>
 __global__ void quant_kernel(const T* x, __nv_fp8_e4m3* y, float* scales, int width) {
-  tei_fp8_quant_row(x, y, scales, width);
+  wait_for_producer();
+  infinity_fp8_quant_row(x, y, scales, width);
 }
 
 /// Aligned scalar pack for vectorized row-wise FP8 quantization.
@@ -80,6 +90,7 @@ template <class T, int N> struct alignas(sizeof(T) * N) QuantPack {
 
 template <class T>
 __global__ void quant_vector(const T* x, __nv_fp8_e4m3* y, float* scales, int width) {
+  wait_for_producer();
   __shared__ float partial[8];
   const int64_t row = blockIdx.x;
   const int lane = threadIdx.x % 32, warp = threadIdx.x / 32;
@@ -111,9 +122,26 @@ __global__ void quant_vector(const T* x, __nv_fp8_e4m3* y, float* scales, int wi
   }
   __syncthreads();
   const float scale = partial[0];
+  const float reciprocal = __frcp_rn(scale);
+  const bool fast = isfinite(scale);
 
   if (!threadIdx.x)
     scales[row] = scale;
+  if (fast) {
+#pragma unroll
+    for (int group = 0; group < 3; ++group) {
+      if (threadIdx.x + group * 256 >= packs)
+        continue;
+      QuantPack<__nv_fp8x2_e4m3, 4> pack;
+#pragma unroll
+      for (int j = 0; j < 4; ++j)
+        pack.value[j] = fp8_quantize_pair_recip(
+            values[group][2 * j], values[group][2 * j + 1], scale, reciprocal);
+      reinterpret_cast<QuantPack<__nv_fp8x2_e4m3, 4>*>(y)[row * packs + threadIdx.x + group * 256] =
+          pack;
+    }
+    return;
+  }
 #pragma unroll
   for (int group = 0; group < 3; ++group) {
     if (threadIdx.x + group * 256 >= packs)
@@ -145,13 +173,18 @@ std::pair<at::Tensor, at::Tensor> fp8_quantize_rows(const at::Tensor& input) {
     if (input.size(1) >= 1024 && input.size(1) <= 6144 && input.size(1) % 8 == 0 &&
         reinterpret_cast<uintptr_t>(input.const_data_ptr()) % 16 == 0) {
       if (input.scalar_type() == at::kHalf)
-        quant_vector<<<input.size(0), 256, 0, stream>>>(
-            reinterpret_cast<const half*>(input.const_data_ptr()),
-            target,
-            scales.data_ptr<float>(),
-            static_cast<int>(input.size(1)));
+        launch_dependent<quant_vector<half>>(input.size(0),
+                                             256,
+                                             stream,
+                                             reinterpret_cast<const half*>(input.const_data_ptr()),
+                                             target,
+                                             scales.data_ptr<float>(),
+                                             static_cast<int>(input.size(1)));
       else
-        quant_vector<<<input.size(0), 256, 0, stream>>>(
+        launch_dependent<quant_vector<__nv_bfloat16>>(
+            input.size(0),
+            256,
+            stream,
             reinterpret_cast<const __nv_bfloat16*>(input.const_data_ptr()),
             target,
             scales.data_ptr<float>(),
@@ -160,13 +193,18 @@ std::pair<at::Tensor, at::Tensor> fp8_quantize_rows(const at::Tensor& input) {
       return {output, scales};
     }
     if (input.scalar_type() == at::kHalf)
-      quant_kernel<<<input.size(0), 128, 0, stream>>>(
-          reinterpret_cast<const half*>(input.data_ptr()),
-          target,
-          scales.data_ptr<float>(),
-          static_cast<int>(input.size(1)));
+      launch_dependent<quant_kernel<half>>(input.size(0),
+                                           128,
+                                           stream,
+                                           reinterpret_cast<const half*>(input.data_ptr()),
+                                           target,
+                                           scales.data_ptr<float>(),
+                                           static_cast<int>(input.size(1)));
     else
-      quant_kernel<<<input.size(0), 128, 0, stream>>>(
+      launch_dependent<quant_kernel<__nv_bfloat16>>(
+          input.size(0),
+          128,
+          stream,
           reinterpret_cast<const __nv_bfloat16*>(input.data_ptr()),
           target,
           scales.data_ptr<float>(),

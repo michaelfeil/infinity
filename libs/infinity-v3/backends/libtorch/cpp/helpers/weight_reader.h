@@ -14,7 +14,7 @@ void read_safetensors(
     int fd,
     uint64_t data_start,
     uint64_t data_length,
-    const TeiWeight* weights,
+    const InfinityTorchWeight* weights,
     size_t count,
     const at::Device& device,
     size_t threads,

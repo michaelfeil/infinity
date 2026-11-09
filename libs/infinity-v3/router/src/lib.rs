@@ -16,6 +16,7 @@ use bigdecimal::{BigDecimal, RoundingMode};
 use hf_hub::api::tokio::ApiBuilder;
 use hf_hub::{Repo, RepoType};
 use infinity_v3_backend::{DType, Pool};
+use infinity_v3_config::{DynamicQuantization, DynamicQuantizationScope};
 use infinity_v3_core::download::{download_artifacts, ST_CONFIG_NAMES};
 use infinity_v3_core::infer::Infer;
 use infinity_v3_core::queue_actor::{Queue, ServiceTier, ServiceTier as QueueTier};
@@ -69,7 +70,8 @@ pub struct ModelSettings {
     pub max_sequence_length: Option<std::num::NonZeroUsize>,
     pub max_batch_requests: Option<usize>,
     pub radix_mlp_threshold: f32,
-    pub enable_fp8_dynamic: bool,
+    pub dynamic_quantization: DynamicQuantization,
+    pub dynamic_quantization_scope: DynamicQuantizationScope,
     pub max_client_batch_size: usize,
     pub max_decision_questions: usize,
     pub auto_truncate: bool,
@@ -80,6 +82,7 @@ pub struct ModelSettings {
     pub backend_device_ids: Option<String>,
     pub backend_kind: infinity_v3_backend::BackendKind,
     pub torch_device: infinity_v3_backend::TorchDevice,
+    pub python_config: Option<String>,
     pub multimodal_config: infinity_v3_core::multimodal::MultimodalConfig,
 }
 
@@ -114,7 +117,8 @@ pub async fn run(
     max_batch_tokens: usize,
     max_batch_requests: Option<usize>,
     radix_mlp_threshold: f32,
-    enable_fp8_dynamic: bool,
+    dynamic_quantization: DynamicQuantization,
+    dynamic_quantization_scope: DynamicQuantizationScope,
     max_client_batch_size: usize,
     max_decision_questions: usize,
     auto_truncate: bool,
@@ -133,6 +137,7 @@ pub async fn run(
     backend_device_ids: Option<String>,
     backend_kind: infinity_v3_backend::BackendKind,
     torch_device: infinity_v3_backend::TorchDevice,
+    python_config: Option<String>,
     multimodal_config: infinity_v3_core::multimodal::MultimodalConfig,
 ) -> Result<()> {
     run_models(
@@ -153,7 +158,8 @@ pub async fn run(
             max_sequence_length: None,
             max_batch_requests,
             radix_mlp_threshold,
-            enable_fp8_dynamic,
+            dynamic_quantization,
+            dynamic_quantization_scope,
             max_client_batch_size,
             max_decision_questions,
             auto_truncate,
@@ -164,6 +170,7 @@ pub async fn run(
             backend_device_ids,
             backend_kind,
             torch_device,
+            python_config,
             multimodal_config,
         }],
         hf_token,
@@ -185,6 +192,46 @@ async fn finish_startup_validation(
         task.await.context("Startup validation task failed")??;
     }
     Ok(())
+}
+
+fn resolve_runtime_limits(
+    base_input_length: usize,
+    max_sequence_length: Option<std::num::NonZeroUsize>,
+    max_batch_tokens: usize,
+    auto_truncate: bool,
+    max_batch_requests: Option<usize>,
+) -> Result<infinity_v3_backend::ServingLimits> {
+    let base_input_length = max_sequence_length.map_or(base_input_length, |limit| {
+        base_input_length.min(limit.get())
+    });
+
+    // Keep the resolved per-request limit within the batch token budget so the
+    // queue cannot loop forever on a request that can never be admitted.
+    let max_input_length = if base_input_length > max_batch_tokens {
+        if !auto_truncate {
+            anyhow::bail!(
+                "`--max-batch-tokens` cannot be lower than the model `max_input_length` ({} < {}) when `--auto-truncate` is disabled, add the `--auto-truncate` flag to truncate the input sequences to match the `--max-batch-tokens`.",
+                base_input_length,
+                max_batch_tokens
+            );
+        }
+        tracing::warn!(
+            "The input sequences will be truncated to {} tokens even if the model `max_input_length` is greater than the provided `--max-batch-tokens` ({} > {}), as `--auto-truncate` is enabled.",
+            max_batch_tokens,
+            base_input_length,
+            max_batch_tokens
+        );
+        max_batch_tokens
+    } else {
+        base_input_length
+    };
+
+    tracing::info!("Maximum number of tokens per request: {max_input_length}");
+    Ok(infinity_v3_backend::ServingLimits::new(
+        max_batch_tokens,
+        max_input_length,
+        max_batch_requests,
+    )?)
 }
 
 async fn initialize_model(
@@ -211,7 +258,8 @@ async fn initialize_model(
         max_sequence_length,
         max_batch_requests,
         radix_mlp_threshold,
-        enable_fp8_dynamic,
+        dynamic_quantization,
+        dynamic_quantization_scope,
         max_client_batch_size,
         max_decision_questions,
         auto_truncate,
@@ -222,6 +270,7 @@ async fn initialize_model(
         backend_device_ids,
         backend_kind,
         torch_device,
+        python_config,
         multimodal_config,
     } = config;
     let (model_id, mut decision_protocol) =
@@ -560,31 +609,14 @@ async fn initialize_model(
         }
     };
 
-    let base_input_length = max_sequence_length.map_or(base_input_length, |limit| {
-        base_input_length.min(limit.get())
-    });
-
-    // Raise an error when max_input_length is bigger than max_batch tokens to prevent an infinite loop in the queue
-    let max_input_length = if base_input_length > max_batch_tokens {
-        if !auto_truncate {
-            anyhow::bail!(
-                "`--max-batch-tokens` cannot be lower than the model `max_input_length` ({} < {}) when `--auto-truncate` is disabled, add the `--auto-truncate` flag to truncate the input sequences to match the `--max-batch-tokens`.",
-                base_input_length,
-                max_batch_tokens
-            );
-        }
-        tracing::warn!(
-            "The input sequences will be truncated to {} tokens even if the model `max_input_length` is greater than the provided `--max-batch-tokens` ({} > {}), as `--auto-truncate` is enabled.",
-            max_batch_tokens,
-            base_input_length,
-            max_batch_tokens
-        );
-        max_batch_tokens
-    } else {
-        base_input_length
-    };
-
-    tracing::info!("Maximum number of tokens per request: {max_input_length}");
+    let runtime_limits = resolve_runtime_limits(
+        base_input_length,
+        max_sequence_length,
+        max_batch_tokens,
+        auto_truncate,
+        max_batch_requests,
+    )?;
+    let max_input_length = runtime_limits.max_input_length;
 
     // Reserve one CPU for the backend and cap both defaults and explicit settings.
     let tokenization_workers = tokenization_workers
@@ -690,6 +722,19 @@ async fn initialize_model(
     } else {
         None
     };
+    // Only start the generic accelerator for routes that encode text in this pool.
+    // Processor-owned embeddings retain their own tokenization; raw-text Qwen
+    // retrieval and EmbeddingGemma2 still need the generic text path.
+    let accelerate_pooled_text = match &backend_model_type {
+        infinity_v3_backend::ModelType::Decision => false,
+        infinity_v3_backend::ModelType::Embedding(_) => {
+            mistral3.is_none()
+                && multimodal
+                    .as_ref()
+                    .is_none_or(|processor| processor.accepts_raw_text())
+        }
+        infinity_v3_backend::ModelType::Classifier => true,
+    };
     let tokenization = Tokenization::with_queue_capacity(
         tokenization_workers,
         tokenization_queue_capacity,
@@ -699,6 +744,7 @@ async fn initialize_model(
         default_prompt,
         prompts,
         chat,
+        accelerate_pooled_text,
     )
     .with_token_input_vocab_size(
         config
@@ -729,6 +775,9 @@ async fn initialize_model(
     // All models must pass validation before any checkpoint weights are loaded.
     finish_startup_validation(validation).await?;
     let torch_device = backend_kind.resolve_device(torch_device)?;
+    let python_backend_config = infinity_v3_backend::PythonBackendConfig {
+        config: python_config.clone(),
+    };
     let model_dtype = if vela_encoder {
         Some("bfloat16")
     } else {
@@ -741,6 +790,7 @@ async fn initialize_model(
             &config.model_type,
             torch_device == infinity_v3_backend::TorchDevice::Cpu,
         ),
+        infinity_v3_backend::BackendKind::PythonBackend => resolve_python_dtype(dtype, model_dtype),
     };
 
     anyhow::ensure!(
@@ -748,13 +798,10 @@ async fn initialize_model(
         "D3 requires --dtype bfloat16 for its backbone (the readout remains FP32)"
     );
 
-    // Create backend
-    let devices = replicas::resolve_devices(
-        backend_device_ids.as_deref(),
-        device_id,
-        backend_kind,
-        torch_device,
-    )?;
+    // Resolve backend-neutral placement before starting replicas.
+    let capabilities = backend_kind.device_capabilities(torch_device, &python_backend_config)?;
+    let devices =
+        replicas::resolve_devices(backend_device_ids.as_deref(), device_id, capabilities)?;
     tracing::info!("Starting model backend");
     let api_repo = api_repo.map(std::sync::Arc::new);
     let initializers = devices.iter().enumerate().map(|(replica, &device)| {
@@ -763,6 +810,7 @@ async fn initialize_model(
         let dtype = dtype.clone();
         let backend_model_type = backend_model_type.clone();
         let dense_path = dense_path.clone();
+        let python_backend_config = python_backend_config.clone();
         let startup_span = tracing::info_span!(
             "backend_startup", model = %model_root.display(), replica, device,
             pid = std::process::id()
@@ -777,9 +825,12 @@ async fn initialize_model(
                 backend_model_type,
                 dense_path,
                 device,
-                enable_fp8_dynamic,
+                dynamic_quantization,
+                dynamic_quantization_scope,
                 backend_kind,
                 torch_device,
+                python_backend_config,
+                runtime_limits,
             )
             .await
             .inspect_err(|error| {
@@ -791,12 +842,8 @@ async fn initialize_model(
                 .health()
                 .await
                 .with_context(|| format!("Model backend on device {device} is not healthy"))?;
-            let replica_batch_limit = match (max_batch_requests, backend.max_batch_size) {
-                (Some(a), Some(b)) => Some(a.min(b)),
-                (a, b) => a.or(b),
-            };
             backend
-                .warmup(max_input_length, max_batch_tokens, replica_batch_limit)
+                .warmup(runtime_limits)
                 .await
                 .with_context(|| format!("Warmup failed on device {device}"))?;
             tracing::info!(device, replica, elapsed = ?started.elapsed(), "Backend replica ready");
@@ -889,7 +936,8 @@ async fn initialize_model(
         max_decision_questions,
         auto_truncate,
         radix_mlp_threshold,
-        enable_fp8_dynamic,
+        dynamic_quantization,
+        dynamic_quantization_scope,
         version: env!("CARGO_PKG_VERSION"),
         sha: option_env!("VERGEN_GIT_SHA"),
         docker_label: option_env!("DOCKER_LABEL"),
@@ -1092,6 +1140,17 @@ fn get_backend_model_type(
 }
 
 // Resolve Auto before passing a concrete dtype to the backend or reporting /info.
+fn resolve_python_dtype(requested: Option<DType>, model_dtype: Option<&str>) -> DType {
+    match requested {
+        None | Some(DType::Auto) => match model_dtype {
+            Some("bfloat16") => DType::Bfloat16,
+            Some("float16") => DType::Float16,
+            _ => DType::Float32,
+        },
+        Some(dtype) => dtype,
+    }
+}
+
 fn resolve_libtorch_dtype(
     requested: Option<DType>,
     model_dtype: Option<&str>,
@@ -1342,8 +1401,12 @@ pub struct Info {
     pub tokenization_queue_capacity: usize,
     #[cfg_attr(feature = "http", schema(example = "0.5"))]
     pub radix_mlp_threshold: f32,
-    /// Experimental per-token activation and per-row weight FP8 projection quantization.
-    pub enable_fp8_dynamic: bool,
+    /// Requested dynamic quantization format.
+    #[cfg_attr(feature = "http", schema(value_type = String, example = "none"))]
+    pub dynamic_quantization: DynamicQuantization,
+    /// Requested dynamic quantization scope.
+    #[cfg_attr(feature = "http", schema(value_type = String, example = "auto"))]
+    pub dynamic_quantization_scope: DynamicQuantizationScope,
     /// Router Info
     #[cfg_attr(feature = "http", schema(example = "0.5.0"))]
     pub version: &'static str,
@@ -1632,6 +1695,43 @@ impl From<ResponseMetadata> for HeaderMap {
 }
 
 #[cfg(test)]
+mod runtime_limit_tests {
+    use super::*;
+    use std::num::NonZeroUsize;
+
+    #[test]
+    fn sequence_limit_uses_the_lower_of_cli_and_checkpoint() {
+        let limits =
+            resolve_runtime_limits(8192, NonZeroUsize::new(2301), 10003, false, Some(37)).unwrap();
+        assert_eq!(limits.max_batch_tokens, 10003);
+        assert_eq!(limits.max_batch_requests, Some(37));
+        assert_eq!(limits.max_input_length, 2301);
+
+        let checkpoint =
+            resolve_runtime_limits(2048, NonZeroUsize::new(4096), 10003, false, Some(37)).unwrap();
+        assert_eq!(checkpoint.max_input_length, 2048);
+    }
+
+    #[test]
+    fn batch_resolution_truncates_the_effective_sequence_limit() {
+        let explicit =
+            resolve_runtime_limits(8192, NonZeroUsize::new(4096), 256, true, None).unwrap();
+        assert_eq!(explicit.max_batch_tokens, 256);
+        assert_eq!(explicit.max_input_length, 256);
+
+        let implicit = resolve_runtime_limits(2048, None, 512, true, None).unwrap();
+        assert_eq!(implicit.max_batch_tokens, 512);
+        assert_eq!(implicit.max_input_length, 512);
+    }
+
+    #[test]
+    fn oversized_sequence_without_truncation_is_an_error() {
+        let error = resolve_runtime_limits(2048, None, 512, false, None).unwrap_err();
+        assert!(error.to_string().contains("--auto-truncate"), "{error}");
+    }
+}
+
+#[cfg(test)]
 mod libtorch_auto_dtype_tests {
     use super::*;
 
@@ -1884,6 +1984,42 @@ mod auto_dtype_tests {
         .unwrap();
         assert_eq!(config.max_position_embeddings, 0);
         assert_eq!(config.text_config.unwrap().max_position_embeddings, 131072);
+    }
+}
+
+#[cfg(test)]
+mod info_dynamic_quantization_tests {
+    use super::*;
+
+    #[test]
+    fn info_serializes_dynamic_quantization_names_without_the_legacy_flag() {
+        let info = Info {
+            model_id: "model".into(),
+            model_sha: None,
+            model_dtype: "bfloat16".into(),
+            model_type: ModelType::Embedding(EmbeddingModel {
+                pooling: "mean".into(),
+            }),
+            max_concurrent_requests: 1,
+            max_input_length: 128,
+            max_batch_tokens: 128,
+            max_batch_requests: None,
+            max_client_batch_size: 1,
+            max_decision_questions: 1,
+            auto_truncate: true,
+            tokenization_workers: 1,
+            tokenization_queue_capacity: 1,
+            radix_mlp_threshold: 0.0,
+            dynamic_quantization: DynamicQuantization::Mxfp8,
+            dynamic_quantization_scope: DynamicQuantizationScope::All,
+            version: "test",
+            sha: None,
+            docker_label: None,
+        };
+        let value = serde_json::to_value(info).unwrap();
+        assert_eq!(value["dynamic_quantization"], "mxfp8");
+        assert_eq!(value["dynamic_quantization_scope"], "all");
+        assert!(value.get("enable_fp8_dynamic").is_none());
     }
 }
 

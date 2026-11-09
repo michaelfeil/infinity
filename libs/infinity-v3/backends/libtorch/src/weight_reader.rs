@@ -104,7 +104,7 @@ struct NativeWeight {
 }
 
 extern "C" {
-    fn tei_load_safetensors(
+    fn infinity_torch_load_safetensors(
         handle: *mut c_void,
         fd: i32,
         start: u64,
@@ -199,7 +199,7 @@ pub(super) fn load(
         // call. Native code drains every read/DMA before returning, including on
         // errors, and stores tensors that own their final allocations.
         let status = unsafe {
-            tei_load_safetensors(
+            infinity_torch_load_safetensors(
                 handle.as_ptr(),
                 file.as_raw_fd(),
                 start,

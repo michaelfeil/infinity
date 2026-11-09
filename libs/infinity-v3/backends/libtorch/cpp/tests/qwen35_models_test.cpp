@@ -5,9 +5,11 @@
 #include "models/decision_models.h"
 #include "batching/radix.h"
 #include "helpers/workspace_admission.h"
+#include "helpers/fp8_linear.h"
+#include "kernels/infinity_fa4.h"
 #include "batching/cuda_graph.h"
 #include <ATen/ops/_flash_attention_forward.h>
-#ifdef TEI_TORCH_CUDA_KERNELS
+#ifdef INFINITY_TORCH_CUDA_KERNELS
 #include <ATen/cuda/CUDAContext.h>
 #include <ATen/cuda/CUDAGraph.h>
 #endif
@@ -15,11 +17,9 @@
 using namespace infinity;
 
 void dynamic_fp8_test(Options cfg, Weights weights, const c10::Device& device) {
-#ifdef TEI_TORCH_CUDA_KERNELS
-  const auto* properties = at::cuda::getDeviceProperties(device.index());
-  const auto capability = properties->major * 10 + properties->minor;
-  if (capability != 89 && capability != 90 && capability != 100 && capability != 120) {
-    std::cout << "Qwen3.5 FP8 fixture skipped: requires SM89/90/100/120\n";
+#ifdef INFINITY_TORCH_CUDA_KERNELS
+  if (!fp8_device_supported(device)) {
+    std::cout << "Qwen3.5 FP8 fixture skipped: unsupported device or CUDA build\n";
     return;
   }
 #endif
@@ -69,27 +69,28 @@ void dynamic_fp8_test(Options cfg, Weights weights, const c10::Device& device) {
     for (const auto* scope : {"mlp", "all", "default"}) {
       cfg.values["model_type"] = family;
       auto enabled = cfg;
-      enabled.values["_fp8_dynamic"] = "true";
+      enabled.values["_dynamic_quantization"] = "fp8";
       if (std::string(scope) != "default")
-        enabled.values["_fp8_scope"] = scope;
+        enabled.values["_dynamic_quantization_scope"] = scope;
       // Exercise the serving bridge's family gate, not only model construction.
-      TeiConfig shape{16, 2, 2, 32, 32, 32, 1, 1e-6, 5};
-      std::unique_ptr<void, decltype(&tei_destroy)> engine(
-          tei_create(&shape, device.str().c_str(), 2), tei_destroy);
-      TORCH_CHECK(engine, tei_error());
+      InfinityTorchConfig shape{16, 2, 2, 32, 32, 32, 1, 1e-6, 5};
+      std::unique_ptr<void, decltype(&infinity_torch_destroy)> engine(
+          infinity_torch_create(&shape, device.str().c_str(), 2), infinity_torch_destroy);
+      TORCH_CHECK(engine, infinity_torch_error());
       for (const auto& [name, value] : enabled.values)
-        TORCH_CHECK(tei_option(engine.get(), name.c_str(), value.c_str()) == 0, tei_error());
+        TORCH_CHECK(infinity_torch_option(engine.get(), name.c_str(), value.c_str()) == 0,
+                    infinity_torch_error());
       for (const auto& [name, value] : weights) {
         auto host = value.cpu().contiguous();
-        TORCH_CHECK(tei_weight(engine.get(),
-                               name.c_str(),
-                               static_cast<const uint8_t*>(host.const_data_ptr()),
-                               host.sizes().data(),
-                               host.dim(),
-                               2) == 0,
-                    tei_error());
+        TORCH_CHECK(infinity_torch_weight(engine.get(),
+                                          name.c_str(),
+                                          static_cast<const uint8_t*>(host.const_data_ptr()),
+                                          host.sizes().data(),
+                                          host.dim(),
+                                          2) == 0,
+                    infinity_torch_error());
       }
-      TORCH_CHECK(tei_ready(engine.get()) == 0, tei_error());
+      TORCH_CHECK(infinity_torch_ready(engine.get()) == 0, infinity_torch_error());
       engine.reset();
       Weights loader;
       for (const auto& [name, value] : weights)
@@ -148,7 +149,7 @@ void dynamic_fp8_test(Options cfg, Weights weights, const c10::Device& device) {
     }
   for (const auto* invalid : {"cpu", "float16", "moe", "quantized", "qkv_shape"}) {
     auto enabled = cfg;
-    enabled.values["_fp8_dynamic"] = "true";
+    enabled.values["_dynamic_quantization"] = "fp8";
     if (std::string(invalid) == "moe")
       enabled.values["num_experts"] = "2";
     if (std::string(invalid) == "quantized")
@@ -174,7 +175,7 @@ void dynamic_fp8_test(Options cfg, Weights weights, const c10::Device& device) {
 }
 
 void radix_workspace_recovery_test(const c10::Device& device) {
-#ifdef TEI_TORCH_CUDA_KERNELS
+#ifdef INFINITY_TORCH_CUDA_KERNELS
   const auto* properties = at::cuda::getDeviceProperties(device.index());
   if (properties->major != 9 || properties->minor != 0) {
     std::cout << "Qwen3.5 shared workspace fixture skipped: production path requires SM 9.0\n";
@@ -312,7 +313,7 @@ void radix_workspace_recovery_test(const c10::Device& device) {
 }
 
 void paged_block_test(const c10::Device& device) {
-#ifdef TEI_TORCH_CUDA_KERNELS
+#ifdef INFINITY_TORCH_CUDA_KERNELS
   const std::vector<int32_t> prefixes{0, 1025, 1537, 1792}, suffixes{0, 3, 260, 261, 266, 283, 284};
   const std::vector<int64_t> sources{0, 1, 0, 2, 1, 0};
   std::vector<int32_t> kv{0};
@@ -363,8 +364,57 @@ void paged_block_test(const c10::Device& device) {
                                                         false,
                                                         scale));
       };
-      TORCH_CHECK(at::equal(reference(), run()),
-                  "Paged prefix/tail/suffix attention differs from contiguous attention");
+      // FA4 and FA2 use different reduction orders, so paged d256 compares
+      // against the contiguous reference with a tolerance. Other shapes keep
+      // the existing bitwise fallback check.
+      const bool fa4_paged = dim == 256 && infinity_fa4_paged_supported(q, 4);
+      auto verify = [&](const at::Tensor& actual, const at::Tensor& expected, const char* label) {
+        if (!fa4_paged) {
+          TORCH_CHECK(at::equal(actual, expected), label);
+          return;
+        }
+        TORCH_CHECK(actual.sizes() == expected.sizes() &&
+                        at::allclose(actual, expected, 1e-2, 1e-2),
+                    label,
+                    ": per-element tolerance exceeded");
+        auto a = actual.to(at::kFloat), b = expected.to(at::kFloat);
+        auto error =
+            at::sqrt((a - b).square().sum() / b.square().sum().clamp_min(1e-12)).item<float>();
+        TORCH_CHECK(
+            at::isfinite(a).all().item<bool>() && error < .015, label, ": relative L2=", error);
+      };
+      verify(run(),
+             reference(),
+             "Paged prefix/tail/suffix attention differs from contiguous attention");
+      if (fa4_paged) {
+        const auto batch = cuq.numel() - 1;
+        auto seqused = (cuk.narrow(0, 1, batch) - cuk.narrow(0, 0, batch)).contiguous();
+        auto direct = infinity_fa4_paged(
+            q,
+            k.index_select(0, pages.gather).view({-1, BlockPages::fa4_page_size, 4, dim}),
+            v.index_select(0, pages.gather).view({-1, BlockPages::fa4_page_size, 4, dim}),
+            cuq,
+            seqused,
+            pages.subpage_table,
+            257,
+            scale);
+        TORCH_CHECK(direct.defined(), "FA4 paged export rejected a supported d256 profile");
+        verify(direct, reference(), "FA4 paged block parity");
+        auto fallback_pages = pages;
+        fallback_pages.subpage_table = {};
+        auto fallback = block_paged_attention(q,
+                                              k.narrow(0, prefixes.back(), suffixes.back()),
+                                              v.narrow(0, prefixes.back(), suffixes.back()),
+                                              k.narrow(0, 0, prefixes.back()),
+                                              v.narrow(0, 0, prefixes.back()),
+                                              cuq,
+                                              cuk,
+                                              fallback_pages,
+                                              257,
+                                              scale);
+        TORCH_CHECK(at::equal(fallback, reference()),
+                    "Missing FA4 paged capability changed the exact native fallback");
+      }
       auto stream = at::cuda::getStreamFromPool(false, device.index());
       at::cuda::CUDAStreamGuard guard(stream);
       c10::cuda::device_synchronize();
@@ -379,25 +429,33 @@ void paged_block_test(const c10::Device& device) {
       k.add_(.125);
       v.mul_(.5);
       graph.replay();
-      TORCH_CHECK(at::equal(reference(), captured), "Paged block graph replay used stale rows");
-      std::cout << "Paged block exact parity and graph replay passed heads=" << heads
-                << " dim=" << dim << " dtype=" << dtype << "\n";
+      verify(captured, reference(), "Paged block graph replay used stale rows");
+      std::cout << "Paged block parity and graph replay passed heads=" << heads << " dim=" << dim
+                << " dtype=" << dtype << "\n";
     }
   }
 #endif
 }
 
-void paged_model_test(Options cfg, Weights weights, const c10::Device& device) {
-  cfg.values["head_dim"] = "64";
+void paged_model_test(Options cfg,
+                      Weights weights,
+                      const c10::Device& device,
+                      int64_t heads,
+                      int64_t kv_heads,
+                      int64_t dim) {
+  cfg.values["head_dim"] = std::to_string(dim);
+  cfg.values["num_attention_heads"] = std::to_string(heads);
+  cfg.values["num_key_value_heads"] = std::to_string(kv_heads);
   cfg.values["max_position_embeddings"] = "1024";
   cfg.values["_decision_attention_mode"] = "block_bidirectional";
+  const auto hidden = cfg.integer("hidden_size");
   const std::string attention = "model.layers.1.self_attn.";
-  weights[attention + "q_proj.weight"] = at::randn({256, 16}) * .05;
+  weights[attention + "q_proj.weight"] = at::randn({2 * heads * dim, hidden}) * .05;
   for (auto name : {"k_proj", "v_proj"})
-    weights[attention + name + ".weight"] = at::randn({64, 16}) * .05;
-  weights[attention + "o_proj.weight"] = at::randn({16, 128}) * .05;
+    weights[attention + name + ".weight"] = at::randn({kv_heads * dim, hidden}) * .05;
+  weights[attention + "o_proj.weight"] = at::randn({hidden, heads * dim}) * .05;
   for (auto name : {"q_norm", "k_norm"})
-    weights[attention + name + ".weight"] = at::zeros({64});
+    weights[attention + name + ".weight"] = at::zeros({dim});
   auto build = [&] {
     Weights loader;
     for (const auto& [name, value] : weights)
@@ -407,11 +465,7 @@ void paged_model_test(Options cfg, Weights weights, const c10::Device& device) {
     return model;
   };
   unsetenv(INFINITY_ENV("TORCH_BLOCK_PAGED"));
-  unsetenv(INFINITY_ENV("TORCH_GDN_SUFFIX_PREFILL"));
   auto paged = build();
-  setenv(INFINITY_ENV("TORCH_GDN_SUFFIX_PREFILL"), "1", 1);
-  auto explicit_prefill = build();
-  unsetenv(INFINITY_ENV("TORCH_GDN_SUFFIX_PREFILL"));
   setenv(INFINITY_ENV("TORCH_BLOCK_PAGED"), "0", 1);
   auto packed = build();
   unsetenv(INFINITY_ENV("TORCH_BLOCK_PAGED"));
@@ -439,8 +493,6 @@ void paged_model_test(Options cfg, Weights weights, const c10::Device& device) {
               "Default paging or its disable override did not select the expected model path");
   TORCH_CHECK(at::allclose(packed->forward(input), paged->forward(input), 1e-2, 1e-2),
               "Model paging changed ragged shared-prefix outputs");
-  TORCH_CHECK(at::equal(paged->forward(input), explicit_prefill->forward(input)),
-              "Default cached suffix prefill differs from explicit opt-in");
   CudaGraphCache graphs(2, 4096, 1);
   for (int operation : {0, 3})
     for (int iteration = 0; iteration < 3; ++iteration) {
@@ -454,10 +506,17 @@ void paged_model_test(Options cfg, Weights weights, const c10::Device& device) {
     }
   TORCH_CHECK(graphs.stats().captures == 2 && graphs.stats().hits >= 4,
               "Paged model did not capture and replay full and pooled graphs");
-  std::cout << "Qwen3.5 default/disabled model paging and full/pooled graph replay passed\n";
+  std::cout << "Qwen3.5 default/disabled model paging and full/pooled graph replay passed"
+            << " heads=" << heads << " kv_heads=" << kv_heads << " dim=" << dim << "\n";
 }
 
 int main(int argc, char** argv) {
+  if (argc > 2 && std::string(argv[1]) == "--paged") {
+    at::manual_seed(724);
+    paged_block_test(c10::Device(argv[2]));
+    std::cout << "Qwen3.5 paged FA4 block regression passed\n";
+    return 0;
+  }
   std::vector<int32_t> fanout_suffixes{0};
   for (int i = 0; i < 50; ++i)
     fanout_suffixes.push_back(fanout_suffixes.back() + 185);
@@ -829,7 +888,9 @@ int main(int argc, char** argv) {
   std::cout << "Qwen3.5 MoE/shared expert, stable routing ties and packed isolation passed\n";
   if (argc > 1) {
     c10::Device device(argv[1]);
-    paged_model_test(cfg, weights, device);
+    paged_model_test(cfg, weights, device, 2, 1, 64);
+    // Exercise the paged FA4 d256 path end-to-end through the model graph/cache.
+    paged_model_test(cfg, weights, device, 16, 4, 256);
     dynamic_fp8_test(cfg, weights, device);
     for (auto& [key, value] : weights)
       value = value.to(at::kBFloat16);

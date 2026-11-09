@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-// Reuses the original packed reduction implementation from this TEI fork.
+// Reuses the original packed reduction implementation from the Infinity backend.
 #include "batching/packed_pool.h"
 #include <ATen/cuda/CUDAContext.h>
 #include <c10/cuda/CUDAGuard.h>

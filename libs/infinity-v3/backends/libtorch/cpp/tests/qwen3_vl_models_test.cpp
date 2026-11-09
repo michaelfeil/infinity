@@ -7,14 +7,43 @@
 #include <c10/core/InferenceMode.h>
 #include <ATen/Parallel.h>
 #include <iostream>
-#ifdef TEI_TORCH_CUDA_KERNELS
+#ifdef INFINITY_TORCH_CUDA_KERNELS
 #include "kernels/qwen35_vision.h"
 #include <ATen/cuda/CUDAContext.h>
 #include <c10/cuda/CUDACachingAllocator.h>
 #endif
 using namespace infinity;
 
-#ifdef TEI_TORCH_CUDA_KERNELS
+#ifdef INFINITY_TORCH_CUDA_KERNELS
+void vision_position_test(const c10::Device& device) {
+  for (auto dtype : {at::kHalf, at::kBFloat16, at::kFloat})
+    for (auto grid : {std::array<int64_t, 3>{4, 6, 2}, {6, 4, 2}, {1, 1, 1}}) {
+      auto [height, width, merge] = grid;
+      auto options = at::TensorOptions().device(device).dtype(dtype);
+      auto table = at::randn({25, 24}, options);
+      auto ix = at::arange(2 * height * width, options.dtype(at::kLong));
+      auto c = ix.remainder(merge) +
+               at::floor_divide(ix, merge * merge).remainder(width / merge) * merge;
+      auto r = at::floor_divide(ix, merge).remainder(merge) +
+               at::floor_divide(ix, merge * width).remainder(height / merge) * merge;
+      auto rf = r.to(at::kFloat) * (height == 1 ? 0.f : 4.f / float(height - 1));
+      auto cf = c.to(at::kFloat) * (width == 1 ? 0.f : 4.f / float(width - 1));
+      auto r0 = rf.floor().to(at::kLong), r1 = rf.ceil().clamp_max(4).to(at::kLong);
+      auto c0 = cf.floor().to(at::kLong), c1 = cf.ceil().clamp_max(4).to(at::kLong);
+      auto dr = rf - r0.to(at::kFloat), dc = cf - c0.to(at::kFloat);
+      auto corner = [&](const at::Tensor& rr, const at::Tensor& cc, const at::Tensor& scale) {
+        return table.index_select(0, rr * 5 + cc) * scale.to(dtype).unsqueeze(-1);
+      };
+      auto expected = at::stack({corner(r0, c0, (1 - dr) * (1 - dc)),
+                                 corner(r0, c1, (1 - dr) * dc),
+                                 corner(r1, c0, dr * (1 - dc)),
+                                 corner(r1, c1, dr * dc)});
+      auto actual = vision_position_corners(table, 5, 2, height, width, merge);
+      TORCH_CHECK(at::equal(actual.view(at::kByte), expected.view(at::kByte)),
+                  "Vision interpolation changed corner order or model-dtype rounding");
+    }
+}
+
 void vision_rotary_test(const c10::Device& device) {
   for (auto dtype : {at::kHalf, at::kBFloat16, at::kFloat})
     for (int64_t dim : {8, 64, 72, 128}) {
@@ -389,7 +418,8 @@ int main(int argc, char** argv) {
   std::cout << "Qwen3.5 FP16 vision, BF16-compatible injection and mRoPE packed isolation passed\n";
   if (argc > 1) {
     c10::Device device(argv[1]);
-#ifdef TEI_TORCH_CUDA_KERNELS
+#ifdef INFINITY_TORCH_CUDA_KERNELS
+    vision_position_test(device);
     vision_rotary_test(device);
 #endif
     Weights hw, cw;
@@ -430,7 +460,7 @@ int main(int argc, char** argv) {
       auto reference_weights = checkpoint;
       auto baseline = create_qwen3_vl(fp8_config, reference_weights, device, at::kHalf);
       baseline->ready();
-      fp8_config.values["_fp8_dynamic"] = "true";
+      fp8_config.values["_dynamic_quantization"] = "fp8";
       auto quantized = create_qwen3_vl(fp8_config, checkpoint, device, at::kHalf);
       quantized->ready();
       TORCH_CHECK(checkpoint.empty(), "Qwen3-VL retained redundant text checkpoint weights");
@@ -458,7 +488,7 @@ int main(int argc, char** argv) {
                 (expected - actual).abs().max().item<float>());
     std::cout << "Qwen3-VL CUDA/CPU float16 parity maxabs="
               << (expected - actual).abs().max().item<float>() << "\n";
-#ifdef TEI_TORCH_CUDA_KERNELS
+#ifdef INFINITY_TORCH_CUDA_KERNELS
     // Actual 64x64 patch grid: two heads make each original F32 score
     // tensor 128 MiB, exercising production query chunking rather than the
     // unchanged small-image branch. These are synthetic functional weights,

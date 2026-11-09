@@ -4,6 +4,7 @@ members = [
     "backends",
     "backends/core",
     "backends/libtorch",
+    "backends/python",
     "core",
     "router",
 ]
@@ -19,7 +20,7 @@ resolver = "2"
 [workspace.package]
 # Fork license adoption; inherited and third-party grants remain in LICENSE.
 license-file = "LICENSE"
-version = "3.0.2-beta.1"
+version = "3.0.2-beta.3"
 edition = "2021"
 authors = ["infinity authors"]
 homepage = "https://github.com/michaelfeil/infinity"

@@ -48,5 +48,5 @@ dependencies have separate terms.
 See [LICENSES/README.md](LICENSES/README.md), [NOTICE](NOTICE), and
 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md). Docker packages include the
 license bundle at `/usr/share/licenses/infinity_v3/`; native LibTorch installs
-include it at `share/licenses/tei_torch/`. The complete [LICENSE](LICENSE)
+include it at `share/licenses/infinity_torch/`. The complete [LICENSE](LICENSE)
 controls over this summary.

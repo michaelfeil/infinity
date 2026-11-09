@@ -195,7 +195,8 @@ GPUs as replicas; each GPU loads a complete model, rather than a shard.
 | `--dtype` | `auto`, `float32`, `float16` or `bfloat16`; CUDA attention requires FP16/BF16. |
 | `--device-id` | Run on one visible accelerator ordinal, such as `0`. |
 | `--backend-device-ids` | Select CUDA replicas, such as `0,1`, or `auto`. |
-| `--enable-fp8-dynamic` | Enable experimental dynamic FP8 for supported models and GPUs. Off by default; validate task accuracy before enabling. |
+| `--dynamic-quantization` | `none` (default), `fp8`, `mxfp8` or `nvfp4`. Select per model; requires a supported CUDA model and GPU. |
+| `--dynamic-quantization-scope` | `auto` (default), `mlp` or `all`. `auto` uses all-linear scope for eligible dense decoders and MLP-only scope otherwise. |
 
 </details>
 
@@ -444,6 +445,7 @@ server's `/docs`, [decision inputs](docs/cli.md#structured-decision-inputs) and
 - [Performance and Radix MLP](docs/performance.md)
 - [CLI and deployment options](docs/cli.md)
 - [Native LibTorch backend](docs/libtorch-backend.md)
+- [Python backend plugins](docs/python-backend.md)
 - [Model coverage and limitations](docs/libtorch-model-coverage.md)
 - [API and documentation index](docs/README.md)
 - [Licensing](LICENSING.md): Infinity Restricted MIT License 1.0, with retained third-party and earlier grants

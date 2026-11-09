@@ -7,8 +7,8 @@ import pytest
 import requests
 from asgi_lifespan import LifespanManager
 import time
-from httpx import AsyncClient
-from openai import APIConnectionError, AsyncOpenAI
+from httpx import ASGITransport, AsyncClient
+from openai import AuthenticationError, AsyncOpenAI
 
 from infinity_emb import create_server
 from infinity_emb.args import EngineArgs
@@ -42,7 +42,7 @@ app = create_server(
 
 @pytest.fixture()
 async def client():
-    async with AsyncClient(app=app, base_url=baseurl, timeout=20) as client, LifespanManager(app):
+    async with AsyncClient(transport=ASGITransport(app=app), base_url=baseurl, timeout=20) as client, LifespanManager(app):
         yield client
 
 
@@ -155,13 +155,15 @@ async def test_openai(client: AsyncClient):
         emb_1_text.data[0].embedding, emb_1_text.data[1].embedding, rtol=1e-4, atol=1e-4
     )
 
-    # wrong key
-    with pytest.raises(APIConnectionError):
-        client_oai = AsyncOpenAI(api_key="some_wrong", base_url=baseurl, http_client=client)
-        async with client_oai:
-            await client_oai.embeddings.create(
-                model=pytest.DEFAULT_AUDIO_MODEL,
-                input=[pytest.AUDIO_SAMPLE_URL],
-                encoding_format="float",
-                extra_body={"modality": "audio"},
-            )
+    # The SDK owns/closes its HTTP client; use a fresh client for the auth check.
+    async with AsyncClient(transport=ASGITransport(app=app), base_url=baseurl, timeout=20) as wrong_key_client:
+        with pytest.raises(AuthenticationError):
+            async with AsyncOpenAI(
+                api_key="some_wrong", base_url=baseurl, http_client=wrong_key_client
+            ) as client_oai:
+                await client_oai.embeddings.create(
+                    model=pytest.DEFAULT_AUDIO_MODEL,
+                    input=[pytest.AUDIO_SAMPLE_URL],
+                    encoding_format="float",
+                    extra_body={"modality": "audio"},
+                )

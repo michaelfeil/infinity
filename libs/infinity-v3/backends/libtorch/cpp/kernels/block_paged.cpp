@@ -1,8 +1,9 @@
 // Copyright Infinity Core Contributors. Licensed under the repository LICENSE.
 #include "block_paged.h"
+#include "kernels/infinity_fa4.h"
 #include <algorithm>
 #include <ATen/ops/_flash_attention_forward.h>
-#ifdef TEI_TORCH_CUDA_KERNELS
+#ifdef INFINITY_TORCH_CUDA_KERNELS
 #include <ATen/cuda/CUDAContext.h>
 #endif
 
@@ -55,13 +56,24 @@ BlockPages prepare_block_pages(const std::vector<int32_t>& prefixes,
   std::vector<int32_t> table(rows.size() * columns, 0);
   for (size_t row = 0; row < rows.size(); ++row)
     std::copy(rows[row].begin(), rows[row].end(), table.begin() + row * columns);
+  // The same gathered rows are a contiguous 128-row page view for FA4. Expanding
+  // each 256-row page index into its two subpages keeps the fallback layout and
+  // storage untouched; seqused_k masks the page-rounded tail.
+  std::vector<int32_t> subpage(rows.size() * columns * 2, 0);
+  for (size_t row = 0; row < rows.size(); ++row)
+    for (size_t column = 0; column < rows[row].size(); ++column) {
+      subpage[row * columns * 2 + column * 2] = rows[row][column] * 2;
+      subpage[row * columns * 2 + column * 2 + 1] = rows[row][column] * 2 + 1;
+    }
   return {at::tensor(gather, options.dtype(at::kLong)),
           at::tensor(table, options.dtype(at::kInt)).view({int64_t(rows.size()), int64_t(columns)}),
+          at::tensor(subpage, options.dtype(at::kInt))
+              .view({int64_t(rows.size()), int64_t(columns * 2)}),
           max_k};
 }
 
 bool block_paged_supported(const at::Tensor& q) {
-#ifdef TEI_TORCH_CUDA_KERNELS
+#ifdef INFINITY_TORCH_CUDA_KERNELS
   return q.is_cuda() && q.dim() == 3 && q.size(0) > 0 && q.stride(2) == 1 &&
          (q.scalar_type() == at::kHalf || q.scalar_type() == at::kBFloat16) &&
          (q.size(2) == 64 || q.size(2) == 128 || q.size(2) == 256) &&
@@ -83,28 +95,53 @@ at::Tensor block_paged_attention(const at::Tensor& q,
                                  double scale) {
   TORCH_CHECK(block_paged_supported(q) && pages.gather.defined(), "Unsupported block page layout");
   auto pack = [&](const at::Tensor& prefix, const at::Tensor& suffix) {
-    return at::cat({prefix, suffix}, 0)
-        .index_select(0, pages.gather)
-        .view({-1, BlockPages::page_size, k.size(1), k.size(2)});
+    return at::cat({prefix, suffix}, 0).index_select(0, pages.gather);
   };
+  auto packed_k = pack(prefix_k, k), packed_v = pack(prefix_v, v);
+  // Prefer FA4 on the 128-row subpage view of the same gathered pages. Its
+  // seqused_k is the exact prefix+suffix length, so the page-rounded tail is
+  // masked. Unsupported profiles/capabilities return undefined and preserve the
+  // existing ATen paged provider; a selected launch error propagates. Device
+  // value bounds stay trusted because prepare_block_pages builds both the table
+  // and the true lengths; the host-known table capacity is checked here.
+  if (pages.subpage_table.defined() && cu_q.numel() > 1 && cu_k.numel() == cu_q.numel() &&
+      cu_q.scalar_type() == at::kInt && cu_k.scalar_type() == at::kInt && cu_q.is_cuda() &&
+      cu_k.is_cuda() && infinity_fa4_paged_supported(q, k.size(1))) {
+    TORCH_CHECK(pages.max_k <= pages.subpage_table.size(1) * BlockPages::fa4_page_size,
+                "FA4 paged table does not cover the block KV length");
+    const auto batch = cu_q.numel() - 1;
+    auto seqused = (cu_k.narrow(0, 1, batch) - cu_k.narrow(0, 0, batch)).contiguous();
+    auto fa4 =
+        infinity_fa4_paged(q,
+                           packed_k.view({-1, BlockPages::fa4_page_size, k.size(1), k.size(2)}),
+                           packed_v.view({-1, BlockPages::fa4_page_size, v.size(1), v.size(2)}),
+                           cu_q,
+                           seqused,
+                           pages.subpage_table,
+                           max_q,
+                           scale);
+    if (fa4.defined())
+      return fa4;
+  }
   // One softmax over prefix + own suffix. Explicit num_splits=1 avoids the
   // provider's split-K workspace/merge and preserves its contiguous traversal.
-  return std::get<0>(at::_flash_attention_forward(q,
-                                                  pack(prefix_k, k),
-                                                  pack(prefix_v, v),
-                                                  cu_q,
-                                                  cu_k,
-                                                  max_q,
-                                                  pages.max_k,
-                                                  0.,
-                                                  false,
-                                                  false,
-                                                  scale,
-                                                  std::nullopt,
-                                                  std::nullopt,
-                                                  std::nullopt,
-                                                  std::nullopt,
-                                                  pages.table,
-                                                  1));
+  return std::get<0>(
+      at::_flash_attention_forward(q,
+                                   packed_k.view({-1, BlockPages::page_size, k.size(1), k.size(2)}),
+                                   packed_v.view({-1, BlockPages::page_size, v.size(1), v.size(2)}),
+                                   cu_q,
+                                   cu_k,
+                                   max_q,
+                                   pages.max_k,
+                                   0.,
+                                   false,
+                                   false,
+                                   scale,
+                                   std::nullopt,
+                                   std::nullopt,
+                                   std::nullopt,
+                                   std::nullopt,
+                                   pages.table,
+                                   1));
 }
 }

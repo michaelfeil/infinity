@@ -5,7 +5,7 @@
 #include "models/decoder_models.h"
 #include "helpers/attention.h"
 #include "helpers/vision_batch.h"
-#ifdef TEI_TORCH_CUDA_KERNELS
+#ifdef INFINITY_TORCH_CUDA_KERNELS
 #include "kernels/fast_kernels.h"
 #include "kernels/transformers_norm.h"
 #endif
@@ -35,7 +35,7 @@ class Mistral3 final : public Model {
   /// Compute RMS statistics in FP32, round normalized rows back to model dtype, then multiply
   /// affine weights. The fused vision path retains those Transformers boundaries.
   at::Tensor rms(const at::Tensor& x, const at::Tensor& scale, double eps) const {
-#ifdef TEI_TORCH_CUDA_KERNELS
+#ifdef INFINITY_TORCH_CUDA_KERNELS
     if (fused_vision)
       return transformers_rms_norm(x, {}, scale, eps).first;
 #endif
@@ -129,7 +129,7 @@ class Mistral3 final : public Model {
       auto p = "vision_tower.transformer.layers." + std::to_string(i) + ".";
       auto norm = rms(x, w(p + "attention_norm.weight"), 1e-5);
       at::Tensor q, k, v, attended;
-#ifdef TEI_TORCH_CUDA_KERNELS
+#ifdef INFINITY_TORCH_CUDA_KERNELS
       if (fused_vision) {
         auto qkv = linear(norm, p + "attention.qkv").view({n, 3, heads, dim});
         auto pair = fused_rotary(qkv.select(1, 0), qkv.select(1, 1), cos, sin, false);
@@ -157,7 +157,7 @@ class Mistral3 final : public Model {
         attended = at::cat(outputs).reshape({n, hidden});
       }
       auto projected = linear(attended, p + "attention.o_proj");
-#ifdef TEI_TORCH_CUDA_KERNELS
+#ifdef INFINITY_TORCH_CUDA_KERNELS
       if (fused_vision) {
         auto pair = transformers_rms_norm(projected, x, w(p + "ffn_norm.weight"), 1e-5);
         x = pair.second;
@@ -214,12 +214,12 @@ public:
     }
     source.clear();
     Options tc;
-    const bool fp8 = c.boolean("_fp8_dynamic", false);
+    const bool quantized = c.dynamic_quantization() != Quantization::None;
     for (const auto& [k, v] : c.values) {
       if (k.starts_with("text_config."))
         tc.values[k.substr(12)] = v;
       // Quantization applies to the frozen text encoder; the vision tower stays BF16.
-      else if (k == "_fp8_dynamic" || k == "_fp8_scope")
+      else if (k == "_dynamic_quantization" || k == "_dynamic_quantization_scope")
         tc.values[k] = v;
     }
     TORCH_CHECK(tc.string("model_type") == "ministral3" || tc.string("model_type") == "mistral",
@@ -227,7 +227,7 @@ public:
     // This wrapper follows Transformers rounding boundaries, independently
     // of the legacy Candle-compatible Mistral kernel contracts. Dynamic FP8
     // keeps the native quantized arithmetic path.
-    if (!fp8)
+    if (!quantized)
       tc.values["_transformers_math"] = "true";
     text = create_decoder(tc, tw, device, dtype);
     hidden = cfg.integer("vision_config.hidden_size");
@@ -306,7 +306,7 @@ public:
                   out,
                   "]");
     text->ready();
-#ifdef TEI_TORCH_CUDA_KERNELS
+#ifdef INFINITY_TORCH_CUDA_KERNELS
     fused_vision = device.is_cuda() && (dtype == at::kHalf || dtype == at::kBFloat16) &&
                    dim % 8 == 0 && dim <= 256;
     if (fused_vision)
@@ -348,7 +348,7 @@ public:
       if (fused_vision) {
         auto recipe = MlpActivationRecipe::numerical(
             [silu](const at::Tensor& rows) {
-#ifdef TEI_TORCH_CUDA_KERNELS
+#ifdef INFINITY_TORCH_CUDA_KERNELS
               return fused_gated_activation(rows, silu ? 0 : 1);
 #else
               TORCH_CHECK(false, "Fused vision MLP requires CUDA");

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Native Laya C-ABI latency/accuracy/profile matrix; requires pinned Torch and NumPy.
 
-Example: python laya_performance.py --library libtei_torch.so --model MODEL
+Example: python laya_performance.py --library libinfinity_torch.so --model MODEL
   --fixture original-inputs.json --output REPORT --iterations 100 --repeats 2
 Run baseline and candidate on the same otherwise-idle GPU, without HTTP/tokenization.
 """
@@ -41,35 +41,36 @@ def flatten(value, prefix=''):
 
 
 class Native:
-    def __init__(self, library, model, graphs, fp8=False):
+    def __init__(self, library, model, graphs, dynamic_quantization='none'):
         self.lib = lib = C.CDLL(str(library.resolve()))
-        lib.tei_error.restype = C.c_char_p
-        lib.tei_create.argtypes = [C.POINTER(Config), C.c_char_p, C.c_int32]
-        lib.tei_create.restype = C.c_void_p
-        lib.tei_option.argtypes = [C.c_void_p, C.c_char_p, C.c_char_p]
-        lib.tei_weight.argtypes = [C.c_void_p, C.c_char_p, C.c_void_p, C.c_void_p, C.c_size_t, C.c_int32]
-        for name in ['tei_ready', 'tei_destroy', 'tei_graph_count']:
+        lib.infinity_torch_error.restype = C.c_char_p
+        lib.infinity_torch_create.argtypes = [C.POINTER(Config), C.c_char_p, C.c_int32]
+        lib.infinity_torch_create.restype = C.c_void_p
+        lib.infinity_torch_option.argtypes = [C.c_void_p, C.c_char_p, C.c_char_p]
+        lib.infinity_torch_weight.argtypes = [C.c_void_p, C.c_char_p, C.c_void_p, C.c_void_p, C.c_size_t, C.c_int32]
+        for name in ['infinity_torch_ready', 'infinity_torch_destroy', 'infinity_torch_graph_count']:
             getattr(lib, name).argtypes = [C.c_void_p]
-        lib.tei_graph_count.restype = C.c_int64
-        lib.tei_decide.argtypes = [C.c_void_p] + [C.c_void_p] * 4 + [
+        lib.infinity_torch_graph_count.restype = C.c_int64
+        lib.infinity_torch_decide.argtypes = [C.c_void_p] + [C.c_void_p] * 4 + [
             C.c_int64, C.c_int64, C.c_void_p, C.c_void_p, C.c_size_t,
             C.c_void_p, C.c_void_p, C.c_void_p, C.c_size_t, C.c_void_p, C.c_size_t]
         cfg = json.loads((model / 'encoder/config.json').read_text())
         conf = Config(cfg['hidden_size'], cfg['num_attention_heads'], cfg['num_hidden_layers'],
                       cfg['intermediate_size'], cfg['vocab_size'], cfg['max_position_embeddings'],
                       cfg.get('type_vocab_size', 1), cfg['norm_eps'], 0)
-        self.handle = lib.tei_create(C.byref(conf), b'cuda:0', 2)
+        self.handle = lib.infinity_torch_create(C.byref(conf), b'cuda:0', 2)
         if not self.handle:
-            raise RuntimeError(lib.tei_error().decode())
+            raise RuntimeError(lib.infinity_torch_error().decode())
         for layer, key in [('full_attention', 'global_rope_theta'), ('sliding_attention', 'local_rope_theta')]:
             if key not in cfg:
                 cfg[key] = cfg['rope_parameters'][layer]['rope_theta']
         cfg.update(_decision={'kind': 'laya', 'config': json.loads((model / 'rl_agent_config.json').read_text())},
                    _cuda_graphs=graphs, _cuda_graph_max_tokens=32768, _cuda_graph_entries=8,
                    _cuda_graph_max_bytes=2 << 30, _pooling='decision', _dense_count=0,
-                   _cudnn_varlen=False, _fp8_dynamic=fp8)
+                   _cudnn_varlen=False, _dynamic_quantization=dynamic_quantization,
+                   _dynamic_quantization_scope='mlp')
         for key, value in flatten(cfg):
-            self.check(lib.tei_option(self.handle, key.encode(), value.encode()))
+            self.check(lib.infinity_torch_option(self.handle, key.encode(), value.encode()))
         file = model / 'model.safetensors'
         with file.open('rb') as f:
             with mmap.mmap(f.fileno(), 0, access=mmap.ACCESS_COPY) as mm:
@@ -83,14 +84,14 @@ class Native:
                     array = np.ndarray(tensor['shape'], dtype={'F32': np.float32, 'F16': np.float16, 'BF16': np.uint16}[dtype],
                                        buffer=mm, offset=8+n+tensor['data_offsets'][0])
                     shape = np.asarray(tensor['shape'], np.int64)
-                    self.check(lib.tei_weight(self.handle, name.encode(), array.ctypes.data,
+                    self.check(lib.infinity_torch_weight(self.handle, name.encode(), array.ctypes.data,
                                              shape.ctypes.data, len(shape), {'F32': 0, 'F16': 1, 'BF16': 2}[dtype]))
                     del array
-        self.check(lib.tei_ready(self.handle))
+        self.check(lib.infinity_torch_ready(self.handle))
 
     def check(self, code):
         if code:
-            raise RuntimeError(self.lib.tei_error().decode())
+            raise RuntimeError(self.lib.infinity_torch_error().decode())
 
     def prepare(self, sequences):
         lengths = [len(s['ids']) for s in sequences]
@@ -108,7 +109,7 @@ class Native:
         def forward():
             # Keep all buffers, including marker storage, alive through the synchronous ABI call.
             _ = markers
-            self.check(self.lib.tei_decide(self.handle, ids.ctypes.data, types.ctypes.data,
+            self.check(self.lib.infinity_torch_decide(self.handle, ids.ctypes.data, types.ctypes.data,
                 positions.ctypes.data, cumulative.ctypes.data, len(sequences), max(lengths),
                 metadata, logits.ctypes.data, len(logits), actions.ctypes.data, None, None, 0, None, 0))
             if not np.isfinite(logits).all() or not np.isfinite(actions).all():
@@ -117,7 +118,7 @@ class Native:
         return forward
 
     def close(self):
-        self.lib.tei_destroy(self.handle)
+        self.lib.infinity_torch_destroy(self.handle)
 
 
 def cases(fixture, extended=False):
@@ -179,7 +180,8 @@ def main():
     p.add_argument('--extended-only', action='store_true', help='Measure only added larger batches and exact targets')
     p.add_argument('--tune-gemm', type=int, default=0,
                    help='Experimentally tune this many cuBLASLt heuristic candidates before measuring')
-    p.add_argument('--fp8', action='store_true', help='Evaluate existing dynamic FP8 encoder MLP; changes precision')
+    p.add_argument('--dynamic-quantization', choices=['none', 'fp8', 'mxfp8', 'nvfp4'], default='none',
+                   help='Select the runtime MLP format; unsupported model/format combinations fail during loading')
     args = p.parse_args()
     assert args.iterations >= 20 and args.repeats >= 1
     args.output.mkdir(parents=True, exist_ok=True)
@@ -207,10 +209,10 @@ def main():
                     model_metadata=json.loads((args.model / 'checkpoint_metadata.json').read_text()),
                     graphs=args.graphs, iterations=args.iterations, repeats=args.repeats,
                     gemm_heuristic_candidates=args.tune_gemm,
-                    fp8_mlp=args.fp8,
+                    dynamic_quantization=args.dynamic_quantization, dynamic_quantization_scope='mlp',
                     measurement='synchronous native C ABI; includes input upload, encoder, head and host outputs; excludes HTTP/tokenization; BF16; exact packed tokens')
     (args.output / 'manifest.json').write_text(json.dumps(manifest, indent=2))
-    engine = Native(args.library, args.model, args.graphs, args.fp8)
+    engine = Native(args.library, args.model, args.graphs, args.dynamic_quantization)
     rows = []
     try:
         for repeat in range(args.repeats):
@@ -232,7 +234,7 @@ def main():
                 row = dict(case=case['name'], repeat=repeat, lengths=[len(s['ids']) for s in case['sequences']],
                            samples_ms=samples, p50_ms=float(np.median(samples)), p95_ms=float(np.percentile(samples,95)),
                            peak_allocated_bytes=torch.cuda.max_memory_allocated(), reserved_bytes=torch.cuda.memory_reserved(),
-                           graph_count=engine.lib.tei_graph_count(engine.handle), logits=ref_logits.tolist(), actions=ref_actions.tolist())
+                           graph_count=engine.lib.infinity_torch_graph_count(engine.handle), logits=ref_logits.tolist(), actions=ref_actions.tolist())
                 row['tokens_per_second'] = sum(row['lengths']) * 1000 / row['p50_ms']
                 row['questions_per_second'] = len(row['lengths']) * 1000 / row['p50_ms']
                 rows.append(row)

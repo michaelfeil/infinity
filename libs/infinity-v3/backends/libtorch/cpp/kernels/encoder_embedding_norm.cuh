@@ -31,7 +31,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 */
 #pragma once
 
-// TEI-local derivative of the pinned Candle ln_fwd_kernel. Reduction and
+// Infinity-local derivative of the pinned Candle ln_fwd_kernel. Reduction and
 // affine math are retained; only the input loader adds the rounded Half pair.
 // This kernel is instantiated only for contiguous CUDA Half width-768 rows.
 namespace layer_norm {

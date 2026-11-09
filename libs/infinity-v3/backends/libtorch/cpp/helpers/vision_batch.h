@@ -4,7 +4,7 @@
 
 #pragma once
 #include "batching/packed_input.h"
-#ifdef TEI_TORCH_CUDA_KERNELS
+#ifdef INFINITY_TORCH_CUDA_KERNELS
 #include <c10/cuda/CUDACachingAllocator.h>
 #include <c10/cuda/CUDAGuard.h>
 #endif
@@ -18,7 +18,7 @@ inline std::vector<std::pair<size_t, size_t>> vision_batches(const std::vector<I
                                                              int64_t hidden,
                                                              int64_t intermediate) {
   size_t budget = 2ULL << 30;
-#ifdef TEI_TORCH_CUDA_KERNELS
+#ifdef INFINITY_TORCH_CUDA_KERNELS
   if (device.is_cuda()) {
     c10::cuda::CUDAGuard guard(device);
     size_t available = 0, total = 0;

@@ -124,12 +124,12 @@ class Device(EnumType):
 
 
 class Dtype(EnumType):
-    float32: str = "float32"
-    float16: str = "float16"
-    bfloat16: str = "bfloat16"
-    int8: str = "int8"
-    fp8: str = "fp8"
-    auto: str = "auto"
+    float32 = "float32"
+    float16 = "float16"
+    bfloat16 = "bfloat16"
+    int8 = "int8"
+    fp8 = "fp8"
+    auto = "auto"
 
     @staticmethod
     def default_value():
@@ -143,11 +143,11 @@ class Dtype(EnumType):
 
 
 class EmbeddingDtype(EnumType):
-    float32: str = "float32"
-    int8: str = "int8"
-    uint8: str = "uint8"
-    binary: str = "binary"
-    ubinary: str = "ubinary"
+    float32 = "float32"
+    int8 = "int8"
+    uint8 = "uint8"
+    binary = "binary"
+    ubinary = "ubinary"
 
     @lru_cache
     def uses_bitpacking(self) -> bool:
@@ -159,9 +159,9 @@ class EmbeddingDtype(EnumType):
 
 
 class PoolingMethod(EnumType):
-    mean: str = "mean"
-    cls: str = "cls"
-    auto: str = "auto"
+    mean = "mean"
+    cls = "cls"
+    auto = "auto"
 
     @staticmethod
     def default_value():

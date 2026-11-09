@@ -21,14 +21,70 @@ Use a local model directory or a compatible Hugging Face model ID. Model
 availability, access credentials, pooling and supported inputs depend on the
 checkpoint and selected backend.
 
-LibTorch is the only inference backend. Most deployments should omit
+LibTorch is the default when it is compiled. Single-backend builds select their
+only compiled backend automatically, and most deployments should omit
 `--backend`; `--backend libtorch` remains accepted for existing configurations.
+Builds that compile the Python backend can select it with `--backend python-backend`
+and pass a JSON configuration object with `--python-config`; see the
+[Python backend](python-backend.md) guide for reserved keys and plugin
+selection. The flag cannot enable a backend
+missing from the image; startup errors list the compiled choices.
 
 Open `/docs` on the running server for interactive API documentation. The API
 schema is available at `/api-doc/openapi.json`.
 
 CUDA inference requires SM80 (Ampere) or newer. SM75/Turing
 is unsupported; use a CPU build on hosts without a supported GPU.
+
+## Quantization
+
+`--dynamic-quantization none|fp8|mxfp8|nvfp4` selects a format independently of
+`--dtype`. It defaults to `none`. `fp8` uses rowwise FP8 projections; `mxfp8`
+and `nvfp4` select block-scaled MLP formats for compatible Blackwell BF16 models.
+All quantized modes require the LibTorch CUDA backend and an unquantized
+checkpoint. Explicit unsupported formats fail during initialization.
+
+`--dynamic-quantization-scope auto|mlp|all` controls projection coverage. `auto` (default)
+uses all-linear scope for eligible dense decoders and MLP-only scope otherwise.
+`mlp` limits quantization to feed-forward projections. In `all` scope, non-MLP
+projections use FP8 even when MLPs use MXFP8 or NVFP4. Attention calculations,
+normalization, embedding/output heads and media towers keep their existing dtype.
+
+One value broadcasts to every model; semicolon-separated values or repeated
+flags align with `--model-id`. For example, serve an eligible NVFP4 reranker
+alongside a rowwise FP8 encoder:
+
+```sh
+infinity_v3 --model-id /models/qwen3-reranker --model-id /models/bert-encoder \
+  --torch-device cuda --dtype bfloat16 --dynamic-quantization 'nvfp4;fp8'
+```
+
+Use `none` for a companion model that should keep its floating-point dtype.
+The environment alternatives are `INFINITY_DYNAMIC_QUANTIZATION` and
+`INFINITY_DYNAMIC_QUANTIZATION_SCOPE` (with the configured environment prefix).
+Formats can change accuracy; validate on your task before deployment.
+
+### Migrating existing deployments
+
+Remove the old settings from launch commands, Docker/Kubernetes environment
+variables and service files. Retired flags are rejected; retired environment
+selectors report their replacements instead of being ignored. They are not
+translated automatically.
+
+| Previous setting | Replacement |
+| --- | --- |
+| `--enable-fp8-dynamic` / `ENABLE_FP8_DYNAMIC=true` | `--dynamic-quantization fp8` for rowwise FP8, or `mxfp8` for the previously automatic eligible MXFP8 MLP path. Choose the format explicitly. |
+| `TORCH_MXFP8_MLP=0` with dynamic FP8 enabled | `--dynamic-quantization fp8` |
+| `TORCH_MXFP8_MLP=1` on an eligible model | `--dynamic-quantization mxfp8` |
+| `TORCH_NVFP4_MLP=1` with dynamic FP8 enabled | `--dynamic-quantization nvfp4` |
+| `TORCH_FP8_SCOPE=mlp` or `all` | `--dynamic-quantization-scope mlp` or `all` |
+| Quantization disabled | Omit the format flag or set `--dynamic-quantization none`. Remove old selectors even when set to `0` or `false`. |
+
+The environment names above also apply with the configured prefix (for example,
+`INFINITY_TORCH_NVFP4_MLP`). The new equivalents are
+`INFINITY_DYNAMIC_QUANTIZATION` and `INFINITY_DYNAMIC_QUANTIZATION_SCOPE`.
+`/info` now returns `dynamic_quantization` and `dynamic_quantization_scope` in
+place of `enable_fp8_dynamic`; scope reports the requested value, including `auto`.
 
 ## Request service tiers
 

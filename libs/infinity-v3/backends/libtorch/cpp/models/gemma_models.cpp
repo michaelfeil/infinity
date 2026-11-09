@@ -31,7 +31,7 @@
 #include <limits>
 #include <map>
 #include <memory>
-#ifdef TEI_TORCH_CUDA_KERNELS
+#ifdef INFINITY_TORCH_CUDA_KERNELS
 #include "kernels/gemma_score.h"
 #include <ATen/cuda/CUDAContext.h>
 #include <c10/cuda/CUDAStream.h>
@@ -82,7 +82,7 @@ class Gemma final : public Model {
   std::unordered_map<std::string, DenseMlp> media_mlps;
   // Choose the same accumulation tree as the original logical-row GEMM,
   // using descriptors only. Execute on actual compact rows, with no padding.
-#ifdef TEI_TORCH_CUDA_KERNELS
+#ifdef INFINITY_TORCH_CUDA_KERNELS
   /// Retained cuBLASLt plan and workspace ownership for logical-row projections.
   struct RadixLinearPlan {
     cublasLtMatmulDesc_t operation{};
@@ -133,7 +133,7 @@ class Gemma final : public Model {
                                      const std::string& name,
                                      const PackedInput& packed,
                                      const at::Tensor& supplied = at::Tensor{}) const {
-#ifdef TEI_TORCH_CUDA_KERNELS
+#ifdef INFINITY_TORCH_CUDA_KERNELS
     const auto& matrix = supplied.defined() ? supplied : w(name + ".weight");
     // Cached Gemma4 routers retain the original FP32 reduction geometry. Cold
     // execution still uses its original operator and BLAS provider; warm plans
@@ -382,7 +382,7 @@ class Gemma final : public Model {
                                     .index_select(0, ids.reshape({-1}))
                                     .view_as(ids);
     auto activation = [&](const at::Tensor& gu) {
-#ifdef TEI_TORCH_CUDA_KERNELS
+#ifdef INFINITY_TORCH_CUDA_KERNELS
       auto act = string("hidden_activation", "gelu_pytorch_tanh");
       if (device.is_cuda() && (dtype == at::kBFloat16 || dtype == at::kHalf) && act != "relu" &&
           act != "gelu")
@@ -442,7 +442,7 @@ class Gemma final : public Model {
       return output;
     };
     auto an = [&](const at::Tensor& x, const std::string& name) {
-#ifdef TEI_TORCH_CUDA_KERNELS
+#ifdef INFINITY_TORCH_CUDA_KERNELS
       if (device.is_cuda() && x.scalar_type() == at::kBFloat16)
         return gemma_audio_norm_cuda(
             x.contiguous(), weight(norm_scales, root + name + ".weight"), eps);
@@ -622,7 +622,7 @@ class Gemma final : public Model {
       return at::linear(x, weight(weights, key));
     };
     auto vn = [&](const at::Tensor& x, const std::string& name) {
-#ifdef TEI_TORCH_CUDA_KERNELS
+#ifdef INFINITY_TORCH_CUDA_KERNELS
       if (device.is_cuda() && dtype == at::kBFloat16) {
         auto scale =
             name.empty() ? norm_ones.at(x.size(-1)) : weight(norm_scales, root + name + ".weight");
@@ -664,7 +664,7 @@ class Gemma final : public Model {
     auto cos = at::cat({col_angles.cos(), row_angles.cos()}, -1).to(dtype).unsqueeze(1);
     auto sin = at::cat({col_angles.sin(), row_angles.sin()}, -1).to(dtype).unsqueeze(1);
     auto rotate2d = [&](const at::Tensor& x) {
-#ifdef TEI_TORCH_CUDA_KERNELS
+#ifdef INFINITY_TORCH_CUDA_KERNELS
       if (device.is_cuda() && dtype == at::kBFloat16)
         return gemma_vision_rotary_cuda(x, cos, sin);
 #endif
@@ -689,7 +689,7 @@ class Gemma final : public Model {
                            p + "self_attn.k_norm"));
       auto v = vn(vl(normalized, p + "self_attn.v_proj").view({states.size(0), nk, dim}), "");
       at::Tensor attention_output;
-#ifdef TEI_TORCH_CUDA_KERNELS
+#ifdef INFINITY_TORCH_CUDA_KERNELS
       if (device.is_cuda() && dtype == at::kBFloat16 &&
           torch_flash_fma_supported(q, k, v, false, -1, -1))
         attention_output =
@@ -708,7 +708,7 @@ class Gemma final : public Model {
       const auto height = images[i].grid_thw[1], width = images[i].grid_thw[2];
       auto slice = states.narrow(0, offsets[i], offsets[i + 1] - offsets[i]);
       at::Tensor pooled;
-#ifdef TEI_TORCH_CUDA_KERNELS
+#ifdef INFINITY_TORCH_CUDA_KERNELS
       if (device.is_cuda() && dtype == at::kBFloat16)
         pooled = gemma_vision_pool_cuda(slice.contiguous(), height, width, pool);
       else
@@ -728,7 +728,7 @@ class Gemma final : public Model {
       pooled = (pooled - vw("vision_tower.std_bias").to(at::kFloat)) *
                vw("vision_tower.std_scale").to(at::kFloat);
     pooled = pooled.to(dtype);
-#ifdef TEI_TORCH_CUDA_KERNELS
+#ifdef INFINITY_TORCH_CUDA_KERNELS
     // Preserve the final BareRmsNorm and its activation cast before projection.
     if (device.is_cuda() && dtype == at::kBFloat16)
       pooled = gemma_vision_norm_cuda(pooled.contiguous(), norm_ones.at(vh), eps);
@@ -789,7 +789,7 @@ class Gemma final : public Model {
   /// Legacy and newer families retain their rsqrt versus sqrt/divide arithmetic before
   /// converting to the input dtype.
   at::Tensor norm(const at::Tensor& x, const std::string& name, bool unit = false) const {
-#ifdef TEI_TORCH_CUDA_KERNELS
+#ifdef INFINITY_TORCH_CUDA_KERNELS
     if (device.is_cuda() && (dtype == at::kBFloat16 || dtype == at::kHalf) && x.size(-1) <= 8192) {
       const auto& scale =
           unit ? norm_ones.at(x.size(-1)) : weight(norm_scales, prefix + name + ".weight");
@@ -811,7 +811,7 @@ class Gemma final : public Model {
   /// applies post-normalization to the branch before adding it to the residual stream.
   at::Tensor
   residual_norm(const at::Tensor& residual, const at::Tensor& x, const std::string& name) const {
-#ifdef TEI_TORCH_CUDA_KERNELS
+#ifdef INFINITY_TORCH_CUDA_KERNELS
     if (device.is_cuda() && dtype == at::kHalf && x.dim() == 2 && x.size(1) > 0 &&
         x.size(1) <= 8192 && x.is_contiguous() && residual.is_contiguous())
       return gemma_half_residual_norm_cuda(
@@ -840,7 +840,7 @@ class Gemma final : public Model {
     const auto act = string("hidden_activation", "gelu_pytorch_tanh");
     if (act == "gelu")
       return at::gelu(x, "none");
-#ifdef TEI_TORCH_CUDA_KERNELS
+#ifdef INFINITY_TORCH_CUDA_KERNELS
     if (x.is_cuda() && (x.scalar_type() == at::kBFloat16 || x.scalar_type() == at::kHalf) &&
         act != "relu")
       return gemma_activation_cuda(x, act != "silu" && act != "swish");
@@ -858,7 +858,7 @@ class Gemma final : public Model {
   /// Gather the current layer's rotary phases by token position and rotate split head halves.
   /// Layer-local tables support different sliding/global attention settings.
   at::Tensor rotate(const at::Tensor& x, const Layer& layer, const at::Tensor& positions) const {
-#ifdef TEI_TORCH_CUDA_KERNELS
+#ifdef INFINITY_TORCH_CUDA_KERNELS
     if (!legacy && x.is_cuda() &&
         (x.scalar_type() == at::kHalf ||
          (x.scalar_type() == at::kBFloat16 && (!embedding2 || embedding2_reference_cuda))))
@@ -915,7 +915,7 @@ class Gemma final : public Model {
                                   input.cumulative.options());
             auto cuk =
                 at::tensor(std::vector<int32_t>{0, int32_t(count)}, input.cumulative.options());
-#ifdef TEI_TORCH_CUDA_KERNELS
+#ifdef INFINITY_TORCH_CUDA_KERNELS
             if (torch_flash_fma_supported(iq, ik, iv, false, layer.window - 1, -1))
               correction = torch_flash_fma_varlen(iq,
                                                   ik,
@@ -989,7 +989,7 @@ class Gemma final : public Model {
           auto iq = q.narrow(0, image.token_start, image.token_count),
                ik = k.narrow(0, key_start, key_len), iv = v.narrow(0, key_start, key_len);
           at::Tensor correction;
-#ifdef TEI_TORCH_CUDA_KERNELS
+#ifdef INFINITY_TORCH_CUDA_KERNELS
           if (torch_flash_fma_supported(iq, ik, iv, false, layer.window - 1, -1))
             correction = torch_flash_fma_varlen(iq,
                                                 ik,
@@ -1257,19 +1257,22 @@ public:
   /// Validate the selected Gemma family and prepare layer metadata,
   /// norms, towers, and optional score heads.
   void ready() override {
-    const auto fp8 = cfg.boolean("_fp8_dynamic", false);
-    TORCH_CHECK(cfg.string("_fp8_scope", "mlp") == "mlp", "Gemma FP8 supports MLP scope only");
-    if (fp8) {
+    const auto quantization = cfg.dynamic_quantization();
+    TORCH_CHECK(cfg.dynamic_quantization_scope() == QuantizationScope::Mlp,
+                "Gemma quantization supports MLP scope only");
+    if (quantization != Quantization::None) {
       TORCH_CHECK(!boolean("enable_moe_block", false),
-                  "Dynamic FP8 Gemma requires a dense checkpoint; routed experts are unsupported");
+                  quantization_name(quantization),
+                  " Gemma requires a dense checkpoint; routed experts are unsupported");
       TORCH_CHECK(device.is_cuda() && (dtype == at::kHalf || dtype == at::kBFloat16),
-                  "Dynamic FP8 Gemma requires CUDA float16/bfloat16");
+                  quantization_name(quantization),
+                  " Gemma requires CUDA float16/bfloat16");
       for (const auto& [name, value] : cfg.values)
         TORCH_CHECK(
             name != "quantization_config" && name.rfind("quantization_config.", 0) != 0 &&
                 name != "text_config.quantization_config" &&
                 name.rfind("text_config.quantization_config.", 0) != 0,
-            "Dynamic FP8 requires an unquantized checkpoint without supplied quantization scales");
+            "Quantized Gemma requires an unquantized checkpoint without supplied quantization scales");
     }
     if (supports_audio()) {
       const auto chunk = cfg.integer("audio_config.attention_chunk_size", 12),
@@ -1379,7 +1382,7 @@ public:
       const auto p = vision_root + "vision_tower.encoder.layers." + std::to_string(i) + ".mlp";
       auto activation = MlpActivationRecipe::numerical([this](const at::Tensor& gate) {
         const auto kind = cfg.string("vision_config.hidden_activation", "gelu_pytorch_tanh");
-#ifdef TEI_TORCH_CUDA_KERNELS
+#ifdef INFINITY_TORCH_CUDA_KERNELS
         if (device.is_cuda() && dtype == at::kBFloat16 && kind != "silu" && kind != "gelu")
           return gemma_activation_cuda(gate, true);
 #endif
@@ -1475,7 +1478,7 @@ public:
           at::cat({w(layer.p + "mlp.gate_proj.weight"), w(layer.p + "mlp.up_proj.weight")}, 0);
       auto activation = MlpActivationRecipe::numerical(
           [this](const at::Tensor& gu) {
-#ifdef TEI_TORCH_CUDA_KERNELS
+#ifdef INFINITY_TORCH_CUDA_KERNELS
             const auto act = string("hidden_activation", "gelu_pytorch_tanh");
             if (device.is_cuda() && (dtype == at::kBFloat16 || dtype == at::kHalf) &&
                 act != "relu" && act != "gelu")
@@ -1490,8 +1493,8 @@ public:
           {w(layer.p + "mlp.down_proj.weight"),
            has(layer.p + "mlp.down_proj.bias") ? w(layer.p + "mlp.down_proj.bias") : at::Tensor()},
           std::move(activation));
-      if (fp8) {
-        layer.dense_mlp.prepare(MlpPrecision::Fp8);
+      if (quantization != Quantization::None) {
+        layer.dense_mlp.prepare(quantization);
         layer.gate_up = at::Tensor();
         for (const auto* projection : {"gate_proj", "up_proj", "down_proj"})
           weights.erase(prefix + layer.p + "mlp." + projection + ".weight");
@@ -1571,7 +1574,7 @@ public:
       auto logits = at::linear(states, weight(weights, "score.weight"));
       const double cap = real("final_logit_softcapping", 0.);
       const bool capped = cfg.values.count(key("final_logit_softcapping"));
-#ifdef TEI_TORCH_CUDA_KERNELS
+#ifdef INFINITY_TORCH_CUDA_KERNELS
       if (logits.is_cuda() && logits.scalar_type() == at::kBFloat16 && logits.is_contiguous() &&
           logical.cumulative.scalar_type() == at::kInt && logical.cumulative.is_contiguous())
         return gemma4_bf16_sequence_score_readout(
@@ -1596,7 +1599,7 @@ public:
   /// retain the caller's full logical order.
   at::Tensor
   forward_impl(const PackedInput& input, bool is_causal, const at::Tensor& output_rows = {}) const {
-#ifdef TEI_TORCH_CUDA_KERNELS
+#ifdef INFINITY_TORCH_CUDA_KERNELS
     // The synchronous call owns the device guard; the session owns no guard.
     c10::cuda::OptionalCUDAGuard ordinary_guard;
     if (ordinary_ffn)
@@ -1709,7 +1712,7 @@ public:
         }
       }
       bool fused_qk_rotary = false;
-#ifdef TEI_TORCH_CUDA_KERNELS
+#ifdef INFINITY_TORCH_CUDA_KERNELS
       if (legacy && device.is_cuda() && dtype == at::kBFloat16 && !layer.shared && layer.dim > 0 &&
           layer.dim <= 8192 && layer.dim % 2 == 0) {
         auto result =
@@ -1739,7 +1742,7 @@ public:
       } else {
         if (!fused_qk_rotary) {
           k = norm(k, p + "self_attn.k_norm");
-#ifdef TEI_TORCH_CUDA_KERNELS
+#ifdef INFINITY_TORCH_CUDA_KERNELS
           if (legacy && device.is_cuda()) {
             // The fork's packed Gemma3 rotary contracts the first product in
             // BF16/Half. Gemma4's composed rotary retains separate rounding.
@@ -1796,7 +1799,7 @@ public:
       output = radix_enabled(input) ? linear_radix_projection(output, p + "self_attn.o_proj", input)
                                     : prefix_projection(output, p + "self_attn.o_proj", input);
       bool fused_residual_prenorm = false;
-#ifdef TEI_TORCH_CUDA_KERNELS
+#ifdef INFINITY_TORCH_CUDA_KERNELS
       if (fused_legacy_residual) {
         auto result = gemma3_residual_prenorm_cuda(
             states,
@@ -1831,7 +1834,7 @@ public:
 
       if (boolean("enable_moe_block", false))
         mlp = moe(states, mlp, p, input);
-#ifdef TEI_TORCH_CUDA_KERNELS
+#ifdef INFINITY_TORCH_CUDA_KERNELS
       const auto* layer_scale =
           publisher_sequence && ple_width == 0 ? &w(p + "layer_scalar") : nullptr;
       if (layer_scale && device.is_cuda() && dtype == at::kBFloat16 && states.is_contiguous() &&

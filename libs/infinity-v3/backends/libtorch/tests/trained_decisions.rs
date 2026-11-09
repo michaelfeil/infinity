@@ -14,6 +14,7 @@ fn trained_laya_cpu_matches_published_upstream_fixture() {
         "float32",
         ModelType::Decision,
         "cpu",
+        crate::limits(),
     )
     .unwrap();
     let mut batch = Batch {
@@ -64,4 +65,8 @@ fn trained_laya_cpu_matches_published_upstream_fixture() {
                 < 0.01
         );
     }
+}
+
+fn limits() -> text_embeddings_backend_core::ServingLimits {
+    text_embeddings_backend_core::ServingLimits::new(16_384, 8_192, None).unwrap()
 }

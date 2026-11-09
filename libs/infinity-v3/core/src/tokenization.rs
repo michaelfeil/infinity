@@ -82,9 +82,13 @@ impl Tokenization {
             default_prompt,
             prompts,
             chat,
+            true,
         )
     }
 
+    /// Start HF workers while optional pooled-text acceleration builds in the background.
+    /// Disable the accelerator when inference owns its tokenization; metadata
+    /// tokenize/decode workers still serve with HF.
     #[allow(clippy::too_many_arguments)]
     pub fn with_queue_capacity(
         workers: usize,
@@ -95,12 +99,14 @@ impl Tokenization {
         default_prompt: Option<String>,
         prompts: Option<HashMap<String, String>>,
         chat: Option<crate::chat::ChatProcessor>,
+        accelerate_pooled_text: bool,
     ) -> Self {
         let workers = workers.clamp(1, MAX_TOKENIZATION_WORKERS);
         let chat = chat.map(Arc::new);
         tracing::info!(
             workers,
             queue_capacity = queue_capacity.get(),
+            accelerate_pooled_text,
             "Starting tokenization workers"
         );
 
@@ -111,10 +117,15 @@ impl Tokenization {
         // since tokenizer.clone() require 0.2s.
         let supervisor = std::thread::spawn(move || {
             let mut handles = Vec::with_capacity(workers);
-            let fast_tokenizer = crate::fast_tokenization::load(&tokenizer).map(Arc::new);
+            let tokenizer = Arc::new(tokenizer);
+            let fast_tokenizer = if accelerate_pooled_text {
+                crate::fast_tokenization::BackgroundFastTokenizer::new(Arc::clone(&tokenizer))
+            } else {
+                crate::fast_tokenization::BackgroundFastTokenizer::disabled()
+            };
             for _ in 0..workers {
                 let chat = chat.clone();
-                let tokenizer_clone = tokenizer.clone();
+                let tokenizer_clone = tokenizer.as_ref().clone();
                 let fast_tokenizer = fast_tokenizer.clone();
                 let receiver_clone = receiver.clone();
                 let default_prompt_clone = default_prompt.clone();
@@ -470,7 +481,7 @@ impl Tokenization {
 #[allow(clippy::too_many_arguments)]
 fn tokenizer_worker(
     mut tokenizer: Tokenizer,
-    fast_tokenizer: Option<Arc<crate::fast_tokenization::FastTokenizer>>,
+    fast_tokenizer: crate::fast_tokenization::BackgroundFastTokenizer,
     max_input_length: usize,
     position_offset: usize,
     default_prompt: Option<String>,
@@ -478,6 +489,9 @@ fn tokenizer_worker(
     receiver: async_channel::Receiver<QueuedTokenizerRequest>,
     chat: Option<Arc<crate::chat::ChatProcessor>>,
 ) {
+    // Publication is permanent. Cache the borrowed accelerator per worker so
+    // steady requests no longer need to check the shared initialization state.
+    let mut ready_fast_tokenizer = None;
     // Loop over requests
     while let Ok(queued) = receiver.recv_blocking() {
         // Keep admission through processing and response delivery, even when
@@ -498,6 +512,14 @@ fn tokenizer_worker(
             ) => {
                 parent_span.in_scope(|| {
                     if !response_tx.is_closed() {
+                        let fast = if matches!(mode, EncodeMode::IdsOnly) {
+                            if ready_fast_tokenizer.is_none() {
+                                ready_fast_tokenizer = fast_tokenizer.get();
+                            }
+                            ready_fast_tokenizer
+                        } else {
+                            None
+                        };
                         let default_prompt_clone = match prompt_name {
                             None => default_prompt.clone(),
                             Some(_) => None,
@@ -515,11 +537,7 @@ fn tokenizer_worker(
                             prompt_name,
                             prompts.as_ref(),
                             &mut tokenizer,
-                            if matches!(mode, EncodeMode::IdsOnly) {
-                                fast_tokenizer.as_deref()
-                            } else {
-                                None
-                            },
+                            fast,
                             chat.as_deref(),
                             mode,
                         ));
@@ -1483,7 +1501,12 @@ mod fast_embedding_tests {
 
     #[test]
     fn concurrent_requests_preserve_fast_and_fallback_ids() {
-        for capacity in [1, DEFAULT_TOKENIZATION_QUEUE_CAPACITY] {
+        for (capacity, accelerate_pooled_text) in [
+            (1, false),
+            (1, true),
+            (DEFAULT_TOKENIZATION_QUEUE_CAPACITY, false),
+            (DEFAULT_TOKENIZATION_QUEUE_CAPACITY, true),
+        ] {
             let tokenizer = Tokenization::with_queue_capacity(
                 4,
                 NonZeroUsize::new(capacity).unwrap(),
@@ -1493,6 +1516,7 @@ mod fast_embedding_tests {
                 None,
                 None,
                 None,
+                accelerate_pooled_text,
             );
             assert_eq!(tokenizer.sender.capacity(), Some(capacity));
             tokio::runtime::Runtime::new().unwrap().block_on(async {
@@ -1506,11 +1530,22 @@ mod fast_embedding_tests {
                             .await
                             .unwrap();
                         let actual = tokenizer
-                            .encode_embedding(pair.into(), true, TruncationDirection::Right, None)
+                            .encode_embedding(
+                                pair.clone().into(),
+                                true,
+                                TruncationDirection::Right,
+                                None,
+                            )
                             .await
                             .unwrap();
                         assert_eq!(actual.input_ids, expected.input_ids);
                         assert_eq!(actual.token_type_ids, expected.token_type_ids);
+                        let classification = tokenizer
+                            .encode_classification(pair.into(), true, TruncationDirection::Right)
+                            .await
+                            .unwrap();
+                        assert_eq!(classification.input_ids, expected.input_ids);
+                        assert_eq!(classification.token_type_ids, expected.token_type_ids);
                         let text = format!("request {i} 東京 👩🏽‍💻");
                         let expected = tokenizer
                             .encode(text.clone().into(), true, TruncationDirection::Left, None)
@@ -1529,5 +1564,118 @@ mod fast_embedding_tests {
                 }
             });
         }
+    }
+
+    fn assert_encoding_matches(actual: &ValidEncoding, expected: &ValidEncoding) {
+        assert_eq!(actual.input_ids, expected.input_ids);
+        assert_eq!(actual.token_type_ids, expected.token_type_ids);
+        assert_eq!(actual.position_ids, expected.position_ids);
+        assert!(actual.tokens.is_empty() && actual.offsets.is_empty());
+    }
+
+    #[test]
+    fn gated_accelerator_serves_pooled_paths_before_publication_and_matches_after() {
+        let mut hf = crate::fast_tokenization::test_tokenizer();
+        hf.with_post_processor(Some(
+            tokenizers::processors::template::TemplateProcessing::builder()
+                .try_single("$A:2")
+                .unwrap()
+                .try_pair("$A:2 $B:3")
+                .unwrap()
+                .build()
+                .unwrap(),
+        ));
+        let hf = Arc::new(hf);
+        let (started_tx, started_rx) = std::sync::mpsc::sync_channel(0);
+        let (release_tx, release_rx) = std::sync::mpsc::channel();
+        let fast = crate::fast_tokenization::BackgroundFastTokenizer::new_gated(
+            Arc::clone(&hf),
+            started_tx,
+            release_rx,
+        );
+        let probe = fast.clone();
+        let (sender, receiver) = async_channel::bounded(4);
+        let supervisor = std::thread::spawn(move || {
+            tokenizer_worker((*hf).clone(), fast, 32, 2, None, None, receiver, None);
+        });
+        let tokenization = Tokenization {
+            workers: Arc::new(TokenizerWorkers {
+                sender: sender.clone(),
+                supervisor: std::sync::Mutex::new(Some(supervisor)),
+            }),
+            sender,
+            multimodal: None,
+            mistral3: None,
+            embedding_gemma2: None,
+            token_input_vocab_size: None,
+            max_input_length: 32,
+            position_offset: 2,
+        };
+        started_rx
+            .recv_timeout(std::time::Duration::from_secs(5))
+            .unwrap();
+        assert!(probe.get().is_none());
+
+        let make_input = |pair: bool| {
+            if pair {
+                EncodingInput::Dual("query 東京".into(), "a longer document 👩🏽‍💻".into())
+            } else {
+                EncodingInput::Single("hello 東京 👩🏽‍💻 longer text".into())
+            }
+        };
+        tokio::runtime::Runtime::new().unwrap().block_on(async {
+            let before = tokio::time::timeout(std::time::Duration::from_secs(5), async {
+                let mut outputs = Vec::new();
+                for pair in [false, true] {
+                    let embedding = tokenization
+                        .encode_embedding(make_input(pair), true, TruncationDirection::Right, None)
+                        .await
+                        .unwrap();
+                    let classification = tokenization
+                        .encode_classification(make_input(pair), true, TruncationDirection::Right)
+                        .await
+                        .unwrap();
+                    outputs.push((embedding, classification));
+                }
+                outputs
+            })
+            .await
+            .expect("pooled requests must not wait for Basetenkenizer publication");
+            assert!(
+                probe.get().is_none(),
+                "requests must be served before publication"
+            );
+
+            release_tx.send(()).unwrap();
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+            while probe.get().is_none() {
+                assert!(
+                    std::time::Instant::now() < deadline,
+                    "Basetenkenizer did not publish after release"
+                );
+                tokio::time::sleep(std::time::Duration::from_millis(1)).await;
+            }
+
+            let mut after = Vec::new();
+            for pair in [false, true] {
+                let embedding = tokenization
+                    .encode_embedding(make_input(pair), true, TruncationDirection::Right, None)
+                    .await
+                    .unwrap();
+                let classification = tokenization
+                    .encode_classification(make_input(pair), true, TruncationDirection::Right)
+                    .await
+                    .unwrap();
+                after.push((embedding, classification));
+            }
+            for (
+                (embedding_before, classification_before),
+                (embedding_after, classification_after),
+            ) in before.into_iter().zip(after)
+            {
+                assert_encoding_matches(&embedding_before, &embedding_after);
+                assert_encoding_matches(&classification_before, &classification_after);
+            }
+        });
     }
 }

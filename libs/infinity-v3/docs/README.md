@@ -8,6 +8,7 @@ and client are separate projects in the parent `libs` directory.
 - [Supported models and configuration by task](supported-models.md)
 - [Performance and Radix MLP](performance.md)
 - [Native LibTorch backend](libtorch-backend.md)
+- [Python backend plugins](python-backend.md)
 - [Native model coverage](libtorch-model-coverage.md)
 - [Licensing and retained third-party notices](../LICENSING.md)
 

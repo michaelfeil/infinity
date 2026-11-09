@@ -30,18 +30,31 @@ For native LibTorch CPU builds, use `--torch-device cpu --dtype float32`.
 CPU builds from current `main` use LibTorch. Dynamic FP8 and CUDA-only kernels
 require the NVIDIA image.
 
-## Optional dynamic FP8
+## Optional quantization
 
-Add `--enable-fp8-dynamic` to enable FP8 projections on supported models and GPUs:
+Use `--dynamic-quantization` to select a format for each model:
 
 ```bash
 infinity_v3 --model-id /path/to/model \
-  --torch-device cuda --dtype bfloat16 --enable-fp8-dynamic
+  --torch-device cuda --dtype bfloat16 --dynamic-quantization fp8
 ```
 
-FP8 is opt-in and can change outputs; check accuracy on your task before enabling
-it. Model and hardware support varies. Use `INFINITY_TORCH_FP8_SCOPE=mlp` to
-restrict eligible models to MLP projections. See [model coverage](libtorch-model-coverage.md).
+`none` preserves the model dtype. `fp8` selects rowwise FP8; `mxfp8` and `nvfp4`
+select the corresponding block-scaled MLP format on eligible Blackwell BF16
+models. In all-linear scope, attention projections still use FP8. Unsupported
+format/model combinations fail during initialization rather than selecting a
+different format. Quantization can change outputs; check accuracy on your task.
+
+Use `--dynamic-quantization-scope mlp` to restrict quantization to MLP projections.
+The default `auto` uses all-linear scope for eligible dense decoders and MLP-only
+scope otherwise. See [model coverage](libtorch-model-coverage.md) and
+[per-model configuration](cli.md#quantization).
+
+Portable FP8 projections fuse output scaling and conversion into one kernel.
+They retain the two separately rounded FP32 scale products and the final
+model-dtype rounding, including subnormal values. Aligned matrices use vector
+loads and stores; other contiguous layouts use the same arithmetic with scalar
+accesses. The existing Hopper row-scaled projection policy is unchanged.
 
 ## InfinityFA4
 
@@ -56,14 +69,32 @@ For compatible decision checkpoints, use `--decision-protocol onejev` with
 shared prefixes are reused within a backend batch. This is not a persistent
 cross-request cache.
 
-For dense Qwen3.5, `--enable-fp8-dynamic` uses all-linear dynamic FP8 by
+For dense Qwen3.5, `--dynamic-quantization fp8` uses all-linear dynamic FP8 by
 default and enables the FP8 optimizations automatically. GDN activations remain
 BF16 and stored recurrent states remain FP32.
 
-Eligible cached GDN suffixes use the existing tensor-core prefill kernels by
-default. Batch geometry and provider support are selected automatically; other
-layouts retain recurrent execution. Set `INFINITY_TORCH_GDN_SUFFIX_PREFILL=0`
-to disable suffix prefill. BF16 normalized Q/K and chunk arithmetic can change
+Dense FP8 MLPs combine portable projection scaling, rounded SwiGLU and row
+quantization for aligned intermediate widths up to 20480. The fused SwiGLU path
+keeps the two FP32 scale products and model-dtype rounding of the separate
+operations; wider rows, projection bias or clipping retain their existing
+recipes for that gated form. Gated rounded GELU uses the same fused boundary,
+including reversed gate/up layouts, and follows the native gated kernel's selected
+layout recipe: aligned vector rows use the native half-pair HFMA GELU staging,
+while ragged or unaligned rows retain its scalar separate multiply/add staging.
+This is distinct from the unary encoder GELU recipe. Legacy decoder SwiGLU keeps
+its frozen scalar bytes. Unary FP8 MLPs can fuse ReLU, Candle-rounded SiLU, or
+encoder-rounded GELU with the projection, an optional separate bias, and row quantization,
+including for Hopper's rowwise projection. Custom rounded recipes opt in
+explicitly; standard erf/tanh GELU, ordinary SiLU, packed gate/up activation
+without an explicit rounded recipe, clipping, and casts keep the composed path.
+Qwen3.5 post-attention normalization can also produce the dense MLP's FP8 input
+directly, omitting its unused BF16 copy.
+
+Cached GDN suffixes use the existing tensor-core prefill provider automatically
+whenever an immutable FP32 prefix state is available. Batch size and per-row
+length do not select a different arithmetic path. Prefix capture, native
+checkpoint resumption, and unsupported provider capabilities retain native
+recurrent execution. BF16 normalized Q/K and chunk arithmetic can change
 probabilities and selected answers, including with FP8 enabled. The GDN provider and native
 backend must be rebuilt together for provider ABI 2; old provider bundles are
 rejected during configuration.

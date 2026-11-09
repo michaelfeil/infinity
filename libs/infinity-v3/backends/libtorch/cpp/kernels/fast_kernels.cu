@@ -5,6 +5,7 @@
 /// Model adapters select the operation and its rounding contract through these wrappers.
 
 #include "kernels/fast_kernels.h"
+#include "kernels/dependent_launch.cuh"
 #include <ATen/cuda/CUDAContext.h>
 #include <ATen/ops/_fused_rms_norm.h>
 #include <c10/cuda/CUDAGuard.h>
@@ -99,19 +100,21 @@ __global__ void nomic_topk8_kernel(
   }
 }
 
-__global__ void qk_bf16_bridge(const __nv_bfloat16* q,
-                               const __nv_bfloat16* k,
-                               const __nv_bfloat16* qw,
-                               const __nv_bfloat16* kw,
-                               const __nv_bfloat16* cosine,
-                               const __nv_bfloat16* sine,
-                               __nv_bfloat16* out,
-                               int tokens,
-                               int qheads,
-                               int kheads,
-                               int qstride,
-                               int kstride,
-                               float eps) {
+template <class T>
+__global__ void qk_bridge(const T* q,
+                          const T* k,
+                          const T* qw,
+                          const T* kw,
+                          const T* cosine,
+                          const T* sine,
+                          T* out,
+                          int tokens,
+                          int qheads,
+                          int kheads,
+                          int qstride,
+                          int kstride,
+                          float eps) {
+  wait_for_producer();
   ::fused_qk_norm_rope(
       q, k, qw, kw, cosine, sine, out, tokens, qheads, kheads, qstride, kstride, eps);
 }
@@ -269,6 +272,7 @@ __global__ void add_rms_kernel(const T* x,
                                T* summed,
                                int64_t width,
                                float epsilon) {
+  wait_for_producer();
   const int64_t row = blockIdx.x;
   float variance = 0;
   float values[Columns];
@@ -307,6 +311,7 @@ __global__ void add_rms_bf16_vector_kernel(const __nv_bfloat16* x,
                                            __nv_bfloat16* summed,
                                            int64_t width,
                                            float epsilon) {
+  wait_for_producer();
   __shared__ float values[4096];
   const int64_t row = blockIdx.x;
 #pragma unroll
@@ -353,6 +358,7 @@ __global__ void add_rms_large_kernel(const T* x,
                                      T* summed,
                                      int64_t width,
                                      float epsilon) {
+  wait_for_producer();
   const int64_t row = blockIdx.x;
   float variance = 0;
   for (int64_t col = threadIdx.x; col < width; col += blockDim.x) {
@@ -437,30 +443,32 @@ void run_rms(const at::Tensor& x,
     if (vector_width && reinterpret_cast<uintptr_t>(xp) % 16 == 0 &&
         reinterpret_cast<uintptr_t>(wp) % 16 == 0 &&
         (!rp || reinterpret_cast<uintptr_t>(rp) % 16 == 0)) {
-      add_rms_bf16_vector_kernel<<<rows, 256, 0, stream>>>(xp, rp, wp, op, sp, width, epsilon);
+      launch_dependent<add_rms_bf16_vector_kernel>(
+          rows, 256, stream, xp, rp, wp, op, sp, width, epsilon);
       return;
     }
   }
 
-#define TEI_RMS_COLUMNS(C)                                                                         \
-  add_rms_kernel<T, C><<<rows, 256, 0, stream>>>(xp, rp, wp, op, sp, width, epsilon)
+#define INFINITY_RMS_COLUMNS(C)                                                                    \
+  launch_dependent<add_rms_kernel<T, C>>(rows, 256, stream, xp, rp, wp, op, sp, width, epsilon)
   if (width <= 256) {
-    TEI_RMS_COLUMNS(1);
+    INFINITY_RMS_COLUMNS(1);
   } else if (width <= 512) {
-    TEI_RMS_COLUMNS(2);
+    INFINITY_RMS_COLUMNS(2);
   } else if (width <= 768) {
-    TEI_RMS_COLUMNS(3);
+    INFINITY_RMS_COLUMNS(3);
   } else if (width <= 1024) {
-    TEI_RMS_COLUMNS(4);
+    INFINITY_RMS_COLUMNS(4);
   } else if (width <= 2048) {
-    TEI_RMS_COLUMNS(8);
+    INFINITY_RMS_COLUMNS(8);
   } else if (width <= 4096) {
-    TEI_RMS_COLUMNS(16);
+    INFINITY_RMS_COLUMNS(16);
   } else if (width <= 8192) {
-    TEI_RMS_COLUMNS(32);
+    INFINITY_RMS_COLUMNS(32);
   } else
-    add_rms_large_kernel<T><<<rows, 256, 0, stream>>>(xp, rp, wp, op, sp, width, epsilon);
-#undef TEI_RMS_COLUMNS
+    launch_dependent<add_rms_large_kernel<T>>(
+        rows, 256, stream, xp, rp, wp, op, sp, width, epsilon);
+#undef INFINITY_RMS_COLUMNS
 }
 
 template <class T>
@@ -522,6 +530,7 @@ template <class T> __device__ __forceinline__ T gated_value(float gate, float up
 template <class T>
 __global__ void
 gated_kernel(const T* x, T* out, int64_t count, int64_t width, int activation, bool gate_first) {
+  wait_for_producer();
   int64_t i = int64_t(blockIdx.x) * blockDim.x + threadIdx.x;
   if (i >= count)
     return;
@@ -558,6 +567,7 @@ template <> __device__ __nv_bfloat162 model_pair_tanh(__nv_bfloat162 value) {
 template <class Pair, class Index>
 __global__ void
 gated_gelu_pairs_kernel(const Pair* x, Pair* out, Index count, Index width, bool gate_first) {
+  wait_for_producer();
   const Index index = Index(blockIdx.x) * blockDim.x + threadIdx.x;
   if (index >= count / 4)
     return;
@@ -586,6 +596,7 @@ __global__ void gated_silu_bf16_pairs_kernel(const __nv_bfloat162* x,
                                              __nv_bfloat162* out,
                                              Index count,
                                              Index width) {
+  wait_for_producer();
   const Index index = Index(blockIdx.x) * blockDim.x + threadIdx.x;
   if (index >= count / 8)
     return;
@@ -606,6 +617,7 @@ __global__ void gated_silu_bf16_pairs_kernel(const __nv_bfloat162* x,
 template <class T, class Index, int Lanes>
 __global__ void
 gated_vector_kernel(const T* x, T* out, Index count, Index width, int activation, bool gate_first) {
+  wait_for_producer();
   Index index = Index(blockIdx.x) * blockDim.x + threadIdx.x;
   if (index >= count / Lanes)
     return;
@@ -812,7 +824,7 @@ void run_norm(const at::Tensor& x,
     return t.defined() ? reinterpret_cast<const T*>(t.const_data_ptr()) : nullptr;
   };
   auto width = x.size(-1), rows = x.numel() / width;
-#define TEI_REGISTER_LN(N)                                                                         \
+#define INFINITY_REGISTER_LN(N)                                                                    \
   add_norm_register_kernel<T, N>                                                                   \
       <<<rows, 256, 0, stream>>>(p(x),                                                             \
                                  p(residual),                                                      \
@@ -823,21 +835,21 @@ void run_norm(const at::Tensor& x,
                                  width,                                                            \
                                  epsilon)
   if (width <= 256) {
-    TEI_REGISTER_LN(1);
+    INFINITY_REGISTER_LN(1);
   } else if (width <= 512) {
-    TEI_REGISTER_LN(2);
+    INFINITY_REGISTER_LN(2);
   } else if (width <= 768) {
-    TEI_REGISTER_LN(3);
+    INFINITY_REGISTER_LN(3);
   } else if (width <= 1024) {
-    TEI_REGISTER_LN(4);
+    INFINITY_REGISTER_LN(4);
   } else if (width <= 1536) {
-    TEI_REGISTER_LN(6);
+    INFINITY_REGISTER_LN(6);
   } else if (width <= 2048) {
-    TEI_REGISTER_LN(8);
+    INFINITY_REGISTER_LN(8);
   } else if (width <= 3072) {
-    TEI_REGISTER_LN(12);
+    INFINITY_REGISTER_LN(12);
   } else if (width <= 4096) {
-    TEI_REGISTER_LN(16);
+    INFINITY_REGISTER_LN(16);
   } else
     add_norm_kernel<T><<<rows, 256, 0, stream>>>(p(x),
                                                  p(residual),
@@ -847,7 +859,7 @@ void run_norm(const at::Tensor& x,
                                                  reinterpret_cast<T*>(output.mutable_data_ptr()),
                                                  width,
                                                  epsilon);
-#undef TEI_REGISTER_LN
+#undef INFINITY_REGISTER_LN
 }
 
 template <class T>
@@ -964,16 +976,16 @@ std::pair<at::Tensor, at::Tensor> fused_add_rms_norm(const at::Tensor& x,
     C10_CUDA_KERNEL_LAUNCH_CHECK();
     return {output, sum};
   }
-#define TEI_RMS_DISPATCH(T) run_rms<T>(x, residual, weight, output, sum, epsilon, stream)
+#define INFINITY_RMS_DISPATCH(T) run_rms<T>(x, residual, weight, output, sum, epsilon, stream)
   if (x.scalar_type() == at::kHalf) {
-    TEI_RMS_DISPATCH(__half);
+    INFINITY_RMS_DISPATCH(__half);
   } else if (x.scalar_type() == at::kBFloat16) {
-    TEI_RMS_DISPATCH(__nv_bfloat16);
+    INFINITY_RMS_DISPATCH(__nv_bfloat16);
   } else if (x.scalar_type() == at::kFloat) {
-    TEI_RMS_DISPATCH(float);
+    INFINITY_RMS_DISPATCH(float);
   } else
     TORCH_CHECK(false, "Unsupported fused RMSNorm dtype");
-#undef TEI_RMS_DISPATCH
+#undef INFINITY_RMS_DISPATCH
   C10_CUDA_KERNEL_LAUNCH_CHECK();
   return {output, sum};
 }
@@ -1013,53 +1025,61 @@ at::Tensor fused_gated_activation(const at::Tensor& x, int32_t activation, bool 
   auto stream = at::cuda::getCurrentCUDAStream(x.device().index());
   if (activation == 5 && gate_first && x.scalar_type() == at::kBFloat16 && shape.back() % 8 == 0 &&
       reinterpret_cast<uintptr_t>(x.const_data_ptr()) % 16 == 0) {
-#define TEI_SILU_PAIRS(I)                                                                          \
-  gated_silu_bf16_pairs_kernel<I><<<(output.numel() / 8 + 255) / 256, 256, 0, stream>>>(           \
+#define INFINITY_SILU_PAIRS(I)                                                                     \
+  launch_dependent<gated_silu_bf16_pairs_kernel<I>>(                                               \
+      (output.numel() / 8 + 255) / 256,                                                            \
+      256,                                                                                         \
+      stream,                                                                                      \
       reinterpret_cast<const __nv_bfloat162*>(x.const_data_ptr()),                                 \
       reinterpret_cast<__nv_bfloat162*>(output.mutable_data_ptr()),                                \
       I(output.numel()),                                                                           \
       I(shape.back()))
     if (x.numel() <= UINT32_MAX) {
-      TEI_SILU_PAIRS(uint32_t);
+      INFINITY_SILU_PAIRS(uint32_t);
     } else {
-      TEI_SILU_PAIRS(uint64_t);
+      INFINITY_SILU_PAIRS(uint64_t);
     }
-#undef TEI_SILU_PAIRS
+#undef INFINITY_SILU_PAIRS
     C10_CUDA_KERNEL_LAUNCH_CHECK();
     return output;
   }
   if (activation == 4 && (x.scalar_type() == at::kHalf || x.scalar_type() == at::kBFloat16) &&
       shape.back() % 8 == 0 && reinterpret_cast<uintptr_t>(x.const_data_ptr()) % 16 == 0) {
-#define TEI_GATE_PAIRS(T, I)                                                                       \
-  gated_gelu_pairs_kernel<T, I><<<(output.numel() / 8 + 255) / 256, 256, 0, stream>>>(             \
-      reinterpret_cast<const T*>(x.const_data_ptr()),                                              \
-      reinterpret_cast<T*>(output.mutable_data_ptr()),                                             \
-      I(output.numel() / 2),                                                                       \
-      I(shape.back() / 2),                                                                         \
-      gate_first)
+#define INFINITY_GATE_PAIRS(T, I)                                                                  \
+  launch_dependent<gated_gelu_pairs_kernel<T, I>>((output.numel() / 8 + 255) / 256,                \
+                                                  256,                                             \
+                                                  stream,                                          \
+                                                  reinterpret_cast<const T*>(x.const_data_ptr()),  \
+                                                  reinterpret_cast<T*>(output.mutable_data_ptr()), \
+                                                  I(output.numel() / 2),                           \
+                                                  I(shape.back() / 2),                             \
+                                                  gate_first)
     if (x.scalar_type() == at::kHalf) {
       if (x.numel() <= UINT32_MAX) {
-        TEI_GATE_PAIRS(__half2, uint32_t);
+        INFINITY_GATE_PAIRS(__half2, uint32_t);
       } else {
-        TEI_GATE_PAIRS(__half2, uint64_t);
+        INFINITY_GATE_PAIRS(__half2, uint64_t);
       }
     } else {
       if (x.numel() <= UINT32_MAX) {
-        TEI_GATE_PAIRS(__nv_bfloat162, uint32_t);
+        INFINITY_GATE_PAIRS(__nv_bfloat162, uint32_t);
       } else {
-        TEI_GATE_PAIRS(__nv_bfloat162, uint64_t);
+        INFINITY_GATE_PAIRS(__nv_bfloat162, uint64_t);
       }
     }
-#undef TEI_GATE_PAIRS
+#undef INFINITY_GATE_PAIRS
     C10_CUDA_KERNEL_LAUNCH_CHECK();
     return output;
   }
-#define TEI_GATE(T)                                                                                \
+#define INFINITY_GATE(T)                                                                           \
   do {                                                                                             \
     if (x.element_size() == 2 && shape.back() % 8 == 0 &&                                          \
         reinterpret_cast<uintptr_t>(x.const_data_ptr()) % 16 == 0) {                               \
       if (x.numel() <= UINT32_MAX)                                                                 \
-        gated_vector_kernel<T, uint32_t, 8><<<(output.numel() / 8 + 255) / 256, 256, 0, stream>>>( \
+        launch_dependent<gated_vector_kernel<T, uint32_t, 8>>(                                     \
+            (output.numel() / 8 + 255) / 256,                                                      \
+            256,                                                                                   \
+            stream,                                                                                \
             reinterpret_cast<const T*>(x.const_data_ptr()),                                        \
             reinterpret_cast<T*>(output.mutable_data_ptr()),                                       \
             output.numel(),                                                                        \
@@ -1067,7 +1087,10 @@ at::Tensor fused_gated_activation(const at::Tensor& x, int32_t activation, bool 
             activation,                                                                            \
             gate_first);                                                                           \
       else                                                                                         \
-        gated_vector_kernel<T, int64_t, 8><<<(output.numel() / 8 + 255) / 256, 256, 0, stream>>>(  \
+        launch_dependent<gated_vector_kernel<T, int64_t, 8>>(                                      \
+            (output.numel() / 8 + 255) / 256,                                                      \
+            256,                                                                                   \
+            stream,                                                                                \
             reinterpret_cast<const T*>(x.const_data_ptr()),                                        \
             reinterpret_cast<T*>(output.mutable_data_ptr()),                                       \
             output.numel(),                                                                        \
@@ -1077,7 +1100,10 @@ at::Tensor fused_gated_activation(const at::Tensor& x, int32_t activation, bool 
     } else if (shape.back() % 4 == 0 &&                                                            \
                reinterpret_cast<uintptr_t>(x.const_data_ptr()) % (4 * x.element_size()) == 0) {    \
       if (x.numel() <= UINT32_MAX)                                                                 \
-        gated_vector_kernel<T, uint32_t, 4><<<(output.numel() / 4 + 255) / 256, 256, 0, stream>>>( \
+        launch_dependent<gated_vector_kernel<T, uint32_t, 4>>(                                     \
+            (output.numel() / 4 + 255) / 256,                                                      \
+            256,                                                                                   \
+            stream,                                                                                \
             reinterpret_cast<const T*>(x.const_data_ptr()),                                        \
             reinterpret_cast<T*>(output.mutable_data_ptr()),                                       \
             output.numel(),                                                                        \
@@ -1085,7 +1111,10 @@ at::Tensor fused_gated_activation(const at::Tensor& x, int32_t activation, bool 
             activation,                                                                            \
             gate_first);                                                                           \
       else                                                                                         \
-        gated_vector_kernel<T, int64_t, 4><<<(output.numel() / 4 + 255) / 256, 256, 0, stream>>>(  \
+        launch_dependent<gated_vector_kernel<T, int64_t, 4>>(                                      \
+            (output.numel() / 4 + 255) / 256,                                                      \
+            256,                                                                                   \
+            stream,                                                                                \
             reinterpret_cast<const T*>(x.const_data_ptr()),                                        \
             reinterpret_cast<T*>(output.mutable_data_ptr()),                                       \
             output.numel(),                                                                        \
@@ -1093,23 +1122,25 @@ at::Tensor fused_gated_activation(const at::Tensor& x, int32_t activation, bool 
             activation,                                                                            \
             gate_first);                                                                           \
     } else                                                                                         \
-      gated_kernel<T><<<(output.numel() + 255) / 256, 256, 0, stream>>>(                           \
-          reinterpret_cast<const T*>(x.const_data_ptr()),                                          \
-          reinterpret_cast<T*>(output.mutable_data_ptr()),                                         \
-          output.numel(),                                                                          \
-          shape.back(),                                                                            \
-          activation,                                                                              \
-          gate_first);                                                                             \
+      launch_dependent<gated_kernel<T>>((output.numel() + 255) / 256,                              \
+                                        256,                                                       \
+                                        stream,                                                    \
+                                        reinterpret_cast<const T*>(x.const_data_ptr()),            \
+                                        reinterpret_cast<T*>(output.mutable_data_ptr()),           \
+                                        output.numel(),                                            \
+                                        shape.back(),                                              \
+                                        activation,                                                \
+                                        gate_first);                                               \
   } while (false)
   if (x.scalar_type() == at::kHalf) {
-    TEI_GATE(__half);
+    INFINITY_GATE(__half);
   } else if (x.scalar_type() == at::kBFloat16) {
-    TEI_GATE(__nv_bfloat16);
+    INFINITY_GATE(__nv_bfloat16);
   } else if (x.scalar_type() == at::kFloat) {
-    TEI_GATE(float);
+    INFINITY_GATE(float);
   } else
     TORCH_CHECK(false, "Unsupported gated activation dtype");
-#undef TEI_GATE
+#undef INFINITY_GATE
   C10_CUDA_KERNEL_LAUNCH_CHECK();
   return output;
 }
@@ -1141,7 +1172,7 @@ std::pair<at::Tensor, at::Tensor> fused_rotary(const at::Tensor& q,
                       output.numel() <= UINT32_MAX && q.size(0) * q.stride(0) <= UINT32_MAX &&
                       k.size(0) * k.stride(0) <= UINT32_MAX;
   if (output.numel() > 0) {
-#define TEI_ROPE(T)                                                                                \
+#define INFINITY_ROPE(T)                                                                           \
   if (paired)                                                                                      \
     paired_rotary_kernel<T><<<(output.numel() / 2 + 255) / 256, 256, 0, stream>>>(                 \
         reinterpret_cast<const T*>(q.const_data_ptr()),                                            \
@@ -1174,14 +1205,14 @@ std::pair<at::Tensor, at::Tensor> fused_rotary(const at::Tensor& q,
         cosine.size(-1),                                                                           \
         contract_first_product)
     if (q.scalar_type() == at::kHalf) {
-      TEI_ROPE(__half);
+      INFINITY_ROPE(__half);
     } else if (q.scalar_type() == at::kBFloat16) {
-      TEI_ROPE(__nv_bfloat16);
+      INFINITY_ROPE(__nv_bfloat16);
     } else if (q.scalar_type() == at::kFloat) {
-      TEI_ROPE(float);
+      INFINITY_ROPE(float);
     } else
       TORCH_CHECK(false, "Unsupported rotary dtype");
-#undef TEI_ROPE
+#undef INFINITY_ROPE
     C10_CUDA_KERNEL_LAUNCH_CHECK();
   }
   return {output.narrow(0, 0, qr).view({q.size(0), q.size(1), dim}),
@@ -1231,7 +1262,7 @@ static void encoder_rotary_dispatch(const at::Tensor& q,
                      q.size(2) % 2 == 0 && cosine.size(-1) % 2 == 0 && q.stride(0) % 2 == 0 &&
                      k.stride(0) % 2 == 0 && aligned(q) && aligned(k) && aligned(cosine) &&
                      aligned(sine);
-#define TEI_ENCODER_PAIRS(T, I, P)                                                                 \
+#define INFINITY_ENCODER_PAIRS(T, I, P)                                                            \
   encoder_rotary_pairs_kernel<T, I, P><<<(count / 2 + 255) / 256, 256, 0, stream>>>(               \
       reinterpret_cast<T*>(q.mutable_data_ptr()),                                                  \
       reinterpret_cast<T*>(k.mutable_data_ptr()),                                                  \
@@ -1246,32 +1277,32 @@ static void encoder_rotary_dispatch(const at::Tensor& q,
       I(cosine.size(-1) / 2),                                                                      \
       indexed ? positions.const_data_ptr<int64_t>() : nullptr,                                     \
       I(cosine.size(0)))
-#define TEI_ENCODER_PAIRS_WIDTH(T)                                                                 \
+#define INFINITY_ENCODER_PAIRS_WIDTH(T)                                                            \
   if (indexed) {                                                                                   \
     if (narrow) {                                                                                  \
-      TEI_ENCODER_PAIRS(T, uint32_t, true);                                                        \
+      INFINITY_ENCODER_PAIRS(T, uint32_t, true);                                                   \
     } else {                                                                                       \
-      TEI_ENCODER_PAIRS(T, uint64_t, true);                                                        \
+      INFINITY_ENCODER_PAIRS(T, uint64_t, true);                                                   \
     }                                                                                              \
   } else {                                                                                         \
     if (narrow) {                                                                                  \
-      TEI_ENCODER_PAIRS(T, uint32_t, false);                                                       \
+      INFINITY_ENCODER_PAIRS(T, uint32_t, false);                                                  \
     } else {                                                                                       \
-      TEI_ENCODER_PAIRS(T, uint64_t, false);                                                       \
+      INFINITY_ENCODER_PAIRS(T, uint64_t, false);                                                  \
     }                                                                                              \
   }
   if (pairs) {
     if (q.scalar_type() == at::kHalf) {
-      TEI_ENCODER_PAIRS_WIDTH(__half2);
+      INFINITY_ENCODER_PAIRS_WIDTH(__half2);
     } else {
-      TEI_ENCODER_PAIRS_WIDTH(__nv_bfloat162);
+      INFINITY_ENCODER_PAIRS_WIDTH(__nv_bfloat162);
     }
     C10_CUDA_KERNEL_LAUNCH_CHECK();
     return;
   }
-#undef TEI_ENCODER_PAIRS_WIDTH
-#undef TEI_ENCODER_PAIRS
-#define TEI_ENCODER_ROPE(T, I, P)                                                                  \
+#undef INFINITY_ENCODER_PAIRS_WIDTH
+#undef INFINITY_ENCODER_PAIRS
+#define INFINITY_ENCODER_ROPE(T, I, P)                                                             \
   encoder_rotary_inplace_kernel<T, I, P><<<(count + 255) / 256, 256, 0, stream>>>(                 \
       reinterpret_cast<T*>(q.mutable_data_ptr()),                                                  \
       reinterpret_cast<T*>(k.mutable_data_ptr()),                                                  \
@@ -1286,30 +1317,30 @@ static void encoder_rotary_dispatch(const at::Tensor& q,
       I(cosine.size(-1)),                                                                          \
       indexed ? positions.const_data_ptr<int64_t>() : nullptr,                                     \
       I(cosine.size(0)))
-#define TEI_ENCODER_ROPE_WIDTH(T)                                                                  \
+#define INFINITY_ENCODER_ROPE_WIDTH(T)                                                             \
   if (indexed) {                                                                                   \
     if (narrow) {                                                                                  \
-      TEI_ENCODER_ROPE(T, uint32_t, true);                                                         \
+      INFINITY_ENCODER_ROPE(T, uint32_t, true);                                                    \
     } else {                                                                                       \
-      TEI_ENCODER_ROPE(T, uint64_t, true);                                                         \
+      INFINITY_ENCODER_ROPE(T, uint64_t, true);                                                    \
     }                                                                                              \
   } else {                                                                                         \
     if (narrow) {                                                                                  \
-      TEI_ENCODER_ROPE(T, uint32_t, false);                                                        \
+      INFINITY_ENCODER_ROPE(T, uint32_t, false);                                                   \
     } else {                                                                                       \
-      TEI_ENCODER_ROPE(T, uint64_t, false);                                                        \
+      INFINITY_ENCODER_ROPE(T, uint64_t, false);                                                   \
     }                                                                                              \
   }
   if (q.scalar_type() == at::kHalf) {
-    TEI_ENCODER_ROPE_WIDTH(__half);
+    INFINITY_ENCODER_ROPE_WIDTH(__half);
   } else if (q.scalar_type() == at::kBFloat16) {
-    TEI_ENCODER_ROPE_WIDTH(__nv_bfloat16);
+    INFINITY_ENCODER_ROPE_WIDTH(__nv_bfloat16);
   } else if (q.scalar_type() == at::kFloat) {
-    TEI_ENCODER_ROPE_WIDTH(float);
+    INFINITY_ENCODER_ROPE_WIDTH(float);
   } else
     TORCH_CHECK(false, "Unsupported encoder rotary dtype");
-#undef TEI_ENCODER_ROPE_WIDTH
-#undef TEI_ENCODER_ROPE
+#undef INFINITY_ENCODER_ROPE_WIDTH
+#undef INFINITY_ENCODER_ROPE
   C10_CUDA_KERNEL_LAUNCH_CHECK();
 }
 
@@ -1375,25 +1406,30 @@ std::pair<at::Tensor, at::Tensor> fused_qk_norm_rope(const at::Tensor& q,
       auto p = [](const at::Tensor& t) {
         return reinterpret_cast<const __half*>(t.const_data_ptr());
       };
-      qk_norm_rope_f16<<<blocks, 128, 0, stream>>>(
-          p(q),
-          p(k),
-          p(qw),
-          p(kw),
-          p(cosine),
-          p(sine),
-          reinterpret_cast<__half*>(output.mutable_data_ptr()),
-          q.size(0),
-          q.size(1),
-          k.size(1),
-          q.stride(0),
-          k.stride(0),
-          epsilon);
+      launch_dependent<qk_bridge<__half>>(blocks,
+                                          128,
+                                          stream,
+                                          p(q),
+                                          p(k),
+                                          p(qw),
+                                          p(kw),
+                                          p(cosine),
+                                          p(sine),
+                                          reinterpret_cast<__half*>(output.mutable_data_ptr()),
+                                          q.size(0),
+                                          q.size(1),
+                                          k.size(1),
+                                          q.stride(0),
+                                          k.stride(0),
+                                          epsilon);
     } else {
       auto p = [](const at::Tensor& t) {
         return reinterpret_cast<const __nv_bfloat16*>(t.const_data_ptr());
       };
-      qk_bf16_bridge<<<blocks, 128, 0, stream>>>(
+      launch_dependent<qk_bridge<__nv_bfloat16>>(
+          blocks,
+          128,
+          stream,
           p(q),
           p(k),
           p(qw),

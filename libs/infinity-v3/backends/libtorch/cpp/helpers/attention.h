@@ -8,7 +8,7 @@
 #include "helpers/checked_size.h"
 #include "helpers/admission_error.h"
 #include "kernels/infinity_fa4.h"
-#ifdef TEI_TORCH_CUDA_KERNELS
+#ifdef INFINITY_TORCH_CUDA_KERNELS
 #include "kernels/torch_flash_fma.h"
 #endif
 #include <cstddef>
@@ -156,7 +156,7 @@ inline at::Tensor packed_cuda_attention(const at::Tensor& q,
   auto output = infinity_fa4(q, k, v, cu_q, cu_k, max_q, scale, causal, left, right, fa4_dtype);
   if (output.defined())
     return output;
-#ifdef TEI_TORCH_CUDA_KERNELS
+#ifdef INFINITY_TORCH_CUDA_KERNELS
   if (prefer_native && torch_flash_fma_supported(q, k, v, causal, left, right)) {
     if (cu_q.const_data_ptr() == cu_k.const_data_ptr() && max_q == max_k)
       return torch_flash_fma(q, k, v, cu_q, max_q, scale, causal, left, right);

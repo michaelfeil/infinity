@@ -2,7 +2,7 @@
 # This file is generated from Dockerfile.jinja2. Do not edit the Dockerfile.cuda|cpu|amd file directly.
 # Only contribute to the Dockerfile.jinja2 and dockerfile_template.yaml and regenerate the Dockerfile.cuda|cpu|amd
 
-FROM nvidia/cuda:12.9.0-cudnn-devel-ubuntu22.04 AS base
+FROM nvidia/cuda:12.9.1-cudnn-devel-ubuntu24.04 AS base
 
 ENV PYTHONUNBUFFERED=1 \
     # pip
@@ -16,9 +16,8 @@ ENV PYTHONUNBUFFERED=1 \
     POETRY_NO_INTERACTION=1 \
     # extras
     EXTRAS="all onnxruntime-gpu" \
-    PYTHON="python3" 
-    # "python3.10"
-RUN apt-get update && apt-get install --no-install-recommends -y build-essential python3-dev libsndfile1 $PYTHON-venv $PYTHON-pip $PYTHON curl
+    PYTHON="python3.12"
+RUN apt-get update && apt-get install --no-install-recommends -y build-essential $PYTHON-dev libsndfile1 $PYTHON-venv python3-pip $PYTHON curl
 # Set default to tensorrt
 ENV LD_LIBRARY_PATH=/app/.venv/lib/${PYTHON}/site-packages/tensorrt:/usr/lib/x86_64-linux-gnu:/app/.venv/lib/${PYTHON}/site-packages/tensorrt_libs:${LD_LIBRARY_PATH}
 ENV PATH=/app/.venv/lib/${PYTHON}/site-packages/tensorrt/bin:${PATH}
@@ -29,15 +28,13 @@ WORKDIR /app
 
 FROM base AS builder
 # Set the working directory for the app
-# Define the version of Poetry to install (default is 1.8.4)
-# Define the directory to install Poetry to (default is /opt/poetry)
-ARG POETRY_VERSION=1.8.4
+# Install release tooling in its own environment, preserving the application interpreter.
+ARG POETRY_VERSION=2.5.1
 ARG POETRY_HOME=/opt/poetry
-# Create a Python virtual environment for Poetry and install it
-RUN curl -sSL https://install.python-poetry.org | POETRY_HOME=$POETRY_HOME POETRY_VERSION=$POETRY_VERSION $PYTHON -
+RUN $PYTHON -m venv $POETRY_HOME \
+    && $POETRY_HOME/bin/pip install --no-cache-dir "poetry==$POETRY_VERSION" "poetry-plugin-export==1.10.1"
 ENV PATH=$POETRY_HOME/bin:$PATH
-# Test if Poetry is installed in the expected path
-RUN echo "Poetry version:" && poetry --version
+RUN poetry --version
 # Copy the rest of the app source code (this layer will be invalidated and rebuilt whenever the source code changes)
 COPY poetry.lock poetry.toml pyproject.toml README.md /app/
 # Install dependencies only
@@ -49,10 +46,11 @@ RUN poetry install --no-interaction --no-ansi  --extras "${EXTRAS}" --without li
 # Install utils for tensorrt
 RUN apt-get install -y --no-install-recommends openmpi-bin libopenmpi-dev git git-lfs python3-pip
 RUN poetry run $PYTHON -m pip install --no-cache-dir flash-attn --no-build-isolation
-RUN poetry run $PYTHON -m pip install --no-cache-dir "tensorrt==10.3.0" "tensorrt_lean==10.3.0" "tensorrt_dispatch==10.3.0"
+# Keep only the CUDA-12 ORT distribution; CPU and GPU wheels share Python files.
+RUN poetry run $PYTHON -m pip uninstall -y onnxruntime onnxruntime-gpu \
+    && poetry run $PYTHON -m pip install --no-cache-dir "onnxruntime-gpu==1.23.2" "tensorrt==10.9.0.34" "tensorrt_lean==10.9.0.34" "tensorrt_dispatch==10.9.0.34"
 
-# TODO: remove this line
-RUN apt-get install --no-install-recommends -y git && poetry run python -m pip install git+https://github.com/huggingface/transformers.git@7547f55e5d93245c0a013b50df976924f2d9e8b0 && rm -rf ~/.cache/ /tmp/*
+
 
 FROM builder AS testing
 # install lint and test dependencies

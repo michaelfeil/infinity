@@ -2,6 +2,7 @@ mod dtype;
 
 use hf_hub::api::tokio::{ApiError, ApiRepo};
 use infinity_v3_backend_core::{Backend as CoreBackend, Inference};
+use infinity_v3_config::{DynamicQuantization, DynamicQuantizationScope};
 use std::cmp::{max, min};
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -10,51 +11,96 @@ use std::time::{Duration, Instant};
 use tokio::sync::{mpsc, oneshot, watch};
 use tracing::{instrument, Span};
 
-#[cfg(feature = "libtorch")]
+#[cfg(any(feature = "libtorch", feature = "python-backend"))]
 use serde::Deserialize;
 
 pub use crate::dtype::DType;
 pub use infinity_v3_backend_core::{block_attention_config, result_memory};
 pub use infinity_v3_backend_core::{
     AudioFeatures, BackendError, Batch, ClefField, DecisionInput, DecisionOutput, Embedding,
-    Embeddings, ImagePatches, ModelType, MultimodalEncoding, Pool, Predictions, TokenPredictions,
+    Embeddings, ImagePatches, ModelType, MultimodalEncoding, Pool, Predictions, ServingLimits,
+    SharedF32, TokenPredictions,
 };
 
-/// A completed result or an owned completion handle after native submission.
+#[cfg(feature = "python-backend")]
+pub use infinity_v3_backend_python::PythonBackendConfig;
+
+/// Parameters for a bring-your-own-Python backend.
+#[cfg(not(feature = "python-backend"))]
+#[derive(Clone, Debug, Default)]
+pub struct PythonBackendConfig {
+    pub config: Option<String>,
+}
+
+/// Backend-neutral replica placement capabilities.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct DeviceCapabilities {
+    pub visible_device_count: usize,
+    pub supports_replication: bool,
+}
+
+impl Default for DeviceCapabilities {
+    fn default() -> Self {
+        Self {
+            visible_device_count: 1,
+            supports_replication: false,
+        }
+    }
+}
+
+/// A completed result or an owned completion handle after dispatch.
 /// Deferred results have already been handed to the bounded completion worker,
 /// so the model lease can be released before awaiting the result.
 pub enum Submission<T> {
     Ready(T, Duration),
     Deferred(oneshot::Receiver<Result<(T, Duration), BackendError>>),
+    /// Queued execution retains its replica lease until completion.
+    Queued(oneshot::Receiver<Result<(T, Duration), BackendError>>),
 }
 
 impl<T> Submission<T> {
     pub async fn complete(self) -> Result<(T, Duration), BackendError> {
         match self {
             Self::Ready(value, duration) => Ok((value, duration)),
-            Self::Deferred(receiver) => receiver.await.map_err(|_| BackendError::Unhealthy)?,
+            Self::Deferred(receiver) | Self::Queued(receiver) => {
+                receiver.await.map_err(|_| BackendError::Unhealthy)?
+            }
         }
     }
 }
 
 /// Inference runtime name retained for existing CLI configurations.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "clap", derive(clap::ValueEnum))]
 pub enum BackendKind {
-    #[default]
     Libtorch,
+    PythonBackend,
+}
+
+impl Default for BackendKind {
+    fn default() -> Self {
+        if cfg!(feature = "libtorch") {
+            Self::Libtorch
+        } else if cfg!(feature = "python-backend") {
+            Self::PythonBackend
+        } else {
+            Self::Libtorch
+        }
+    }
 }
 
 impl BackendKind {
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::Libtorch => "libtorch",
+            Self::PythonBackend => "python-backend",
         }
     }
 
     pub const fn is_compiled(self) -> bool {
         match self {
             Self::Libtorch => cfg!(feature = "libtorch"),
+            Self::PythonBackend => cfg!(feature = "python-backend"),
         }
     }
 
@@ -62,29 +108,67 @@ impl BackendKind {
         if self.is_compiled() {
             return Ok(());
         }
-        Err(BackendError::Start(
-            "LibTorch was not compiled; build with --features libtorch".into(),
-        ))
+        let available = [Self::Libtorch, Self::PythonBackend]
+            .into_iter()
+            .filter(|kind| kind.is_compiled())
+            .map(Self::as_str)
+            .collect::<Vec<_>>();
+        Err(BackendError::Start(format!(
+            "Requested backend '{}' was not compiled into this binary; compiled backends: {}.",
+            self.as_str(),
+            if available.is_empty() {
+                "none".into()
+            } else {
+                available.join(", ")
+            }
+        )))
     }
 
     /// Resolve accelerator selection once before choosing dtype or replica devices.
     pub fn resolve_device(self, torch: TorchDevice) -> Result<TorchDevice, BackendError> {
         match self {
             Self::Libtorch => torch.resolved(),
+            Self::PythonBackend => Ok(torch),
         }
     }
 
-    /// Whether the selected runtime and accelerator can host GPU replicas.
-    pub fn supports_replication(self, torch: TorchDevice) -> bool {
+    /// Resolve replica placement for the selected runtime and device.
+    pub fn device_capabilities(
+        self,
+        device: TorchDevice,
+        python: &PythonBackendConfig,
+    ) -> Result<DeviceCapabilities, BackendError> {
         match self {
-            Self::Libtorch => torch == TorchDevice::Cuda,
-        }
-    }
-
-    /// Query the selected runtime rather than another backend's CUDA installation.
-    pub fn visible_device_count(self, torch: TorchDevice) -> Result<usize, BackendError> {
-        match self {
-            Self::Libtorch => torch.count(),
+            Self::Libtorch => {
+                let device = device.resolved()?;
+                if device == TorchDevice::Cuda {
+                    Ok(DeviceCapabilities {
+                        visible_device_count: device.count()?,
+                        supports_replication: true,
+                    })
+                } else {
+                    Ok(DeviceCapabilities::default())
+                }
+            }
+            Self::PythonBackend => {
+                #[cfg(feature = "python-backend")]
+                {
+                    let (visible_device_count, supports_replication) =
+                        infinity_v3_backend_python::PythonBackend::discover_capabilities(python)?;
+                    Ok(DeviceCapabilities {
+                        visible_device_count,
+                        supports_replication,
+                    })
+                }
+                #[cfg(not(feature = "python-backend"))]
+                {
+                    let _ = python;
+                    Err(BackendError::Start(
+                        "Python backend was not compiled; build with --features python-backend"
+                            .into(),
+                    ))
+                }
+            }
         }
     }
 }
@@ -149,6 +233,54 @@ pub struct Backend {
     pub model_type: ModelType,
 }
 
+fn validate_dynamic_quantization_request(
+    dynamic_quantization: DynamicQuantization,
+    dynamic_quantization_scope: DynamicQuantizationScope,
+    kind: BackendKind,
+    dtype: &DType,
+    torch_device: TorchDevice,
+) -> Result<(), BackendError> {
+    if dynamic_quantization_scope == DynamicQuantizationScope::All
+        && !dynamic_quantization.is_enabled()
+    {
+        return Err(BackendError::Start(
+            "All-linear dynamic quantization requires a format other than none".into(),
+        ));
+    }
+    if !dynamic_quantization.is_enabled() {
+        return Ok(());
+    }
+    if kind != BackendKind::Libtorch {
+        return Err(BackendError::Start(format!(
+            "{} dynamic quantization is only supported by the LibTorch backend",
+            dynamic_quantization.as_str()
+        )));
+    }
+    if torch_device == TorchDevice::Cpu {
+        return Err(BackendError::Start(format!(
+            "{} dynamic quantization requires CUDA",
+            dynamic_quantization.as_str()
+        )));
+    }
+    let dtype_supported = if dynamic_quantization.requires_bfloat16() {
+        dtype == &DType::Bfloat16
+    } else {
+        matches!(dtype, DType::Float16 | DType::Bfloat16)
+    };
+    if !dtype_supported {
+        return Err(BackendError::Start(format!(
+            "{} dynamic quantization requires {}",
+            dynamic_quantization.as_str(),
+            if dynamic_quantization.requires_bfloat16() {
+                "bfloat16"
+            } else {
+                "float16 or bfloat16"
+            }
+        )));
+    }
+    Ok(())
+}
+
 impl Backend {
     #[allow(clippy::too_many_arguments)]
     pub async fn new(
@@ -158,6 +290,7 @@ impl Backend {
         model_type: ModelType,
         dense_path: Option<String>,
         device_id: usize,
+        runtime_limits: ServingLimits,
     ) -> Result<Self, BackendError> {
         Self::new_shared(
             model_path,
@@ -166,6 +299,7 @@ impl Backend {
             model_type,
             dense_path,
             device_id,
+            runtime_limits,
         )
         .await
     }
@@ -178,22 +312,33 @@ impl Backend {
         model_type: ModelType,
         dense_path: Option<String>,
         device_id: usize,
+        runtime_limits: ServingLimits,
     ) -> Result<Self, BackendError> {
-        Self::new_shared_with_fp8(
-            model_path, api_repo, dtype, model_type, dense_path, device_id, false,
+        Self::new_shared_with_dynamic_quantization(
+            model_path,
+            api_repo,
+            dtype,
+            model_type,
+            dense_path,
+            device_id,
+            DynamicQuantization::None,
+            DynamicQuantizationScope::Auto,
+            runtime_limits,
         )
         .await
     }
 
     #[allow(clippy::too_many_arguments)]
-    pub async fn new_shared_with_fp8(
+    pub async fn new_shared_with_dynamic_quantization(
         model_path: PathBuf,
         api_repo: Option<Arc<ApiRepo>>,
         dtype: DType,
         model_type: ModelType,
         dense_path: Option<String>,
         device_id: usize,
-        enable_fp8_dynamic: bool,
+        dynamic_quantization: DynamicQuantization,
+        dynamic_quantization_scope: DynamicQuantizationScope,
+        runtime_limits: ServingLimits,
     ) -> Result<Self, BackendError> {
         Self::new_selected(
             model_path,
@@ -202,9 +347,12 @@ impl Backend {
             model_type,
             dense_path,
             device_id,
-            enable_fp8_dynamic,
+            dynamic_quantization,
+            dynamic_quantization_scope,
             BackendKind::default(),
             TorchDevice::Auto,
+            PythonBackendConfig::default(),
+            runtime_limits,
         )
         .await
     }
@@ -217,10 +365,20 @@ impl Backend {
         model_type: ModelType,
         dense_path: Option<String>,
         device_id: usize,
-        enable_fp8_dynamic: bool,
+        dynamic_quantization: DynamicQuantization,
+        dynamic_quantization_scope: DynamicQuantizationScope,
         kind: BackendKind,
         torch_device: TorchDevice,
+        python: PythonBackendConfig,
+        runtime_limits: ServingLimits,
     ) -> Result<Self, BackendError> {
+        validate_dynamic_quantization_request(
+            dynamic_quantization,
+            dynamic_quantization_scope,
+            kind,
+            &dtype,
+            torch_device,
+        )?;
         kind.ensure_compiled()?;
         let (backend_sender, backend_receiver) = mpsc::channel(8);
 
@@ -231,8 +389,12 @@ impl Backend {
             model_type.clone(),
             dense_path,
             device_id,
-            enable_fp8_dynamic,
+            dynamic_quantization,
+            dynamic_quantization_scope,
+            kind,
             torch_device,
+            python,
+            runtime_limits,
         )
         .await?;
         let radix_mlp_supported = backend.supports_radix_mlp();
@@ -253,13 +415,16 @@ impl Backend {
     }
 
     #[instrument(skip(self))]
-    pub async fn warmup(
-        &self,
-        max_input_length: usize,
-        max_batch_tokens: usize,
-        max_batch_requests: Option<usize>,
-    ) -> Result<(), BackendError> {
-        let warmup_tokens = max_batch_tokens;
+    pub async fn warmup(&self, limits: ServingLimits) -> Result<(), BackendError> {
+        let ServingLimits {
+            max_input_length,
+            max_batch_tokens: warmup_tokens,
+            max_batch_requests,
+        } = limits;
+        let max_batch_requests = match (max_batch_requests, self.max_batch_size) {
+            (Some(configured), Some(capacity)) => Some(configured.min(capacity)),
+            (configured, capacity) => configured.or(capacity),
+        };
 
         let mut input_ids = Vec::with_capacity(warmup_tokens);
         let mut token_type_ids = Vec::with_capacity(warmup_tokens);
@@ -468,8 +633,12 @@ async fn init_backend(
     model_type: ModelType,
     dense_path: Option<String>,
     device_id: usize,
-    enable_fp8_dynamic: bool,
+    dynamic_quantization: DynamicQuantization,
+    dynamic_quantization_scope: DynamicQuantizationScope,
+    kind: BackendKind,
     torch_device: TorchDevice,
+    python: PythonBackendConfig,
+    runtime_limits: ServingLimits,
 ) -> Result<Box<dyn CoreBackend + Send>, BackendError> {
     if model_type == ModelType::Decision {
         if let Some(repo) = api_repo.as_ref() {
@@ -477,6 +646,47 @@ async fn init_backend(
                 .await
                 .map_err(|error| BackendError::WeightsNotFound(error.to_string()))?;
         }
+    }
+    if kind == BackendKind::PythonBackend {
+        #[cfg(feature = "python-backend")]
+        {
+            if let Some(repo) = api_repo.as_ref() {
+                if download_safetensors(repo.clone()).await.is_err() {
+                    tracing::warn!(
+                        "safetensors weights not found; falling back to pytorch_model.bin"
+                    );
+                    download_file(repo, "pytorch_model.bin")
+                        .await
+                        .map_err(|e| BackendError::WeightsNotFound(e.to_string()))?;
+                }
+                download_dense_modules(repo, dense_path.clone())
+                    .await
+                    .map_err(|e| BackendError::WeightsNotFound(e.to_string()))?;
+            }
+            let path = model_path.clone();
+            let dtype = dtype.to_string();
+            let backend = tokio::task::spawn_blocking(move || {
+                infinity_v3_backend_python::PythonBackend::new(
+                    &path,
+                    &dtype,
+                    model_type,
+                    device_id,
+                    python,
+                    runtime_limits,
+                )
+            })
+            .await
+            .map_err(|error| {
+                BackendError::Start(format!(
+                    "Python backend initialization worker failed: {error}"
+                ))
+            })??;
+            return Ok(Box::new(backend));
+        }
+        #[cfg(not(feature = "python-backend"))]
+        return Err(BackendError::Start(
+            "Python backend was not compiled; build with --features python".into(),
+        ));
     }
     #[cfg(feature = "libtorch")]
     {
@@ -526,13 +736,15 @@ async fn init_backend(
         let startup_span = Span::current();
         let model = tokio::task::spawn_blocking(move || {
             startup_span.in_scope(|| {
-                infinity_backend_libtorch::LibtorchBackend::new_with_dense_paths_and_fp8(
+                infinity_backend_libtorch::LibtorchBackend::new_with_dense_paths_and_dynamic_quantization(
                     &model_path,
                     &dtype.to_string(),
                     model_type,
                     &device,
                     dense_paths,
-                    enable_fp8_dynamic,
+                    dynamic_quantization,
+                    dynamic_quantization_scope,
+                    runtime_limits,
                 )
             })
         })
@@ -559,7 +771,7 @@ impl CompletionThread {
     fn new() -> Self {
         let (sender, receiver) = std::sync::mpsc::sync_channel::<CompletionJob>(2);
         let handle = std::thread::Builder::new()
-            .name("tei-completion".into())
+            .name("infinity-completion".into())
             .spawn(move || {
                 while let Ok(job) = receiver.recv() {
                     job();
@@ -587,8 +799,9 @@ fn deliver<T: Send + 'static>(
     health: &watch::Sender<bool>,
     completion: &mut Option<CompletionThread>,
 ) {
+    let queued = matches!(&result, Ok(Inference::Queued(_)));
     match result {
-        Ok(Inference::Deferred(complete)) => {
+        Ok(Inference::Deferred(complete) | Inference::Queued(complete)) => {
             let health = health.clone();
             let (response, receiver) = oneshot::channel();
             let job = Box::new(move || {
@@ -611,9 +824,14 @@ fn deliver<T: Send + 'static>(
                 .unwrap()
                 .send(job)
                 .expect("Completion worker exited");
-            // Return the completion handle only after native submission and
-            // bounded handoff. Dropping it still leaves the worker owning the job.
-            let _ = sender.send(Ok(Submission::Deferred(receiver)));
+            // Return the completion handle after bounded handoff. Only native
+            // deferred work permits early replica reuse. The worker owns the job.
+            let submission = if queued {
+                Submission::Queued(receiver)
+            } else {
+                Submission::Deferred(receiver)
+            };
+            let _ = sender.send(Ok(submission));
         }
         result => {
             let result = result
@@ -647,7 +865,10 @@ impl BackendThread {
             while let Some(cmd) = backend_receiver.blocking_recv() {
                 let start = Instant::now();
                 match cmd {
-                    BackendCommand::Shutdown => break,
+                    BackendCommand::Shutdown => {
+                        backend.shutdown();
+                        break;
+                    }
                     BackendCommand::Probe(batch, model_type, span, sender) => {
                         let _span = span.entered();
                         let result = backend.probe(batch, &model_type);
@@ -760,6 +981,7 @@ async fn download_decision_sidecars(api: &ApiRepo) -> Result<(), ApiError> {
     Ok(())
 }
 
+#[cfg(any(feature = "libtorch", feature = "python-backend"))]
 async fn download_safetensors(api: Arc<ApiRepo>) -> Result<Vec<PathBuf>, ApiError> {
     // Single file
     tracing::info!("Downloading `model.safetensors`");
@@ -772,14 +994,19 @@ async fn download_safetensors(api: Arc<ApiRepo>) -> Result<Vec<PathBuf>, ApiErro
     // Download and parse index file
     tracing::info!("Downloading `model.safetensors.index.json`");
     let index_file = api.get("model.safetensors.index.json").await?;
-    let index_file_string: String =
-        std::fs::read_to_string(index_file).expect("model.safetensors.index.json is corrupted");
-    let json: serde_json::Value = serde_json::from_str(&index_file_string)
-        .expect("model.safetensors.index.json is corrupted");
+    let index_file_string = std::fs::read_to_string(index_file)?;
+    let json: serde_json::Value = serde_json::from_str(&index_file_string).map_err(|error| {
+        ApiError::IoError(std::io::Error::new(std::io::ErrorKind::InvalidData, error))
+    })?;
 
     let weight_map = match json.get("weight_map") {
         Some(serde_json::Value::Object(map)) => map,
-        _ => panic!("model.safetensors.index.json is corrupted"),
+        _ => {
+            return Err(ApiError::IoError(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "model.safetensors.index.json is missing weight_map",
+            )))
+        }
     };
 
     let mut safetensors_filenames = std::collections::HashSet::new();
@@ -811,7 +1038,7 @@ async fn download_safetensors(api: Arc<ApiRepo>) -> Result<Vec<PathBuf>, ApiErro
     Ok(safetensors_files)
 }
 
-#[cfg(feature = "libtorch")]
+#[cfg(any(feature = "libtorch", feature = "python-backend"))]
 #[derive(Debug, Clone, Deserialize, PartialEq)]
 enum ModuleType {
     // Output quantization is omitted when serving floating-point embeddings.
@@ -843,7 +1070,7 @@ enum ModuleType {
     Transformer,
 }
 
-#[cfg(feature = "libtorch")]
+#[cfg(any(feature = "libtorch", feature = "python-backend"))]
 #[derive(Debug, Clone, Deserialize)]
 struct ModuleConfig {
     #[allow(dead_code)]
@@ -857,13 +1084,13 @@ struct ModuleConfig {
     module_type: ModuleType,
 }
 
-#[cfg(feature = "libtorch")]
+#[cfg(any(feature = "libtorch", feature = "python-backend"))]
 async fn download_file(api: &ApiRepo, file_path: &str) -> Result<PathBuf, ApiError> {
     tracing::info!("Downloading `{}`", file_path);
     api.get(file_path).await
 }
 
-#[cfg(feature = "libtorch")]
+#[cfg(any(feature = "libtorch", feature = "python-backend"))]
 async fn parse_dense_paths_from_modules(
     modules_path: &PathBuf,
 ) -> Result<Vec<String>, std::io::Error> {
@@ -878,7 +1105,7 @@ async fn parse_dense_paths_from_modules(
         .collect::<Vec<String>>())
 }
 
-#[cfg(feature = "libtorch")]
+#[cfg(any(feature = "libtorch", feature = "python-backend"))]
 #[instrument(skip_all)]
 pub async fn download_dense_modules(
     api: &ApiRepo,
@@ -958,7 +1185,7 @@ pub async fn download_dense_modules(
     }
 }
 
-#[cfg(feature = "libtorch")]
+#[cfg(any(feature = "libtorch", feature = "python-backend"))]
 async fn download_dense_module(api: &ApiRepo, dense_path: &str) -> Result<PathBuf, ApiError> {
     // Download `config.json` for the Dense module
     let config_file = format!("{}/config.json", dense_path);
@@ -992,6 +1219,36 @@ mod completion_tests {
         atomic::{AtomicUsize, Ordering},
         Mutex,
     };
+
+    #[test]
+    fn queued_submission_retains_its_scheduling_semantics() {
+        let (gate, wait) = std::sync::mpsc::channel();
+        let (sender, receiver) = oneshot::channel();
+        let (health, _) = watch::channel(true);
+        let mut completion = None;
+        let inference = Inference::Queued(Box::new(move || {
+            wait.recv().unwrap();
+            Ok(7_u32)
+        }));
+        // Mapping backend output must preserve the queued lease contract.
+        let inference = inference.map(|value| value + 1).try_map(Ok).unwrap();
+        deliver(
+            Ok(inference),
+            sender,
+            Instant::now(),
+            Span::none(),
+            &health,
+            &mut completion,
+        );
+        let submission = receiver.blocking_recv().unwrap().unwrap();
+        assert!(matches!(submission, Submission::Queued(_)));
+        gate.send(()).unwrap();
+        let result = match submission {
+            Submission::Queued(receiver) => receiver.blocking_recv().unwrap().unwrap(),
+            _ => panic!("expected queued completion"),
+        };
+        assert_eq!(result.0, 8);
+    }
 
     struct DeferredBackend {
         gate: Arc<Mutex<std::sync::mpsc::Receiver<Result<(), BackendError>>>>,
@@ -1030,7 +1287,7 @@ mod completion_tests {
                 self.completed.clone(),
             );
             Ok(Inference::Deferred(Box::new(move || {
-                assert_eq!(std::thread::current().name(), Some("tei-completion"));
+                assert_eq!(std::thread::current().name(), Some("infinity-completion"));
                 started.send(()).unwrap();
                 let result = gate.lock().unwrap().recv().unwrap();
                 completed.fetch_add(1, Ordering::SeqCst);
@@ -1208,7 +1465,7 @@ mod completion_tests {
             .unwrap();
         let result = match result.blocking_recv().unwrap().unwrap() {
             Submission::Deferred(result) => result,
-            Submission::Ready(..) => panic!("expected deferred completion"),
+            Submission::Ready(..) | Submission::Queued(_) => panic!("expected deferred completion"),
         };
         // Cancellation before the submission response must also leave the job
         // owned by the worker, alongside the two existing completions.
@@ -1239,5 +1496,177 @@ mod completion_tests {
         assert!(commands.is_closed());
         assert_eq!(dropped.load(Ordering::SeqCst), 1);
         assert_eq!(completed.load(Ordering::SeqCst), 3);
+    }
+}
+
+#[cfg(test)]
+mod backend_selection_tests {
+    use super::*;
+
+    #[test]
+    fn default_uses_compiled_backend() {
+        let default = BackendKind::default();
+        if cfg!(feature = "libtorch") {
+            assert_eq!(default, BackendKind::Libtorch);
+        } else if cfg!(feature = "python-backend") {
+            assert_eq!(default, BackendKind::PythonBackend);
+        } else {
+            assert!(default.ensure_compiled().is_err());
+        }
+    }
+
+    #[cfg(feature = "python-backend")]
+    #[tokio::test]
+    async fn shared_startup_forwards_limits_to_python_before_warmup() {
+        let limits = ServingLimits::new(10_003, 2_301, Some(37)).unwrap();
+        let config = serde_json::json!({
+            "backend": "infinity_v3_python.testing:create_executor",
+            "expected_serving_limits": {
+                "max_input_length": 2_301,
+                "max_batch_tokens": 10_003,
+                "max_batch_requests": 37,
+            },
+        });
+        // The factory rejects missing/wrong limits during startup. No inference
+        // or warmup can supply them later, and no checkpoint is required.
+        let backend = Backend::new_selected(
+            PathBuf::from("."),
+            None,
+            DType::Float32,
+            ModelType::Embedding(Pool::Mean),
+            None,
+            0,
+            DynamicQuantization::None,
+            DynamicQuantizationScope::Auto,
+            BackendKind::PythonBackend,
+            TorchDevice::Cpu,
+            PythonBackendConfig {
+                config: Some(config.to_string()),
+            },
+            limits,
+        )
+        .await
+        .unwrap();
+        backend.warmup(limits).await.unwrap();
+        backend.shutdown().await;
+    }
+
+    #[test]
+    fn unavailable_backend_reports_compiled_choices() {
+        for kind in [BackendKind::Libtorch, BackendKind::PythonBackend] {
+            let result = kind.ensure_compiled();
+            if kind.is_compiled() {
+                assert!(result.is_ok());
+            } else {
+                let error = result.unwrap_err().to_string();
+                assert!(error.contains(&format!("Requested backend '{}'", kind.as_str())));
+            }
+        }
+    }
+
+    #[test]
+    fn requested_dynamic_quantization_requires_libtorch_cuda_and_half_precision() {
+        for kind in [BackendKind::Libtorch, BackendKind::PythonBackend] {
+            assert!(validate_dynamic_quantization_request(
+                DynamicQuantization::None,
+                DynamicQuantizationScope::Auto,
+                kind,
+                &DType::Float32,
+                TorchDevice::Cpu,
+            )
+            .is_ok());
+            assert!(validate_dynamic_quantization_request(
+                DynamicQuantization::None,
+                DynamicQuantizationScope::Mlp,
+                kind,
+                &DType::Float32,
+                TorchDevice::Cpu,
+            )
+            .is_ok());
+            assert!(validate_dynamic_quantization_request(
+                DynamicQuantization::None,
+                DynamicQuantizationScope::All,
+                kind,
+                &DType::Bfloat16,
+                TorchDevice::Cuda,
+            )
+            .unwrap_err()
+            .to_string()
+            .contains("format other than none"));
+        }
+        for dynamic_quantization in [
+            DynamicQuantization::Fp8,
+            DynamicQuantization::Mxfp8,
+            DynamicQuantization::Nvfp4,
+        ] {
+            assert!(validate_dynamic_quantization_request(
+                dynamic_quantization,
+                DynamicQuantizationScope::Auto,
+                BackendKind::PythonBackend,
+                &DType::Bfloat16,
+                TorchDevice::Cuda,
+            )
+            .unwrap_err()
+            .to_string()
+            .contains("LibTorch"));
+            assert!(validate_dynamic_quantization_request(
+                dynamic_quantization,
+                DynamicQuantizationScope::Auto,
+                BackendKind::Libtorch,
+                &DType::Bfloat16,
+                TorchDevice::Cpu,
+            )
+            .unwrap_err()
+            .to_string()
+            .contains("CUDA"));
+            assert!(validate_dynamic_quantization_request(
+                dynamic_quantization,
+                DynamicQuantizationScope::Auto,
+                BackendKind::Libtorch,
+                &DType::Float32,
+                TorchDevice::Cuda,
+            )
+            .is_err());
+            assert!(validate_dynamic_quantization_request(
+                dynamic_quantization,
+                DynamicQuantizationScope::Auto,
+                BackendKind::Libtorch,
+                &DType::Auto,
+                TorchDevice::Cuda,
+            )
+            .is_err());
+        }
+        assert!(validate_dynamic_quantization_request(
+            DynamicQuantization::Fp8,
+            DynamicQuantizationScope::Auto,
+            BackendKind::Libtorch,
+            &DType::Float16,
+            TorchDevice::Cuda,
+        )
+        .is_ok());
+        assert!(validate_dynamic_quantization_request(
+            DynamicQuantization::Mxfp8,
+            DynamicQuantizationScope::Auto,
+            BackendKind::Libtorch,
+            &DType::Float16,
+            TorchDevice::Cuda,
+        )
+        .is_err());
+        assert!(validate_dynamic_quantization_request(
+            DynamicQuantization::Nvfp4,
+            DynamicQuantizationScope::Auto,
+            BackendKind::Libtorch,
+            &DType::Float16,
+            TorchDevice::Cuda,
+        )
+        .is_err());
+        assert!(validate_dynamic_quantization_request(
+            DynamicQuantization::Mxfp8,
+            DynamicQuantizationScope::Auto,
+            BackendKind::Libtorch,
+            &DType::Bfloat16,
+            TorchDevice::Cuda,
+        )
+        .is_ok());
     }
 }

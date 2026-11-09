@@ -1,8 +1,8 @@
 //! Portable packed embedding tensors. All multi-byte values use little endian.
 use super::result_storage;
-use super::types::{AllEmbedding, Embedding, EncodingFormat};
+use super::types::{AllEmbedding, Embedding, EncodingFormat, FloatOutput};
 use base64::{display::Base64Display, engine::general_purpose::STANDARD, Engine};
-use infinity_v3_backend::BackendError;
+use infinity_v3_backend::{BackendError, SharedF32};
 use infinity_v3_core::TextEmbeddingsError;
 use serde::{Serialize, Serializer};
 use utoipa::{
@@ -82,14 +82,14 @@ impl Tensor {
         Self::new(&[values.len()], std::iter::once(values))
     }
 
-    pub(crate) fn matrix(rows: &[Vec<f32>]) -> Result<Self, TextEmbeddingsError> {
-        let width = rows.first().map_or(0, Vec::len);
-        if rows.iter().any(|row| row.len() != width) {
+    pub(crate) fn matrix<T: AsRef<[f32]>>(rows: &[T]) -> Result<Self, TextEmbeddingsError> {
+        let width = rows.first().map_or(0, |row| row.as_ref().len());
+        if rows.iter().any(|row| row.as_ref().len() != width) {
             return Err(invalid(
                 "Embedding tensor rows have inconsistent dimensions",
             ));
         }
-        Self::new(&[rows.len(), width], rows.iter().map(Vec::as_slice))
+        Self::new(&[rows.len(), width], rows.iter().map(AsRef::as_ref))
     }
 
     fn new<'a>(
@@ -121,15 +121,16 @@ impl Tensor {
 }
 
 pub(crate) fn encode_vector(
-    values: Vec<f32>,
+    values: SharedF32,
     format: EncodingFormat,
 ) -> Result<Embedding, TextEmbeddingsError> {
     match format {
-        EncodingFormat::Float => Ok(Embedding::Float(values)),
+        EncodingFormat::Float => Ok(Embedding::Float(FloatOutput(values))),
         EncodingFormat::Tensor => Ok(Embedding::All(AllEmbedding::Tensor(Tensor::vector(
-            &values,
+            values.as_ref(),
         )?))),
         EncodingFormat::Base64 => {
+            let values = values.as_ref();
             // Preserve the legacy base64 representation (native-endian float32).
             let bytes = unsafe {
                 std::slice::from_raw_parts(values.as_ptr().cast::<u8>(), values.len() * 4)
@@ -144,11 +145,13 @@ pub(crate) fn encode_vector(
 }
 
 pub(crate) fn encode_matrix(
-    values: Vec<Vec<f32>>,
+    values: Vec<SharedF32>,
     format: EncodingFormat,
 ) -> Result<AllEmbedding, TextEmbeddingsError> {
     match format {
-        EncodingFormat::Float => Ok(AllEmbedding::Float(values)),
+        EncodingFormat::Float => Ok(AllEmbedding::Float(
+            values.into_iter().map(FloatOutput).collect(),
+        )),
         EncodingFormat::Tensor => Ok(AllEmbedding::Tensor(Tensor::matrix(&values)?)),
         EncodingFormat::Base64 => {
             let mut rows = result_storage::vector(values.len())?;
@@ -311,8 +314,11 @@ mod tests {
 
     #[test]
     fn late_interaction_batches_preserve_shapes_and_token_order() {
-        let matrices = [vec![vec![1., 2.], vec![3., 4.]], vec![vec![-1., -2.]]];
-        let tensors = matrices
+        let matrices = [
+            vec![vec![1., 2.].into(), vec![3., 4.].into()],
+            vec![vec![-1., -2.].into()],
+        ];
+        let tensors: Vec<AllEmbedding> = matrices
             .into_iter()
             .map(|matrix| encode_matrix(matrix, EncodingFormat::Tensor).unwrap())
             .collect();
@@ -328,25 +334,28 @@ mod tests {
         assert_eq!(values, [1., 2., 3., 4.]);
         assert_eq!(decoded[1].data.len(), 8);
         assert!(Tensor::matrix(&[vec![1.], vec![2., 3.]]).is_err());
-        assert_eq!(Tensor::matrix(&[]).unwrap().shape, [0, 0]);
+        assert_eq!(Tensor::matrix::<Vec<f32>>(&[]).unwrap().shape, [0, 0]);
         assert!(Tensor::new(&[usize::MAX], std::iter::empty()).is_err());
     }
 
     #[test]
     fn legacy_formats_and_request_defaults_are_unchanged() {
-        let dense = EmbedResponse(vec![
-            encode_vector(vec![1., -2.], EncodingFormat::Float).unwrap()
-        ]);
+        let dense = EmbedResponse(vec![encode_vector(
+            vec![1., -2.].into(),
+            EncodingFormat::Float,
+        )
+        .unwrap()]);
         assert_eq!(serde_json::to_value(dense).unwrap(), json!([[1., -2.]]));
         let matrix = EmbedAllResponse(vec![encode_matrix(
-            vec![vec![1., -2.]],
+            vec![vec![1., -2.].into()],
             EncodingFormat::Float,
         )
         .unwrap()]);
         assert_eq!(serde_json::to_value(matrix).unwrap(), json!([[[1., -2.]]]));
-        let encoded =
-            serde_json::to_value(encode_vector(vec![1., -2.], EncodingFormat::Base64).unwrap())
-                .unwrap();
+        let encoded = serde_json::to_value(
+            encode_vector(vec![1., -2.].into(), EncodingFormat::Base64).unwrap(),
+        )
+        .unwrap();
         assert_eq!(
             STANDARD.decode(encoded.as_str().unwrap()).unwrap(),
             [1.0f32.to_ne_bytes(), (-2.0f32).to_ne_bytes()].concat()

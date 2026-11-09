@@ -16,7 +16,7 @@
 #include <future>
 #include <thread>
 #include <ATen/Parallel.h>
-#ifdef TEI_TORCH_CUDA_KERNELS
+#ifdef INFINITY_TORCH_CUDA_KERNELS
 #include <ATen/CPUGeneratorImpl.h>
 #include <ATen/cuda/CUDAContext.h>
 #include <ATen/cuda/CUDAEvent.h>
@@ -33,7 +33,7 @@ void input_descriptor_test() {
   int32_t offsets[] = {0, 32, 64};
   float payload = 0;
   uint8_t mask = 1;
-  TeiImage image{};
+  InfinityTorchImage image{};
   image.pixels = &payload;
   image.rows = 32;
   image.patch_dim = 1536;
@@ -42,10 +42,10 @@ void input_descriptor_test() {
   image.merge_size = 2;
   image.token_start = 4;
   image.token_count = 8;
-  TeiAudio audio{&payload, &mask, 4, 128, 2, 1};
-  auto validate = [&](const TeiImage* images,
+  InfinityTorchAudio audio{&payload, &mask, 4, 128, 2, 1};
+  auto validate = [&](const InfinityTorchImage* images,
                       size_t ni,
-                      const TeiAudio* audios,
+                      const InfinityTorchAudio* audios,
                       size_t na,
                       int64_t maximum = 32) {
     return validate_input_descriptors(
@@ -105,7 +105,7 @@ void input_descriptor_test() {
   bad_audio = audio;
   bad_audio.mask = nullptr;
   rejects([&] { validate(nullptr, 0, &bad_audio, 1); }, "Null audio mask accepted");
-  TeiImage gemma = image;
+  InfinityTorchImage gemma = image;
   gemma.rows = 36;
   gemma.patch_dim = 768;
   gemma.grid[0] = 1;
@@ -147,94 +147,98 @@ void input_descriptor_test() {
       },
       "Multiple-frame Gemma image accepted");
   // Exercise the actual native bridge before model creation/any tensor upload.
-  TeiConfig cfg{16, 4, 1, 24, 32, 64, 2, 1e-5, 0};
-  auto handle = tei_create(&cfg, "cpu", 0);
-  TORCH_CHECK(handle, tei_error());
-  auto code = tei_forward(handle,
-                          data,
-                          data,
-                          data,
-                          offsets,
-                          2,
-                          32,
-                          0,
-                          nullptr,
-                          0,
-                          nullptr,
-                          0,
-                          nullptr,
-                          0,
-                          nullptr,
-                          nullptr,
-                          1,
-                          nullptr,
-                          0);
-  TORCH_CHECK(code != 0 && std::string(tei_error()).find("counted image") != std::string::npos,
+  InfinityTorchConfig cfg{16, 4, 1, 24, 32, 64, 2, 1e-5, 0};
+  auto handle = infinity_torch_create(&cfg, "cpu", 0);
+  TORCH_CHECK(handle, infinity_torch_error());
+  auto code = infinity_torch_forward(handle,
+                                     data,
+                                     data,
+                                     data,
+                                     offsets,
+                                     2,
+                                     32,
+                                     0,
+                                     nullptr,
+                                     0,
+                                     nullptr,
+                                     0,
+                                     nullptr,
+                                     0,
+                                     nullptr,
+                                     nullptr,
+                                     1,
+                                     nullptr,
+                                     0);
+  TORCH_CHECK(code != 0 &&
+                  std::string(infinity_torch_error()).find("counted image") != std::string::npos,
               "Native bridge did not reject malformed media before upload/model access");
-  auto pending = tei_forward_submit(handle,
-                                    data,
-                                    data,
-                                    data,
-                                    offsets,
-                                    2,
-                                    32,
-                                    0,
-                                    nullptr,
-                                    0,
-                                    nullptr,
-                                    0,
-                                    std::numeric_limits<size_t>::max(),
-                                    nullptr,
-                                    nullptr,
-                                    1,
-                                    nullptr,
-                                    0,
-                                    nullptr);
-  TORCH_CHECK(!pending && std::string(tei_error()).find("counted image") != std::string::npos,
+  auto pending = infinity_torch_forward_submit(handle,
+                                               data,
+                                               data,
+                                               data,
+                                               offsets,
+                                               2,
+                                               32,
+                                               0,
+                                               nullptr,
+                                               0,
+                                               nullptr,
+                                               0,
+                                               std::numeric_limits<size_t>::max(),
+                                               nullptr,
+                                               nullptr,
+                                               1,
+                                               nullptr,
+                                               0,
+                                               nullptr);
+  TORCH_CHECK(!pending &&
+                  std::string(infinity_torch_error()).find("counted image") != std::string::npos,
               "Deferred bridge did not validate descriptors before output allocation");
-  code = tei_forward(handle,
-                     data,
-                     data,
-                     data,
-                     offsets,
-                     2,
-                     32,
-                     0,
-                     nullptr,
-                     1,
-                     nullptr,
-                     0,
-                     nullptr,
-                     0,
-                     nullptr,
-                     nullptr,
-                     0,
-                     nullptr,
-                     0);
-  TORCH_CHECK(code != 0 && std::string(tei_error()).find("counted pooled") != std::string::npos,
+  code = infinity_torch_forward(handle,
+                                data,
+                                data,
+                                data,
+                                offsets,
+                                2,
+                                32,
+                                0,
+                                nullptr,
+                                1,
+                                nullptr,
+                                0,
+                                nullptr,
+                                0,
+                                nullptr,
+                                nullptr,
+                                0,
+                                nullptr,
+                                0);
+  TORCH_CHECK(code != 0 &&
+                  std::string(infinity_torch_error()).find("counted pooled") != std::string::npos,
               "Native bridge did not reject missing output indices before model access");
-  pending = tei_forward_submit(handle,
-                               data,
-                               data,
-                               data,
-                               offsets,
-                               2,
-                               32,
-                               0,
-                               nullptr,
-                               0,
-                               &invalid,
-                               1,
-                               std::numeric_limits<size_t>::max(),
-                               nullptr,
-                               nullptr,
-                               0,
-                               nullptr,
-                               0,
-                               nullptr);
-  TORCH_CHECK(!pending && std::string(tei_error()).find("raw output index") != std::string::npos,
+  pending = infinity_torch_forward_submit(handle,
+                                          data,
+                                          data,
+                                          data,
+                                          offsets,
+                                          2,
+                                          32,
+                                          0,
+                                          nullptr,
+                                          0,
+                                          &invalid,
+                                          1,
+                                          std::numeric_limits<size_t>::max(),
+                                          nullptr,
+                                          nullptr,
+                                          0,
+                                          nullptr,
+                                          0,
+                                          nullptr);
+  TORCH_CHECK(!pending &&
+                  std::string(infinity_torch_error()).find("raw output index") != std::string::npos,
               "Deferred bridge did not reject output indices before output allocation");
-  tei_destroy(handle);
+  infinity_torch_destroy(handle);
 }
 
 Options config(const std::string& family, bool moe = false) {
@@ -319,26 +323,28 @@ Weights weights(const Options& cfg, bool fused = false) {
 void output_capacity_bridge_test() {
   auto cfg = config("qwen3");
   auto w = weights(cfg);
-  TeiConfig native_cfg{16, 4, 2, 24, 32, 32, 1, 1e-6, 0};
-  auto handle = tei_create(&native_cfg, "cpu", 0);
-  TORCH_CHECK(handle, tei_error());
+  InfinityTorchConfig native_cfg{16, 4, 2, 24, 32, 32, 1, 1e-6, 0};
+  auto handle = infinity_torch_create(&native_cfg, "cpu", 0);
+  TORCH_CHECK(handle, infinity_torch_error());
   for (const auto& [key, value] : cfg.values)
-    TORCH_CHECK(tei_option(handle, key.c_str(), value.c_str()) == 0, tei_error());
-  TORCH_CHECK(tei_option(handle, "_decision.kind", "option_tokens") == 0 &&
-                  tei_option(handle, "tie_word_embeddings", "true") == 0,
-              tei_error());
+    TORCH_CHECK(infinity_torch_option(handle, key.c_str(), value.c_str()) == 0,
+                infinity_torch_error());
+  TORCH_CHECK(infinity_torch_option(handle, "_decision.kind", "option_tokens") == 0 &&
+                  infinity_torch_option(handle, "tie_word_embeddings", "true") == 0,
+              infinity_torch_error());
   for (const auto& [key, value] : w)
-    TORCH_CHECK(tei_weight(handle,
-                           key.c_str(),
-                           reinterpret_cast<const uint8_t*>(value.const_data_ptr()),
-                           value.sizes().data(),
-                           value.dim(),
-                           0) == 0,
-                tei_error());
-  TORCH_CHECK(tei_option(handle, "_transient_max_bytes", "1") == 0 &&
-                  tei_option(handle, "_device_memory_headroom_bytes", "9223372036854775807") == 0,
-              tei_error());
-  TORCH_CHECK(tei_ready(handle) == 0, tei_error());
+    TORCH_CHECK(infinity_torch_weight(handle,
+                                      key.c_str(),
+                                      reinterpret_cast<const uint8_t*>(value.const_data_ptr()),
+                                      value.sizes().data(),
+                                      value.dim(),
+                                      0) == 0,
+                infinity_torch_error());
+  TORCH_CHECK(infinity_torch_option(handle, "_transient_max_bytes", "1") == 0 &&
+                  infinity_torch_option(
+                      handle, "_device_memory_headroom_bytes", "9223372036854775807") == 0,
+              infinity_torch_error());
+  TORCH_CHECK(infinity_torch_ready(handle) == 0, infinity_torch_error());
   // Legacy estimate options must not reject valid requests or alter their results.
   // A one-byte cap rejected this same forward before the heuristic was removed.
   int64_t ids[] = {3, 4, 5, 6}, types[4]{}, positions[] = {0, 1, 0, 1}, pooled = 0;
@@ -346,26 +352,26 @@ void output_capacity_bridge_test() {
   // Preserve subset order, duplicate selections, mean pooling and mixed raw output.
   auto readout = [&](int pool, std::vector<int64_t> selected, std::vector<int64_t> raw) {
     std::vector<float> result(16 * (selected.size() + 2 * raw.size()));
-    TORCH_CHECK(tei_forward(handle,
-                            ids,
-                            types,
-                            positions,
-                            cumulative,
-                            2,
-                            2,
-                            pool,
-                            selected.data(),
-                            selected.size(),
-                            raw.data(),
-                            raw.size(),
-                            result.data(),
-                            result.size(),
-                            nullptr,
-                            nullptr,
-                            0,
-                            nullptr,
-                            0) == 0,
-                tei_error());
+    TORCH_CHECK(infinity_torch_forward(handle,
+                                       ids,
+                                       types,
+                                       positions,
+                                       cumulative,
+                                       2,
+                                       2,
+                                       pool,
+                                       selected.data(),
+                                       selected.size(),
+                                       raw.data(),
+                                       raw.size(),
+                                       result.data(),
+                                       result.size(),
+                                       nullptr,
+                                       nullptr,
+                                       0,
+                                       nullptr,
+                                       0) == 0,
+                infinity_torch_error());
     return result;
   };
   auto full = readout(2, {}, {0, 1});
@@ -386,33 +392,121 @@ void output_capacity_bridge_test() {
                     "Mixed raw tokens changed");
     }
   int64_t option_ids[] = {1, 2};
-  TeiDecision valid_head[2]{};
+  InfinityTorchDecision valid_head[2]{};
   valid_head[0].kind = 1;
   valid_head[0].token_ids = option_ids;
   valid_head[0].token_count = 2;
   valid_head[1].kind = 3;
   float head_logits[3]{}, head_actions[2]{};
-  TORCH_CHECK(tei_decide(handle,
-                         ids,
-                         types,
-                         positions,
-                         cumulative,
-                         2,
-                         2,
-                         valid_head,
-                         head_logits,
-                         3,
-                         head_actions,
-                         nullptr,
-                         nullptr,
-                         0,
-                         nullptr,
-                         0) == 0,
-              tei_error());
+  TORCH_CHECK(infinity_torch_decide(handle,
+                                    ids,
+                                    types,
+                                    positions,
+                                    cumulative,
+                                    2,
+                                    2,
+                                    valid_head,
+                                    head_logits,
+                                    3,
+                                    head_actions,
+                                    nullptr,
+                                    nullptr,
+                                    0,
+                                    nullptr,
+                                    0) == 0,
+              infinity_torch_error());
   for (auto value : head_logits)
     TORCH_CHECK(std::isfinite(value), "Typed response contains non-finite logits");
   for (const auto capacity : {size_t(17), std::numeric_limits<size_t>::max()}) {
-    auto pending = tei_forward_submit(handle,
+    auto pending = infinity_torch_forward_submit(handle,
+                                                 ids,
+                                                 types,
+                                                 positions,
+                                                 cumulative,
+                                                 2,
+                                                 2,
+                                                 0,
+                                                 &pooled,
+                                                 1,
+                                                 nullptr,
+                                                 0,
+                                                 capacity,
+                                                 nullptr,
+                                                 nullptr,
+                                                 0,
+                                                 nullptr,
+                                                 0,
+                                                 nullptr);
+    TORCH_CHECK(
+        !pending &&
+            std::string(infinity_torch_error()).find("Deferred output capacity must exactly") !=
+                std::string::npos,
+        "Deferred spare capacity reached CUDA/output allocation");
+  }
+  auto pending = infinity_torch_forward_submit(handle,
+                                               ids,
+                                               types,
+                                               positions,
+                                               cumulative,
+                                               2,
+                                               2,
+                                               0,
+                                               &pooled,
+                                               1,
+                                               nullptr,
+                                               0,
+                                               16,
+                                               nullptr,
+                                               nullptr,
+                                               0,
+                                               nullptr,
+                                               0,
+                                               nullptr);
+  TORCH_CHECK(!pending && infinity_torch_last_error_kind() == 1 &&
+                  std::string(infinity_torch_error()).find("Deferred output requires CUDA") !=
+                      std::string::npos,
+              "Exact deferred capacity failed metadata validation");
+  float output[20];
+  std::fill_n(output, 20, std::numeric_limits<float>::quiet_NaN());
+  TORCH_CHECK(infinity_torch_forward(handle,
+                                     ids,
+                                     types,
+                                     positions,
+                                     cumulative,
+                                     2,
+                                     2,
+                                     0,
+                                     &pooled,
+                                     1,
+                                     nullptr,
+                                     0,
+                                     output,
+                                     20,
+                                     nullptr,
+                                     nullptr,
+                                     0,
+                                     nullptr,
+                                     0) == 0,
+              infinity_torch_error());
+  for (int i = 0; i < 16; ++i)
+    TORCH_CHECK(std::isfinite(output[i]), "Valid response failed after capacity rejection");
+  for (int i = 16; i < 20; ++i)
+    TORCH_CHECK(std::isnan(output[i]), "Synchronous spare capacity was overwritten");
+  // Oversized finite payload descriptors must be rejected without reading them.
+  const auto fake_float = reinterpret_cast<const float*>(uintptr_t(1));
+  const auto fake_mask = reinterpret_cast<const uint8_t*>(uintptr_t(1));
+  InfinityTorchImage huge{};
+  huge.pixels = fake_float;
+  huge.rows = 1;
+  huge.patch_dim = (512LL << 20) / sizeof(float) + 1;
+  huge.grid[0] = huge.grid[1] = huge.grid[2] = huge.merge_size = huge.token_count = 1;
+  auto budget_error = [&](int code) {
+    TORCH_CHECK(code != 0 && infinity_torch_last_error_kind() == 2 &&
+                    std::string(infinity_torch_error()).find("Native input upload exceeds") !=
+                        std::string::npos,
+                "Input budget did not reject before payload read/allocation");
+  };
+  budget_error(infinity_torch_forward(handle,
                                       ids,
                                       types,
                                       positions,
@@ -424,228 +518,144 @@ void output_capacity_bridge_test() {
                                       1,
                                       nullptr,
                                       0,
-                                      capacity,
+                                      output,
+                                      20,
                                       nullptr,
+                                      &huge,
+                                      1,
                                       nullptr,
-                                      0,
-                                      nullptr,
-                                      0,
-                                      nullptr);
-    TORCH_CHECK(!pending &&
-                    std::string(tei_error()).find("Deferred output capacity must exactly") !=
-                        std::string::npos,
-                "Deferred spare capacity reached CUDA/output allocation");
-  }
-  auto pending = tei_forward_submit(handle,
-                                    ids,
-                                    types,
-                                    positions,
-                                    cumulative,
-                                    2,
-                                    2,
-                                    0,
-                                    &pooled,
-                                    1,
-                                    nullptr,
-                                    0,
-                                    16,
-                                    nullptr,
-                                    nullptr,
-                                    0,
-                                    nullptr,
-                                    0,
-                                    nullptr);
-  TORCH_CHECK(!pending && tei_last_error_kind() == 1 &&
-                  std::string(tei_error()).find("Deferred output requires CUDA") !=
-                      std::string::npos,
-              "Exact deferred capacity failed metadata validation");
-  float output[20];
-  std::fill_n(output, 20, std::numeric_limits<float>::quiet_NaN());
-  TORCH_CHECK(tei_forward(handle,
-                          ids,
-                          types,
-                          positions,
-                          cumulative,
-                          2,
-                          2,
-                          0,
-                          &pooled,
-                          1,
-                          nullptr,
-                          0,
-                          output,
-                          20,
-                          nullptr,
-                          nullptr,
-                          0,
-                          nullptr,
-                          0) == 0,
-              tei_error());
-  for (int i = 0; i < 16; ++i)
-    TORCH_CHECK(std::isfinite(output[i]), "Valid response failed after capacity rejection");
-  for (int i = 16; i < 20; ++i)
-    TORCH_CHECK(std::isnan(output[i]), "Synchronous spare capacity was overwritten");
-  // Oversized finite payload descriptors must be rejected without reading them.
-  const auto fake_float = reinterpret_cast<const float*>(uintptr_t(1));
-  const auto fake_mask = reinterpret_cast<const uint8_t*>(uintptr_t(1));
-  TeiImage huge{};
-  huge.pixels = fake_float;
-  huge.rows = 1;
-  huge.patch_dim = (512LL << 20) / sizeof(float) + 1;
-  huge.grid[0] = huge.grid[1] = huge.grid[2] = huge.merge_size = huge.token_count = 1;
-  auto budget_error = [&](int code) {
-    TORCH_CHECK(code != 0 && tei_last_error_kind() == 2 &&
-                    std::string(tei_error()).find("Native input upload exceeds") !=
-                        std::string::npos,
-                "Input budget did not reject before payload read/allocation");
-  };
-  budget_error(tei_forward(handle,
-                           ids,
-                           types,
-                           positions,
-                           cumulative,
-                           2,
-                           2,
-                           0,
-                           &pooled,
-                           1,
-                           nullptr,
-                           0,
-                           output,
-                           20,
-                           nullptr,
-                           &huge,
-                           1,
-                           nullptr,
-                           0));
-  pending = tei_forward_submit(handle,
-                               ids,
-                               types,
-                               positions,
-                               cumulative,
-                               2,
-                               2,
-                               0,
-                               &pooled,
-                               1,
-                               nullptr,
-                               0,
-                               16,
-                               nullptr,
-                               &huge,
-                               1,
-                               nullptr,
-                               0,
-                               nullptr);
+                                      0));
+  pending = infinity_torch_forward_submit(handle,
+                                          ids,
+                                          types,
+                                          positions,
+                                          cumulative,
+                                          2,
+                                          2,
+                                          0,
+                                          &pooled,
+                                          1,
+                                          nullptr,
+                                          0,
+                                          16,
+                                          nullptr,
+                                          &huge,
+                                          1,
+                                          nullptr,
+                                          0,
+                                          nullptr);
   budget_error(pending ? 0 : -1);
-  budget_error(tei_decide(handle,
-                          ids,
-                          types,
-                          positions,
-                          cumulative,
-                          2,
-                          2,
-                          nullptr,
-                          nullptr,
-                          0,
-                          nullptr,
-                          nullptr,
-                          &huge,
-                          1,
-                          nullptr,
-                          0));
-  TeiAudio huge_audio{fake_float, fake_mask, 1, (512LL << 20) / sizeof(float) + 1, 0, 1};
-  budget_error(tei_forward(handle,
-                           ids,
-                           types,
-                           positions,
-                           cumulative,
-                           2,
-                           2,
-                           0,
-                           &pooled,
-                           1,
-                           nullptr,
-                           0,
-                           output,
-                           20,
-                           nullptr,
-                           nullptr,
-                           0,
-                           &huge_audio,
-                           1));
-  TORCH_CHECK(tei_option(handle, "_input_upload_max_bytes", "108") == 0, tei_error());
+  budget_error(infinity_torch_decide(handle,
+                                     ids,
+                                     types,
+                                     positions,
+                                     cumulative,
+                                     2,
+                                     2,
+                                     nullptr,
+                                     nullptr,
+                                     0,
+                                     nullptr,
+                                     nullptr,
+                                     &huge,
+                                     1,
+                                     nullptr,
+                                     0));
+  InfinityTorchAudio huge_audio{fake_float, fake_mask, 1, (512LL << 20) / sizeof(float) + 1, 0, 1};
+  budget_error(infinity_torch_forward(handle,
+                                      ids,
+                                      types,
+                                      positions,
+                                      cumulative,
+                                      2,
+                                      2,
+                                      0,
+                                      &pooled,
+                                      1,
+                                      nullptr,
+                                      0,
+                                      output,
+                                      20,
+                                      nullptr,
+                                      nullptr,
+                                      0,
+                                      &huge_audio,
+                                      1));
+  TORCH_CHECK(infinity_torch_option(handle, "_input_upload_max_bytes", "108") == 0,
+              infinity_torch_error());
   auto fake_indices = reinterpret_cast<const int64_t*>(uintptr_t(1));
-  TeiRadix fake_radix{fake_indices, fake_indices, fake_indices, fake_indices, fake_indices, 4};
-  budget_error(tei_forward_radix(handle,
-                                 ids,
-                                 types,
-                                 positions,
-                                 cumulative,
-                                 2,
-                                 2,
-                                 0,
-                                 &pooled,
-                                 1,
-                                 nullptr,
-                                 0,
-                                 output,
-                                 20,
-                                 nullptr,
-                                 nullptr,
-                                 0,
-                                 nullptr,
-                                 0,
-                                 &fake_radix));
-  budget_error(tei_forward(handle,
-                           ids,
-                           types,
-                           positions,
-                           cumulative,
-                           2,
-                           2,
-                           0,
-                           &pooled,
-                           1,
-                           nullptr,
-                           0,
-                           output,
-                           20,
-                           fake_indices,
-                           nullptr,
-                           0,
-                           nullptr,
-                           0));
+  InfinityTorchRadix fake_radix{
+      fake_indices, fake_indices, fake_indices, fake_indices, fake_indices, 4};
+  budget_error(infinity_torch_forward_radix(handle,
+                                            ids,
+                                            types,
+                                            positions,
+                                            cumulative,
+                                            2,
+                                            2,
+                                            0,
+                                            &pooled,
+                                            1,
+                                            nullptr,
+                                            0,
+                                            output,
+                                            20,
+                                            nullptr,
+                                            nullptr,
+                                            0,
+                                            nullptr,
+                                            0,
+                                            &fake_radix));
+  budget_error(infinity_torch_forward(handle,
+                                      ids,
+                                      types,
+                                      positions,
+                                      cumulative,
+                                      2,
+                                      2,
+                                      0,
+                                      &pooled,
+                                      1,
+                                      nullptr,
+                                      0,
+                                      output,
+                                      20,
+                                      fake_indices,
+                                      nullptr,
+                                      0,
+                                      nullptr,
+                                      0));
   std::fill_n(output, 20, std::numeric_limits<float>::quiet_NaN());
-  TORCH_CHECK(tei_forward(handle,
-                          ids,
-                          types,
-                          positions,
-                          cumulative,
-                          2,
-                          2,
-                          0,
-                          &pooled,
-                          1,
-                          nullptr,
-                          0,
-                          output,
-                          20,
-                          nullptr,
-                          nullptr,
-                          0,
-                          nullptr,
-                          0) == 0,
-              tei_error());
-  TORCH_CHECK(tei_last_error_kind() == 0 && std::string(tei_error()).empty(),
+  TORCH_CHECK(infinity_torch_forward(handle,
+                                     ids,
+                                     types,
+                                     positions,
+                                     cumulative,
+                                     2,
+                                     2,
+                                     0,
+                                     &pooled,
+                                     1,
+                                     nullptr,
+                                     0,
+                                     output,
+                                     20,
+                                     nullptr,
+                                     nullptr,
+                                     0,
+                                     nullptr,
+                                     0) == 0,
+              infinity_torch_error());
+  TORCH_CHECK(infinity_torch_last_error_kind() == 0 && std::string(infinity_torch_error()).empty(),
               "Successful inference retained an admission error kind");
   for (int i = 0; i < 16; ++i)
     TORCH_CHECK(std::isfinite(output[i]), "Valid response failed after input budget rejection");
   uint64_t disabled_stats[7]{};
-  TORCH_CHECK(tei_prefix_cache_stats(handle, disabled_stats, 7) == 0, tei_error());
+  TORCH_CHECK(infinity_torch_prefix_cache_stats(handle, disabled_stats, 7) == 0,
+              infinity_torch_error());
   for (auto value : disabled_stats)
     TORCH_CHECK(value == 0, "Default configuration enabled the experimental prefix cache");
-  TeiDecision huge_metadata{};
+  InfinityTorchDecision huge_metadata{};
   huge_metadata.markers = fake_indices;
   huge_metadata.marker_count = std::numeric_limits<size_t>::max();
   bool metadata_rejected = false;
@@ -655,28 +665,29 @@ void output_capacity_bridge_test() {
     metadata_rejected = true;
   }
   TORCH_CHECK(metadata_rejected, "Decision metadata overflow was copied before admission");
-  TORCH_CHECK(tei_option(handle, "_input_upload_max_bytes", "0") == 0, tei_error());
-  TORCH_CHECK(tei_forward(handle,
-                          ids,
-                          types,
-                          positions,
-                          cumulative,
-                          2,
-                          2,
-                          0,
-                          &pooled,
-                          1,
-                          nullptr,
-                          0,
-                          output,
-                          20,
-                          nullptr,
-                          nullptr,
-                          0,
-                          nullptr,
-                          0) != 0,
+  TORCH_CHECK(infinity_torch_option(handle, "_input_upload_max_bytes", "0") == 0,
+              infinity_torch_error());
+  TORCH_CHECK(infinity_torch_forward(handle,
+                                     ids,
+                                     types,
+                                     positions,
+                                     cumulative,
+                                     2,
+                                     2,
+                                     0,
+                                     &pooled,
+                                     1,
+                                     nullptr,
+                                     0,
+                                     output,
+                                     20,
+                                     nullptr,
+                                     nullptr,
+                                     0,
+                                     nullptr,
+                                     0) != 0,
               "Zero input budget accepted");
-  tei_destroy(handle);
+  infinity_torch_destroy(handle);
 }
 
 at::Tensor run(Model& model, std::vector<int64_t> ids, std::vector<int32_t> offsets) {
@@ -722,8 +733,8 @@ void selected_classifier_rows_test(c10::Device device, at::ScalarType dtype) {
                                                  : "Qwen3ForSequenceClassification";
           cfg.values["is_causal"] = causal ? "true" : "false";
           cfg.values["intermediate_size"] = "32";
-          cfg.values["_fp8_dynamic"] = fp8 ? "true" : "false";
-          cfg.values["_fp8_scope"] = fp8 ? scope : "mlp";
+          cfg.values["_dynamic_quantization"] = fp8 ? "fp8" : "none";
+          cfg.values["_dynamic_quantization_scope"] = fp8 ? scope : "mlp";
           cfg.values["num_labels"] = "3";
           cfg.values["num_attention_heads"] = "2";
           cfg.values["num_key_value_heads"] = "1";
@@ -1473,7 +1484,7 @@ void cache_concurrency_test(Model& model, int64_t length) {
   cache.clear();
   TORCH_CHECK(cache.bytes() == 0, "Concurrent readers retained cleared cache storage");
 }
-#ifdef TEI_TORCH_CUDA_KERNELS
+#ifdef INFINITY_TORCH_CUDA_KERNELS
 void indexed_stream_test(const c10::Device& device) {
   struct Rows final : Model {
     void ready() override {}
@@ -2046,60 +2057,63 @@ void native_engine_stream_test(const c10::Device& device) {
       for (auto& [name, value] : tensors)
         if (name.ends_with("q_norm.weight") || name.ends_with("k_norm.weight"))
           value = value.repeat({2});
-      TeiConfig shape{16, 2, 2, 24, 32, 32, 1, 1e-6, 3};
-      auto handle = tei_create(&shape, device.str().c_str(), 2);
-      TORCH_CHECK(handle, tei_error());
+      InfinityTorchConfig shape{16, 2, 2, 24, 32, 32, 1, 1e-6, 3};
+      auto handle = infinity_torch_create(&shape, device.str().c_str(), 2);
+      TORCH_CHECK(handle, infinity_torch_error());
 
       struct EngineOwner {
         void* value;
 
         ~EngineOwner() {
           if (value)
-            tei_destroy(value);
+            infinity_torch_destroy(value);
         }
       } owner{handle};
 
       for (const auto& [key, value] : cfg.values)
-        TORCH_CHECK(tei_option(handle, key.c_str(), value.c_str()) == 0, tei_error());
-      TORCH_CHECK(tei_option(handle, "_cuda_graphs", "true") == 0, tei_error());
-      TORCH_CHECK(tei_option(handle, "_cuda_graph_reuse", "1") == 0, tei_error());
+        TORCH_CHECK(infinity_torch_option(handle, key.c_str(), value.c_str()) == 0,
+                    infinity_torch_error());
+      TORCH_CHECK(infinity_torch_option(handle, "_cuda_graphs", "true") == 0,
+                  infinity_torch_error());
+      TORCH_CHECK(infinity_torch_option(handle, "_cuda_graph_reuse", "1") == 0,
+                  infinity_torch_error());
       if (caching)
-        TORCH_CHECK(tei_option(handle, "_prefix_cache_max_bytes", "1048576") == 0 &&
-                        tei_option(handle, "_prefix_cache_entries", "1") == 0,
-                    tei_error());
+        TORCH_CHECK(infinity_torch_option(handle, "_prefix_cache_max_bytes", "1048576") == 0 &&
+                        infinity_torch_option(handle, "_prefix_cache_entries", "1") == 0,
+                    infinity_torch_error());
       for (const auto& [key, value] : tensors)
-        TORCH_CHECK(tei_weight(handle,
-                               key.c_str(),
-                               reinterpret_cast<const uint8_t*>(value.const_data_ptr()),
-                               value.sizes().data(),
-                               value.dim(),
-                               0) == 0,
-                    tei_error());
-      TORCH_CHECK(tei_ready(handle) == 0, tei_error());
+        TORCH_CHECK(infinity_torch_weight(handle,
+                                          key.c_str(),
+                                          reinterpret_cast<const uint8_t*>(value.const_data_ptr()),
+                                          value.sizes().data(),
+                                          value.dim(),
+                                          0) == 0,
+                    infinity_torch_error());
+      TORCH_CHECK(infinity_torch_ready(handle) == 0, infinity_torch_error());
       std::array<int64_t, 4> a = {3, 4, 5, 6}, b = {7, 4, 5, 8}, types{}, positions = {0, 1, 2, 3};
       int32_t ends[] = {0, 4};
       int64_t selected[] = {0};
       auto submit = [&](const auto& ids) {
-        auto output = tei_forward_submit(handle,
-                                         ids.data(),
-                                         types.data(),
-                                         positions.data(),
-                                         ends,
-                                         1,
-                                         4,
-                                         pool,
-                                         selected,
-                                         1,
-                                         nullptr,
-                                         0,
-                                         width,
-                                         nullptr,
-                                         nullptr,
-                                         0,
-                                         nullptr,
-                                         0,
-                                         nullptr);
-        TORCH_CHECK(output, tei_error());
+        auto output = infinity_torch_forward_submit(handle,
+                                                    ids.data(),
+                                                    types.data(),
+                                                    positions.data(),
+                                                    ends,
+                                                    1,
+                                                    4,
+                                                    pool,
+                                                    selected,
+                                                    1,
+                                                    nullptr,
+                                                    0,
+                                                    width,
+                                                    nullptr,
+                                                    nullptr,
+                                                    0,
+                                                    nullptr,
+                                                    0,
+                                                    nullptr);
+        TORCH_CHECK(output, infinity_torch_error());
         return output;
       };
 
@@ -2108,7 +2122,7 @@ void native_engine_stream_test(const c10::Device& device) {
 
         ~OutputOwner() {
           if (value)
-            tei_output_destroy(value);
+            infinity_torch_output_destroy(value);
         }
       };
 
@@ -2117,15 +2131,15 @@ void native_engine_stream_test(const c10::Device& device) {
         c10::cuda::CUDAStreamGuard guard(stream);
         for (int i = 0; i < 4; ++i) {
           OutputOwner output{submit(ids)};
-          auto data = tei_output_wait(output.value);
-          TORCH_CHECK(data, tei_error());
+          auto data = infinity_torch_output_wait(output.value);
+          TORCH_CHECK(data, infinity_torch_error());
           std::copy(data, data + width, expected.begin());
         }
       };
       warm(a, expected_a, producer);
       warm(b, expected_b, consumer);
       TORCH_CHECK(expected_a != expected_b, "Stream fixture cannot distinguish its two requests");
-      TORCH_CHECK(tei_graph_count(handle) == 1,
+      TORCH_CHECK(infinity_torch_graph_count(handle) == 1,
                   "Native stream fixture did not retain a shared graph");
 
       struct Gate {
@@ -2180,14 +2194,14 @@ void native_engine_stream_test(const c10::Device& device) {
       TORCH_CHECK(ordered, "A different stream bypassed native submission ordering");
       for (auto pair :
            {std::pair{first.value, &expected_a}, std::pair{second.value, &expected_b}}) {
-        auto data = tei_output_wait(pair.first);
-        TORCH_CHECK(data, tei_error());
+        auto data = infinity_torch_output_wait(pair.first);
+        TORCH_CHECK(data, infinity_torch_error());
         TORCH_CHECK(std::equal(data, data + width, pair.second->begin()),
                     "Cross-stream replay overwrote a deferred native result");
       }
-      tei_output_destroy(first.value);
+      infinity_torch_output_destroy(first.value);
       first.value = nullptr;
-      tei_output_destroy(second.value);
+      infinity_torch_output_destroy(second.value);
       second.value = nullptr;
       {
         // Move completion to another CPU thread, alternate GPU streams and retire
@@ -2201,21 +2215,21 @@ void native_engine_stream_test(const c10::Device& device) {
           if (!cancel) {
             auto value = pending[slot].value;
             auto data = std::async(std::launch::async, [value] {
-                          auto result = tei_output_wait(value);
-                          TORCH_CHECK(result, tei_error());
+                          auto result = infinity_torch_output_wait(value);
+                          TORCH_CHECK(result, infinity_torch_error());
                           return result;
                         }).get();
             TORCH_CHECK(std::equal(data, data + width, expected[slot]->begin()),
                         "Native classifier/embedding stress changed a deferred result");
           }
-          tei_output_destroy(pending[slot].value);
+          infinity_torch_output_destroy(pending[slot].value);
           pending[slot].value = nullptr;
         };
         for (int step = 0; step < 96; ++step) {
           const auto slot = step % 2;
           collect(slot, step % 13 == 0);
           if (step % 17 == 0)
-            TORCH_CHECK(tei_prefix_cache_clear(handle) == 0, tei_error());
+            TORCH_CHECK(infinity_torch_prefix_cache_clear(handle) == 0, infinity_torch_error());
           const bool use_b = (step / 3) % 2;
           c10::cuda::CUDAStreamGuard guard(step % 2 ? consumer : producer);
           pending[slot].value = submit(use_b ? b : a);
@@ -2225,46 +2239,46 @@ void native_engine_stream_test(const c10::Device& device) {
         collect(1);
         if (caching) {
           uint64_t stats[7];
-          TORCH_CHECK(tei_prefix_cache_stats(handle, stats, 7) == 0 && stats[4] > 0,
+          TORCH_CHECK(infinity_torch_prefix_cache_stats(handle, stats, 7) == 0 && stats[4] > 0,
                       "One-entry native stress never evicted a snapshot");
         }
         {
           c10::cuda::CUDAStreamGuard guard(consumer);
-          OutputOwner invalid{tei_forward_submit(handle,
-                                                 a.data(),
-                                                 types.data(),
-                                                 positions.data(),
-                                                 ends,
-                                                 1,
-                                                 4,
-                                                 pool,
-                                                 selected,
-                                                 1,
-                                                 nullptr,
-                                                 0,
-                                                 0,
-                                                 nullptr,
-                                                 nullptr,
-                                                 0,
-                                                 nullptr,
-                                                 0,
-                                                 nullptr)};
+          OutputOwner invalid{infinity_torch_forward_submit(handle,
+                                                            a.data(),
+                                                            types.data(),
+                                                            positions.data(),
+                                                            ends,
+                                                            1,
+                                                            4,
+                                                            pool,
+                                                            selected,
+                                                            1,
+                                                            nullptr,
+                                                            0,
+                                                            0,
+                                                            nullptr,
+                                                            nullptr,
+                                                            0,
+                                                            nullptr,
+                                                            0,
+                                                            nullptr)};
           TORCH_CHECK(!invalid.value, "Undersized deferred output unexpectedly succeeded");
         }
         {
           c10::cuda::CUDAStreamGuard guard(producer);
           OutputOwner recovered{submit(a)};
-          auto data = tei_output_wait(recovered.value);
+          auto data = infinity_torch_output_wait(recovered.value);
           TORCH_CHECK(data && std::equal(data, data + width, expected_a.begin()),
                       "Recoverable submission error contaminated the next stream's result");
         }
       }
       if (caching) {
-        TORCH_CHECK(tei_prefix_cache_clear(handle) == 0, tei_error());
+        TORCH_CHECK(infinity_torch_prefix_cache_clear(handle) == 0, infinity_torch_error());
         {
           c10::cuda::CUDAStreamGuard guard(producer);
           OutputOwner observe{submit(a)};
-          TORCH_CHECK(tei_output_wait(observe.value), tei_error());
+          TORCH_CHECK(infinity_torch_output_wait(observe.value), infinity_torch_error());
         }
         gate.open.store(false);
         C10_CUDA_CHECK(cudaLaunchHostFunc(
@@ -2284,18 +2298,19 @@ void native_engine_stream_test(const c10::Device& device) {
           c10::cuda::CUDAStreamGuard guard(producer);
           produced.value = submit(a);
         }
-        TORCH_CHECK(tei_prefix_cache_stats(handle, before, 7) == 0 && before[6] > 0,
+        TORCH_CHECK(infinity_torch_prefix_cache_stats(handle, before, 7) == 0 && before[6] > 0,
                     "Pending native fixture did not admit a snapshot");
         {
           c10::cuda::CUDAStreamGuard guard(consumer);
           resumed.value = submit(a);
         }
-        TORCH_CHECK(tei_prefix_cache_stats(handle, after, 7) == 0, tei_error());
+        TORCH_CHECK(infinity_torch_prefix_cache_stats(handle, after, 7) == 0,
+                    infinity_torch_error());
         const bool was_pending = !unpublished.query();
         gate.release();
         release_pending.join();
         for (auto output : {produced.value, resumed.value}) {
-          auto data = tei_output_wait(output);
+          auto data = infinity_torch_output_wait(output);
           TORCH_CHECK(data && std::equal(data, data + width, expected_a.begin()),
                       "Ordered pending native reuse changed result bits");
         }
@@ -2306,16 +2321,16 @@ void native_engine_stream_test(const c10::Device& device) {
       // Stage replacement weights before blocking the producer. Ready must wait
       // for an old-model submission, then publish initialization on its new stream.
       for (const auto& [key, value] : tensors)
-        TORCH_CHECK(tei_weight(handle,
-                               key.c_str(),
-                               reinterpret_cast<const uint8_t*>(value.const_data_ptr()),
-                               value.sizes().data(),
-                               value.dim(),
-                               0) == 0,
-                    tei_error());
-      TORCH_CHECK(tei_option(handle, "_cuda_graphs", "false") == 0 &&
-                      tei_option(handle, "_prefix_cache_max_bytes", "0") == 0,
-                  tei_error());
+        TORCH_CHECK(infinity_torch_weight(handle,
+                                          key.c_str(),
+                                          reinterpret_cast<const uint8_t*>(value.const_data_ptr()),
+                                          value.sizes().data(),
+                                          value.dim(),
+                                          0) == 0,
+                    infinity_torch_error());
+      TORCH_CHECK(infinity_torch_option(handle, "_cuda_graphs", "false") == 0 &&
+                      infinity_torch_option(handle, "_prefix_cache_max_bytes", "0") == 0,
+                  infinity_torch_error());
       gate.open.store(false);
       C10_CUDA_CHECK(cudaLaunchHostFunc(
           producer.stream(),
@@ -2334,7 +2349,8 @@ void native_engine_stream_test(const c10::Device& device) {
         previous.value = submit(a);
       }
       const bool reload_pending = !reloading.query();
-      auto reload = std::async(std::launch::async, [handle] { return tei_ready(handle); });
+      auto reload =
+          std::async(std::launch::async, [handle] { return infinity_torch_ready(handle); });
       const auto reload_status = reload.wait_for(std::chrono::milliseconds(10));
       gate.release();
       reload_watchdog.join();
@@ -2345,20 +2361,20 @@ void native_engine_stream_test(const c10::Device& device) {
       TORCH_CHECK(reload_pending && reload_status == std::future_status::timeout &&
                       reload_result == 0,
                   "Ready did not drain pending old-model work");
-      const auto prior = tei_output_wait(previous.value);
+      const auto prior = infinity_torch_output_wait(previous.value);
       TORCH_CHECK(prior && std::equal(prior, prior + width, expected_a.begin()),
                   "Ready invalidated a deferred result from the old model");
-      TORCH_CHECK(tei_graph_count(handle) == 0, "Ready retained disabled CUDA graphs");
+      TORCH_CHECK(infinity_torch_graph_count(handle) == 0, "Ready retained disabled CUDA graphs");
       {
         c10::cuda::CUDAStreamGuard guard(consumer);
         OutputOwner fresh{submit(b)};
-        auto data = tei_output_wait(fresh.value);
+        auto data = infinity_torch_output_wait(fresh.value);
         TORCH_CHECK(data && std::equal(data, data + width, expected_b.begin()),
                     "Ready did not order initialization before the next stream's inference");
       }
       TORCH_CHECK(std::equal(prior, prior + width, expected_a.begin()),
                   "New-model inference overwrote a retained old-model result");
-      tei_output_destroy(previous.value);
+      infinity_torch_output_destroy(previous.value);
       previous.value = nullptr;
       // Destruction must drain a genuinely pending submission, and the lease still
       // owns its host result afterward. No engine calls start after destruction.
@@ -2380,7 +2396,7 @@ void native_engine_stream_test(const c10::Device& device) {
         survivor.value = submit(a);
       }
       const bool retiring_pending = !retiring.query();
-      auto destroyed = std::async(std::launch::async, [handle] { tei_destroy(handle); });
+      auto destroyed = std::async(std::launch::async, [handle] { infinity_torch_destroy(handle); });
       const auto retiring_status = destroyed.wait_for(std::chrono::milliseconds(10));
       gate.release();
       retire_watchdog.join();
@@ -2389,7 +2405,7 @@ void native_engine_stream_test(const c10::Device& device) {
       TORCH_CHECK(retiring_pending, "Destruction fixture did not retain queued GPU work");
       TORCH_CHECK(retiring_status == std::future_status::timeout,
                   "Engine destruction released a pending submission");
-      const auto saved = tei_output_wait(survivor.value);
+      const auto saved = infinity_torch_output_wait(survivor.value);
       TORCH_CHECK(saved && std::equal(saved, saved + width, expected_a.begin()),
                   "Engine destruction invalidated an owned output lease");
     }
@@ -2506,61 +2522,64 @@ void native_reconfigure_test(const c10::Device& device) {
   for (auto& [name, value] : tensors)
     if (name.ends_with("q_norm.weight") || name.ends_with("k_norm.weight"))
       value = value.repeat({2});
-  TeiConfig shape{16, 2, 2, 24, 32, 32, 1, 1e-6, 3};
-  auto handle = tei_create(&shape, device.str().c_str(), device.is_cuda() ? 2 : 0);
-  TORCH_CHECK(handle, tei_error());
+  InfinityTorchConfig shape{16, 2, 2, 24, 32, 32, 1, 1e-6, 3};
+  auto handle = infinity_torch_create(&shape, device.str().c_str(), device.is_cuda() ? 2 : 0);
+  TORCH_CHECK(handle, infinity_torch_error());
 
   struct Owner {
     void* value;
 
     ~Owner() {
-      tei_destroy(value);
+      infinity_torch_destroy(value);
     }
   } owner{handle};
 
   for (const auto& [key, value] : cfg.values)
-    TORCH_CHECK(tei_option(handle, key.c_str(), value.c_str()) == 0, tei_error());
+    TORCH_CHECK(infinity_torch_option(handle, key.c_str(), value.c_str()) == 0,
+                infinity_torch_error());
   auto upload = [&] {
     for (const auto& [name, value] : tensors)
-      TORCH_CHECK(tei_weight(handle,
-                             name.c_str(),
-                             reinterpret_cast<const uint8_t*>(value.const_data_ptr()),
-                             value.sizes().data(),
-                             value.dim(),
-                             0) == 0,
-                  tei_error());
+      TORCH_CHECK(infinity_torch_weight(handle,
+                                        name.c_str(),
+                                        reinterpret_cast<const uint8_t*>(value.const_data_ptr()),
+                                        value.sizes().data(),
+                                        value.dim(),
+                                        0) == 0,
+                  infinity_torch_error());
   };
-  TORCH_CHECK(tei_option(handle, "_prefix_cache_max_bytes", "1048576") == 0, tei_error());
-  TORCH_CHECK(tei_option(handle, "_cuda_graphs", "true") == 0, tei_error());
-  TORCH_CHECK(tei_option(handle, "_cuda_graph_reuse", "1") == 0, tei_error());
-  TORCH_CHECK(tei_option(handle, "_decision.kind", "option_tokens") == 0, tei_error());
+  TORCH_CHECK(infinity_torch_option(handle, "_prefix_cache_max_bytes", "1048576") == 0,
+              infinity_torch_error());
+  TORCH_CHECK(infinity_torch_option(handle, "_cuda_graphs", "true") == 0, infinity_torch_error());
+  TORCH_CHECK(infinity_torch_option(handle, "_cuda_graph_reuse", "1") == 0, infinity_torch_error());
+  TORCH_CHECK(infinity_torch_option(handle, "_decision.kind", "option_tokens") == 0,
+              infinity_torch_error());
   upload();
-  TORCH_CHECK(tei_ready(handle) == 0, tei_error());
+  TORCH_CHECK(infinity_torch_ready(handle) == 0, infinity_torch_error());
   int64_t ids[] = {3, 4, 5, 6}, types[] = {0, 0, 0, 0}, positions[] = {0, 1, 2, 3},
           selected[] = {0};
   int32_t ends[] = {0, 4};
   float output[16];
   auto forward = [&] {
-    TORCH_CHECK(tei_forward(handle,
-                            ids,
-                            types,
-                            positions,
-                            ends,
-                            1,
-                            4,
-                            2,
-                            selected,
-                            1,
-                            nullptr,
-                            0,
-                            output,
-                            16,
-                            nullptr,
-                            nullptr,
-                            0,
-                            nullptr,
-                            0) == 0,
-                tei_error());
+    TORCH_CHECK(infinity_torch_forward(handle,
+                                       ids,
+                                       types,
+                                       positions,
+                                       ends,
+                                       1,
+                                       4,
+                                       2,
+                                       selected,
+                                       1,
+                                       nullptr,
+                                       0,
+                                       output,
+                                       16,
+                                       nullptr,
+                                       nullptr,
+                                       0,
+                                       nullptr,
+                                       0) == 0,
+                infinity_torch_error());
   };
   forward();
   forward();
@@ -2568,25 +2587,28 @@ void native_reconfigure_test(const c10::Device& device) {
   std::array<float, 16> expected;
   std::copy(std::begin(output), std::end(output), expected.begin());
   uint64_t stats[7];
-  TORCH_CHECK(tei_prefix_cache_stats(handle, stats, 7) == 0 && stats[3] > 0 && stats[6] > 0,
+  TORCH_CHECK(infinity_torch_prefix_cache_stats(handle, stats, 7) == 0 && stats[3] > 0 &&
+                  stats[6] > 0,
               "Reconfiguration fixture did not fill cache");
   if (device.is_cuda())
-    TORCH_CHECK(tei_graph_count(handle) > 0, "Reconfiguration fixture did not capture a graph");
-  TeiDecision decision{};
+    TORCH_CHECK(infinity_torch_graph_count(handle) > 0,
+                "Reconfiguration fixture did not capture a graph");
+  InfinityTorchDecision decision{};
   decision.kind = 1;
   decision.token_ids = selected;
   decision.token_count = 1;
   int64_t count;
-  TORCH_CHECK(tei_decision_counts(handle, &decision, 1, &count) == 0 && count == 1,
+  TORCH_CHECK(infinity_torch_decision_counts(handle, &decision, 1, &count) == 0 && count == 1,
               "Reconfiguration fixture did not load a decision head");
-  TORCH_CHECK(tei_option(handle, "_prefix_cache_max_bytes", "0") == 0, tei_error());
-  TORCH_CHECK(tei_option(handle, "_cuda_graphs", "false") == 0, tei_error());
-  TORCH_CHECK(tei_option(handle, "_decision.kind", "") == 0, tei_error());
+  TORCH_CHECK(infinity_torch_option(handle, "_prefix_cache_max_bytes", "0") == 0,
+              infinity_torch_error());
+  TORCH_CHECK(infinity_torch_option(handle, "_cuda_graphs", "false") == 0, infinity_torch_error());
+  TORCH_CHECK(infinity_torch_option(handle, "_decision.kind", "") == 0, infinity_torch_error());
   upload();
-  TORCH_CHECK(tei_ready(handle) == 0, tei_error());
-  TORCH_CHECK(tei_prefix_cache_stats(handle, stats, 7) == 0, tei_error());
-  const auto decision_status = tei_decision_counts(handle, &decision, 1, &count);
-  const auto graphs = tei_graph_count(handle);
+  TORCH_CHECK(infinity_torch_ready(handle) == 0, infinity_torch_error());
+  TORCH_CHECK(infinity_torch_prefix_cache_stats(handle, stats, 7) == 0, infinity_torch_error());
+  const auto decision_status = infinity_torch_decision_counts(handle, &decision, 1, &count);
+  const auto graphs = infinity_torch_graph_count(handle);
   std::cout << "reinitialized feature state: cache_bytes=" << stats[6] << " graphs=" << graphs
             << " decision_status=" << decision_status << std::endl;
   TORCH_CHECK(
@@ -2595,8 +2617,8 @@ void native_reconfigure_test(const c10::Device& device) {
       "Native reinitialization retained disabled prefix cache, graphs or decision head");
   forward();
   forward();
-  TORCH_CHECK(tei_prefix_cache_stats(handle, stats, 7) == 0 && stats[3] == 0 &&
-                  tei_graph_count(handle) == 0,
+  TORCH_CHECK(infinity_torch_prefix_cache_stats(handle, stats, 7) == 0 && stats[3] == 0 &&
+                  infinity_torch_graph_count(handle) == 0,
               "Disabled features reappeared after inference");
   TORCH_CHECK(std::equal(std::begin(output), std::end(output), expected.begin()),
               "Disabling optional features changed native inference results");
@@ -2605,70 +2627,74 @@ void native_reconfigure_test(const c10::Device& device) {
 void probe_cache_test() {
   auto cfg = config("qwen3");
   auto source = weights(cfg);
-  TeiConfig native{16, 4, 2, 24, 32, 32, 1, 1e-6, 3};
-  auto handle = tei_create(&native, "cpu", 0);
-  TORCH_CHECK(handle, tei_error());
+  InfinityTorchConfig native{16, 4, 2, 24, 32, 32, 1, 1e-6, 3};
+  auto handle = infinity_torch_create(&native, "cpu", 0);
+  TORCH_CHECK(handle, infinity_torch_error());
 
   struct Cleanup {
     void* handle;
 
     ~Cleanup() {
-      tei_destroy(handle);
+      infinity_torch_destroy(handle);
     }
   } cleanup{handle};
 
   for (const auto& [key, value] : cfg.values)
-    TORCH_CHECK(tei_option(handle, key.c_str(), value.c_str()) == 0, tei_error());
-  TORCH_CHECK(tei_option(handle, "_prefix_cache_max_bytes", "1048576") == 0, tei_error());
+    TORCH_CHECK(infinity_torch_option(handle, key.c_str(), value.c_str()) == 0,
+                infinity_torch_error());
+  TORCH_CHECK(infinity_torch_option(handle, "_prefix_cache_max_bytes", "1048576") == 0,
+              infinity_torch_error());
   for (const auto& [name, tensor] : source)
-    TORCH_CHECK(tei_weight(handle,
-                           name.c_str(),
-                           reinterpret_cast<const uint8_t*>(tensor.const_data_ptr()),
-                           tensor.sizes().data(),
-                           tensor.dim(),
-                           0) == 0,
-                tei_error());
-  TORCH_CHECK(tei_ready(handle) == 0, tei_error());
+    TORCH_CHECK(infinity_torch_weight(handle,
+                                      name.c_str(),
+                                      reinterpret_cast<const uint8_t*>(tensor.const_data_ptr()),
+                                      tensor.sizes().data(),
+                                      tensor.dim(),
+                                      0) == 0,
+                infinity_torch_error());
+  TORCH_CHECK(infinity_torch_ready(handle) == 0, infinity_torch_error());
   int64_t ids[] = {1, 2, 3}, types[] = {0, 0, 0}, positions[] = {0, 1, 2}, selection[] = {0};
   int32_t cumulative[] = {0, 3};
   float result[16];
   auto forward = [&] {
-    TORCH_CHECK(tei_forward(handle,
-                            ids,
-                            types,
-                            positions,
-                            cumulative,
-                            1,
-                            3,
-                            2,
-                            selection,
-                            1,
-                            nullptr,
-                            0,
-                            result,
-                            16,
-                            nullptr,
-                            nullptr,
-                            0,
-                            nullptr,
-                            0) == 0,
-                tei_error());
+    TORCH_CHECK(infinity_torch_forward(handle,
+                                       ids,
+                                       types,
+                                       positions,
+                                       cumulative,
+                                       1,
+                                       3,
+                                       2,
+                                       selection,
+                                       1,
+                                       nullptr,
+                                       0,
+                                       result,
+                                       16,
+                                       nullptr,
+                                       nullptr,
+                                       0,
+                                       nullptr,
+                                       0) == 0,
+                infinity_torch_error());
   };
   uint64_t before[7], after[7];
   forward();
-  TORCH_CHECK(tei_prefix_cache_stats(handle, before, 7) == 0 && before[3] == 0,
+  TORCH_CHECK(infinity_torch_prefix_cache_stats(handle, before, 7) == 0 && before[3] == 0,
               "One-off user input bypassed admission policy");
   forward();
-  TORCH_CHECK(tei_prefix_cache_stats(handle, before, 7) == 0 && before[3] == 1,
+  TORCH_CHECK(infinity_torch_prefix_cache_stats(handle, before, 7) == 0 && before[3] == 1,
               "User request did not fill prefix cache");
-  TORCH_CHECK(tei_prefix_cache_set_probe(handle, 1) == 0, "Probe begin did not return prior flag");
+  TORCH_CHECK(infinity_torch_prefix_cache_set_probe(handle, 1) == 0,
+              "Probe begin did not return prior flag");
   forward();
-  TORCH_CHECK(tei_prefix_cache_stats(handle, after, 7) == 0, tei_error());
+  TORCH_CHECK(infinity_torch_prefix_cache_stats(handle, after, 7) == 0, infinity_torch_error());
   TORCH_CHECK(std::equal(std::begin(before), std::end(before), std::begin(after)),
               "Probe consumed or populated user cache state");
-  TORCH_CHECK(tei_prefix_cache_set_probe(handle, 0) == 1, "Probe end did not restore prior flag");
+  TORCH_CHECK(infinity_torch_prefix_cache_set_probe(handle, 0) == 1,
+              "Probe end did not restore prior flag");
   forward();
-  TORCH_CHECK(tei_prefix_cache_stats(handle, after, 7) == 0 && after[0] == before[0] + 1,
+  TORCH_CHECK(infinity_torch_prefix_cache_stats(handle, after, 7) == 0 && after[0] == before[0] + 1,
               "Probe bypass leaked into next user request");
   std::barrier start(2);
   std::exception_ptr failure;
@@ -2683,26 +2709,26 @@ void probe_cache_test() {
     try {
       for (int i = 0; i < 100; ++i) {
         float owned[16];
-        TORCH_CHECK(tei_forward(handle,
-                                ids,
-                                types,
-                                positions,
-                                cumulative,
-                                1,
-                                3,
-                                2,
-                                selection,
-                                1,
-                                nullptr,
-                                0,
-                                owned,
-                                16,
-                                nullptr,
-                                nullptr,
-                                0,
-                                nullptr,
-                                0) == 0,
-                    tei_error());
+        TORCH_CHECK(infinity_torch_forward(handle,
+                                           ids,
+                                           types,
+                                           positions,
+                                           cumulative,
+                                           1,
+                                           3,
+                                           2,
+                                           selection,
+                                           1,
+                                           nullptr,
+                                           0,
+                                           owned,
+                                           16,
+                                           nullptr,
+                                           nullptr,
+                                           0,
+                                           nullptr,
+                                           0) == 0,
+                    infinity_torch_error());
         TORCH_CHECK(std::equal(std::begin(owned), std::end(owned), std::begin(result)),
                     "Concurrent native probe changed user output");
       }
@@ -2714,11 +2740,13 @@ void probe_cache_test() {
     start.arrive_and_wait();
     try {
       for (int i = 0; i < 600; ++i) {
-        TORCH_CHECK(tei_prefix_cache_set_probe(handle, i % 2) >= 0, tei_error());
+        TORCH_CHECK(infinity_torch_prefix_cache_set_probe(handle, i % 2) >= 0,
+                    infinity_torch_error());
         uint64_t current[7];
-        TORCH_CHECK(tei_prefix_cache_stats(handle, current, 7) == 0, tei_error());
+        TORCH_CHECK(infinity_torch_prefix_cache_stats(handle, current, 7) == 0,
+                    infinity_torch_error());
         if (i % 7 == 0)
-          TORCH_CHECK(tei_prefix_cache_clear(handle) == 0, tei_error());
+          TORCH_CHECK(infinity_torch_prefix_cache_clear(handle) == 0, infinity_torch_error());
       }
     } catch (...) {
       save_failure();
@@ -2728,7 +2756,7 @@ void probe_cache_test() {
   probes.join();
   if (failure)
     std::rethrow_exception(failure);
-  TORCH_CHECK(tei_prefix_cache_set_probe(handle, 0) >= 0, tei_error());
+  TORCH_CHECK(infinity_torch_prefix_cache_set_probe(handle, 0) >= 0, infinity_torch_error());
 }
 } // namespace
 
@@ -2815,8 +2843,8 @@ void ultrabert_fp8_test(const c10::Device& device) {
                     4};
   auto expected = reference->forward(input).to(at::kFloat);
   for (const auto* scope : {"mlp", "all"}) {
-    cfg.values["_fp8_dynamic"] = "true";
-    cfg.values["_fp8_scope"] = scope;
+    cfg.values["_dynamic_quantization"] = "fp8";
+    cfg.values["_dynamic_quantization_scope"] = scope;
     auto quantized = build(cfg);
     auto actual = quantized->forward(input).to(at::kFloat);
     TORCH_CHECK(at::isfinite(actual).all().item<bool>() &&
@@ -2954,7 +2982,7 @@ void ultrabert_test() {
 int main(int argc, char** argv) {
   c10::InferenceMode inference;
   at::set_num_threads(1);
-#ifdef TEI_TORCH_CUDA_KERNELS
+#ifdef INFINITY_TORCH_CUDA_KERNELS
   if (argc > 1 && std::string(argv[1]) == "native-stream-cuda") {
     native_engine_stream_test(c10::Device("cuda:0"));
     return 0;
@@ -3184,7 +3212,7 @@ int main(int argc, char** argv) {
                         2,
                         4};
       check_prefix_cache(*gpu, input, 0, .01, .02);
-#ifdef TEI_TORCH_CUDA_KERNELS
+#ifdef INFINITY_TORCH_CUDA_KERNELS
       if (std::string(family) == "qwen3") {
         cumulative_stream_test(c10::Device(argv[1]));
         cache_stream_test(*gpu, input);
@@ -3246,7 +3274,7 @@ int main(int argc, char** argv) {
   multimodal_test();
   probe_cache_test();
   native_reconfigure_test(c10::Device("cpu"));
-#ifdef TEI_TORCH_CUDA_KERNELS
+#ifdef INFINITY_TORCH_CUDA_KERNELS
   if (argc > 1) {
     linear_workspace_test(c10::Device(argv[1]));
     native_engine_stream_test(c10::Device(argv[1]));

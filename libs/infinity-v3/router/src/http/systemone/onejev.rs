@@ -106,8 +106,13 @@ impl Onejev {
                 || path.join("preprocessor_config.json").exists())
         {
             self.images = Some(
-                Qwen3VlProcessor::load(path, self.tokenizer.clone(), self.max_input_length, config)
-                    .map_err(|e| anyhow::anyhow!(e.to_string()))?,
+                Qwen3VlProcessor::load_images_only(
+                    path,
+                    self.tokenizer.clone(),
+                    self.max_input_length,
+                    config,
+                )
+                .map_err(|e| anyhow::anyhow!(e.to_string()))?,
             );
         }
         Ok(self)

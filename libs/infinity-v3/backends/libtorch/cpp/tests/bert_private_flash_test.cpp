@@ -8,10 +8,10 @@
 #include <vector>
 
 static void check(int32_t code) {
-  TORCH_CHECK(code == 0, tei_error());
+  TORCH_CHECK(code == 0, infinity_torch_error());
 }
 
-static void classifier_workspace_recovery(const TeiConfig& cfg,
+static void classifier_workspace_recovery(const InfinityTorchConfig& cfg,
                                           const std::map<std::string, at::Tensor>& source,
                                           const c10::Device& device) {
   if (at::cuda::getDeviceProperties(device.index())->major != 9)
@@ -124,7 +124,7 @@ static void cls_embedding_geometries(const c10::Device& device) {
   if (at::cuda::getDeviceProperties(device.index())->major < 8)
     return;
   for (const int64_t width : {384, 1024}) {
-    TeiConfig cfg{width, width == 384 ? 12 : 16, 1, 4 * width, 64, 256, 2, 1e-5, 0};
+    InfinityTorchConfig cfg{width, width == 384 ? 12 : 16, 1, 4 * width, 64, 256, 2, 1e-5, 0};
     Bert model(cfg, device, at::kHalf);
     model.options.values = {{"model_type", "bert"}, {"_embedding_pool", "cls"}};
     auto add = [&](const std::string& name, at::IntArrayRef shape, bool unit = false) {
@@ -201,7 +201,7 @@ int main(int argc, char** argv) {
   at::manual_seed(321);
   const char* device = argc > 1 ? argv[1] : "cuda:0";
   cls_embedding_geometries(c10::Device(device));
-  TeiConfig cfg{768, 12, 1, 64, 64, 256, 2, 1e-5, 0};
+  InfinityTorchConfig cfg{768, 12, 1, 64, 64, 256, 2, 1e-5, 0};
   std::map<std::string, at::Tensor> weights;
   auto add =
       [&](std::string name, std::vector<int64_t> shape, bool unit = false, bool zero = false) {
@@ -230,21 +230,21 @@ int main(int argc, char** argv) {
   fc(layer + "intermediate.dense", 64, 768);
   fc(layer + "output.dense", 768, 64);
   ln(layer + "output.LayerNorm");
-  void* engine = tei_create(&cfg, device, 1);
-  TORCH_CHECK(engine, tei_error());
-  check(tei_option(engine, "model_type", "bert"));
-  check(tei_option(engine, "_pooling", "embedding"));
-  check(tei_option(engine, "_cuda_graphs", "true"));
-  check(tei_option(engine, "_cudnn_varlen", "true"));
-  check(tei_option(engine, "_cuda_graph_reuse", "1"));
+  void* engine = infinity_torch_create(&cfg, device, 1);
+  TORCH_CHECK(engine, infinity_torch_error());
+  check(infinity_torch_option(engine, "model_type", "bert"));
+  check(infinity_torch_option(engine, "_pooling", "embedding"));
+  check(infinity_torch_option(engine, "_cuda_graphs", "true"));
+  check(infinity_torch_option(engine, "_cudnn_varlen", "true"));
+  check(infinity_torch_option(engine, "_cuda_graph_reuse", "1"));
   for (const auto& [name, t] : weights)
-    check(tei_weight(engine,
-                     name.c_str(),
-                     reinterpret_cast<const uint8_t*>(t.const_data_ptr()),
-                     t.sizes().data(),
-                     t.dim(),
-                     1));
-  check(tei_ready(engine));
+    check(infinity_torch_weight(engine,
+                                name.c_str(),
+                                reinterpret_cast<const uint8_t*>(t.const_data_ptr()),
+                                t.sizes().data(),
+                                t.dim(),
+                                1));
+  check(infinity_torch_ready(engine));
   std::vector<int64_t> ids, types, positions;
   std::vector<int32_t> cu{0, 5, 134, 143};
   for (int row = 0; row < 3; ++row)
@@ -257,25 +257,25 @@ int main(int argc, char** argv) {
   const int64_t outrows = 3 + 129 + 5;
   auto run = [&]() {
     auto out = at::empty({outrows, 768}, at::kFloat);
-    check(tei_forward(engine,
-                      ids.data(),
-                      types.data(),
-                      positions.data(),
-                      cu.data(),
-                      3,
-                      129,
-                      0,
-                      pooled,
-                      3,
-                      raw,
-                      2,
-                      out.mutable_data_ptr<float>(),
-                      out.numel(),
-                      nullptr,
-                      nullptr,
-                      0,
-                      nullptr,
-                      0));
+    check(infinity_torch_forward(engine,
+                                 ids.data(),
+                                 types.data(),
+                                 positions.data(),
+                                 cu.data(),
+                                 3,
+                                 129,
+                                 0,
+                                 pooled,
+                                 3,
+                                 raw,
+                                 2,
+                                 out.mutable_data_ptr<float>(),
+                                 out.numel(),
+                                 nullptr,
+                                 nullptr,
+                                 0,
+                                 nullptr,
+                                 0));
     return out;
   };
   // Independent FP32 CPU reference uses explicit attention probabilities at each
@@ -328,13 +328,13 @@ int main(int argc, char** argv) {
   };
   auto first = run();
   agreement(first, reference());
-  TORCH_CHECK(tei_graph_count(engine) == 1, "BERT private attention was not captured");
+  TORCH_CHECK(infinity_torch_graph_count(engine) == 1, "BERT private attention was not captured");
   auto original = ids;
   for (int i = 134; i < 143; ++i)
     ids[i] = (ids[i] + 3) % 64;
   auto changed = run();
   agreement(changed, reference());
-  TORCH_CHECK(tei_graph_count(engine) == 1, "Same packed shape did not replay graph");
+  TORCH_CHECK(infinity_torch_graph_count(engine) == 1, "Same packed shape did not replay graph");
   TORCH_CHECK(at::equal(first.narrow(0, 1, 1), changed.narrow(0, 1, 1)) &&
                   at::equal(first.narrow(0, 3, 134), changed.narrow(0, 3, 134)),
               "Changed sequence contaminated another packed span");
@@ -344,7 +344,7 @@ int main(int argc, char** argv) {
               "Repeated pooled request changed output");
   ids = original;
   TORCH_CHECK(at::equal(first, run()), "Restored inputs changed graph output");
-  tei_destroy(engine);
+  infinity_torch_destroy(engine);
   classifier_workspace_recovery(cfg, weights, c10::Device(device));
   std::cout
       << "BERT head64 mixed pooled/raw independent reference, packed isolation and changed-input graph replay passed\n";

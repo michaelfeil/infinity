@@ -1,18 +1,34 @@
 // Copyright Infinity Core Contributors. Licensed under the repository LICENSE.
 #pragma once
 #include "helpers/fp8_linear.h"
+#include "helpers/options.h"
 #include <array>
 #include <functional>
 #include <optional>
 #include <string>
+#include <utility>
 
 namespace infinity {
-enum class MlpPrecision { Model, Fp8 };
 enum class MlpActivation { Identity, Relu, Silu, Gelu, GeluTanh, Tanh, RoundedSilu, RoundedGelu };
 enum class MlpEpilogue { None, Relu, Gelu };
 enum class MlpProjectionRole { Input, Output, Up };
 enum class MlpFusion { None, RoundedSwiGlu, RoundedBiasGelu };
 at::Tensor mlp_activation(const at::Tensor&, MlpActivation);
+
+/// Native block-scaled activation rows, including block and tensor scales.
+struct MlpNativeQuantized {
+  enum class Format { None, Nvfp4 };
+  Format format = Format::None;
+  at::Tensor values;
+  at::Tensor block_scales;
+  at::Tensor global_scale;
+  int64_t rows = 0, cols = 0;
+  at::Tensor row_scales;
+
+  bool defined() const {
+    return format != Format::None;
+  }
+};
 
 struct ProjectionRecipe {
   // Separate bias preserves a model-dtype GEMM rounding before addition.
@@ -37,11 +53,19 @@ struct MlpContext {
 class MlpLinearMethod {
 public:
   virtual ~MlpLinearMethod() = default;
-  virtual MlpPrecision precision() const = 0;
+  /// Immutable quantization representation selected during preparation.
+  virtual Quantization format() const = 0;
   virtual const at::Tensor& weight() const = 0;
 
   virtual bool accepts_fp8_rows() const {
     return false;
+  }
+
+  /// Whether a fused post-attention residual/norm producer may hand this method
+  /// per-row FP32 RMS FP8 rows. Native MXFP8 methods require model-dtype rows and
+  /// return false so the decoder keeps the ordinary residual_norm output.
+  virtual bool supports_rowwise_rms_input() const {
+    return true;
   }
 
   virtual bool supports_epilogue() const {
@@ -54,6 +78,64 @@ public:
                            const MlpContext&,
                            MlpEpilogue,
                            const at::Tensor& scales) const = 0;
+
+  /// Optional fused projection scaling + rounded SwiGLU + row FP8 quantization. An undefined
+  /// result retains the ordinary projection/activation path; implementations must preserve the
+  /// same GEMM operands, scales and rounding order.
+  virtual std::pair<at::Tensor, at::Tensor> apply_swiglu_quantized(const MlpProjection&,
+                                                                   const at::Tensor&,
+                                                                   const at::Tensor&,
+                                                                   const MlpContext&) const {
+    return {};
+  }
+
+  /// Optional fused projection scaling + explicit rounded gated activation + row FP8
+  /// quantization. An undefined result retains the ordinary projection/activation path;
+  /// implementations must preserve the same GEMM operands, scales and rounding order.
+  virtual std::pair<at::Tensor, at::Tensor> apply_gated_quantized(const MlpProjection&,
+                                                                  const at::Tensor&,
+                                                                  const at::Tensor&,
+                                                                  const MlpContext&,
+                                                                  Fp8GatedActivation,
+                                                                  bool) const {
+    return {};
+  }
+
+  /// Optional fused unary activation + row FP8 quantization. An undefined result retains the
+  /// ordinary projection/activation path; implementations must apply any projection bias exactly
+  /// once after the same model-dtype GEMM rounding.
+  virtual std::pair<at::Tensor, at::Tensor> apply_activation_quantized(const MlpProjection&,
+                                                                       const at::Tensor&,
+                                                                       const at::Tensor&,
+                                                                       const MlpContext&,
+                                                                       Fp8Activation) const {
+    return {};
+  }
+
+  /// Optional native block-scaled activation hook. Only methods that know how
+  /// to produce a concrete native format return true; this is intentionally
+  /// separate from the FP8-row hook above.
+  virtual bool supports_native_swiglu_quantized() const {
+    return false;
+  }
+
+  virtual MlpNativeQuantized
+  apply_native_swiglu_quantized(const MlpProjection&, const at::Tensor&, const MlpContext&) const {
+    return {};
+  }
+
+  /// Whether this projection can consume the native block-scaled rows emitted
+  /// by another method of the same format.
+  virtual bool accepts_native_quantized_rows() const {
+    return false;
+  }
+
+  virtual at::Tensor apply_native_quantized(const MlpProjection&,
+                                            const MlpNativeQuantized&,
+                                            const at::Tensor&,
+                                            const MlpContext&) const {
+    TORCH_CHECK(false, "MLP method does not accept native block-scaled rows");
+  }
 };
 
 // A loader selects a method using projection metadata, without changing forward.
@@ -74,6 +156,7 @@ class MlpProjection {
                      const at::Tensor& scales,
                      MlpEpilogue = MlpEpilogue::None,
                      bool omit_bias = false) const;
+  at::Tensor execute_native(const MlpNativeQuantized&, const MlpContext&) const;
   void prepare(const MlpMethodFactory&);
 
 public:
@@ -103,8 +186,8 @@ public:
     return role_;
   }
 
-  bool fp8() const {
-    return method_ && method_->precision() == MlpPrecision::Fp8;
+  bool is_quantized() const {
+    return method_ && method_->format() != Quantization::None;
   }
 
   const MlpLinearMethod& method() const {
@@ -123,7 +206,7 @@ public:
   at::Tensor forward(const at::Tensor& x, const MlpContext& context = {}) const;
 };
 
-// The mathematical recipe is prepared once and applied in either precision.
+// The mathematical recipe is prepared once and applied in either representation.
 // Custom recipes describe numerical contracts, never projection dispatch.
 struct MlpActivationRecipe {
   MlpActivation kind = MlpActivation::Identity;
@@ -131,6 +214,11 @@ struct MlpActivationRecipe {
   std::function<at::Tensor(const at::Tensor&)> custom, quantized_custom;
   MlpEpilogue epilogue = MlpEpilogue::None;
   MlpFusion fusion = MlpFusion::None;
+  // Explicit opt-in for custom rounded recipes whose FP8 form is one of the bounded unary kernels.
+  std::optional<Fp8Activation> fp8_activation;
+  // Explicit opt-in for packed gated recipes whose FP8 form is one of the bounded gated kernels.
+  // gate_first above selects the original packed orientation.
+  std::optional<Fp8GatedActivation> fp8_gated_activation;
   MlpActivationRecipe() = default;
 
   MlpActivationRecipe(MlpActivation activation) : kind(activation) {}
@@ -138,7 +226,7 @@ struct MlpActivationRecipe {
   static MlpActivationRecipe gated(MlpActivation kind, bool gate_first = true);
   static MlpActivationRecipe numerical(std::function<at::Tensor(const at::Tensor&)> apply,
                                        bool packed = false);
-  at::Tensor apply(const at::Tensor&, bool fp8) const;
+  at::Tensor apply(const at::Tensor&, bool is_quantized) const;
 };
 
 class DenseMlp {
@@ -153,12 +241,27 @@ public:
            MlpProjection up,
            MlpProjection output,
            MlpActivationRecipe activation);
-  void prepare(MlpPrecision precision);
+  /// Select one explicit projection format. Native formats must qualify, and
+  /// an already prepared method cannot change representation.
+  void prepare(Quantization format);
   void prepare(const MlpMethodFactory& factory);
 
-  bool fp8() const {
-    return input_.fp8();
+  bool is_quantized() const {
+    return input_.is_quantized();
   }
+
+  bool supports_rowwise_rms_input() const {
+    return input_.method().supports_rowwise_rms_input();
+  }
+
+  /// Load-time qualification for the experimental packed SwiGLU gate-first
+  /// MXFP8 MLP path. Other activations, reversed gates, biases on the packed
+  /// projection, casts/clipping, or wide projections keep the rowwise method.
+  bool supports_mxfp8() const;
+
+  /// Load-time qualification for NVFP4 MLP. Only the
+  /// existing packed gate-first rounded SwiGLU geometry is eligible.
+  bool supports_nvfp4() const;
 
   const MlpProjection& input() const {
     return input_;
@@ -176,4 +279,10 @@ public:
                      const MlpContext& context = {},
                      const at::Tensor& input_scales = {}) const;
 };
+
+/// Load-time qualification for the experimental native MXFP8 MLP method.
+bool mxfp8_mlp_supported(const at::Tensor& gate_up, const at::Tensor& down);
+
+/// Load-time qualification for the native NVFP4 MLP method.
+bool nvfp4_mlp_supported(const at::Tensor& gate_up, const at::Tensor& down);
 }
