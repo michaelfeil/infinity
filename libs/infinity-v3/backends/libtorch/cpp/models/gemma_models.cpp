@@ -1250,7 +1250,7 @@ class Gemma final : public Model {
         suffixes.push_back(suffixes.back() + length - prefix);
         kv.push_back(kv.back() + length);
         layout->max_suffix = std::max(layout->max_suffix, int64_t(length - prefix));
-        layout->max_kv = std::max(layout->max_kv, length);
+        layout->max_kv = std::max<int64_t>(layout->max_kv, length);
       }
     }
     for (const auto& image : input.images) {
