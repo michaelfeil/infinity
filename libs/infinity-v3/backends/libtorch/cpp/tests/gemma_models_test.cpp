@@ -601,6 +601,50 @@ void embedding_layer_key_aliases() {
               "Omitted head default conflicts with explicit alias");
 }
 
+void gemma4_layer_head_dim_geometry() {
+  Fixture f("gemma4", 8, 6, 0);
+  for (int64_t layer = 0; layer < 6; ++layer)
+    f.cfg.values["layer_types." + std::to_string(layer)] =
+        layer == 5 ? "full_attention" : "sliding_attention";
+  const std::string p = "layers.5.self_attn.";
+  // Layer 5 is full attention; give it a per-layer width of 16 while the
+  // sliding layers keep the root head_dim of 8.
+  f.weights[p + "q_proj.weight"] = at::randn({32, 16}) * .1;
+  f.weights[p + "k_proj.weight"] = at::randn({16, 16}) * .1;
+  f.weights[p + "v_proj.weight"] = at::randn({16, 16}) * .1;
+  f.weights[p + "q_norm.weight"] = at::ones({16});
+  f.weights[p + "k_norm.weight"] = at::ones({16});
+  f.weights[p + "o_proj.weight"] = at::randn({16, 32}) * .1;
+  const std::vector<int64_t> ids = {1, 2, 3, 4, 5};
+  const std::vector<int32_t> offsets = {0, 5};
+  auto packed = input(ids, offsets);
+  auto run = [&](const Options& cfg) {
+    auto model = create_gemma(cfg, f.weights, c10::Device("cpu"), at::kFloat);
+    model->ready();
+    return model->forward(packed);
+  };
+  // Default full-layer geometry still falls back to global_head_dim.
+  auto global = f.cfg;
+  global.values["global_head_dim"] = "16";
+  const auto expected = run(global);
+  // Released Gemma4 text configs omit global_head_dim and store the full-layer
+  // width under a padded per_layer_config index.
+  auto padded = f.cfg;
+  padded.values.erase("global_head_dim");
+  padded.values["per_layer_config.05.head_dim"] = "16";
+  TORCH_CHECK(at::equal(expected, run(padded)),
+              "Gemma4 padded per-layer head_dim changed layer geometry");
+  auto canonical = padded;
+  canonical.values.erase("per_layer_config.05.head_dim");
+  canonical.values["per_layer_config.5.head_dim"] = "16";
+  TORCH_CHECK(at::equal(expected, run(canonical)),
+              "Gemma4 canonical per-layer head_dim alias diverged");
+  auto nested = padded;
+  nested.values.erase("per_layer_config.05.head_dim");
+  nested.values["text_config.per_layer_config.05.head_dim"] = "16";
+  TORCH_CHECK(at::equal(expected, run(nested)), "Gemma4 text_config per-layer head_dim diverged");
+}
+
 #ifdef INFINITY_TORCH_CUDA_KERNELS
 // Exercise the actual local/global head widths and strided packed QKV layouts.
 // Unary/gated activation and rotary must retain their low-precision stages.
@@ -724,14 +768,22 @@ void gemma_block_attention_test(const c10::Device& device, at::ScalarType dtype)
   packed.block_prefix_lengths = {3, 2, 3};
   packed.block_prefix_sources = {0, 1, 2};
   auto output = block->forward(packed);
+  // The decision bridge reads pooled last rows; they must match the same rows
+  // selected from the full forward on both CPU and CUDA.
+  std::vector<int64_t> ends;
+  for (size_t row = 0; row + 1 < offsets.size(); ++row)
+    ends.push_back(offsets[row + 1] - 1);
+  auto selected_ends = output.index_select(0, at::tensor(ends, output.options().dtype(at::kLong)));
+  TORCH_CHECK(
+      at::allclose(block->forward_pooled(packed, true), selected_ends, cross_shape, cross_shape),
+      "Block Gemma pooled rows differed from selected forward rows");
   auto changed_future = packed;
   changed_future.ids = packed.ids.clone();
   changed_future.ids.index_put_({5}, 42);
   auto future = block->forward(changed_future);
   TORCH_CHECK(at::equal(output.narrow(0, 0, 3), future.narrow(0, 0, 3)),
               "Block Gemma prefix attended to its question suffix");
-  TORCH_CHECK((output.narrow(0, 3, 2) - future.narrow(0, 3, 2)).abs().max().item<float>() >
-                  1e-5,
+  TORCH_CHECK((output.narrow(0, 3, 2) - future.narrow(0, 3, 2)).abs().max().item<float>() > 1e-5,
               "Block Gemma suffix lost bidirectional attention");
   TORCH_CHECK(at::equal(output.narrow(0, 6, 7), future.narrow(0, 6, 7)),
               "Changing one block row leaked into another row or a prefix-only row");
@@ -739,8 +791,7 @@ void gemma_block_attention_test(const c10::Device& device, at::ScalarType dtype)
   changed_prefix.ids = packed.ids.clone();
   changed_prefix.ids.index_put_({1}, 42);
   auto prefixed = block->forward(changed_prefix);
-  TORCH_CHECK((output.narrow(0, 3, 3) - prefixed.narrow(0, 3, 3)).abs().max().item<float>() >
-                  1e-5,
+  TORCH_CHECK((output.narrow(0, 3, 3) - prefixed.narrow(0, 3, 3)).abs().max().item<float>() > 1e-5,
               "Block Gemma suffix ignored its prefix");
   // The prefix-only execution is the explicit reference for the block prefix mask.
   std::vector<int64_t> prefix_ids(ids.begin(), ids.begin() + 3);
@@ -748,11 +799,40 @@ void gemma_block_attention_test(const c10::Device& device, at::ScalarType dtype)
   auto prefix_only = on_device(input(prefix_ids, prefix_offsets));
   prefix_only.block_prefix_lengths = {3};
   prefix_only.block_prefix_sources = {0};
-  TORCH_CHECK(at::allclose(output.narrow(0, 0, 3),
-                           block->forward(prefix_only),
+  TORCH_CHECK(
+      at::allclose(output.narrow(0, 0, 3), block->forward(prefix_only), cross_shape, cross_shape),
+      "Block Gemma prefix differs from an isolated prefix forward");
+  // An all-prefix batch leaves the suffix gather empty; rows must stay isolated
+  // and pooled rows must still match the full forward.
+  std::vector<int64_t> prefix_batch_ids{1, 2, 3, 4, 5, 6};
+  std::vector<int32_t> prefix_batch_offsets{0, 3, 6};
+  auto prefix_batch = on_device(input(prefix_batch_ids, prefix_batch_offsets));
+  prefix_batch.block_prefix_lengths = {3, 3};
+  prefix_batch.block_prefix_sources = {0, 1};
+  auto prefix_batch_output = block->forward(prefix_batch);
+  for (size_t row = 0; row + 1 < prefix_batch_offsets.size(); ++row) {
+    std::vector<int64_t> row_ids(prefix_batch_ids.begin() + prefix_batch_offsets[row],
+                                 prefix_batch_ids.begin() + prefix_batch_offsets[row + 1]);
+    std::vector<int32_t> row_offsets{0, 3};
+    auto single = on_device(input(row_ids, row_offsets));
+    single.block_prefix_lengths = {3};
+    single.block_prefix_sources = {0};
+    TORCH_CHECK(at::allclose(prefix_batch_output.narrow(0, prefix_batch_offsets[row], 3),
+                             block->forward(single),
+                             cross_shape,
+                             cross_shape),
+                "All-prefix block Gemma row crossed its batch boundary: row=",
+                row);
+  }
+  auto prefix_batch_selected = prefix_batch_output.index_select(
+      0,
+      at::tensor(std::vector<int64_t>{prefix_batch_offsets[1] - 1, prefix_batch_offsets[2] - 1},
+                 prefix_batch_output.options().dtype(at::kLong)));
+  TORCH_CHECK(at::allclose(block->forward_pooled(prefix_batch, true),
+                           prefix_batch_selected,
                            cross_shape,
                            cross_shape),
-              "Block Gemma prefix differs from an isolated prefix forward");
+              "All-prefix block Gemma pooled rows differed from forward rows");
   for (size_t row = 0; row + 1 < offsets.size(); ++row) {
     const auto length = offsets[row + 1] - offsets[row];
     std::vector<int64_t> row_ids(ids.begin() + offsets[row], ids.begin() + offsets[row + 1]);
@@ -777,6 +857,43 @@ void gemma_block_attention_test(const c10::Device& device, at::ScalarType dtype)
   shared.block_prefix_sources = {0, 1};
   TORCH_CHECK(at::equal(shared_output, block->forward(shared)),
               "Shared block-prefix witnesses changed Gemma outputs");
+
+  // Shared-KV geometry with full-attention producers first: layers 2/3 reuse
+  // producers 0/1. The block mask must not depend on the default producer order.
+  Fixture sharing("gemma4", 8, 4, 2);
+  auto sharing_cfg = sharing.cfg;
+  sharing_cfg.values["layer_types.0"] = "full_attention";
+  sharing_cfg.values["layer_types.1"] = "sliding_attention";
+  sharing_cfg.values["layer_types.2"] = "full_attention";
+  sharing_cfg.values["layer_types.3"] = "sliding_attention";
+  sharing_cfg.values["_decision.kind"] = "option_tokens";
+  sharing_cfg.values["_decision_attention_mode"] = "block_bidirectional";
+  Weights sharing_weights = load(sharing.weights);
+  TORCH_CHECK(sharing_weights.count("layers.1.self_attn.k_proj.weight") &&
+                  !sharing_weights.count("layers.2.self_attn.k_proj.weight") &&
+                  !sharing_weights.count("layers.3.self_attn.k_proj.weight"),
+              "Shared-KV block fixture did not exercise producer reuse");
+  auto sharing_block = create_gemma(sharing_cfg, sharing_weights, device, dtype);
+  sharing_block->ready();
+  auto sharing_input = on_device(input(ids, offsets));
+  sharing_input.block_prefix_lengths = packed.block_prefix_lengths;
+  sharing_input.block_prefix_sources = packed.block_prefix_sources;
+  auto sharing_output = sharing_block->forward(sharing_input);
+  auto sharing_changed = sharing_input;
+  sharing_changed.ids = sharing_input.ids.clone();
+  sharing_changed.ids.index_put_({4}, 42);
+  TORCH_CHECK(at::equal(sharing_output.narrow(0, 0, 3),
+                        sharing_block->forward(sharing_changed).narrow(0, 0, 3)),
+              "Shared-KV block prefix observed its suffix");
+  auto sharing_prefix = sharing_input;
+  sharing_prefix.ids = sharing_input.ids.clone();
+  sharing_prefix.ids.index_put_({1}, 42);
+  TORCH_CHECK(
+      (sharing_output.narrow(0, 3, 3) - sharing_block->forward(sharing_prefix).narrow(0, 3, 3))
+              .abs()
+              .max()
+              .item<float>() > 1e-5,
+      "Shared-KV block suffix ignored its prefix");
 
   // All-sliding block mode must stay exactly causal.
   Fixture sliding("gemma4", 8, 4, 2);
@@ -838,6 +955,22 @@ void gemma_block_attention_test(const c10::Device& device, at::ScalarType dtype)
   auto causal_future = full_causal->forward(on_device(input(causal_changed, full_offsets)));
   TORCH_CHECK(at::equal(causal_output.narrow(0, 2, 2), causal_future.narrow(0, 2, 2)),
               "Causal reference observed a future token");
+  // Prefix noncausality: an earlier prefix query must see a later prefix key in
+  // the block mask, while the causal reference must not.
+  auto full_prefix_future = full_input;
+  full_prefix_future.ids = full_input.ids.clone();
+  full_prefix_future.ids.index_put_({1}, 42);
+  TORCH_CHECK(
+      (bidirectional.narrow(0, 0, 1) - full_block->forward(full_prefix_future).narrow(0, 0, 1))
+              .abs()
+              .max()
+              .item<float>() > 1e-5,
+      "Full-attention block prefix was not bidirectional within its block");
+  auto causal_prefix_ids = full_ids;
+  causal_prefix_ids[1] = 42;
+  auto causal_prefix = full_causal->forward(on_device(input(causal_prefix_ids, full_offsets)));
+  TORCH_CHECK(at::equal(causal_output.narrow(0, 0, 1), causal_prefix.narrow(0, 0, 1)),
+              "Causal reference observed a future prefix token");
   std::cout << "gemma4: block prefix isolation, suffix bidirectionality, causal sliding and mixed "
                "lengths passed on "
             << device << " " << at::toString(dtype) << "\n";
@@ -845,6 +978,7 @@ void gemma_block_attention_test(const c10::Device& device, at::ScalarType dtype)
 
 int main(int argc, char** argv) {
   embedding_layer_key_aliases();
+  gemma4_layer_head_dim_geometry();
   feature_cache_bounds();
   gemma_block_attention_test(c10::Device("cpu"), at::kFloat);
 #ifdef INFINITY_TORCH_CUDA_KERNELS

@@ -922,7 +922,10 @@ class Gemma final : public Model {
                                         layout.max_prefix,
                                         layout.max_prefix,
                                         scale,
-                                        false);
+                                        false,
+                                        -1,
+                                        -1,
+                                        true);
     output.index_copy_(0, layout.prefix_rows, prefix);
     if (layout.suffix_rows.numel() > 0) {
       auto suffix = packed_cuda_attention(q.index_select(0, layout.suffix_rows),
@@ -933,7 +936,10 @@ class Gemma final : public Model {
                                           layout.max_suffix,
                                           layout.max_kv,
                                           scale,
-                                          false);
+                                          false,
+                                          -1,
+                                          -1,
+                                          true);
       output.index_copy_(0, layout.suffix_rows, suffix);
     }
     return output;
@@ -1233,8 +1239,7 @@ class Gemma final : public Model {
       TORCH_CHECK(prefix > 0 && prefix <= length, "Invalid OneJev prefix boundary");
       if (!input.block_prefix_sources.empty()) {
         const auto source = input.block_prefix_sources[row];
-        TORCH_CHECK(source >= 0 && source <= row &&
-                        input.block_prefix_sources[source] == source &&
+        TORCH_CHECK(source >= 0 && source <= row && input.block_prefix_sources[source] == source &&
                         input.block_prefix_lengths[source] == prefix,
                     "Invalid shared OneJev prefix");
       }
@@ -1565,9 +1570,12 @@ public:
                   "Unsupported Gemma attention type ",
                   kind);
       auto default_dim = integer("head_dim", hidden / heads);
-      layer.dim = embedding2 ? override_int(i, "head_dim", default_dim)
-                             : (layer.sliding || legacy ? default_dim
-                                                        : integer("global_head_dim", default_dim));
+      layer.dim = legacy ? default_dim
+                         : override_int(i,
+                                        "head_dim",
+                                        (embedding2 || layer.sliding)
+                                            ? default_dim
+                                            : integer("global_head_dim", default_dim));
       layer.k_equals_v = !legacy && !layer.sliding && boolean("attention_k_eq_v", false);
       layer.kv = override_int(i,
                               "num_key_value_heads",
@@ -1735,8 +1743,9 @@ public:
   /// Inject media and per-layer embeddings, then run local/global transformer blocks with explicit
   /// residuals. Causal Gemma4 may compact identical prefixes; restored rows
   /// retain the caller's full logical order.
-  at::Tensor
-  forward_impl(const PackedInput& source, bool is_causal, const at::Tensor& output_rows = {}) const {
+  at::Tensor forward_impl(const PackedInput& source,
+                          bool is_causal,
+                          const at::Tensor& output_rows = {}) const {
     PackedInput prepared;
     const PackedInput* input_ptr = &source;
     if (block_bidirectional) {
@@ -1754,9 +1763,10 @@ public:
     // Reuse this call's stream/context/policy snapshot for all Wi/Wo pairs.
     auto ordinary_session = ordinary_ffn ? ordinary_ffn->prepare(w("embed_tokens.weight"))
                                          : OrdinaryLinearExecutor::Session{};
-    TORCH_CHECK(!block_bidirectional || (is_causal && !radix_enabled(input) && !input.prefix &&
-                                         !input.capture_prefix),
-                "Block-bidirectional Gemma requires causal non-full layers without radix or prefix state");
+    TORCH_CHECK(
+        !block_bidirectional ||
+            (is_causal && !radix_enabled(input) && !input.prefix && !input.capture_prefix),
+        "Block-bidirectional Gemma requires causal non-full layers without radix or prefix state");
     TORCH_CHECK(!radix_enabled(input) || (is_causal && !legacy && !embedding2),
                 "Gemma radix folding requires causal Gemma4 hidden states");
     const auto& ids = radix_ids(input);
