@@ -1781,7 +1781,7 @@ dependencies = [
 
 [[package]]
 name = "infinity-backend-libtorch"
-version = "3.0.2-beta.2"
+version = "3.0.2-beta.3"
 dependencies = [
  "bytemuck",
  "cmake",
@@ -1798,7 +1798,7 @@ dependencies = [
 
 [[package]]
 name = "infinity-v3-backend-python"
-version = "3.0.2-beta.2"
+version = "3.0.2-beta.3"
 dependencies = [
  "bytes",
  "infinity_v3-backend-core",
@@ -1812,7 +1812,7 @@ dependencies = [
 
 [[package]]
 name = "infinity-v3-config"
-version = "3.0.2-beta.2"
+version = "3.0.2-beta.3"
 dependencies = [
  "clap",
  "serde",
@@ -1820,7 +1820,7 @@ dependencies = [
 
 [[package]]
 name = "infinity_v3-backend"
-version = "3.0.2-beta.2"
+version = "3.0.2-beta.3"
 dependencies = [
  "clap",
  "hf-hub",
@@ -1836,7 +1836,7 @@ dependencies = [
 
 [[package]]
 name = "infinity_v3-backend-core"
-version = "3.0.2-beta.2"
+version = "3.0.2-beta.3"
 dependencies = [
  "bytes",
  "clap",
@@ -1850,7 +1850,7 @@ dependencies = [
 
 [[package]]
 name = "infinity_v3-core"
-version = "3.0.2-beta.2"
+version = "3.0.2-beta.3"
 dependencies = [
  "async-channel",
  "base64 0.22.1",
@@ -1879,7 +1879,7 @@ dependencies = [
 
 [[package]]
 name = "infinity_v3-router"
-version = "3.0.2-beta.2"
+version = "3.0.2-beta.3"
 dependencies = [
  "anyhow",
  "axum 0.7.9",
