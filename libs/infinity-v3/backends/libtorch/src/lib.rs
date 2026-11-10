@@ -754,11 +754,11 @@ impl LibtorchBackend {
             if decision_kind != Some("option_tokens")
                 || !matches!(
                     options["model_type"].as_str(),
-                    Some("qwen3_5" | "qwen3_5_text")
+                    Some("qwen3_5" | "qwen3_5_text" | "gemma4" | "gemma4_text" | "gemma4_unified")
                 )
             {
                 return Err(start(
-                    "Block attention requires a dense Qwen3.5 decision model",
+                    "Block attention requires a dense Qwen3.5 or Gemma4 decision model",
                 ));
             }
             options["_decision_attention_mode"] = "block_bidirectional".into();

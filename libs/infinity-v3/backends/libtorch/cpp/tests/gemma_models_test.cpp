@@ -3,6 +3,7 @@
 // Packed sequence isolation and geometry tests for native Gemma implementations.
 #include "models/gemma_models.h"
 #include "batching/radix.h"
+#include "batching/cuda_graph.h"
 #include "helpers/image_feature_cache.h"
 #include <iostream>
 #include <cstring>
@@ -601,6 +602,50 @@ void embedding_layer_key_aliases() {
               "Omitted head default conflicts with explicit alias");
 }
 
+void gemma4_layer_head_dim_geometry() {
+  Fixture f("gemma4", 8, 6, 0);
+  for (int64_t layer = 0; layer < 6; ++layer)
+    f.cfg.values["layer_types." + std::to_string(layer)] =
+        layer == 5 ? "full_attention" : "sliding_attention";
+  const std::string p = "layers.5.self_attn.";
+  // Layer 5 is full attention; give it a per-layer width of 16 while the
+  // sliding layers keep the root head_dim of 8.
+  f.weights[p + "q_proj.weight"] = at::randn({32, 16}) * .1;
+  f.weights[p + "k_proj.weight"] = at::randn({16, 16}) * .1;
+  f.weights[p + "v_proj.weight"] = at::randn({16, 16}) * .1;
+  f.weights[p + "q_norm.weight"] = at::ones({16});
+  f.weights[p + "k_norm.weight"] = at::ones({16});
+  f.weights[p + "o_proj.weight"] = at::randn({16, 32}) * .1;
+  const std::vector<int64_t> ids = {1, 2, 3, 4, 5};
+  const std::vector<int32_t> offsets = {0, 5};
+  auto packed = input(ids, offsets);
+  auto run = [&](const Options& cfg) {
+    auto model = create_gemma(cfg, f.weights, c10::Device("cpu"), at::kFloat);
+    model->ready();
+    return model->forward(packed);
+  };
+  // Default full-layer geometry still falls back to global_head_dim.
+  auto global = f.cfg;
+  global.values["global_head_dim"] = "16";
+  const auto expected = run(global);
+  // Released Gemma4 text configs omit global_head_dim and store the full-layer
+  // width under a padded per_layer_config index.
+  auto padded = f.cfg;
+  padded.values.erase("global_head_dim");
+  padded.values["per_layer_config.05.head_dim"] = "16";
+  TORCH_CHECK(at::equal(expected, run(padded)),
+              "Gemma4 padded per-layer head_dim changed layer geometry");
+  auto canonical = padded;
+  canonical.values.erase("per_layer_config.05.head_dim");
+  canonical.values["per_layer_config.5.head_dim"] = "16";
+  TORCH_CHECK(at::equal(expected, run(canonical)),
+              "Gemma4 canonical per-layer head_dim alias diverged");
+  auto nested = padded;
+  nested.values.erase("per_layer_config.05.head_dim");
+  nested.values["text_config.per_layer_config.05.head_dim"] = "16";
+  TORCH_CHECK(at::equal(expected, run(nested)), "Gemma4 text_config per-layer head_dim diverged");
+}
+
 #ifdef INFINITY_TORCH_CUDA_KERNELS
 // Exercise the actual local/global head widths and strided packed QKV layouts.
 // Unary/gated activation and rotary must retain their low-precision stages.
@@ -689,11 +734,596 @@ void gemma_low_precision_pointwise(c10::Device device) {
 }
 #endif
 
+void gemma_block_attention_test(const c10::Device& device, at::ScalarType dtype) {
+  const bool cpu = device.is_cpu();
+  auto load = [&](const Weights& host) {
+    Weights weights;
+    for (const auto& [name, value] : host)
+      weights[name] = value.to(device, dtype);
+    return weights;
+  };
+  auto on_device = [&](PackedInput packed) {
+    if (!cpu) {
+      packed.ids = packed.ids.to(device);
+      packed.types = packed.types.to(device);
+      packed.positions = packed.positions.to(device);
+      packed.cumulative = packed.cumulative.to(device);
+    }
+    return packed;
+  };
+  const auto cross_shape = cpu ? 1e-5 : 1e-2;
+  Fixture f("gemma4", 8, 4, 2);
+  auto block_cfg = f.cfg;
+  block_cfg.values["_decision.kind"] = "option_tokens";
+  block_cfg.values["_decision_attention_mode"] = "block_bidirectional";
+  Weights block_weights = load(f.weights);
+  auto block = create_gemma(block_cfg, block_weights, device, dtype);
+  block->ready();
+  TORCH_CHECK(!block->supports_radix() && !block->supports_prefix_cache(0),
+              "Block-bidirectional Gemma enabled causal radix/prefix state");
+  // Row0: 6 tokens, 3-token prefix. Row1: 4 tokens, 2-token prefix.
+  // Row2: 3 tokens, prefix-only row (no suffix).
+  std::vector<int64_t> ids{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13};
+  std::vector<int32_t> offsets{0, 6, 10, 13};
+  auto packed = on_device(input(ids, offsets));
+  packed.block_prefix_lengths = {3, 2, 3};
+  packed.block_prefix_sources = {0, 1, 2};
+  auto output = block->forward(packed);
+  // The decision bridge reads pooled last rows; they must match the same rows
+  // selected from the full forward on both CPU and CUDA.
+  std::vector<int64_t> ends;
+  for (size_t row = 0; row + 1 < offsets.size(); ++row)
+    ends.push_back(offsets[row + 1] - 1);
+  auto selected_ends = output.index_select(0, at::tensor(ends, output.options().dtype(at::kLong)));
+  TORCH_CHECK(
+      at::allclose(block->forward_pooled(packed, true), selected_ends, cross_shape, cross_shape),
+      "Block Gemma pooled rows differed from selected forward rows");
+  auto changed_future = packed;
+  changed_future.ids = packed.ids.clone();
+  changed_future.ids.index_put_({5}, 42);
+  auto future = block->forward(changed_future);
+  TORCH_CHECK(at::equal(output.narrow(0, 0, 3), future.narrow(0, 0, 3)),
+              "Block Gemma prefix attended to its question suffix");
+  TORCH_CHECK((output.narrow(0, 3, 2) - future.narrow(0, 3, 2)).abs().max().item<float>() > 1e-5,
+              "Block Gemma suffix lost bidirectional attention");
+  TORCH_CHECK(at::equal(output.narrow(0, 6, 7), future.narrow(0, 6, 7)),
+              "Changing one block row leaked into another row or a prefix-only row");
+  auto changed_prefix = packed;
+  changed_prefix.ids = packed.ids.clone();
+  changed_prefix.ids.index_put_({1}, 42);
+  auto prefixed = block->forward(changed_prefix);
+  TORCH_CHECK((output.narrow(0, 3, 3) - prefixed.narrow(0, 3, 3)).abs().max().item<float>() > 1e-5,
+              "Block Gemma suffix ignored its prefix");
+  // The prefix-only execution is the explicit reference for the block prefix mask.
+  std::vector<int64_t> prefix_ids(ids.begin(), ids.begin() + 3);
+  std::vector<int32_t> prefix_offsets{0, 3};
+  auto prefix_only = on_device(input(prefix_ids, prefix_offsets));
+  prefix_only.block_prefix_lengths = {3};
+  prefix_only.block_prefix_sources = {0};
+  TORCH_CHECK(
+      at::allclose(output.narrow(0, 0, 3), block->forward(prefix_only), cross_shape, cross_shape),
+      "Block Gemma prefix differs from an isolated prefix forward");
+  // An all-prefix batch leaves the suffix gather empty; rows must stay isolated
+  // and pooled rows must still match the full forward.
+  std::vector<int64_t> prefix_batch_ids{1, 2, 3, 4, 5, 6};
+  std::vector<int32_t> prefix_batch_offsets{0, 3, 6};
+  auto prefix_batch = on_device(input(prefix_batch_ids, prefix_batch_offsets));
+  prefix_batch.block_prefix_lengths = {3, 3};
+  prefix_batch.block_prefix_sources = {0, 1};
+  auto prefix_batch_output = block->forward(prefix_batch);
+  for (size_t row = 0; row + 1 < prefix_batch_offsets.size(); ++row) {
+    std::vector<int64_t> row_ids(prefix_batch_ids.begin() + prefix_batch_offsets[row],
+                                 prefix_batch_ids.begin() + prefix_batch_offsets[row + 1]);
+    std::vector<int32_t> row_offsets{0, 3};
+    auto single = on_device(input(row_ids, row_offsets));
+    single.block_prefix_lengths = {3};
+    single.block_prefix_sources = {0};
+    TORCH_CHECK(at::allclose(prefix_batch_output.narrow(0, prefix_batch_offsets[row], 3),
+                             block->forward(single),
+                             cross_shape,
+                             cross_shape),
+                "All-prefix block Gemma row crossed its batch boundary: row=",
+                row);
+  }
+  auto prefix_batch_selected = prefix_batch_output.index_select(
+      0,
+      at::tensor(std::vector<int64_t>{prefix_batch_offsets[1] - 1, prefix_batch_offsets[2] - 1},
+                 prefix_batch_output.options().dtype(at::kLong)));
+  TORCH_CHECK(at::allclose(block->forward_pooled(prefix_batch, true),
+                           prefix_batch_selected,
+                           cross_shape,
+                           cross_shape),
+              "All-prefix block Gemma pooled rows differed from forward rows");
+  for (size_t row = 0; row + 1 < offsets.size(); ++row) {
+    const auto length = offsets[row + 1] - offsets[row];
+    std::vector<int64_t> row_ids(ids.begin() + offsets[row], ids.begin() + offsets[row + 1]);
+    std::vector<int32_t> row_offsets{0, length};
+    auto single = on_device(input(row_ids, row_offsets));
+    single.block_prefix_lengths = {packed.block_prefix_lengths[row]};
+    single.block_prefix_sources = {0};
+    TORCH_CHECK(at::allclose(output.narrow(0, offsets[row], length),
+                             block->forward(single),
+                             cross_shape,
+                             cross_shape),
+                "Mixed-length block Gemma row crossed its prefix or batch boundary: row=",
+                row);
+  }
+  // Shared prefix witnesses must not change the result.
+  std::vector<int64_t> shared_ids{1, 2, 3, 4, 5, 1, 2, 3, 8, 9};
+  std::vector<int32_t> shared_offsets{0, 5, 10};
+  auto shared = on_device(input(shared_ids, shared_offsets));
+  shared.block_prefix_lengths = {3, 3};
+  shared.block_prefix_sources = {0, 0};
+  auto shared_output = block->forward(shared);
+  shared.block_prefix_sources = {0, 1};
+  TORCH_CHECK(at::equal(shared_output, block->forward(shared)),
+              "Shared block-prefix witnesses changed Gemma outputs");
+
+  // Shared-KV geometry with full-attention producers first: layers 2/3 reuse
+  // producers 0/1. The block mask must not depend on the default producer order.
+  Fixture sharing("gemma4", 8, 4, 2);
+  auto sharing_cfg = sharing.cfg;
+  sharing_cfg.values["layer_types.0"] = "full_attention";
+  sharing_cfg.values["layer_types.1"] = "sliding_attention";
+  sharing_cfg.values["layer_types.2"] = "full_attention";
+  sharing_cfg.values["layer_types.3"] = "sliding_attention";
+  sharing_cfg.values["_decision.kind"] = "option_tokens";
+  sharing_cfg.values["_decision_attention_mode"] = "block_bidirectional";
+  Weights sharing_weights = load(sharing.weights);
+  TORCH_CHECK(sharing_weights.count("layers.1.self_attn.k_proj.weight") &&
+                  !sharing_weights.count("layers.2.self_attn.k_proj.weight") &&
+                  !sharing_weights.count("layers.3.self_attn.k_proj.weight"),
+              "Shared-KV block fixture did not exercise producer reuse");
+  auto sharing_block = create_gemma(sharing_cfg, sharing_weights, device, dtype);
+  sharing_block->ready();
+  auto sharing_input = on_device(input(ids, offsets));
+  sharing_input.block_prefix_lengths = packed.block_prefix_lengths;
+  sharing_input.block_prefix_sources = packed.block_prefix_sources;
+  auto sharing_output = sharing_block->forward(sharing_input);
+  auto sharing_changed = sharing_input;
+  sharing_changed.ids = sharing_input.ids.clone();
+  sharing_changed.ids.index_put_({4}, 42);
+  TORCH_CHECK(at::equal(sharing_output.narrow(0, 0, 3),
+                        sharing_block->forward(sharing_changed).narrow(0, 0, 3)),
+              "Shared-KV block prefix observed its suffix");
+  auto sharing_prefix = sharing_input;
+  sharing_prefix.ids = sharing_input.ids.clone();
+  sharing_prefix.ids.index_put_({1}, 42);
+  TORCH_CHECK(
+      (sharing_output.narrow(0, 3, 3) - sharing_block->forward(sharing_prefix).narrow(0, 3, 3))
+              .abs()
+              .max()
+              .item<float>() > 1e-5,
+      "Shared-KV block suffix ignored its prefix");
+
+  // All-sliding block mode must stay exactly causal.
+  Fixture sliding("gemma4", 8, 4, 2);
+  auto sliding_cfg = sliding.cfg;
+  for (int64_t layer = 0; layer < 4; ++layer)
+    sliding_cfg.values["layer_types." + std::to_string(layer)] = "sliding_attention";
+  auto sliding_block_cfg = sliding_cfg;
+  sliding_block_cfg.values["_decision.kind"] = "option_tokens";
+  sliding_block_cfg.values["_decision_attention_mode"] = "block_bidirectional";
+  Weights sliding_weights = load(sliding.weights);
+  auto sliding_block = create_gemma(sliding_block_cfg, sliding_weights, device, dtype);
+  sliding_block->ready();
+  auto causal_cfg = sliding_cfg;
+  causal_cfg.values["_decision.kind"] = "option_tokens";
+  auto causal = create_gemma(causal_cfg, sliding_weights, device, dtype);
+  causal->ready();
+  auto sliding_input = on_device(input(ids, offsets));
+  sliding_input.block_prefix_lengths = packed.block_prefix_lengths;
+  sliding_input.block_prefix_sources = packed.block_prefix_sources;
+  TORCH_CHECK(at::equal(sliding_block->forward(sliding_input),
+                        causal->forward(on_device(input(ids, offsets)))),
+              "Block-mode sliding layers diverged from causal attention");
+
+  // All-full block mode is bidirectional inside the question suffix.
+  Fixture full("gemma4", 8, 4, 2);
+  auto full_cfg = full.cfg;
+  for (int64_t layer = 0; layer < 4; ++layer)
+    full_cfg.values["layer_types." + std::to_string(layer)] = "full_attention";
+  auto full_block_cfg = full_cfg;
+  full_block_cfg.values["_decision.kind"] = "option_tokens";
+  full_block_cfg.values["_decision_attention_mode"] = "block_bidirectional";
+  Weights full_weights = load(full.weights);
+  auto full_block = create_gemma(full_block_cfg, full_weights, device, dtype);
+  full_block->ready();
+  auto full_causal_cfg = full_cfg;
+  full_causal_cfg.values["_decision.kind"] = "option_tokens";
+  auto full_causal = create_gemma(full_causal_cfg, full_weights, device, dtype);
+  full_causal->ready();
+  std::vector<int64_t> full_ids{1, 2, 3, 4, 5};
+  std::vector<int32_t> full_offsets{0, 5};
+  auto full_input = on_device(input(full_ids, full_offsets));
+  full_input.block_prefix_lengths = {2};
+  full_input.block_prefix_sources = {0};
+  auto bidirectional = full_block->forward(full_input);
+  auto full_future = full_input;
+  full_future.ids = full_input.ids.clone();
+  full_future.ids.index_put_({4}, 42);
+  auto future_bidirectional = full_block->forward(full_future);
+  TORCH_CHECK(at::equal(bidirectional.narrow(0, 0, 2), future_bidirectional.narrow(0, 0, 2)),
+              "Full-attention block prefix observed its suffix");
+  TORCH_CHECK((bidirectional.narrow(0, 2, 2) - future_bidirectional.narrow(0, 2, 2))
+                      .abs()
+                      .max()
+                      .item<float>() > 1e-5,
+              "Full-attention block suffix was not bidirectional");
+  auto causal_output = full_causal->forward(on_device(input(full_ids, full_offsets)));
+  auto causal_changed = full_ids;
+  causal_changed[4] = 42;
+  auto causal_future = full_causal->forward(on_device(input(causal_changed, full_offsets)));
+  TORCH_CHECK(at::equal(causal_output.narrow(0, 2, 2), causal_future.narrow(0, 2, 2)),
+              "Causal reference observed a future token");
+  // Prefix noncausality: an earlier prefix query must see a later prefix key in
+  // the block mask, while the causal reference must not.
+  auto full_prefix_future = full_input;
+  full_prefix_future.ids = full_input.ids.clone();
+  full_prefix_future.ids.index_put_({1}, 42);
+  TORCH_CHECK(
+      (bidirectional.narrow(0, 0, 1) - full_block->forward(full_prefix_future).narrow(0, 0, 1))
+              .abs()
+              .max()
+              .item<float>() > 1e-5,
+      "Full-attention block prefix was not bidirectional within its block");
+  auto causal_prefix_ids = full_ids;
+  causal_prefix_ids[1] = 42;
+  auto causal_prefix = full_causal->forward(on_device(input(causal_prefix_ids, full_offsets)));
+  TORCH_CHECK(at::equal(causal_output.narrow(0, 0, 1), causal_prefix.narrow(0, 0, 1)),
+              "Causal reference observed a future prefix token");
+  if (!cpu) {
+    // Decision op3 pools last rows. The graph must replay mutated ids from the
+    // same storage and keep distinct entries for distinct block boundaries.
+    CudaGraphCache graphs(2, 4096, 1);
+    const auto& graph_input = packed;
+    const auto fresh = block->forward_pooled(graph_input, true);
+    auto captured = graphs.forward(*block, graph_input, 3);
+    TORCH_CHECK(at::allclose(captured, fresh, cross_shape, cross_shape),
+                "Block Gemma graph capture changed pooled outputs");
+    TORCH_CHECK(at::allclose(graphs.forward(*block, graph_input, 3),
+                             block->forward_pooled(graph_input, true),
+                             cross_shape,
+                             cross_shape),
+                "Block Gemma graph replay changed pooled outputs");
+    TORCH_CHECK(graphs.size() == 1 && graphs.stats().captures == 1,
+                "Block Gemma graph did not capture the block batch");
+    const auto ids_pointer = graph_input.ids.const_data_ptr();
+    graph_input.ids.add_(1).remainder_(64);
+    TORCH_CHECK(graph_input.ids.const_data_ptr() == ids_pointer,
+                "Block Gemma graph ids mutation replaced storage");
+    auto mutated = block->forward_pooled(graph_input, true);
+    TORCH_CHECK(
+        at::allclose(graphs.forward(*block, graph_input, 3), mutated, cross_shape, cross_shape),
+        "Block Gemma graph replay ignored in-place ids mutation");
+    auto changed = graph_input;
+    changed.block_prefix_lengths = {2, 3, 2};
+    changed.block_prefix_sources = {0, 1, 2};
+    auto changed_fresh = block->forward_pooled(changed, true);
+    TORCH_CHECK(
+        at::allclose(graphs.forward(*block, changed, 3), changed_fresh, cross_shape, cross_shape),
+        "Block Gemma graph changed the new prefix-layout outputs");
+    TORCH_CHECK(graphs.size() == 2 && graphs.stats().captures == 2,
+                "Block Gemma graph cache did not separate block layout entries");
+    TORCH_CHECK(at::allclose(graphs.forward(*block, graph_input, 3),
+                             block->forward_pooled(graph_input, true),
+                             cross_shape,
+                             cross_shape),
+                "Block Gemma graph replay reused the wrong block layout");
+    TORCH_CHECK(at::allclose(graphs.forward(*block, changed, 3),
+                             block->forward_pooled(changed, true),
+                             cross_shape,
+                             cross_shape),
+                "Block Gemma changed-layout graph replay was invalid");
+  }
+  std::cout << "gemma4: block prefix isolation, suffix bidirectionality, causal sliding and mixed "
+               "lengths passed on "
+            << device << " " << at::toString(dtype) << "\n";
+}
+
+void add_tiny_vision(Options& cfg, Weights& weights) {
+  cfg.values["vision_config.hidden_size"] = "8";
+  cfg.values["vision_config.num_attention_heads"] = "2";
+  cfg.values["vision_config.num_key_value_heads"] = "1";
+  cfg.values["vision_config.head_dim"] = "4";
+  cfg.values["vision_config.num_hidden_layers"] = "1";
+  cfg.values["vision_config.intermediate_size"] = "12";
+  auto put = [&](const std::string& name, std::initializer_list<int64_t> shape, bool norm = false) {
+    weights[name] = norm ? at::ones(shape) : at::randn(shape) * .03;
+  };
+  put("vision_tower.patch_embedder.input_proj.weight", {8, 768});
+  put("vision_tower.patch_embedder.position_embedding_table", {2, 16, 8});
+  auto p = std::string("vision_tower.encoder.layers.0.");
+  for (const auto& name : {"input_layernorm",
+                           "post_attention_layernorm",
+                           "pre_feedforward_layernorm",
+                           "post_feedforward_layernorm"})
+    put(p + name + ".weight", {8}, true);
+  put(p + "self_attn.q_proj.linear.weight", {8, 8});
+  put(p + "self_attn.k_proj.linear.weight", {4, 8});
+  put(p + "self_attn.v_proj.linear.weight", {4, 8});
+  put(p + "self_attn.o_proj.linear.weight", {8, 8});
+  put(p + "self_attn.q_norm.weight", {4}, true);
+  put(p + "self_attn.k_norm.weight", {4}, true);
+  put(p + "mlp.gate_proj.linear.weight", {12, 8});
+  put(p + "mlp.up_proj.linear.weight", {12, 8});
+  put(p + "mlp.down_proj.linear.weight", {8, 12});
+  put("embed_vision.embedding_projection.weight", {16, 8});
+}
+
+void add_vision_bounds(Weights& weights,
+                       const std::string& base,
+                       double input_min,
+                       double input_max,
+                       double output_min,
+                       double output_max) {
+  const auto options = at::TensorOptions().dtype(at::kFloat);
+  weights[base + ".input_min"] = at::scalar_tensor(input_min, options);
+  weights[base + ".input_max"] = at::scalar_tensor(input_max, options);
+  weights[base + ".output_min"] = at::scalar_tensor(output_min, options);
+  weights[base + ".output_max"] = at::scalar_tensor(output_max, options);
+}
+
+Weights clone_weights(const Weights& weights) {
+  Weights copy;
+  for (const auto& [name, value] : weights)
+    copy[name] = value.clone();
+  return copy;
+}
+
+at::Tensor prepare_vision_features(const Options& cfg,
+                                   const Weights& weights,
+                                   const at::Tensor& pixels,
+                                   at::ScalarType dtype) {
+  Weights typed;
+  for (const auto& [name, value] : weights)
+    typed[name] = value.to(dtype);
+  auto model = create_gemma(cfg, typed, c10::Device("cpu"), dtype);
+  model->ready();
+  const std::vector<int32_t> offsets{0, 3};
+  auto batch = input({1, 2, 3}, offsets);
+  ImageInput image;
+  image.pixels = pixels;
+  image.grid_thw = {1, 3, 3};
+  image.merge_size = 3;
+  image.token_start = 0;
+  image.token_count = 1;
+  batch.images.push_back(image);
+  model->prepare_input(batch);
+  return batch.images[0].prepared_features.to(at::kFloat).clone();
+}
+
+void gemma4_vision_clipping_test() {
+  at::manual_seed(418);
+  Fixture f("gemma4", 8, 1, 0);
+  add_tiny_vision(f.cfg, f.weights);
+  f.cfg.values["vision_config.use_clipped_linears"] = "false";
+  const auto pixels = at::arange(9 * 768, at::kFloat).reshape({9, 768}) / 1000.;
+  const auto baseline = prepare_vision_features(f.cfg, f.weights, pixels, at::kFloat);
+  const auto mlp = std::string("vision_tower.encoder.layers.0.mlp.");
+  const std::vector<std::string> bases = {
+      "vision_tower.encoder.layers.0.self_attn.q_proj",
+      "vision_tower.encoder.layers.0.self_attn.k_proj",
+      "vision_tower.encoder.layers.0.self_attn.v_proj",
+      "vision_tower.encoder.layers.0.self_attn.o_proj",
+      mlp + "gate_proj",
+      mlp + "up_proj",
+      mlp + "down_proj",
+  };
+  for (const auto& base : bases) {
+    for (int mode = 0; mode < 2; ++mode) {
+      auto cfg = f.cfg;
+      cfg.values["vision_config.use_clipped_linears"] = "true";
+      auto weights = clone_weights(f.weights);
+      const double wide = 1e30;
+      // Exercise both checkpoint clipping stages independently: zero the input
+      // clamp with a wide output clamp, then the reverse.
+      if (mode == 0)
+        add_vision_bounds(weights, base, 0., 0., -wide, wide);
+      else
+        add_vision_bounds(weights, base, -wide, wide, 0., 0.);
+      const auto clipped = prepare_vision_features(cfg, weights, pixels, at::kFloat);
+      TORCH_CHECK(!at::allclose(baseline, clipped, 1e-6, 1e-6),
+                  "Gemma4 ",
+                  base,
+                  mode == 0 ? " input" : " output",
+                  " clamp was not applied");
+    }
+  }
+  // Bounds present on an unclipped checkpoint must remain inert.
+  auto inert_cfg = f.cfg;
+  auto inert_weights = clone_weights(f.weights);
+  add_vision_bounds(
+      inert_weights, "vision_tower.encoder.layers.0.self_attn.q_proj", 0., 0., 0., 0.);
+  TORCH_CHECK(at::allclose(baseline,
+                           prepare_vision_features(inert_cfg, inert_weights, pixels, at::kFloat),
+                           1e-6,
+                           1e-6),
+              "Gemma4 applied clip bounds while use_clipped_linears was false");
+  // The BF16 path must also honor bounds. V and down give an observable
+  // effect without relying on tiny softmax changes in a low-precision Q/K.
+  auto bf16_cfg = f.cfg;
+  bf16_cfg.values["vision_config.use_clipped_linears"] = "false";
+  const auto bf16_baseline = prepare_vision_features(bf16_cfg, f.weights, pixels, at::kBFloat16);
+  auto bf16_weights = clone_weights(f.weights);
+  add_vision_bounds(
+      bf16_weights, "vision_tower.encoder.layers.0.self_attn.v_proj", 0., 0., -1e30, 1e30);
+  bf16_cfg.values["vision_config.use_clipped_linears"] = "true";
+  TORCH_CHECK(!at::equal(bf16_baseline,
+                         prepare_vision_features(bf16_cfg, bf16_weights, pixels, at::kBFloat16)),
+              "Gemma4 BF16 vision input clamp was not applied");
+  auto bf16_output_weights = clone_weights(f.weights);
+  add_vision_bounds(
+      bf16_output_weights, "vision_tower.encoder.layers.0.mlp.down_proj", -1e30, 1e30, 0., 0.);
+  TORCH_CHECK(
+      !at::equal(bf16_baseline,
+                 prepare_vision_features(bf16_cfg, bf16_output_weights, pixels, at::kBFloat16)),
+      "Gemma4 BF16 vision output clamp was not applied");
+  std::cout << "gemma4: vision q/k/v/o and MLP input/output clips passed\n";
+}
+
+PackedInput image_input(const at::Tensor& features) {
+  static const std::vector<int32_t> offsets{0, 4};
+  auto batch = input({1, 63, 2, 3}, offsets);
+  ImageInput image;
+  image.pixels = at::zeros({9, 768});
+  image.grid_thw = {1, 3, 3};
+  image.merge_size = 3;
+  image.token_start = 1;
+  image.token_count = features.size(0);
+  image.sequence_start = 0;
+  image.prepared_features = features;
+  batch.images.push_back(image);
+  return batch;
+}
+
+void gemma4_image_ple_test() {
+  at::manual_seed(418);
+  // Four layers with two shared-KV layers keeps the E4B-like shared path active.
+  Fixture f("gemma4", 8, 4, 2);
+  add_tiny_vision(f.cfg, f.weights);
+  f.cfg.values["rms_norm_eps"] = "1e6";
+  f.cfg.values["pad_token_id"] = "0";
+  for (int64_t layer = 0; layer < 4; ++layer) {
+    const auto p = "layers." + std::to_string(layer) + ".";
+    for (const auto* name : {"self_attn.q_proj.weight",
+                             "self_attn.k_proj.weight",
+                             "self_attn.v_proj.weight",
+                             "self_attn.o_proj.weight",
+                             "mlp.gate_proj.weight",
+                             "mlp.up_proj.weight",
+                             "mlp.down_proj.weight"}) {
+      if (f.weights.count(p + name))
+        f.weights[p + name].zero_();
+    }
+    f.weights[p + "per_layer_input_gate.weight"].zero_();
+    f.weights[p + "per_layer_projection.weight"].zero_();
+  }
+  f.weights["per_layer_model_projection.weight"].zero_();
+  f.weights["embed_tokens_per_layer.weight"].zero_();
+  // A constant image-token gate and a visible layer-0 PLE path keep the
+  // comparison linear enough to attribute differences to PLE alone.
+  f.weights["layers.0.per_layer_input_gate.weight"].select(0, 0).select(0, 0).fill_(1000.);
+  f.weights["layers.0.per_layer_projection.weight"].select(0, 0).select(0, 0).fill_(1000.);
+
+  auto run = [&](Weights weights, const at::Tensor& pixels) {
+    auto model = create_gemma(f.cfg, weights, c10::Device("cpu"), at::kFloat);
+    model->ready();
+    return model->forward(image_input(pixels));
+  };
+  auto constant_image = [](float value) {
+    auto features = at::zeros({1, 16});
+    features.select(0, 0).select(0, 0).fill_(1.);
+    features.select(0, 0).select(0, 1).fill_(value);
+    return features;
+  };
+
+  // Token identity must use the pad row on image slots, not the image token row.
+  Weights pad = clone_weights(f.weights);
+  pad["embed_tokens_per_layer.weight"].select(0, 0).select(0, 0).fill_(1.);
+  auto image_row = clone_weights(pad);
+  image_row["embed_tokens_per_layer.weight"].select(0, 63).select(0, 0).fill_(2.);
+  const auto image = constant_image(.1);
+  TORCH_CHECK(at::allclose(run(pad, image), run(image_row, image), 1e-6, 1e-6),
+              "Gemma4 image PLE token identity used the image id instead of the pad id");
+
+  // Context projection must use the injected image state, not the pre-image
+  // token embedding. Both models share the same image injection, so A-B
+  // isolates the PLE context contribution.
+  auto context_weights = clone_weights(f.weights);
+  context_weights["per_layer_model_projection.weight"].select(0, 0).select(0, 1).fill_(1.);
+  auto no_context = clone_weights(f.weights);
+  const auto first = constant_image(.1), second = constant_image(.3);
+  const auto first_delta = run(context_weights, first) - run(no_context, first);
+  const auto second_delta = run(context_weights, second) - run(no_context, second);
+  TORCH_CHECK(!at::allclose(first_delta.narrow(0, 1, 1), second_delta.narrow(0, 1, 1), 1e-6, 1e-6),
+              "Gemma4 image PLE context used pre-image token embeddings");
+
+  // Radix compact rows must pad every aliased image row, not just the first
+  // logical occurrence. Both sequences share the same image prefix.
+  const std::vector<int32_t> offsets{0, 3, 6};
+  auto logical = input({1, 63, 2, 1, 63, 3}, offsets);
+  ImageInput first_image, second_image;
+  first_image.pixels = at::zeros({9, 768});
+  second_image.pixels = at::zeros({9, 768});
+  first_image.grid_thw = {1, 3, 3};
+  second_image.grid_thw = {1, 3, 3};
+  first_image.merge_size = 3;
+  second_image.merge_size = 3;
+  first_image.token_start = 1;
+  first_image.sequence_start = 0;
+  second_image.token_start = 4;
+  second_image.sequence_start = 3;
+  first_image.token_count = second_image.token_count = 1;
+  first_image.prepared_features = second_image.prepared_features = image;
+  logical.images = {first_image, second_image};
+  auto compact = logical;
+  compact.compact_ids = at::tensor({1, 63, 2, 3}, at::kLong);
+  compact.compact_positions = at::tensor({0, 1, 2, 2}, at::kLong);
+  compact.compact_types = at::zeros({4}, at::kLong);
+  compact.scatter_unfold = at::tensor({0, 1, 2, 0, 1, 3}, at::kLong);
+  compact.fold_gather = at::tensor({0, 1, 2, 5}, at::kLong);
+  validate_radix(compact, true);
+  auto causal_cfg = f.cfg;
+  causal_cfg.values["_decision.kind"] = "option_tokens";
+  auto radix_model = create_gemma(causal_cfg, pad, c10::Device("cpu"), at::kFloat);
+  radix_model->ready();
+  TORCH_CHECK(
+      at::allclose(radix_model->forward(logical), radix_model->forward(compact), 1e-6, 1e-6),
+      "Gemma4 image PLE radix fold did not pad aliased image rows");
+  std::cout << "gemma4: image PLE pad identity, post-image context and shared KV passed\n";
+}
+
+void gemma4_image_visibility_test() {
+  at::manual_seed(418);
+  Fixture f("gemma4", 8, 2, 0);
+  add_tiny_vision(f.cfg, f.weights);
+  for (int64_t layer = 0; layer < 2; ++layer) {
+    const auto p = "layers." + std::to_string(layer) + ".";
+    f.cfg.values["layer_types." + std::to_string(layer)] = "sliding_attention";
+    // Uniform attention isolates visibility; identity V/O preserve direction,
+    // unlike rank-one projections whose magnitude disappears in RMSNorm.
+    for (const auto* name : {"self_attn.q_proj.weight", "self_attn.k_proj.weight"})
+      f.weights[p + name].zero_();
+    for (const auto* name : {"self_attn.v_proj.weight", "self_attn.o_proj.weight"}) {
+      const auto& matrix = f.weights.at(p + name);
+      f.weights[p + name] = at::eye(matrix.size(0), matrix.size(1), matrix.options());
+    }
+    for (const auto* name : {"mlp.gate_proj.weight", "mlp.up_proj.weight", "mlp.down_proj.weight"})
+      f.weights[p + name].zero_();
+  }
+  f.cfg.values["_decision.kind"] = "option_tokens";
+  auto features = at::randn({2, 16}) * .1;
+  auto changed = features.clone();
+  changed.select(0, 1).add_(1.);
+  auto run = [&](bool vision, const at::Tensor& pixels) {
+    auto cfg = f.cfg;
+    if (vision)
+      cfg.values["use_bidirectional_attention"] = "vision";
+    auto model = create_gemma(cfg, f.weights, c10::Device("cpu"), at::kFloat);
+    model->ready();
+    return model->forward(image_input(pixels));
+  };
+  const auto causal = run(false, features), causal_changed = run(false, changed);
+  TORCH_CHECK(at::allclose(causal.narrow(0, 1, 1), causal_changed.narrow(0, 1, 1), 1e-7, 1e-7),
+              "Gemma4 use_bidirectional_attention=None applied the vision overlay");
+  const auto vision = run(true, features), vision_changed = run(true, changed);
+  TORCH_CHECK(!at::allclose(vision.narrow(0, 1, 1), vision_changed.narrow(0, 1, 1), 1e-6, 1e-6),
+              "Gemma4 use_bidirectional_attention=vision did not make image tokens bidirectional");
+  std::cout << "gemma4: use_bidirectional_attention vision overlay gate passed\n";
+}
+
 int main(int argc, char** argv) {
   embedding_layer_key_aliases();
+  gemma4_image_ple_test();
+  gemma4_image_visibility_test();
+  gemma4_vision_clipping_test();
+  gemma4_layer_head_dim_geometry();
   feature_cache_bounds();
+  gemma_block_attention_test(c10::Device("cpu"), at::kFloat);
 #ifdef INFINITY_TORCH_CUDA_KERNELS
   if (argc > 1) {
+    gemma_block_attention_test(c10::Device(argv[1]), at::kBFloat16);
     gemma_low_precision_pointwise(c10::Device(argv[1]));
     for (const auto* family : {"gemma3", "gemma3_text", "gemma4", "embedding_gemma2"})
       dynamic_fp8(c10::Device(argv[1]), family);

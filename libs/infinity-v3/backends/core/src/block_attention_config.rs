@@ -36,11 +36,35 @@ fn resolve(overrides: Option<&Value>) -> Result<bool, String> {
     {
         return Err("Decision metadata requires a slot_lm readout".into());
     }
-    let attention = &value["attention"];
-    if attention["linear_attention"].as_str() != Some("causal") {
-        return Err("Decision metadata requires causal linear attention".into());
+    let attention = value
+        .get("attention")
+        .and_then(Value::as_object)
+        .ok_or("Decision metadata requires an attention map")?;
+    // Gemma checkpoints declare their causal non-full layers as sliding_attention;
+    // Qwen checkpoints declare linear_attention. Other layer keys fail closed.
+    for key in attention.keys() {
+        if !matches!(
+            key.as_str(),
+            "full_attention" | "linear_attention" | "sliding_attention"
+        ) {
+            return Err(format!(
+                "Unsupported attention layer key in model overrides: {key}"
+            ));
+        }
     }
-    let block = match attention["full_attention"].as_str() {
+    let mut non_full = false;
+    for key in ["linear_attention", "sliding_attention"] {
+        if let Some(mode) = attention.get(key) {
+            non_full = true;
+            if mode.as_str() != Some("causal") {
+                return Err(format!("Decision metadata requires causal {key}"));
+            }
+        }
+    }
+    if !non_full {
+        return Err("Decision metadata requires causal non-full attention".into());
+    }
+    let block = match attention.get("full_attention").and_then(Value::as_str) {
         Some("causal") => false,
         Some("block_bidirectional") => true,
         _ => return Err("Unsupported full-attention mode in model overrides".into()),
@@ -85,11 +109,18 @@ mod tests {
         assert_eq!(resolve(Some(&overrides)), Ok(true));
         let causal = json!({"attention":{"full_attention":"causal","linear_attention":"causal"},"readout":"slot_lm"});
         assert_eq!(resolve(Some(&causal)), Ok(false));
+        let gemma = json!({"attention":{"full_attention":"block_bidirectional","sliding_attention":"causal"},"readout":"slot_lm"});
+        assert_eq!(resolve(Some(&gemma)), Ok(true));
+        let gemma_causal = json!({"attention":{"full_attention":"causal","sliding_attention":"causal"},"readout":"slot_lm"});
+        assert_eq!(resolve(Some(&gemma_causal)), Ok(false));
         for invalid in [
             json!(null),
             json!({}),
             json!({"attention":{"full_attention":"bidirectional","linear_attention":"causal"}}),
             json!({"attention":{"full_attention":"block_bidirectional","linear_attention":"noncausal"}}),
+            json!({"attention":{"full_attention":"block_bidirectional","sliding_attention":"noncausal"}}),
+            json!({"attention":{"full_attention":"block_bidirectional","sliding_attention":"causal","mamba":"causal"}}),
+            json!({"attention":{"full_attention":"block_bidirectional"},"readout":"slot_lm"}),
             json!({"attention":{"full_attention":"block_bidirectional","linear_attention":"causal"},"readout":"pointer"}),
         ] {
             assert!(resolve(Some(&invalid)).is_err());

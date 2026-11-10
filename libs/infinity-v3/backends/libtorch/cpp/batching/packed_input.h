@@ -184,6 +184,10 @@ struct BlockLayout {
   at::Tensor prefix_cumulative, suffix_cumulative, kv_cumulative, history_cumulative, cache_sources;
   // Every executed suffix selects its own representative, so no device gather is needed.
   bool cache_sources_identity = false;
+  // Gemma full-attention row gathers: prefix queries and K/V, suffix queries, and the
+  // full rows each suffix attends. Qwen leaves these empty.
+  at::Tensor prefix_rows, suffix_rows, suffix_kv_rows;
+  int64_t max_prefix = 0, max_suffix = 0, max_kv = 0;
   std::vector<int32_t> history_offsets;
   BlockPages pages;
 };

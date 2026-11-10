@@ -6,7 +6,10 @@ use super::*;
 use infinity_v3_core::{
     chat::ChatProcessor,
     input::{ContentPart, ImageDetail, MessageContent, MessageRole},
-    multimodal::{image_positions, PreparedQwenImages, Qwen3VlProcessor},
+    multimodal::{
+        image_positions, Gemma4ImageProcessor, PreparedGemmaImages, PreparedQwenImages,
+        Qwen3VlProcessor,
+    },
 };
 
 const SYSTEM: &str = "Apply the question to the state. Choose exactly one of the listed options. Respond with only its uppercase letter, with no explanation or reasoning.";
@@ -15,13 +18,24 @@ const SPLIT_LABELS: &[&str] = &[
     "GZ", "HJ", "IY", "JF", "JG", "JH", "JL", "JN", "JQ",
 ];
 
+enum OnejevImages {
+    Qwen(Qwen3VlProcessor),
+    Gemma(Gemma4ImageProcessor),
+    Unsupported(&'static str),
+}
+
+pub(super) enum OnejevPreparedImages {
+    Qwen(PreparedQwenImages),
+    Gemma(PreparedGemmaImages),
+}
+
 pub struct Onejev {
     tokenizer: Tokenizer,
     chat: ChatProcessor,
     codes: Vec<String>,
     token_ids: Vec<u32>,
     max_input_length: usize,
-    images: Option<Qwen3VlProcessor>,
+    images: Option<OnejevImages>,
     block_attention: bool,
     reuse_prefix: bool,
 }
@@ -101,30 +115,75 @@ impl Onejev {
         config: infinity_v3_core::multimodal::MultimodalConfig,
     ) -> anyhow::Result<Self> {
         let model: Value = serde_json::from_slice(&std::fs::read(path.join("config.json"))?)?;
-        if model["vision_config"].is_object()
-            && (path.join("processor_config.json").exists()
+        let family = model["model_type"]
+            .as_str()
+            .or_else(|| model["text_config"]["model_type"].as_str())
+            .unwrap_or_default();
+        let vision = model["vision_config"].is_object();
+        if matches!(family, "gemma4" | "gemma4_text" | "gemma4_unified") {
+            self.images = if vision && path.join("processor_config.json").exists() {
+                Some(OnejevImages::Gemma(
+                    Gemma4ImageProcessor::load(path, config)
+                        .map_err(|e| anyhow::anyhow!(e.to_string()))?,
+                ))
+            } else {
+                Some(OnejevImages::Unsupported("Gemma4"))
+            };
+            return Ok(self);
+        }
+        if !vision
+            || !(path.join("processor_config.json").exists()
                 || path.join("preprocessor_config.json").exists())
         {
-            self.images = Some(
-                Qwen3VlProcessor::load_images_only(
-                    path,
-                    self.tokenizer.clone(),
-                    self.max_input_length,
-                    config,
-                )
-                .map_err(|e| anyhow::anyhow!(e.to_string()))?,
-            );
+            return Ok(self);
         }
+        if !family.starts_with("qwen3_5") {
+            self.images = Some(OnejevImages::Unsupported("this model"));
+            return Ok(self);
+        }
+        self.images = Some(OnejevImages::Qwen(
+            Qwen3VlProcessor::load_images_only(
+                path,
+                self.tokenizer.clone(),
+                self.max_input_length,
+                config,
+            )
+            .map_err(|e| anyhow::anyhow!(e.to_string()))?,
+        ));
         Ok(self)
     }
 
+    fn image_marker(&self) -> Option<&'static str> {
+        match &self.images {
+            Some(OnejevImages::Gemma(_)) => Some("<|image|>"),
+            Some(OnejevImages::Unsupported(_)) => None,
+            // Preparation-only callers without a loaded processor keep the
+            // historical Qwen marker; requests are gated by image_sources.
+            Some(OnejevImages::Qwen(_)) | None => {
+                Some("<|vision_start|><|image_pad|><|vision_end|>")
+            }
+        }
+    }
+
     pub(super) fn max_images(&self) -> usize {
-        self.images.as_ref().map_or(0, Qwen3VlProcessor::max_images)
+        match &self.images {
+            Some(OnejevImages::Qwen(images)) => images.max_images(),
+            Some(OnejevImages::Gemma(images)) => images.max_images(),
+            Some(OnejevImages::Unsupported(_)) | None => 0,
+        }
+    }
+
+    pub(super) fn unsupported_images(&self) -> Option<&'static str> {
+        match &self.images {
+            Some(OnejevImages::Unsupported(family)) => Some(*family),
+            _ => None,
+        }
     }
 
     pub(super) fn image_sources(
         request: &mut SystemOneRequest,
         max_images: usize,
+        unsupported: Option<&str>,
     ) -> Result<Vec<String>, String> {
         let check_text = |text: &str| {
             if text.contains("<image:") || text.contains("<video:") {
@@ -150,6 +209,11 @@ impl Onejev {
                             ContentPart::ImageUrl { image_url }
                                 if matches!(message.role, MessageRole::User) =>
                             {
+                                if let Some(family) = unsupported {
+                                    return Err(format!(
+                                        "OneJev image inputs are unsupported for {family}"
+                                    ));
+                                }
                                 if !matches!(image_url.detail, None | Some(ImageDetail::Auto)) {
                                     return Err(
                                         "OneJev image detail must be auto or omitted".into()
@@ -175,19 +239,44 @@ impl Onejev {
     pub(super) async fn prepare_images(
         &self,
         sources: Vec<String>,
-    ) -> Result<PreparedQwenImages, infinity_v3_core::TextEmbeddingsError> {
-        self.images
-            .as_ref()
-            .ok_or_else(|| {
-                infinity_v3_core::TextEmbeddingsError::Validation(
-                    "OneJev image processor unavailable".into(),
-                )
-            })?
-            .prepare_images(sources, 4096)
-            .await
+    ) -> Result<OnejevPreparedImages, infinity_v3_core::TextEmbeddingsError> {
+        match &self.images {
+            Some(OnejevImages::Qwen(images)) => images
+                .prepare_images(sources, 4096)
+                .await
+                .map(OnejevPreparedImages::Qwen),
+            Some(OnejevImages::Gemma(images)) => images
+                .prepare(sources)
+                .await
+                .map(OnejevPreparedImages::Gemma),
+            Some(OnejevImages::Unsupported(family)) => {
+                Err(infinity_v3_core::TextEmbeddingsError::Validation(format!(
+                    "OneJev image inputs are unsupported for {family}"
+                )))
+            }
+            None => Err(infinity_v3_core::TextEmbeddingsError::Validation(
+                "OneJev image processor unavailable".into(),
+            )),
+        }
     }
 
     pub(super) fn attach_images(
+        &self,
+        questions: &mut [Question],
+        images: OnejevPreparedImages,
+        max_len: Option<usize>,
+    ) -> Result<(), String> {
+        match images {
+            OnejevPreparedImages::Qwen(images) => {
+                self.attach_qwen_images(questions, images, max_len)
+            }
+            OnejevPreparedImages::Gemma(images) => {
+                self.attach_gemma_images(questions, images, max_len)
+            }
+        }
+    }
+
+    fn attach_qwen_images(
         &self,
         questions: &mut [Question],
         images: PreparedQwenImages,
@@ -250,6 +339,83 @@ impl Onejev {
                 position_ids: positions,
                 memory: Some(images.memory.clone()),
             }));
+        }
+        Ok(())
+    }
+
+    fn attach_gemma_images(
+        &self,
+        questions: &mut [Question],
+        images: PreparedGemmaImages,
+        max_len: Option<usize>,
+    ) -> Result<(), String> {
+        let image_id = self
+            .tokenizer
+            .token_to_id("<|image|>")
+            .ok_or("Gemma tokenizer is missing image token")?;
+        let begin = self
+            .tokenizer
+            .token_to_id("<|image>")
+            .ok_or("Gemma tokenizer is missing image boundary")?;
+        let end = self
+            .tokenizer
+            .token_to_id("<image|>")
+            .ok_or("Gemma tokenizer is missing image boundary")?;
+        let limit = max_len
+            .unwrap_or(self.max_input_length)
+            .min(self.max_input_length);
+        for question in questions {
+            let prefix_length = match &question.input {
+                DecisionInput::BlockOptionTokens { prefix_length, .. } => Some(*prefix_length),
+                _ => None,
+            };
+            let mut expanded_prefix = None;
+            let encoding = &mut question.encoding;
+            let mut ids = Vec::new();
+            let mut spans = Vec::new();
+            let mut patches = images.images.iter();
+            for (index, &id) in encoding.input_ids.iter().enumerate() {
+                if id == image_id {
+                    let image = patches.next().ok_or("Too many image markers")?;
+                    ids.push(begin);
+                    spans.push((ids.len(), image.clone()));
+                    let end_id = ids
+                        .len()
+                        .checked_add(image.token_count())
+                        .ok_or("Image span overflow")?;
+                    ids.resize(end_id, image_id);
+                    ids.push(end);
+                } else {
+                    ids.push(id);
+                }
+                if prefix_length == Some(index + 1) {
+                    expanded_prefix = Some(ids.len());
+                }
+            }
+            if patches.next().is_some() {
+                return Err("Image marker count mismatch".into());
+            }
+            if ids.len() > limit {
+                return Err(
+                    "OneJev image prompt exceeds token limit; image spans cannot be truncated"
+                        .into(),
+                );
+            }
+            if let DecisionInput::BlockOptionTokens { prefix_length, .. } = &mut question.input {
+                *prefix_length = expanded_prefix.ok_or("Invalid OneJev image prefix boundary")?;
+            }
+            let length =
+                u32::try_from(ids.len()).map_err(|_| "OneJev prompt exceeds position range")?;
+            let positions = (0..length).collect::<Vec<_>>();
+            encoding.token_type_ids = vec![0; ids.len()];
+            encoding.position_ids = positions.clone();
+            encoding.multimodal = Some(Arc::new(infinity_v3_backend::MultimodalEncoding {
+                audios: vec![],
+                images: spans,
+                position_ids: std::array::from_fn(|_| positions.clone()),
+                memory: Some(images.memory.clone()),
+            }));
+            encoding.input_ids = ids;
         }
         Ok(())
     }
@@ -344,11 +510,35 @@ impl Onejev {
             let header = if kind == "score" { "Rate the state:" } else { "Question:" };
             let word = if n <= 26 { "letter" } else { "label" };
             let user = format!("<state>\n{state}\n</state>\n\n{header} {instructions}\n\nOptions:\n{options}\n\nAnswer with one {word}: {}.", self.codes[..n].join(", "));
-            if ["<|im_start|>", "<|im_end|>", "<|vision_start|>", "<|vision_end|>", "<|image_pad|>", "<|video_pad|>"].iter().any(|token| user.contains(token)) { return Err("State and questions must not contain reserved chat or media tokens".into()); }
+            if [
+                "<|im_start|>",
+                "<|im_end|>",
+                "<|vision_start|>",
+                "<|vision_end|>",
+                "<|image_pad|>",
+                "<|video_pad|>",
+                "<|image>",
+                "<|image|>",
+                "<image|>",
+                "<|audio>",
+                "<|audio|>",
+                "<audio|>",
+                "<|video|>",
+            ]
+            .iter()
+            .any(|token| user.contains(token))
+            {
+                return Err("State and questions must not contain reserved chat or media tokens".into());
+            }
             if instructions.contains("<image:") || options.contains("<image:") || user.contains("<video:") { return Err("Questions must not contain media placeholders".into()); }
             let mut prompt = self.chat.render_decision(SYSTEM, &user)?;
-            for i in 1..=image_count {
-                prompt = prompt.replace(&format!("<image:{i}>"), "<|vision_start|><|image_pad|><|vision_end|>");
+            if image_count > 0 {
+                let marker = self
+                    .image_marker()
+                    .ok_or("OneJev image processor unavailable")?;
+                for i in 1..=image_count {
+                    prompt = prompt.replace(&format!("<image:{i}>"), marker);
+                }
             }
             let boundary = if self.block_attention {
                 let suffix = format!("{header} {instructions}\n\nOptions:\n{options}\n\nAnswer with one {word}: {}.", self.codes[..n].join(", "));
@@ -468,7 +658,12 @@ mod tests {
             {"type":"image_url", "image_url":{"url":"https://example.com/second.png"}}
         ]}]});
         let mut with_images: SystemOneRequest = serde_json::from_value(request.clone())?;
-        assert_eq!(Onejev::image_sources(&mut with_images, 2).unwrap().len(), 2);
+        assert_eq!(
+            Onejev::image_sources(&mut with_images, 2, None)
+                .unwrap()
+                .len(),
+            2
+        );
         request["state"] = serde_json::to_value(with_images.state)?;
         compare_preparation(&mut model, request.clone())?;
         for reuse in [true, false] {
@@ -669,13 +864,15 @@ mod tests {
                 merge_size: 2,
             })
         };
-        let prepared = || PreparedQwenImages {
-            images: vec![image(4), image(6)],
-            memory: Arc::new(
-                Arc::new(tokio::sync::Semaphore::new(1))
-                    .try_acquire_owned()
-                    .unwrap(),
-            ),
+        let prepared = || {
+            OnejevPreparedImages::Qwen(PreparedQwenImages {
+                images: vec![image(4), image(6)],
+                memory: Arc::new(
+                    Arc::new(tokio::sync::Semaphore::new(1))
+                        .try_acquire_owned()
+                        .unwrap(),
+                ),
+            })
         };
         let question = |prefix_length| Question {
             id: "q".into(),
@@ -746,7 +943,7 @@ mod tests {
         ]}]},"questions":{"q":{"type":"noul"}}});
         let mut request = serde_json::from_value(value.clone()).unwrap();
         assert_eq!(
-            Onejev::image_sources(&mut request, 16).unwrap(),
+            Onejev::image_sources(&mut request, 16, None).unwrap(),
             [
                 "data:image/png;base64,first",
                 "data:image/png;base64,second"
@@ -766,7 +963,8 @@ mod tests {
                 }
             }
             assert!(
-                Onejev::image_sources(&mut serde_json::from_value(invalid).unwrap(), 16).is_err()
+                Onejev::image_sources(&mut serde_json::from_value(invalid).unwrap(), 16, None)
+                    .is_err()
             );
         }
         for limit in [1, 16] {
@@ -778,12 +976,191 @@ mod tests {
                         count
                     ]);
                 assert_eq!(
-                    Onejev::image_sources(&mut serde_json::from_value(request).unwrap(), limit)
-                        .is_ok(),
+                    Onejev::image_sources(
+                        &mut serde_json::from_value(request).unwrap(),
+                        limit,
+                        None
+                    )
+                    .is_ok(),
                     count == limit
                 );
             }
         }
+    }
+
+    #[test]
+    fn gemma_images_load_and_keep_text_startup() -> anyhow::Result<()> {
+        let path =
+            std::env::temp_dir().join(format!("onejev-gemma-images-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&path)?;
+        std::fs::write(
+            path.join("config.json"),
+            r#"{"model_type":"gemma4","vision_config":{"model_type":"gemma4_vision"}}"#,
+        )?;
+        std::fs::write(
+            path.join("processor_config.json"),
+            r#"{"image_processor":{"patch_size":16,"pooling_kernel_size":3,"max_soft_tokens":280,"resample":3,"do_resize":true,"do_rescale":true,"do_normalize":false,"do_convert_rgb":true,"rescale_factor":0.00392156862745098}}"#,
+        )?;
+        std::fs::write(
+            path.join("chat_template.jinja"),
+            "{{ messages[0].content }}\n{{ messages[1].content }}",
+        )?;
+        let chat = ChatProcessor::load(&path)
+            .map_err(anyhow::Error::msg)?
+            .unwrap();
+        let model = Onejev {
+            tokenizer: prefix::tests::tokenizer(),
+            chat,
+            codes: vec!["A".into(), "B".into()],
+            token_ids: vec![1, 2],
+            max_input_length: 512,
+            images: None,
+            block_attention: false,
+            reuse_prefix: false,
+        }
+        .with_images(&path, Default::default())?;
+        assert!(model.unsupported_images().is_none());
+        assert_eq!(model.max_images(), 16);
+        let request: SystemOneRequest = serde_json::from_value(json!({
+            "state": "cafe",
+            "questions": {"q": {"type": "noul"}}
+        }))?;
+        let questions = model.prepare(request).map_err(anyhow::Error::msg)?;
+        assert_eq!(questions.len(), 1);
+        assert!(!questions[0].encoding.input_ids.is_empty());
+        let reserved: SystemOneRequest = serde_json::from_value(json!({
+            "state": "<|image|>",
+            "questions": {"q": {"type": "noul"}}
+        }))?;
+        let error = model.prepare(reserved).err().unwrap();
+        assert!(error.contains("reserved"));
+        std::fs::remove_dir_all(&path)?;
+        Ok(())
+    }
+
+    #[test]
+    fn gemma_image_expansion_preserves_prefix_boundaries_and_limits() -> anyhow::Result<()> {
+        use infinity_v3_backend::ImagePatches;
+        let path =
+            std::env::temp_dir().join(format!("onejev-gemma-images-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&path)?;
+        std::fs::write(
+            path.join("chat_template.jinja"),
+            "{{ messages[0].content }}",
+        )?;
+        let chat = ChatProcessor::load(&path)
+            .map_err(anyhow::Error::msg)?
+            .unwrap();
+        std::fs::remove_dir_all(&path)?;
+        let tokenizer = Tokenizer::new(
+            tokenizers::models::wordlevel::WordLevel::builder()
+                .vocab(std::collections::HashMap::from([
+                    ("[UNK]".into(), 0),
+                    ("<|image>".into(), 1),
+                    ("<|image|>".into(), 2),
+                    ("<image|>".into(), 3),
+                    ("a".into(), 10),
+                    ("b".into(), 11),
+                    ("c".into(), 12),
+                ]))
+                .unk_token("[UNK]".into())
+                .build()
+                .map_err(|e| anyhow::anyhow!(e.to_string()))?,
+        );
+        let model = Onejev {
+            tokenizer,
+            chat,
+            codes: vec![],
+            token_ids: vec![],
+            max_input_length: 64,
+            images: None,
+            block_attention: true,
+            reuse_prefix: false,
+        };
+        let image = |grid_thw| {
+            Arc::new(ImagePatches {
+                pixels: Vec::new(),
+                grid_thw,
+                patch_dim: 768,
+                merge_size: 3,
+            })
+        };
+        let prepared = || {
+            OnejevPreparedImages::Gemma(PreparedGemmaImages {
+                images: vec![image([1, 3, 3]), image([1, 6, 6])],
+                memory: Arc::new(
+                    Arc::new(tokio::sync::Semaphore::new(1))
+                        .try_acquire_owned()
+                        .unwrap(),
+                ),
+            })
+        };
+        let question = |prefix_length| Question {
+            id: "q".into(),
+            kind: "noul".into(),
+            labels: vec![],
+            criteria: Value::Null,
+            compute_chars: 0,
+            encoding: ValidEncoding {
+                multimodal: None,
+                input_ids: vec![10, 2, 11, 2, 12],
+                token_type_ids: vec![0; 5],
+                position_ids: (0..5).collect(),
+                tokens: vec![],
+                offsets: vec![],
+            },
+            input: DecisionInput::BlockOptionTokens {
+                token_ids: vec![11, 12],
+                prefix_length,
+            },
+        };
+        for (original, expanded) in [(2, 4), (4, 11), (5, 12)] {
+            let mut questions = vec![question(original), question(original)];
+            model
+                .attach_images(&mut questions, prepared(), None)
+                .map_err(anyhow::Error::msg)?;
+            assert_eq!(
+                questions[0].encoding.input_ids,
+                [10, 1, 2, 3, 11, 1, 2, 2, 2, 2, 3, 12]
+            );
+            let DecisionInput::BlockOptionTokens { prefix_length, .. } = &questions[0].input else {
+                panic!("Lost block metadata")
+            };
+            assert_eq!(*prefix_length, expanded);
+            assert_eq!(
+                super::input_token_count(&questions),
+                expanded + 2 * (12 - expanded)
+            );
+            let media = questions[0].encoding.multimodal.as_ref().unwrap();
+            assert_eq!(
+                media
+                    .images
+                    .iter()
+                    .map(|(start, _)| *start)
+                    .collect::<Vec<_>>(),
+                [2, 6]
+            );
+            let sequential = (0..12).collect::<Vec<_>>();
+            assert!(media.position_ids.iter().all(|axis| axis == &sequential));
+            assert_eq!(questions[0].encoding.position_ids, sequential);
+        }
+        assert!(model
+            .attach_images(&mut [question(4)], prepared(), Some(11))
+            .unwrap_err()
+            .contains("token limit"));
+        let mut missing = question(4);
+        missing.encoding.input_ids = vec![10, 2, 11, 12];
+        assert!(model
+            .attach_images(&mut [missing], prepared(), None)
+            .unwrap_err()
+            .contains("count mismatch"));
+        let mut extra = question(4);
+        extra.encoding.input_ids = vec![10, 2, 11, 2, 12, 2];
+        assert!(model
+            .attach_images(&mut [extra], prepared(), None)
+            .unwrap_err()
+            .contains("Too many image markers"));
+        Ok(())
     }
 
     #[test]
@@ -836,8 +1213,9 @@ mod tests {
         let runtime = tokio::runtime::Runtime::new()?;
         for case in fixtures {
             let mut request: SystemOneRequest = serde_json::from_value(case["request"].clone())?;
-            let sources = Onejev::image_sources(&mut request, model.max_images())
-                .map_err(anyhow::Error::msg)?;
+            let sources =
+                Onejev::image_sources(&mut request, model.max_images(), model.unsupported_images())
+                    .map_err(anyhow::Error::msg)?;
             let mut questions = model.prepare(request).map_err(anyhow::Error::msg)?;
             if !sources.is_empty() {
                 let images = runtime.block_on(model.prepare_images(sources))?;

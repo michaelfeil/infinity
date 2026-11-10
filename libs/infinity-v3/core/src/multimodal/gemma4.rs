@@ -84,6 +84,10 @@ impl Gemma4ImageProcessor {
         })
     }
 
+    pub fn max_images(&self) -> usize {
+        self.config.max_images
+    }
+
     pub async fn prepare(&self, sources: Vec<String>) -> Result<PreparedGemmaImages> {
         if sources.is_empty() || sources.len() > self.config.max_images {
             return Err(invalid("Invalid number of images"));
