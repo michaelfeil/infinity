@@ -16,13 +16,12 @@ struct Gemma4PreFeedforwardNorm {
   at::Tensor router;
 };
 
-Gemma4PreFeedforwardNorm gemma4_bf16_pre_feedforward_norm(
-    const at::Tensor& x,
-    const at::Tensor& dense_scale,
-    const at::Tensor& routed_scale,
-    const at::Tensor& router_scale,
-    const at::Tensor& root,
-    double epsilon);
+Gemma4PreFeedforwardNorm gemma4_bf16_pre_feedforward_norm(const at::Tensor& x,
+                                                          const at::Tensor& dense_scale,
+                                                          const at::Tensor& routed_scale,
+                                                          const at::Tensor& router_scale,
+                                                          const at::Tensor& root,
+                                                          double epsilon);
 
 // Gather from the complete all-token score GEMM. Every capped operation rounds
 // to BF16 before the next operation, preserving the declared publisher readout.

@@ -356,11 +356,11 @@ class Gemma final : public Model {
     auto input =
         routed_input.defined() ? routed_input : norm(residual, p + "pre_feedforward_layernorm_2");
     // Preserve the router's BF16 rounding before both root-size and learned scales.
-    auto root = at::scalar_tensor(1. / std::sqrt(double(hidden)), residual.options());
-    auto routing =
-        router_input.defined()
-            ? router_input
-            : ((norm(residual, "", true) * root) * w(p + "router.scale")).to(at::kFloat);
+    auto routing = router_input;
+    if (!routing.defined()) {
+      auto root = at::scalar_tensor(1. / std::sqrt(double(hidden)), residual.options());
+      routing = ((norm(residual, "", true) * root) * w(p + "router.scale")).to(at::kFloat);
+    }
     // Preserve original FP32 accumulation with the logical-shape plan while
     // computing only actual compact router rows. Unsupported plans retain
     // the original logical-row ATen projection through the helper fallback.

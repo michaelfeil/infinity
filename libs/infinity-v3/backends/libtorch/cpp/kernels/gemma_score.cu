@@ -232,8 +232,7 @@ __global__ void gemma4_pre_ff_norm_kernel(const __nv_bfloat16* x,
   const unsigned int lanes = logical_threads / blockDim.x;
   float partial[4] = {0.f, 0.f, 0.f, 0.f};
   for (unsigned int lane = 0; lane < lanes; ++lane)
-    for (unsigned int col = threadIdx.x + lane * blockDim.x; col < width;
-         col += logical_threads) {
+    for (unsigned int col = threadIdx.x + lane * blockDim.x; col < width; col += logical_threads) {
       float v = __bfloat162float(x[base + col]);
       partial[lane] = __fmaf_rn(v, v, partial[lane]);
     }
@@ -286,16 +285,16 @@ Gemma4PreFeedforwardNorm gemma4_bf16_pre_feedforward_norm(const at::Tensor& x,
   Gemma4PreFeedforwardNorm result;
   const bool supported =
       x.defined() && x.is_cuda() && x.scalar_type() == at::kBFloat16 && x.dim() == 2 &&
-      x.is_contiguous() && x.size(1) > 0 && x.size(1) <= 8192 &&
-      dense_scale.defined() && routed_scale.defined() && router_scale.defined() && root.defined() &&
+      x.is_contiguous() && x.size(1) > 0 && x.size(1) <= 8192 && dense_scale.defined() &&
+      routed_scale.defined() && router_scale.defined() && root.defined() &&
       dense_scale.device() == x.device() && routed_scale.device() == x.device() &&
       router_scale.device() == x.device() && root.device() == x.device() &&
       dense_scale.scalar_type() == at::kFloat && routed_scale.scalar_type() == at::kFloat &&
       dense_scale.is_contiguous() && routed_scale.is_contiguous() &&
       dense_scale.numel() == x.size(1) && routed_scale.numel() == x.size(1) &&
       router_scale.scalar_type() == at::kBFloat16 && router_scale.is_contiguous() &&
-      router_scale.numel() == x.size(1) &&
-      root.scalar_type() == at::kBFloat16 && root.is_contiguous() && root.numel() == 1;
+      router_scale.numel() == x.size(1) && root.scalar_type() == at::kBFloat16 &&
+      root.is_contiguous() && root.numel() == 1;
   if (!supported)
     return result;
   c10::cuda::CUDAGuard guard(x.device());

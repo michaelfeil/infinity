@@ -209,12 +209,12 @@ void publisher_bf16_score_readout(const c10::Device& device) {
              at::equal(a.contiguous().view(at::kByte), b.contiguous().view(at::kByte));
     };
     auto check = [&](const Gemma4PreFeedforwardNorm& actual) {
-      TORCH_CHECK(same(actual.dense, gemma_norm_cuda(x, dense_scale, 1e-6, true)) &&
-                      same(actual.routed, gemma_norm_cuda(x, routed_scale, 1e-6, true)) &&
-                      same(actual.router,
-                           ((gemma_norm_cuda(x, ones, 1e-6, true) * root) * router_scale)
-                               .to(at::kFloat)),
-                  "Shared pre-FF statistics changed normalization or router stages");
+      TORCH_CHECK(
+          same(actual.dense, gemma_norm_cuda(x, dense_scale, 1e-6, true)) &&
+              same(actual.routed, gemma_norm_cuda(x, routed_scale, 1e-6, true)) &&
+              same(actual.router,
+                   ((gemma_norm_cuda(x, ones, 1e-6, true) * root) * router_scale).to(at::kFloat)),
+          "Shared pre-FF statistics changed normalization or router stages");
     };
     auto norm_stream = at::cuda::getStreamFromPool(false, device.index());
     at::cuda::getCurrentCUDAStream(device.index()).synchronize();
