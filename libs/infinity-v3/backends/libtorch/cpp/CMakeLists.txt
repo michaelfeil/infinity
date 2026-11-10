@@ -377,6 +377,50 @@ if(TARGET torch_cuda)
       target_compile_definitions(infinity_moe_sm100 PRIVATE INFINITY_TORCH_MOE_SM100_FAMILY)
       target_compile_definitions(infinity_torch PRIVATE INFINITY_TORCH_MOE_SM100_FAMILY)
     endif()
+    # Routed FP8 expert GEMMs use the same SM100 family policy and CUTLASS 4.5
+    # pointer-array schedule as the proven SM100 down projection above. The
+    # helper is the only ATen-facing user, so non-SM100 builds do not link it.
+    add_library(infinity_moe_fp8_grouped_sm100 OBJECT kernels/gemma_moe_fp8_grouped_sm100.cu)
+    set_target_properties(infinity_moe_fp8_grouped_sm100 PROPERTIES
+      POSITION_INDEPENDENT_CODE ON CUDA_STANDARD 20
+      CUDA_ARCHITECTURES "${INFINITY_MOE_SM100_ARCHITECTURES}")
+    target_include_directories(infinity_moe_fp8_grouped_sm100 PRIVATE
+      "${CMAKE_CURRENT_SOURCE_DIR}" "${CUTLASS_ROOT}/include" "${CUTLASS_ROOT}/tools/util/include")
+    target_compile_options(infinity_moe_fp8_grouped_sm100 PRIVATE --expt-relaxed-constexpr -DNDEBUG)
+    target_compile_definitions(infinity_moe_fp8_grouped_sm100 PRIVATE
+      INFINITY_MOE_FP8_GROUPED_SM100)
+    if(INFINITY_MOE_SM100_FAMILY)
+      target_compile_definitions(infinity_moe_fp8_grouped_sm100 PRIVATE
+        INFINITY_MOE_FP8_GROUPED_SM100_FAMILY)
+    endif()
+    target_sources(infinity_torch PRIVATE
+      $<TARGET_OBJECTS:infinity_moe_fp8_grouped_sm100>
+      kernels/moe_fp8.cu)
+    target_compile_definitions(infinity_torch PRIVATE INFINITY_TORCH_MOE_FP8)
+    set(INFINITY_MOE_FP8_ENABLED ON)
+    # Native MXFP8 routed experts. The provider keeps FP32 down output so the
+    # original weighted combine is unchanged, avoiding Torch grouped MX's
+    # BF16-only down result.
+    add_library(infinity_moe_mxfp8_grouped_sm100 OBJECT
+      kernels/gemma_moe_mxfp8_grouped_sm100.cu)
+    set_target_properties(infinity_moe_mxfp8_grouped_sm100 PROPERTIES
+      POSITION_INDEPENDENT_CODE ON CUDA_STANDARD 20
+      CUDA_ARCHITECTURES "${INFINITY_MOE_SM100_ARCHITECTURES}")
+    target_include_directories(infinity_moe_mxfp8_grouped_sm100 PRIVATE
+      "${CMAKE_CURRENT_SOURCE_DIR}" "${CUTLASS_ROOT}/include" "${CUTLASS_ROOT}/tools/util/include")
+    target_compile_options(infinity_moe_mxfp8_grouped_sm100 PRIVATE
+      --expt-relaxed-constexpr -DNDEBUG)
+    target_compile_definitions(infinity_moe_mxfp8_grouped_sm100 PRIVATE
+      INFINITY_MOE_MXFP8_GROUPED_SM100)
+    if(INFINITY_MOE_SM100_FAMILY)
+      target_compile_definitions(infinity_moe_mxfp8_grouped_sm100 PRIVATE
+        INFINITY_MOE_MXFP8_GROUPED_SM100_FAMILY)
+    endif()
+    target_sources(infinity_torch PRIVATE
+      $<TARGET_OBJECTS:infinity_moe_mxfp8_grouped_sm100>
+      kernels/moe_mxfp8.cu)
+    target_compile_definitions(infinity_torch PRIVATE INFINITY_TORCH_MOE_MXFP8)
+    set(INFINITY_MOE_MXFP8_ENABLED ON)
   endif()
 endif()
 
@@ -474,5 +518,25 @@ if(INFINITY_BUILD_NATIVE_TESTS)
     foreach(test decoder_models encoder_models gemma_models qwen35_models qwen3_vl_models)
       add_test(NAME ${test}_cuda COMMAND ${test}_test cuda:0)
     endforeach()
+    if(INFINITY_MOE_FP8_ENABLED)
+      add_executable(gemma_moe_fp8_test tests/gemma_moe_fp8_test.cpp)
+      target_compile_features(gemma_moe_fp8_test PRIVATE cxx_std_20)
+      target_compile_definitions(gemma_moe_fp8_test PRIVATE
+        INFINITY_TORCH_MOE_FP8 INFINITY_TORCH_CUDA_KERNELS)
+      target_link_libraries(gemma_moe_fp8_test PRIVATE infinity_torch "${TORCH_LIBRARIES}"
+        CUDA::cudart)
+      add_test(NAME gemma_moe_fp8_cuda COMMAND gemma_moe_fp8_test 129)
+      set_tests_properties(gemma_moe_fp8_cuda PROPERTIES SKIP_RETURN_CODE 77)
+    endif()
+    if(INFINITY_MOE_MXFP8_ENABLED)
+      add_executable(gemma_moe_mxfp8_test tests/gemma_moe_mxfp8_test.cpp)
+      target_compile_features(gemma_moe_mxfp8_test PRIVATE cxx_std_20)
+      target_compile_definitions(gemma_moe_mxfp8_test PRIVATE
+        INFINITY_TORCH_MOE_MXFP8 INFINITY_TORCH_CUDA_KERNELS)
+      target_link_libraries(gemma_moe_mxfp8_test PRIVATE infinity_torch "${TORCH_LIBRARIES}"
+        CUDA::cudart)
+      add_test(NAME gemma_moe_mxfp8_cuda COMMAND gemma_moe_mxfp8_test 129)
+      set_tests_properties(gemma_moe_mxfp8_cuda PROPERTIES SKIP_RETURN_CODE 77)
+    endif()
   endif()
 endif()

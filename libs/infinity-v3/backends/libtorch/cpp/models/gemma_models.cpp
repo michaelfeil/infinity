@@ -34,6 +34,12 @@
 #include <memory>
 #ifdef INFINITY_TORCH_CUDA_KERNELS
 #include "kernels/gemma_score.h"
+#ifdef INFINITY_TORCH_MOE_FP8
+#include "kernels/moe_fp8.h"
+#endif
+#ifdef INFINITY_TORCH_MOE_MXFP8
+#include "kernels/moe_mxfp8.h"
+#endif
 #include <ATen/cuda/CUDAContext.h>
 #include <c10/cuda/CUDAStream.h>
 #include <c10/cuda/CUDAGuard.h>
@@ -63,6 +69,14 @@ class Gemma final : public Model {
     std::string p;
     at::Tensor qkv, gate_up;
     DenseMlp dense_mlp;
+#ifdef INFINITY_TORCH_MOE_FP8
+    /// Cached E4M3 routed-expert weights/scales when MoE runs the native FP8 provider.
+    std::unique_ptr<GemmaMoeFp8> fp8_moe;
+#endif
+#ifdef INFINITY_TORCH_MOE_MXFP8
+    /// Cached block-scaled MXFP8 routed-expert values/scales.
+    std::unique_ptr<GemmaMoeMxfp8> mx_moe;
+#endif
     /// Per-layer head width and K/V head count may differ from global defaults. window applies
     /// only when sliding is true.
     int64_t dim, kv, window;
@@ -348,7 +362,16 @@ class Gemma final : public Model {
   at::Tensor moe(const at::Tensor& residual,
                  const at::Tensor& dense,
                  const std::string& p,
-                 const PackedInput& packed) const {
+                 const PackedInput& packed
+#ifdef INFINITY_TORCH_MOE_FP8
+                 ,
+                 const GemmaMoeFp8* fp8_moe = nullptr
+#endif
+#ifdef INFINITY_TORCH_MOE_MXFP8
+                 ,
+                 const GemmaMoeMxfp8* mx_moe = nullptr
+#endif
+  ) const {
     auto input = norm(residual, p + "pre_feedforward_layernorm_2");
     // Preserve the router's BF16 rounding before both root-size and learned scales.
     auto root = at::scalar_tensor(1. / std::sqrt(double(hidden)), residual.options());
@@ -362,9 +385,25 @@ class Gemma final : public Model {
                       : at::linear(routing, router_matrix);
     auto count = integer("num_experts", 0), top = integer("top_k_experts", 8);
     TORCH_CHECK(count > 0 && top > 0 && top <= count, "Invalid Gemma4 MoE routing geometry");
+    auto act = string("hidden_activation", "gelu_pytorch_tanh");
+#ifdef INFINITY_TORCH_MOE_MXFP8
+    if (mx_moe) {
+      auto output = mx_moe->forward(
+          input, logits, weight(router_f32, prefix + p + "router.per_expert_scale"));
+      return norm(dense, p + "post_feedforward_layernorm_1") +
+             norm(output, p + "post_feedforward_layernorm_2");
+    }
+#endif
+#ifdef INFINITY_TORCH_MOE_FP8
+    if (fp8_moe) {
+      auto output = fp8_moe->forward(
+          input, logits, weight(router_f32, prefix + p + "router.per_expert_scale"));
+      return norm(dense, p + "post_feedforward_layernorm_1") +
+             norm(output, p + "post_feedforward_layernorm_2");
+    }
+#endif
     const auto& gate_up = w(p + "experts.gate_up_proj");
     const auto& down = w(p + "experts.down_proj");
-    auto act = string("hidden_activation", "gelu_pytorch_tanh");
     if (device.is_cuda() && dtype == at::kBFloat16 && count == 128 && top == 8 && hidden == 2816 &&
         down.size(2) == 704 && (act == "gelu_pytorch_tanh" || act == "gelu_new")) {
       auto output = routed_moe_cuda(input,
@@ -1413,12 +1452,44 @@ public:
     TORCH_CHECK(cfg.dynamic_quantization_scope() == QuantizationScope::Mlp,
                 "Gemma quantization supports MLP scope only");
     if (quantization != Quantization::None) {
-      TORCH_CHECK(!boolean("enable_moe_block", false),
-                  quantization_name(quantization),
-                  " Gemma requires a dense checkpoint; routed experts are unsupported");
       TORCH_CHECK(device.is_cuda() && (dtype == at::kHalf || dtype == at::kBFloat16),
                   quantization_name(quantization),
                   " Gemma requires CUDA float16/bfloat16");
+      if (boolean("enable_moe_block", false)) {
+        TORCH_CHECK(quantization == Quantization::Fp8 || quantization == Quantization::Mxfp8,
+                    quantization_name(quantization),
+                    " Gemma routed experts support native FP8 or MXFP8 only; NVFP4 is unsupported");
+        const auto experts = integer("num_experts", 0), top = integer("top_k_experts", 8);
+        const auto activation = string("hidden_activation", "gelu_pytorch_tanh");
+        const auto& gate_up = w("layers.0.experts.gate_up_proj");
+        const auto& down = w("layers.0.experts.down_proj");
+        TORCH_CHECK(!legacy && !embedding2 && device.is_cuda() && dtype == at::kBFloat16 &&
+                        experts == 128 && top == 8 && hidden > 0 && gate_up.dim() == 3 &&
+                        down.dim() == 3 && down.size(2) > 0 &&
+                        gate_up.sizes() == at::IntArrayRef({experts, 2 * down.size(2), hidden}) &&
+                        down.size(0) == experts && down.size(1) == hidden &&
+                        (activation == "gelu_pytorch_tanh" || activation == "gelu_new"),
+                    "Gemma routed experts require the native 128-expert/top-8 Gemma4 geometry");
+        if (quantization == Quantization::Fp8) {
+#ifdef INFINITY_TORCH_MOE_FP8
+          TORCH_CHECK(GemmaMoeFp8::supported(device),
+                      "Gemma FP8 routed experts require an SM100/SM103 CUDA device");
+#else
+          TORCH_CHECK(
+              false,
+              "Gemma FP8 routed experts require a CUDA build with the SM100 grouped provider");
+#endif
+        } else {
+#ifdef INFINITY_TORCH_MOE_MXFP8
+          TORCH_CHECK(GemmaMoeMxfp8::supported(device),
+                      "Gemma MXFP8 routed experts require an SM100/SM103 CUDA device");
+#else
+          TORCH_CHECK(
+              false,
+              "Gemma MXFP8 routed experts require a CUDA build with the SM100 grouped provider");
+#endif
+        }
+      }
       for (const auto& [name, value] : cfg.values)
         TORCH_CHECK(
             name != "quantization_config" && name.rfind("quantization_config.", 0) != 0 &&
@@ -1657,6 +1728,22 @@ public:
           weights.erase(prefix + layer.p + "mlp." + projection + ".weight");
       } else
         w(layer.p + "mlp.down_proj.weight");
+#ifdef INFINITY_TORCH_MOE_FP8
+      if (quantization == Quantization::Fp8 && boolean("enable_moe_block", false)) {
+        layer.fp8_moe = std::make_unique<GemmaMoeFp8>(w(layer.p + "experts.gate_up_proj"),
+                                                      w(layer.p + "experts.down_proj"));
+        weights.erase(prefix + layer.p + "experts.gate_up_proj");
+        weights.erase(prefix + layer.p + "experts.down_proj");
+      }
+#endif
+#ifdef INFINITY_TORCH_MOE_MXFP8
+      if (quantization == Quantization::Mxfp8 && boolean("enable_moe_block", false)) {
+        layer.mx_moe = std::make_unique<GemmaMoeMxfp8>(w(layer.p + "experts.gate_up_proj"),
+                                                       w(layer.p + "experts.down_proj"));
+        weights.erase(prefix + layer.p + "experts.gate_up_proj");
+        weights.erase(prefix + layer.p + "experts.down_proj");
+      }
+#endif
       auto rope_kind = layer.sliding ? "sliding_attention" : "full_attention";
       auto theta = legacy
                        ? real(layer.sliding ? "rope_local_base_freq" : "rope_theta", 10000.)
@@ -2021,7 +2108,19 @@ public:
       auto mlp = layer.dense_mlp.forward(normalized, mlp_context);
 
       if (boolean("enable_moe_block", false))
-        mlp = moe(states, mlp, p, input);
+        mlp = moe(states,
+                  mlp,
+                  p,
+                  input
+#ifdef INFINITY_TORCH_MOE_FP8
+                  ,
+                  layer.fp8_moe.get()
+#endif
+#ifdef INFINITY_TORCH_MOE_MXFP8
+                      ,
+                  layer.mx_moe.get()
+#endif
+        );
 #ifdef INFINITY_TORCH_CUDA_KERNELS
       const auto* layer_scale =
           publisher_sequence && ple_width == 0 ? &w(p + "layer_scalar") : nullptr;
