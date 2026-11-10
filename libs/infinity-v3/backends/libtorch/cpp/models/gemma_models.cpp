@@ -348,11 +348,19 @@ class Gemma final : public Model {
   at::Tensor moe(const at::Tensor& residual,
                  const at::Tensor& dense,
                  const std::string& p,
-                 const PackedInput& packed) const {
-    auto input = norm(residual, p + "pre_feedforward_layernorm_2");
+                 const PackedInput& packed,
+                 const at::Tensor& routed_input = at::Tensor(),
+                 const at::Tensor& router_input = at::Tensor()) const {
+    // Precomputed inputs reuse the shared pre-feedforward RMS statistic; the
+    // fallback keeps the original separate norm calls for unsupported layouts.
+    auto input =
+        routed_input.defined() ? routed_input : norm(residual, p + "pre_feedforward_layernorm_2");
     // Preserve the router's BF16 rounding before both root-size and learned scales.
-    auto root = at::scalar_tensor(1. / std::sqrt(double(hidden)), residual.options());
-    auto routing = ((norm(residual, "", true) * root) * w(p + "router.scale")).to(at::kFloat);
+    auto routing = router_input;
+    if (!routing.defined()) {
+      auto root = at::scalar_tensor(1. / std::sqrt(double(hidden)), residual.options());
+      routing = ((norm(residual, "", true) * root) * w(p + "router.scale")).to(at::kFloat);
+    }
     // Preserve original FP32 accumulation with the logical-shape plan while
     // computing only actual compact router rows. Unsupported plans retain
     // the original logical-row ATen projection through the helper fallback.
@@ -2002,9 +2010,29 @@ public:
         }
       }
 #endif
+      at::Tensor routed_pre_ff, router_pre_ff;
       if (!fused_residual_prenorm) {
         states = residual_norm(states, output, p + "post_attention_layernorm");
-        normalized = norm(states, p + "pre_feedforward_layernorm");
+        normalized = at::Tensor();
+#ifdef INFINITY_TORCH_CUDA_KERNELS
+        if (boolean("enable_moe_block", false) && device.is_cuda() && dtype == at::kBFloat16) {
+          auto root = at::scalar_tensor(1. / std::sqrt(double(hidden)), states.options());
+          auto pre = gemma4_bf16_pre_feedforward_norm(
+              states,
+              weight(norm_scales, prefix + p + "pre_feedforward_layernorm.weight"),
+              weight(norm_scales, prefix + p + "pre_feedforward_layernorm_2.weight"),
+              w(p + "router.scale"),
+              root,
+              epsilon);
+          if (pre.dense.defined()) {
+            normalized = pre.dense;
+            routed_pre_ff = pre.routed;
+            router_pre_ff = pre.router;
+          }
+        }
+#endif
+        if (!normalized.defined())
+          normalized = norm(states, p + "pre_feedforward_layernorm");
       }
 
       MlpContext mlp_context;
@@ -2021,7 +2049,7 @@ public:
       auto mlp = layer.dense_mlp.forward(normalized, mlp_context);
 
       if (boolean("enable_moe_block", false))
-        mlp = moe(states, mlp, p, input);
+        mlp = moe(states, mlp, p, input, routed_pre_ff, router_pre_ff);
 #ifdef INFINITY_TORCH_CUDA_KERNELS
       const auto* layer_scale =
           publisher_sequence && ple_width == 0 ? &w(p + "layer_scalar") : nullptr;

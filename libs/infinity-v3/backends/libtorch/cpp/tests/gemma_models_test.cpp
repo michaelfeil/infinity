@@ -195,6 +195,54 @@ void publisher_bf16_score_readout(const c10::Device& device) {
       }
     }
   }
+  // The MoE's three pre-FF branches share RMS statistics, but retain their
+  // distinct BF16 normalization/root/learned-scale stages and FP32 router.
+  for (int64_t rows : {3, 129}) {
+    auto x = at::randn({rows, 2816}, values.options());
+    auto dense_scale = at::randn({2816}, x.options().dtype(at::kFloat)) * .1 + 1.;
+    auto routed_scale = at::randn_like(dense_scale) * .1 + 1.;
+    auto router_scale = at::randn({2816}, x.options());
+    auto root = at::scalar_tensor(.3712345, x.options());
+    auto ones = at::ones_like(dense_scale);
+    auto same = [](const at::Tensor& a, const at::Tensor& b) {
+      return a.sizes() == b.sizes() && a.scalar_type() == b.scalar_type() &&
+             at::equal(a.contiguous().view(at::kByte), b.contiguous().view(at::kByte));
+    };
+    auto check = [&](const Gemma4PreFeedforwardNorm& actual) {
+      TORCH_CHECK(
+          same(actual.dense, gemma_norm_cuda(x, dense_scale, 1e-6, true)) &&
+              same(actual.routed, gemma_norm_cuda(x, routed_scale, 1e-6, true)) &&
+              same(actual.router,
+                   ((gemma_norm_cuda(x, ones, 1e-6, true) * root) * router_scale).to(at::kFloat)),
+          "Shared pre-FF statistics changed normalization or router stages");
+    };
+    auto norm_stream = at::cuda::getStreamFromPool(false, device.index());
+    at::cuda::getCurrentCUDAStream(device.index()).synchronize();
+    c10::cuda::CUDAStreamGuard norm_guard(norm_stream);
+    auto execute = [&] {
+      return gemma4_bf16_pre_feedforward_norm(
+          x, dense_scale, routed_scale, router_scale, root, 1e-6);
+    };
+    check(execute());
+    execute();
+    execute();
+    norm_stream.synchronize();
+    at::cuda::CUDAGraph graph;
+    graph.capture_begin();
+    auto captured = execute();
+    graph.capture_end();
+    graph.replay();
+    check(captured);
+    x.add_(.25);
+    root.fill_(.125);
+    router_scale.mul_(.5);
+    graph.replay();
+    check(captured);
+    TORCH_CHECK(!gemma4_bf16_pre_feedforward_norm(
+                     x, dense_scale.to(at::kBFloat16), routed_scale, router_scale, root, 1e-6)
+                     .dense.defined(),
+                "Unsupported shared pre-FF normalization dtype did not decline");
+  }
   auto stream = at::cuda::getStreamFromPool(false, device.index());
   c10::cuda::CUDAStreamGuard stream_guard(stream);
   auto options = at::TensorOptions().device(device).dtype(at::kFloat);
@@ -427,6 +475,67 @@ PackedInput input(const std::vector<int64_t>& ids, const std::vector<int32_t>& o
           maximum};
 }
 #ifdef INFINITY_TORCH_CUDA_KERNELS
+void gemma4_moe_forward_parity(const c10::Device& device) {
+  at::manual_seed(418);
+  Fixture f("gemma4", 8, 2, 0);
+  f.cfg.values["hidden_size_per_layer_input"] = "0";
+  f.cfg.values["enable_moe_block"] = "true";
+  f.cfg.values["num_experts"] = "3";
+  // Select every expert so cross-device BF16 reduction order cannot flip a
+  // top-k boundary; probabilities and per-expert scales still consume routing.
+  f.cfg.values["top_k_experts"] = "3";
+  // Non-proportional learned scales make the three fused pre-FF consumers
+  // observable end to end: dense uses pre_feedforward_layernorm, routed uses
+  // pre_feedforward_layernorm_2, and the FP32 router uses router.scale.
+  const auto index = at::arange(16, at::kFloat);
+  for (int64_t layer = 0; layer < 2; ++layer) {
+    auto p = "layers." + std::to_string(layer) + ".";
+    const auto gain = 1.f + .1f * layer;
+    f.weights[p + "pre_feedforward_layernorm.weight"] = (.25f + index * .1f) * gain;
+    f.weights[p + "pre_feedforward_layernorm_2.weight"] = (1.7f - index * .09f) * gain;
+    f.weights[p + "router.scale"] = (.3f + index.remainder(3) * .6f) * gain;
+    f.weights[p + "router.proj.weight"] = at::randn({3, 16}) * .1;
+    f.weights[p + "router.per_expert_scale"] = at::tensor({.5f, 1.25f, .8f}) * gain;
+    f.weights[p + "experts.gate_up_proj"] = at::randn({3, 12, 16}) * .1;
+    f.weights[p + "experts.down_proj"] = at::randn({3, 16, 6}) * .1;
+    for (const auto& name : {"post_feedforward_layernorm_1", "post_feedforward_layernorm_2"})
+      f.weights[p + name + ".weight"] = at::ones({16});
+  }
+  Weights cpu_weights;
+  for (const auto& [name, value] : f.weights)
+    cpu_weights[name] = value.to(at::kBFloat16);
+  auto cpu = create_gemma(f.cfg, cpu_weights, c10::Device("cpu"), at::kBFloat16);
+  cpu->ready();
+  Weights gpu_weights;
+  for (const auto& [name, value] : cpu_weights)
+    gpu_weights[name] = value.to(device);
+  auto gpu = create_gemma(f.cfg, gpu_weights, device, at::kBFloat16);
+  gpu->ready();
+  // Mixed packed sequence lengths exercise every routed row without padding.
+  const std::vector<int64_t> first = {1, 2, 3}, second = {4, 5, 6, 7, 8}, third = {9, 10};
+  std::vector<int64_t> ids = first;
+  ids.insert(ids.end(), second.begin(), second.end());
+  ids.insert(ids.end(), third.begin(), third.end());
+  const std::vector<int32_t> offsets = {0, 3, 8, 10};
+  auto host = input(ids, offsets), dev = host;
+  dev.ids = host.ids.to(device);
+  dev.types = host.types.to(device);
+  dev.positions = host.positions.to(device);
+  dev.cumulative = host.cumulative.to(device);
+  auto reference = cpu->forward(host).to(at::kFloat);
+  auto actual = gpu->forward(dev).cpu().to(at::kFloat);
+  // The CPU reference retains the original three separate norm calls. CUDA
+  // only shares their RMS statistic, but BF16 attention/GEMM/expert reduction
+  // order still differs across devices. Width 16 keeps the RMS sums well
+  // conditioned, so use the same cross-device tolerance as the dense BF16
+  // parity checks rather than pretending the reference is bit-exact.
+  TORCH_CHECK(at::allclose(reference, actual, .04, .04),
+              "Gemma4 BF16 MoE forward diverged from separate-normalization CPU reference: maxabs=",
+              (reference - actual).abs().max().item<float>());
+  std::cout << "gemma4: BF16 MoE forward matches separate-normalization CPU reference maxabs="
+            << (reference - actual).abs().max().item<float>() << "\n";
+}
+
 void dynamic_fp8(const c10::Device& device, const std::string& family) {
   if (!fp8_device_supported(device))
     return;
@@ -1329,6 +1438,7 @@ int main(int argc, char** argv) {
       dynamic_fp8(c10::Device(argv[1]), family);
     feature_cache_stream_lifetime(c10::Device(argv[1]));
     publisher_bf16_score_readout(c10::Device(argv[1]));
+    gemma4_moe_forward_parity(c10::Device(argv[1]));
   }
 #endif
   at::manual_seed(418);
