@@ -116,16 +116,16 @@ for the effect of local storage and cache state.
 ### GPU kernel cache
 
 Set `INFINITY_KERNEL_CACHE_PREFIX=/mnt/distributed` to default both
-`CUDA_CACHE_PATH` and `PYTORCH_KERNEL_CACHE_PATH` to
-`<prefix>/<NVIDIA-driver-version>/sm<compute-capability>`, for example
-`/mnt/distributed/580.126.09/sm100`. Explicit cache paths take precedence.
-The directory and environment are initialized before CUDA and Tokio start.
-BEIv3 also accepts `BEI_KERNEL_CACHE_PREFIX`.
+`CUDA_CACHE_PATH` and `PYTORCH_KERNEL_CACHE_PATH` to that existing, writable
+directory. Explicit cache paths take precedence. BEIv3 also accepts
+`BEI_KERNEL_CACHE_PREFIX`.
 
-Setup requires `nvidia-smi` and a writable mount with atomic rename support.
-Explicit CPU and Python backends skip it. Models and replicas share one directory;
-mixed-GPU hosts use all architectures reported by `nvidia-smi`, sorted and
-deduplicated (for example, `sm90-sm100`).
+Setup only sets the environment once per process, before CUDA and Tokio start;
+it performs no GPU discovery or cache-directory access. Explicit CPU and Python
+backends skip it. CUDA manages driver compatibility, and PyTorch's kernel cache
+keys include the compilation architecture and NVRTC version. Use a filesystem
+with atomic rename support. This redirects native JIT caches; startup savings
+depend on whether the workload compiles kernels at runtime.
 
 ## Build from source
 
