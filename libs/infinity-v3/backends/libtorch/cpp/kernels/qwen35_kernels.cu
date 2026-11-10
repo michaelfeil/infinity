@@ -573,18 +573,27 @@ template <bool Gelu, typename T> __device__ __forceinline__ T gemma_precise_acti
   }
 }
 
-// One block covers a 256-column tile of a single row. Deriving row and column
-// from the flat block index keeps the identical per-element expression while
-// removing a 64-bit divide and modulo from every element.
-template <bool Gelu, typename T>
+template <typename T, int Lanes> struct alignas(sizeof(T) * Lanes) GemmaGateValues {
+  T values[Lanes];
+};
+
+// Aligned rows use packed accesses in the same gate implementation. Each lane
+// retains the scalar activation and multiply rounding, including BF16 subnormals.
+template <bool Gelu, typename T, int Lanes = 1>
 __global__ void gemma_precise_gate(const T* x, T* out, int64_t width, unsigned int tiles) {
   const int64_t row = blockIdx.x / tiles;
-  const int64_t column = int64_t(blockIdx.x % tiles) * blockDim.x + threadIdx.x;
+  const int64_t column = (int64_t(blockIdx.x % tiles) * blockDim.x + threadIdx.x) * Lanes;
   if (column >= width)
     return;
   const int64_t base = row * 2 * width;
-  out[row * width + column] =
-      gemma_precise_activation<Gelu, T>(x[base + column]) * x[base + width + column];
+  using Values = GemmaGateValues<T, Lanes>;
+  const auto gate = *reinterpret_cast<const Values*>(x + base + column);
+  const auto up = *reinterpret_cast<const Values*>(x + base + width + column);
+  Values result;
+#pragma unroll
+  for (int i = 0; i < Lanes; ++i)
+    result.values[i] = gemma_precise_activation<Gelu, T>(gate.values[i]) * up.values[i];
+  *reinterpret_cast<Values*>(out + row * width + column) = result;
 }
 
 template <bool Gelu, typename T>
@@ -592,30 +601,6 @@ __global__ void gemma_precise_unary(const T* x, T* out, int64_t count) {
   auto i = int64_t(blockIdx.x) * blockDim.x + threadIdx.x;
   if (i < count)
     out[i] = gemma_precise_activation<Gelu, T>(x[i]);
-}
-
-struct alignas(8) Bf16x4 {
-  c10::BFloat16 values[4];
-};
-
-// Four adjacent BF16 columns per thread keep the scalar staged c10 arithmetic
-// while replacing per-column global transactions with aligned 8-byte accesses.
-__global__ void gemma_bf16x4_gelu_gate(const c10::BFloat16* x,
-                                       c10::BFloat16* out,
-                                       int64_t width,
-                                       unsigned int tiles) {
-  const int64_t row = blockIdx.x / tiles;
-  const int64_t column = int64_t(blockIdx.x % tiles) * 1024 + threadIdx.x * 4;
-  if (column >= width)
-    return;
-  const int64_t base = row * 2 * width;
-  const auto gate = *reinterpret_cast<const Bf16x4*>(x + base + column);
-  const auto up = *reinterpret_cast<const Bf16x4*>(x + base + width + column);
-  Bf16x4 result;
-#pragma unroll
-  for (int i = 0; i < 4; ++i)
-    result.values[i] = gemma_precise_activation<true, c10::BFloat16>(gate.values[i]) * up.values[i];
-  *reinterpret_cast<Bf16x4*>(out + row * width + column) = result;
 }
 
 at::Tensor gemma_activation_cuda(const at::Tensor& value, bool gelu) {
@@ -667,17 +652,6 @@ at::Tensor gemma_gated_cuda(const at::Tensor& x, bool gelu) {
   if (out.numel() == 0)
     return out;
   auto stream = at::cuda::getCurrentCUDAStream(x.device().index());
-  if (gelu && x.scalar_type() == at::kBFloat16 && width % 4 == 0 &&
-      reinterpret_cast<uintptr_t>(x.const_data_ptr()) % alignof(Bf16x4) == 0 &&
-      reinterpret_cast<uintptr_t>(out.mutable_data_ptr()) % alignof(Bf16x4) == 0) {
-    const auto* input = reinterpret_cast<const c10::BFloat16*>(x.const_data_ptr());
-    auto* output = reinterpret_cast<c10::BFloat16*>(out.mutable_data_ptr());
-    const auto tiles = static_cast<unsigned int>((width + 1023) / 1024);
-    const auto blocks = static_cast<unsigned int>(out.size(0)) * tiles;
-    gemma_bf16x4_gelu_gate<<<blocks, 256, 0, stream>>>(input, output, width, tiles);
-    C10_CUDA_KERNEL_LAUNCH_CHECK();
-    return out;
-  }
   if (gelu && x.scalar_type() == at::kHalf && width % 2 == 0 &&
       reinterpret_cast<uintptr_t>(x.const_data_ptr()) % alignof(__half2) == 0) {
     const auto* input = reinterpret_cast<const __half2*>(x.const_data_ptr());
@@ -687,12 +661,19 @@ at::Tensor gemma_gated_cuda(const at::Tensor& x, bool gelu) {
     C10_CUDA_KERNEL_LAUNCH_CHECK();
     return out;
   }
-  const auto tiles = static_cast<unsigned int>((width + 255) / 256);
+  const bool packed = gelu && width % 4 == 0 &&
+                      reinterpret_cast<uintptr_t>(x.const_data_ptr()) % 8 == 0 &&
+                      reinterpret_cast<uintptr_t>(out.mutable_data_ptr()) % 8 == 0;
+  const auto tile_width = packed ? 1024 : 256;
+  const auto tiles = static_cast<unsigned int>((width + tile_width - 1) / tile_width);
   const auto blocks = static_cast<unsigned int>(out.size(0)) * tiles;
   AT_DISPATCH_REDUCED_FLOATING_TYPES(x.scalar_type(), "gemma_activation", [&] {
     auto input = reinterpret_cast<const scalar_t*>(x.const_data_ptr());
     auto output = reinterpret_cast<scalar_t*>(out.mutable_data_ptr());
-    if (gelu)
+    if (packed)
+      gemma_precise_gate<true, scalar_t, 4>
+          <<<blocks, 256, 0, stream>>>(input, output, width, tiles);
+    else if (gelu)
       gemma_precise_gate<true, scalar_t><<<blocks, 256, 0, stream>>>(input, output, width, tiles);
     else
       gemma_precise_gate<false, scalar_t><<<blocks, 256, 0, stream>>>(input, output, width, tiles);
