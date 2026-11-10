@@ -1,5 +1,6 @@
 #include "prefix_cache_test.h"
 #include "helpers/fp8_linear.h"
+#include "helpers/mxfp8_linear.h"
 // Packed sequence isolation and geometry tests for native Gemma implementations.
 #include "models/gemma_models.h"
 #include "batching/radix.h"
@@ -472,8 +473,11 @@ void dynamic_fp8(const c10::Device& device, const std::string& family) {
   std::cout << "Gemma dense FP8 numerical and prefix-cache checks passed\n";
 }
 
-void dynamic_fp8_all(const c10::Device& device, const std::string& family) {
-  if (!fp8_device_supported(device))
+void dynamic_quant_all(const c10::Device& device,
+                       const std::string& family,
+                       const std::string& format) {
+  const bool mxfp8 = format == "mxfp8";
+  if (!(mxfp8 ? mxfp8_provider_supported(device) : fp8_device_supported(device)))
     return;
   at::manual_seed(419);
   // Realistic projection geometry: every quantized N is 128-aligned and K is 32-aligned.
@@ -486,7 +490,7 @@ void dynamic_fp8_all(const c10::Device& device, const std::string& family) {
   Weights quantized_weights;
   for (const auto& [name, value] : f.weights)
     quantized_weights[name] = value.to(device, at::kBFloat16);
-  f.cfg.values["_dynamic_quantization"] = "fp8";
+  f.cfg.values["_dynamic_quantization"] = format;
   f.cfg.values["_dynamic_quantization_scope"] = "all";
   auto quantized = create_gemma(f.cfg, quantized_weights, device, at::kBFloat16);
   quantized->ready();
@@ -494,11 +498,11 @@ void dynamic_fp8_all(const c10::Device& device, const std::string& family) {
     const auto p = "layers." + std::to_string(i) + ".self_attn.";
     TORCH_CHECK(!quantized_weights.count(p + "q_proj.weight") &&
                     !quantized_weights.count(p + "o_proj.weight"),
-                "FP8 all scope retained redundant attention weights");
+                "All-linear scope retained redundant attention weights");
     if (f.legacy || i < 2)
       TORCH_CHECK(!quantized_weights.count(p + "k_proj.weight") &&
                       !quantized_weights.count(p + "v_proj.weight"),
-                  "FP8 all scope retained redundant KV weights");
+                  "All-linear scope retained redundant KV weights");
   }
   const std::vector<int32_t> offsets = {0, 5, 7};
   auto packed = input({1, 2, 3, 4, 5, 6, 7}, offsets);
@@ -511,13 +515,13 @@ void dynamic_fp8_all(const c10::Device& device, const std::string& family) {
   // quantized attention weights work through eager, graph and prefix-cache execution consistently.
   TORCH_CHECK(actual.dim() == 2 && actual.size(0) == 7 && actual.size(1) == 256 &&
                   at::isfinite(actual).all().item<bool>(),
-              "Gemma all-linear FP8 returned invalid hidden rows");
+              "Gemma all-linear quantization returned invalid hidden rows");
   CudaGraphCache graphs(1, 4096, 1);
   for (int repeat = 0; repeat < 3; ++repeat)
     TORCH_CHECK(at::allclose(actual, graphs.forward(*quantized, packed).to(at::kFloat), .01, .01),
-                "Gemma all-linear FP8 graph replay changed outputs");
+                "Gemma all-linear graph replay changed outputs");
   TORCH_CHECK(graphs.stats().captures == 1 && graphs.stats().hits >= 2,
-              "Gemma all-linear FP8 graphs did not capture and replay");
+              "Gemma all-linear graphs did not capture and replay");
   auto changed = packed;
   changed.ids = packed.ids.clone();
   changed.ids[0].fill_(8);
@@ -526,9 +530,10 @@ void dynamic_fp8_all(const c10::Device& device, const std::string& family) {
   TORCH_CHECK(!at::equal(actual, changed_expected) &&
                   at::allclose(changed_expected, changed_replayed, .01, .01) &&
                   graphs.stats().captures == 1,
-              "Gemma all-linear FP8 graph replay ignored mutated inputs or recaptured");
+              "Gemma all-linear graph replay ignored mutated inputs or recaptured");
   check_prefix_cache(*quantized, packed, 0, .01, .02);
-  std::cout << "Gemma " << family << " all-linear FP8 graph and prefix-cache checks passed\n";
+  std::cout << "Gemma " << family << " all-linear " << format
+            << " graph and prefix-cache checks passed\n";
 }
 #endif
 void audio_operations(const c10::Device& device) {
@@ -1389,7 +1394,8 @@ int main(int argc, char** argv) {
     for (const auto* family : {"gemma3", "gemma3_text", "gemma4", "embedding_gemma2"})
       dynamic_fp8(c10::Device(argv[1]), family);
     for (const auto* family : {"gemma3", "gemma4"})
-      dynamic_fp8_all(c10::Device(argv[1]), family);
+      for (const auto* format : {"fp8", "mxfp8"})
+        dynamic_quant_all(c10::Device(argv[1]), family, format);
     feature_cache_stream_lifetime(c10::Device(argv[1]));
     publisher_bf16_score_readout(c10::Device(argv[1]));
   }
