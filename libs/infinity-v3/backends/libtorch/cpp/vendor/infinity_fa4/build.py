@@ -52,6 +52,11 @@ if not a.link_only:
         os.environ.pop("FLASH_ATTENTION_NUM_SMS", None)
     from fa4_source import stage_fa4_sources
     staged_source, softmax_backport = stage_fa4_sources()
+    gemma_local_patch = None
+    if capability == 100:
+        from gemma_sm100_local import patch_interface
+        gemma_local_patch = patch_interface(
+            pathlib.Path(staged_source.name) / "flash_attn/cute/interface.py")
     import torch
     import flash_attn.cute.interface as interface
     if not a.compile_only and torch.cuda.get_device_capability() != divmod(capability, 10):
@@ -79,7 +84,16 @@ if not a.link_only:
                 q = torch.zeros((256, h, d), device="cuda", dtype=dtype)
                 k = torch.zeros((256, hk, d), device="cuda", dtype=dtype)
                 previous = set(interface._flash_attn_fwd.compile_cache.cache)
-                if d == 256 and capability in (80, 86, 89, 120):
+                if d == 256 and window[0] is not None and capability == 100:
+                    # The dedicated two-CTA hd256 kernel rejects local windows;
+                    # use the existing generic one-CTA local-mask kernel.
+                    interface._flash_attn_fwd(q, k, k, cu_seqlens_q=cu, cu_seqlens_k=cu,
+                                             max_seqlen_q=129, max_seqlen_k=129,
+                                             tile_mn=(128, 64), num_splits=1, pack_gqa=False,
+                                             causal=causal,
+                                             window_size_left=window[0], window_size_right=window[1],
+                                             disable_scheduler_metadata=True)
+                elif d == 256 and capability in (80, 86, 89, 120):
                     # 64x64 fits the 99 KiB shared-memory budget of SM86/89/120.
                     interface._flash_attn_fwd(q, k, k, cu_seqlens_q=cu, cu_seqlens_k=cu,
                                              max_seqlen_q=129, max_seqlen_k=129,
@@ -163,6 +177,7 @@ if not a.link_only:
         "abi_version": 7,
         "host_target": host_target(),
         "softmax_backport": softmax_backport,
+        "gemma_sm100_local_source_patch": gemma_local_patch,
         "architecture": a.arch,
         "executed_during_export": not a.compile_only,
         "target_sm_count": int(os.environ["FLASH_ATTENTION_NUM_SMS"]) if a.compile_only else torch.cuda.get_device_properties(torch.cuda.current_device()).multi_processor_count,

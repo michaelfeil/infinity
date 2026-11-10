@@ -120,7 +120,7 @@ void standard(at::ScalarType dtype, int mode, bool cross, int64_t span = 0) {
   auto q = qstore.narrow(0, 1, qe.back()).narrow(1, 0, h);
   auto k = at::randn({ke.back(), hk, d}, opts) * .2, v = at::randn_like(k);
   auto cq = offsets(qe, opts), ck = cross ? offsets(ke, opts) : cq;
-  auto window = profile.local ? 37 : -1;
+  auto window = profile.local ? (d == 256 ? 1023 : 37) : -1;
   auto forward = [&] {
     return infinity::infinity_fa4(q,
                                   k,

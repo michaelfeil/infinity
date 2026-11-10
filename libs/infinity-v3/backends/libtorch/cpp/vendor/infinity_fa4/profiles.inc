@@ -19,3 +19,6 @@ FA4_PROFILE(causal_local128, 32, 8, 128, 1, 1)
 FA4_PROFILE(wide_gqa6, 24, 4, 256, 0, 0)
 FA4_PROFILE(causal_wide6, 24, 4, 256, 1, 0)
 FA4_PROFILE(causal_wide4, 16, 4, 256, 1, 0)
+// Gemma v91 text sliding layers: 26B Q16/KV8 and 31B Q32/KV16 both match
+// GQA2, d256, causal sliding window 1024. Head counts stay runtime dimensions.
+FA4_PROFILE(gemma_local1024_d256_gqa2, 16, 8, 256, 1, 1)
