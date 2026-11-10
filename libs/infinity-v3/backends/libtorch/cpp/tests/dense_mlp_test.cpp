@@ -624,6 +624,12 @@ void check_mxfp8_custom_gated(const c10::Device& device) {
   infinity::DenseMlp mlp({gate_up}, {down}, geglu);
   TORCH_CHECK(mlp.supports_mxfp8(), "wide custom packed GeGLU did not qualify for MXFP8");
 
+  auto quantized_only = geglu;
+  quantized_only.quantized_custom = [](const at::Tensor& rows) { return rows; };
+  infinity::DenseMlp quantized_only_mlp({gate_up}, {down}, quantized_only);
+  TORCH_CHECK(!quantized_only_mlp.supports_mxfp8(),
+              "MXFP8 accepted a callback with a format-specific activation contract");
+
   auto swiglu = geglu;
   swiglu.fusion = infinity::MlpFusion::RoundedSwiGlu;
   infinity::DenseMlp swiglu_mlp({gate_up}, {down}, swiglu);

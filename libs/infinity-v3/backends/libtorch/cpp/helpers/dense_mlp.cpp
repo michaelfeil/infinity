@@ -489,7 +489,7 @@ void DenseMlp::prepare(const MlpMethodFactory& factory) {
 bool DenseMlp::supports_mxfp8() const {
   // Structural contract: one packed gate/up projection feeding one down
   // projection. mxfp8_mlp_supported() below also validates that packed geometry.
-  if (up_ || !activation_.packed || !activation_.gate_first)
+  if (up_ || !activation_.packed || !activation_.gate_first || activation_.quantized_custom)
     return false;
   // The native MXFP8 gated kernel implements rounded SwiGLU only. Every other
   // recipe this class can evaluate on model-dtype rows, including the exact
@@ -505,8 +505,8 @@ bool DenseMlp::supports_mxfp8() const {
     return false;
   if (input_.output_width() % 2 != 0)
     return false;
-  // The fused MXFP8 SwiGLU hook is width-bounded; wider SwiGLU would leave
-  // MXFP8 through the rowwise-FP8 quantizer in forward(), so keep it rowwise.
+  // Keep the bounded native SwiGLU contract. Custom recipes use the generic
+  // model-dtype activation path and do not share that fused-kernel width bound.
   if (native_swiglu && input_.output_width() / 2 > fp8_scaled_swiglu_max_width)
     return false;
   return mxfp8_mlp_supported(input_.weight(), output_.weight());

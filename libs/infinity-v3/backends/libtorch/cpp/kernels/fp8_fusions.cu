@@ -67,7 +67,7 @@ __device__ __forceinline__ T gated_rounded(T gate, T up) {
     // Match gemma_precise_activation<true>(c10::BFloat16) exactly. c10::BFloat16 operators use
     // float opmath plus cvt.rn.bf16.f32, while the native __hmul/__hadd helpers may select
     // mul.bf16/add.bf16, which can round or flush differently. Keep every stage as a separate
-    // c10::BFloat16 value and bitcast the final BF16 result back to T.
+    // c10::BFloat16 value and convert the already-rounded BF16 result back to T.
     static_assert(std::is_same_v<T, __nv_bfloat16>, "PreciseGelu requires BF16 rows");
     const c10::BFloat16 x(static_cast<float>(gate));
     const c10::BFloat16 square = x * x;
