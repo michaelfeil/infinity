@@ -1040,17 +1040,16 @@ __device__ __forceinline__ void gemma4_warp_norm_rotary_row(const __nv_bfloat16*
                                                             unsigned int width,
                                                             unsigned int heads,
                                                             unsigned long long token_stride,
-                                                            unsigned long long head_stride,
                                                             unsigned long long row,
                                                             float eps,
                                                             const __nv_bfloat16* cosine,
                                                             const __nv_bfloat16* sine,
                                                             const int64_t* positions,
                                                             int64_t table_rows) {
-  // Preserve the caller's actual packed strides. Expanded tensors have a valid
-  // zero head stride and must keep reading the same head storage per token.
-  const auto base = static_cast<size_t>(row / heads) * token_stride +
-                    static_cast<size_t>(row % heads) * head_stride;
+  // Eligibility guarantees the natural packed head stride (width); token_stride may retain
+  // projection row padding.
+  const auto base =
+      static_cast<size_t>(row / heads) * token_stride + static_cast<size_t>(row % heads) * width;
   const auto denominator = gemma4_warp_norm_denominator(x + base, width, eps);
   gemma4_warp_norm_write(x + base, scale, staged, width, denominator);
   __syncwarp();
@@ -1075,11 +1074,10 @@ __device__ __forceinline__ void gemma4_warp_norm_row(const __nv_bfloat16* x,
                                                      unsigned int width,
                                                      unsigned int heads,
                                                      unsigned long long token_stride,
-                                                     unsigned long long head_stride,
                                                      unsigned long long row,
                                                      float eps) {
-  const auto base = static_cast<size_t>(row / heads) * token_stride +
-                    static_cast<size_t>(row % heads) * head_stride;
+  const auto base =
+      static_cast<size_t>(row / heads) * token_stride + static_cast<size_t>(row % heads) * width;
   const auto denominator = gemma4_warp_norm_denominator(x + base, width, eps);
   gemma4_warp_norm_write(
       x + base, scale, out + static_cast<size_t>(row) * width, width, denominator);
@@ -1104,9 +1102,6 @@ __global__ void gemma4_qkv_warp_norm_rotary(const __nv_bfloat16* q,
                                             unsigned long long qstride,
                                             unsigned long long kstride,
                                             unsigned long long vstride,
-                                            unsigned long long qhead_stride,
-                                            unsigned long long khead_stride,
-                                            unsigned long long vhead_stride,
                                             unsigned long long qrows,
                                             unsigned long long qkrows,
                                             unsigned long long rows,
@@ -1126,7 +1121,6 @@ __global__ void gemma4_qkv_warp_norm_rotary(const __nv_bfloat16* q,
                                 width,
                                 qheads,
                                 qstride,
-                                qhead_stride,
                                 row,
                                 eps,
                                 cosine,
@@ -1141,7 +1135,6 @@ __global__ void gemma4_qkv_warp_norm_rotary(const __nv_bfloat16* q,
                                 width,
                                 kheads,
                                 kstride,
-                                khead_stride,
                                 row - qrows,
                                 eps,
                                 cosine,
@@ -1149,7 +1142,7 @@ __global__ void gemma4_qkv_warp_norm_rotary(const __nv_bfloat16* q,
                                 positions,
                                 table_rows);
   } else {
-    gemma4_warp_norm_row(v, vs, vo, width, vheads, vstride, vhead_stride, row - qkrows, eps);
+    gemma4_warp_norm_row(v, vs, vo, width, vheads, vstride, row - qkrows, eps);
   }
 }
 
@@ -1168,31 +1161,14 @@ std::array<at::Tensor, 3> gemma4_norm_rotary_launch(const at::Tensor& q,
                                                     const at::Tensor& sine,
                                                     const at::Tensor& positions,
                                                     double eps) {
-  if (!q.defined() || !q.is_cuda() || q.scalar_type() != at::kBFloat16 || q.dim() != 3 ||
-      q.stride(2) != 1 || q.size(0) <= 0 || q.size(1) <= 0 || q.size(2) < 32 || q.size(2) > 1024 ||
-      q.size(2) % 2 != 0 || k.defined() != v.defined())
+  // The exported entry point validates the common operand/scale/table contract before calling
+  // this private launcher. Only fused-kernel eligibility and the launch row bound remain here.
+  if (q.scalar_type() != at::kBFloat16 || q.size(2) < 32 || q.size(2) > 1024)
     return {};
   const auto width = q.size(2);
+  if (q.stride(1) != width || (k.defined() && (k.stride(1) != width || v.stride(1) != width)))
+    return {};
   const bool has_kv = k.defined();
-  if (!gemma4_scale_supported(q, q_scale) || !cosine.defined() || !sine.defined() ||
-      !positions.defined())
-    return {};
-  if (has_kv &&
-      (!k.is_cuda() || !v.is_cuda() || k.device() != q.device() || v.device() != q.device() ||
-       k.scalar_type() != at::kBFloat16 || v.scalar_type() != at::kBFloat16 || k.dim() != 3 ||
-       v.dim() != 3 || k.size(0) != q.size(0) || v.size(0) != q.size(0) || k.size(1) <= 0 ||
-       v.size(1) <= 0 || k.size(2) != width || v.size(2) != width || k.stride(2) != 1 ||
-       v.stride(2) != 1 || !gemma4_scale_supported(k, k_scale) ||
-       !gemma4_scale_supported(v, v_scale)))
-    return {};
-  if (cosine.dim() != 2 || sine.dim() != 2 || cosine.size(1) != width / 2 ||
-      cosine.sizes() != sine.sizes() || cosine.device() != q.device() ||
-      sine.device() != q.device() || cosine.scalar_type() != at::kBFloat16 ||
-      sine.scalar_type() != at::kBFloat16 || !cosine.is_contiguous() || !sine.is_contiguous() ||
-      positions.dim() != 1 || positions.device() != q.device() ||
-      positions.scalar_type() != at::kLong || !positions.is_contiguous() ||
-      positions.numel() != q.size(0) || cosine.size(0) <= 0)
-    return {};
   const auto qrows = q.size(0) * q.size(1);
   const auto krows = has_kv ? k.size(0) * k.size(1) : 0;
   const auto vrows = has_kv ? v.size(0) * v.size(1) : 0;
@@ -1229,9 +1205,6 @@ std::array<at::Tensor, 3> gemma4_norm_rotary_launch(const at::Tensor& q,
       q.stride(0),
       has_kv ? k.stride(0) : 0,
       has_kv ? v.stride(0) : 0,
-      q.stride(1),
-      has_kv ? k.stride(1) : 0,
-      has_kv ? v.stride(1) : 0,
       qrows,
       qkrows,
       rows,
@@ -1326,12 +1299,12 @@ std::array<at::Tensor, 3> gemma4_qkv_norm_rotary_cuda(const at::Tensor& q,
                                                       const at::Tensor& sine,
                                                       const at::Tensor& positions,
                                                       double eps) {
+  if (!gemma4_transform_supported(q, k, v, q_scale, k_scale, v_scale, cosine, sine, positions))
+    return {};
   auto fused =
       gemma4_norm_rotary_launch(q, k, v, q_scale, k_scale, v_scale, cosine, sine, positions, eps);
   if (fused[0].defined())
     return fused;
-  if (!gemma4_transform_supported(q, k, v, q_scale, k_scale, v_scale, cosine, sine, positions))
-    return {};
   return gemma4_composed_norm_rotary(
       q, k, v, q_scale, k_scale, v_scale, cosine, sine, positions, eps);
 }

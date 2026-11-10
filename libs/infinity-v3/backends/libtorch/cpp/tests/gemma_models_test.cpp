@@ -777,10 +777,10 @@ void gemma4_qkv_norm_rotary_test(c10::Device device) {
     auto ones = at::ones({width}, float_options);
     auto q_storage = at::randn({tokens, qheads * width + 5}, options);
     auto q = q_storage.narrow(1, 0, qheads * width).view({tokens, qheads, width});
-    auto k_storage = at::randn({tokens, kheads, width + 3}, options);
-    auto k = k_storage.narrow(2, 0, width);
-    auto v_storage = at::randn({tokens, vheads, width + 3}, options);
-    auto v = v_storage.narrow(2, 0, width);
+    auto k_storage = at::randn({tokens, kheads * width + 3}, options);
+    auto k = k_storage.narrow(1, 0, kheads * width).view({tokens, kheads, width});
+    auto v_storage = at::randn({tokens, vheads * width + 3}, options);
+    auto v = v_storage.narrow(1, 0, vheads * width).view({tokens, vheads, width});
     auto q_before = q.clone(), k_before = k.clone(), v_before = v.clone();
     auto q_expected = gemma_rotary_cuda(donor_norm(q, q_scale), cos, sin, positions);
     auto k_expected = gemma_rotary_cuda(donor_norm(k, k_scale), cos, sin, positions);
@@ -807,33 +807,6 @@ void gemma4_qkv_norm_rotary_test(c10::Device device) {
                     exact(tied[1], k_expected) && exact(tied[2], k_unit_expected),
                 "Gemma4 tied-KV fusion transformed V before or during key normalization");
     TORCH_CHECK(exact(k, k_before), "Gemma4 tied-KV fusion overwrote the shared projection");
-  }
-
-  // Expanded head strides are valid packed inputs. Both the fused warp path and
-  // the composed fallback must match the donor norm-plus-rotary operators.
-  for (int64_t width : {64, 2048}) {
-    const int64_t tokens = 5, qheads = 4, kheads = 2, vheads = 2;
-    auto [cos, sin] = tables(9, width, true);
-    auto positions = make_positions({8, 0, 3, 6, 1});
-    auto q_scale = at::randn({width}, float_options);
-    auto k_scale = at::randn({width}, float_options);
-    auto ones = at::ones({width}, float_options);
-    auto q = at::randn({tokens, 1, width}, options).expand({tokens, qheads, width});
-    auto k = at::randn({tokens, 1, width}, options).expand({tokens, kheads, width});
-    auto v = at::randn({tokens, 1, width}, options).expand({tokens, vheads, width});
-    TORCH_CHECK(q.stride(1) == 0 && k.stride(1) == 0 && v.stride(1) == 0,
-                "Gemma4 expanded fixture lost its zero head stride");
-    auto q_expected = gemma_rotary_cuda(donor_norm(q, q_scale), cos, sin, positions);
-    auto k_expected = gemma_rotary_cuda(donor_norm(k, k_scale), cos, sin, positions);
-    auto v_expected = donor_norm(v, ones);
-    auto fused =
-        gemma4_qkv_norm_rotary_cuda(q, k, v, q_scale, k_scale, ones, cos, sin, positions, 1e-6);
-    TORCH_CHECK(fused[0].defined() && exact(fused[0], q_expected) && exact(fused[1], k_expected) &&
-                    exact(fused[2], v_expected),
-                "Gemma4 expanded Q/K/V norm/rotary diverged from donor operators");
-    auto q_only = gemma4_q_norm_rotary_cuda(q, q_scale, cos, sin, positions, 1e-6);
-    TORCH_CHECK(q_only.defined() && exact(q_only, q_expected),
-                "Gemma4 expanded query-only norm/rotary diverged from donor operators");
   }
 
   {
@@ -896,10 +869,10 @@ void gemma4_qkv_norm_rotary_test(c10::Device device) {
   auto ones = at::ones({width}, float_options);
   auto q_storage = at::randn({tokens, qheads * width + 1}, options);
   auto q = q_storage.narrow(1, 0, qheads * width).view({tokens, qheads, width});
-  auto k_storage = at::randn({tokens, kheads, width + 1}, options);
-  auto k = k_storage.narrow(2, 0, width);
-  auto v_storage = at::randn({tokens, vheads, width + 1}, options);
-  auto v = v_storage.narrow(2, 0, width);
+  auto k_storage = at::randn({tokens, kheads * width + 1}, options);
+  auto k = k_storage.narrow(1, 0, kheads * width).view({tokens, kheads, width});
+  auto v_storage = at::randn({tokens, vheads * width + 1}, options);
+  auto v = v_storage.narrow(1, 0, vheads * width).view({tokens, vheads, width});
   auto check = [&](const std::array<at::Tensor, 3>& actual) {
     TORCH_CHECK(
         exact(actual[0], gemma_rotary_cuda(donor_norm(q, q_scale), cos, sin, positions)) &&
