@@ -5,6 +5,25 @@
 #include <ATen/ATen.h>
 
 namespace infinity {
+/// Three pre-feedforward normalization outputs derived from one shared RMS
+/// statistic of the same residual rows. `dense`/`routed` are BF16; `router` is
+/// FP32 after the original unit-norm, scalar-root and learned-scale BF16 stages.
+/// Any unsupported layout/device/dtype returns three undefined tensors so the
+/// caller can keep the existing separate norm calls.
+struct Gemma4PreFeedforwardNorm {
+  at::Tensor dense;
+  at::Tensor routed;
+  at::Tensor router;
+};
+
+Gemma4PreFeedforwardNorm gemma4_bf16_pre_feedforward_norm(
+    const at::Tensor& x,
+    const at::Tensor& dense_scale,
+    const at::Tensor& routed_scale,
+    const at::Tensor& router_scale,
+    const at::Tensor& root,
+    double epsilon);
+
 // Gather from the complete all-token score GEMM. Every capped operation rounds
 // to BF16 before the next operation, preserving the declared publisher readout.
 at::Tensor gemma4_bf16_sequence_score_readout(

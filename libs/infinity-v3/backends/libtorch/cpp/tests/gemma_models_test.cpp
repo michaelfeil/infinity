@@ -195,6 +195,53 @@ void publisher_bf16_score_readout(const c10::Device& device) {
       }
     }
   }
+  // The MoE's three pre-FF branches share RMS statistics, but retain their
+  // distinct BF16 normalization/root/learned-scale stages and FP32 router.
+  for (int64_t rows : {3, 129}) {
+    auto x = at::randn({rows, 2816}, values.options());
+    auto dense_scale = at::randn({2816}, x.options().dtype(at::kFloat)) * .1 + 1.;
+    auto routed_scale = at::randn_like(dense_scale) * .1 + 1.;
+    auto router_scale = at::randn({2816}, x.options());
+    auto root = at::scalar_tensor(.3712345, x.options());
+    auto ones = at::ones_like(dense_scale);
+    auto same = [](const at::Tensor& a, const at::Tensor& b) {
+      return a.sizes() == b.sizes() && a.scalar_type() == b.scalar_type() &&
+             at::equal(a.contiguous().view(at::kByte), b.contiguous().view(at::kByte));
+    };
+    auto check = [&](const Gemma4PreFeedforwardNorm& actual) {
+      TORCH_CHECK(same(actual.dense, gemma_norm_cuda(x, dense_scale, 1e-6, true)) &&
+                      same(actual.routed, gemma_norm_cuda(x, routed_scale, 1e-6, true)) &&
+                      same(actual.router,
+                           ((gemma_norm_cuda(x, ones, 1e-6, true) * root) * router_scale)
+                               .to(at::kFloat)),
+                  "Shared pre-FF statistics changed normalization or router stages");
+    };
+    auto norm_stream = at::cuda::getStreamFromPool(false, device.index());
+    at::cuda::getCurrentCUDAStream(device.index()).synchronize();
+    c10::cuda::CUDAStreamGuard norm_guard(norm_stream);
+    auto execute = [&] {
+      return gemma4_bf16_pre_feedforward_norm(
+          x, dense_scale, routed_scale, router_scale, root, 1e-6);
+    };
+    for (int i = 0; i < 3; ++i)
+      check(execute());
+    norm_stream.synchronize();
+    at::cuda::CUDAGraph graph;
+    graph.capture_begin();
+    auto captured = execute();
+    graph.capture_end();
+    graph.replay();
+    check(captured);
+    x.add_(.25);
+    root.fill_(.125);
+    router_scale.mul_(.5);
+    graph.replay();
+    check(captured);
+    TORCH_CHECK(!gemma4_bf16_pre_feedforward_norm(
+                     x, dense_scale.to(at::kBFloat16), routed_scale, router_scale, root, 1e-6)
+                     .dense.defined(),
+                "Unsupported shared pre-FF normalization dtype did not decline");
+  }
   auto stream = at::cuda::getStreamFromPool(false, device.index());
   c10::cuda::CUDAStreamGuard stream_guard(stream);
   auto options = at::TensorOptions().device(device).dtype(at::kFloat);

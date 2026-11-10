@@ -208,6 +208,121 @@ at::Tensor gemma4_bf16_norm_residual(const at::Tensor& residual,
   return out;
 }
 
+// Three pre-feedforward outputs from one reference RMS statistic. The reduction
+// tree, separate FP32 mean/epsilon, sqrt/div and BF16 scale rounding mirror
+// gemma_norm_cuda(..., reference=true) as used by Gemma4. This TU compiles with
+// --fmad=false, so the donor's contracted square accumulation is spelled out
+// with __fmaf_rn; the remaining adds are plain FP32 adds as in the donor.
+namespace {
+__global__ void gemma4_pre_ff_norm_kernel(const __nv_bfloat16* x,
+                                          const float* dense_scale,
+                                          const float* routed_scale,
+                                          const __nv_bfloat16* router_scale,
+                                          const __nv_bfloat16* root,
+                                          __nv_bfloat16* dense,
+                                          __nv_bfloat16* routed,
+                                          float* router,
+                                          unsigned int width,
+                                          float eps) {
+  const size_t base = static_cast<size_t>(blockIdx.x) * width;
+  __shared__ float sums[1024];
+  unsigned int logical_threads = 1;
+  while (logical_threads < width && logical_threads < 1024)
+    logical_threads <<= 1;
+  const unsigned int lanes = logical_threads / blockDim.x;
+  float partial[4] = {0.f, 0.f, 0.f, 0.f};
+  for (unsigned int lane = 0; lane < lanes; ++lane)
+    for (unsigned int col = threadIdx.x + lane * blockDim.x; col < width;
+         col += logical_threads) {
+      float v = __bfloat162float(x[base + col]);
+      partial[lane] = __fmaf_rn(v, v, partial[lane]);
+    }
+  for (unsigned int stride = lanes / 2; stride; stride >>= 1)
+    for (unsigned int lane = 0; lane < stride; ++lane)
+      partial[lane] += partial[lane + stride];
+  float sum = partial[0];
+  sums[threadIdx.x] = sum;
+  for (unsigned int stride = blockDim.x / 2; stride >= 32; stride >>= 1) {
+    __syncthreads();
+    if (threadIdx.x < stride)
+      sums[threadIdx.x] += sums[threadIdx.x + stride];
+  }
+  if (threadIdx.x < 32) {
+    sum = sums[threadIdx.x];
+    const unsigned int mask = __activemask();
+    for (unsigned int stride = blockDim.x < 32 ? blockDim.x / 2 : 16; stride; stride >>= 1) {
+      float other = __shfl_down_sync(mask, sum, stride);
+      if (threadIdx.x < stride)
+        sum += other;
+    }
+    if (threadIdx.x == 0) {
+      float mean = __fmul_rn(sum, static_cast<float>(1.0 / static_cast<double>(width)));
+      sums[0] = sqrtf(__fadd_rn(mean, eps));
+    }
+  }
+  __syncthreads();
+  const float root_value = __bfloat162float(root[0]);
+  for (unsigned int col = threadIdx.x; col < width; col += blockDim.x) {
+    const float normalized = __bfloat162float(x[base + col]) / sums[0];
+    dense[base + col] = __float2bfloat16_rn(normalized * dense_scale[col]);
+    routed[base + col] = __float2bfloat16_rn(normalized * routed_scale[col]);
+    // norm(..., unit) rounds to BF16, then root and the learned router scale
+    // each round again before the final FP32 cast.
+    const __nv_bfloat16 unit = __float2bfloat16_rn(normalized * 1.f);
+    const __nv_bfloat16 rooted = __float2bfloat16_rn(__bfloat162float(unit) * root_value);
+    const __nv_bfloat16 scaled =
+        __float2bfloat16_rn(__bfloat162float(rooted) * __bfloat162float(router_scale[col]));
+    router[base + col] = __bfloat162float(scaled);
+  }
+}
+} // namespace
+
+Gemma4PreFeedforwardNorm gemma4_bf16_pre_feedforward_norm(const at::Tensor& x,
+                                                          const at::Tensor& dense_scale,
+                                                          const at::Tensor& routed_scale,
+                                                          const at::Tensor& router_scale,
+                                                          const at::Tensor& root,
+                                                          double epsilon) {
+  Gemma4PreFeedforwardNorm result;
+  const bool supported =
+      x.defined() && x.is_cuda() && x.scalar_type() == at::kBFloat16 && x.dim() == 2 &&
+      x.is_contiguous() && x.size(1) > 0 && x.size(1) <= 8192 &&
+      dense_scale.defined() && routed_scale.defined() && router_scale.defined() && root.defined() &&
+      dense_scale.device() == x.device() && routed_scale.device() == x.device() &&
+      router_scale.device() == x.device() && root.device() == x.device() &&
+      dense_scale.scalar_type() == at::kFloat && routed_scale.scalar_type() == at::kFloat &&
+      dense_scale.is_contiguous() && routed_scale.is_contiguous() &&
+      dense_scale.numel() == x.size(1) && routed_scale.numel() == x.size(1) &&
+      router_scale.scalar_type() == at::kBFloat16 && router_scale.is_contiguous() &&
+      router_scale.numel() == x.size(1) &&
+      root.scalar_type() == at::kBFloat16 && root.is_contiguous() && root.numel() == 1;
+  if (!supported)
+    return result;
+  c10::cuda::CUDAGuard guard(x.device());
+  result.dense = at::empty_like(x);
+  result.routed = at::empty_like(x);
+  result.router = at::empty(x.sizes(), x.options().dtype(at::kFloat));
+  if (!x.numel())
+    return result;
+  const auto width = x.size(1);
+  int threads = 1;
+  while (threads < width && threads < 256)
+    threads *= 2;
+  gemma4_pre_ff_norm_kernel<<<x.size(0), threads, 0, at::cuda::getCurrentCUDAStream()>>>(
+      reinterpret_cast<const __nv_bfloat16*>(x.const_data_ptr()),
+      dense_scale.const_data_ptr<float>(),
+      routed_scale.const_data_ptr<float>(),
+      reinterpret_cast<const __nv_bfloat16*>(router_scale.const_data_ptr()),
+      reinterpret_cast<const __nv_bfloat16*>(root.const_data_ptr()),
+      reinterpret_cast<__nv_bfloat16*>(result.dense.mutable_data_ptr()),
+      reinterpret_cast<__nv_bfloat16*>(result.routed.mutable_data_ptr()),
+      result.router.mutable_data_ptr<float>(),
+      static_cast<unsigned int>(width),
+      static_cast<float>(epsilon));
+  C10_CUDA_KERNEL_LAUNCH_CHECK();
+  return result;
+}
+
 /// Select sequence-end scores from the full score projection, preserving BF16 soft-cap stages.
 at::Tensor gemma4_bf16_sequence_score_readout(const at::Tensor& logits,
                                               const at::Tensor& cumulative,
