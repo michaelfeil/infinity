@@ -30,7 +30,7 @@ int main(int argc, char** argv) {
     auto valid = infinity::gemma_gated_cuda(at::ones({1, 12}, options), gelu);
     TORCH_CHECK(at::isfinite(valid).all().item<bool>(),
                 "Empty expert activation poisoned nonempty recovery");
-    for (int width : {6, 32, 3584, 6144})
+    for (int width : {6, 32, 2817, 3584, 6144, 10240, 21504})
       for (int offset : {0, 1}) {
         auto storage = at::randn({3 * 2 * width + offset}, options);
         auto input = storage.narrow(0, offset, 3 * 2 * width).view({3, 2 * width});
@@ -142,7 +142,7 @@ int main(int argc, char** argv) {
   // compiles Gemma RMSNorm with --fmad=false. Keep this independent case
   // separate from the original vision/audio inputs and random seeds.
   at::manual_seed(42261);
-  for (int64_t width : {2816}) {
+  for (int64_t width : {256, 512, 2560, 2816, 2817, 5376}) {
     auto input =
         at::randn({257, 1, width}, at::TensorOptions().device(device).dtype(at::kBFloat16));
     auto scale = at::randn({width}, input.options()).to(at::kFloat);
