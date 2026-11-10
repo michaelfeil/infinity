@@ -6,6 +6,7 @@
 #include "batching/radix.h"
 #include "batching/cuda_graph.h"
 #include "helpers/image_feature_cache.h"
+#include <algorithm>
 #include <iostream>
 #include <cstring>
 #include <utility>
@@ -1273,7 +1274,7 @@ void gemma_block_attention_test(const c10::Device& device, at::ScalarType dtype)
   shared.block_prefix_sources = {0, 0};
   auto shared_output = block->forward(shared);
   shared.block_prefix_sources = {0, 1};
-  TORCH_CHECK(at::equal(shared_output, block->forward(shared)),
+  TORCH_CHECK(at::allclose(shared_output, block->forward(shared), cross_shape, cross_shape),
               "Shared block-prefix witnesses changed Gemma outputs");
 
   // Shared-KV geometry with full-attention producers first: layers 2/3 reuse
@@ -1432,6 +1433,117 @@ void gemma_block_attention_test(const c10::Device& device, at::ScalarType dtype)
                              cross_shape,
                              cross_shape),
                 "Block Gemma changed-layout graph replay was invalid");
+    // Operation 3 with non-identity block sources must keep the compact map in
+    // stable graph buffers and still return final logical pooled rows.
+    CudaGraphCache shared_graphs(1, 4096, 1);
+    auto shared_graph_input = on_device(input(shared_ids, shared_offsets));
+    shared_graph_input.block_prefix_lengths = {3, 3};
+    shared_graph_input.block_prefix_sources = {0, 0};
+    const auto shared_full = block->forward(shared_graph_input);
+    const auto shared_pooled = block->forward_pooled(shared_graph_input, true);
+    const auto shared_ends =
+        at::tensor(std::vector<int64_t>{4, 9}, shared_full.options().dtype(at::kLong));
+    TORCH_CHECK(
+        at::allclose(
+            shared_pooled, shared_full.index_select(0, shared_ends), cross_shape, cross_shape),
+        "Shared-prefix pooled readout did not select final logical rows");
+    TORCH_CHECK(at::allclose(shared_graphs.forward(*block, shared_graph_input, 3),
+                             shared_pooled,
+                             cross_shape,
+                             cross_shape),
+                "Shared-prefix graph capture changed pooled outputs");
+    TORCH_CHECK(shared_graphs.size() == 1 && shared_graphs.stats().captures == 1,
+                "Shared-prefix graph did not capture the compact batch");
+    shared_graph_input.ids.index_put_({4}, 42);
+    const auto suffix_full = block->forward(shared_graph_input);
+    TORCH_CHECK(at::allclose(at::cat({shared_full.narrow(0, 0, 3), shared_full.narrow(0, 5, 5)}),
+                             at::cat({suffix_full.narrow(0, 0, 3), suffix_full.narrow(0, 5, 5)}),
+                             cross_shape,
+                             cross_shape),
+                "Shared-prefix graph leaked a question-suffix mutation");
+    const auto suffix_pooled = block->forward_pooled(shared_graph_input, true);
+    TORCH_CHECK(
+        at::allclose(
+            suffix_pooled, suffix_full.index_select(0, shared_ends), cross_shape, cross_shape),
+        "Mutated suffix pooled readout lost final logical rows");
+    TORCH_CHECK(at::allclose(shared_graphs.forward(*block, shared_graph_input, 3),
+                             suffix_pooled,
+                             cross_shape,
+                             cross_shape),
+                "Shared-prefix graph replay missed a suffix mutation");
+    shared_graph_input.ids.index_put_({0}, 42);
+    shared_graph_input.ids.index_put_({5}, 42);
+    const auto prefix_full = block->forward(shared_graph_input);
+    TORCH_CHECK(
+        !at::allclose(
+            suffix_full.narrow(0, 0, 3), prefix_full.narrow(0, 0, 3), cross_shape, cross_shape) &&
+            !at::allclose(
+                suffix_full.narrow(0, 5, 3), prefix_full.narrow(0, 5, 3), cross_shape, cross_shape),
+        "Coherent shared-prefix mutation did not reach both aliases");
+    const auto prefix_pooled = block->forward_pooled(shared_graph_input, true);
+    TORCH_CHECK(
+        at::allclose(
+            prefix_pooled, prefix_full.index_select(0, shared_ends), cross_shape, cross_shape),
+        "Mutated shared-prefix pooled readout lost final logical rows");
+    TORCH_CHECK(at::allclose(shared_graphs.forward(*block, shared_graph_input, 3),
+                             prefix_pooled,
+                             cross_shape,
+                             cross_shape),
+                "Shared-prefix graph replay missed a coherent prefix mutation");
+    TORCH_CHECK(shared_graphs.size() == 1 && shared_graphs.stats().captures == 1,
+                "Shared-prefix graph recaptured unchanged geometry");
+    // Graph replay must refresh compact values when the caller already prepared
+    // the input and then mutates its logical suffix in place.
+    CudaGraphCache prepared_graphs(1, 4096, 1);
+    auto prepared_graph_input = on_device(input(shared_ids, shared_offsets));
+    prepared_graph_input.block_prefix_lengths = {3, 3};
+    prepared_graph_input.block_prefix_sources = {0, 0};
+    block->prepare_input(prepared_graph_input);
+    const auto prepared_full = block->forward(prepared_graph_input);
+    const auto prepared_pooled = block->forward_pooled(prepared_graph_input, true);
+    const auto prepared_compact_pointer = prepared_graph_input.compact_ids.const_data_ptr();
+    const auto prepared_gather_pointer = prepared_graph_input.fold_gather.const_data_ptr();
+    const auto prepared_layout = prepared_graph_input.block_layout;
+    TORCH_CHECK(at::allclose(prepared_graphs.forward(*block, prepared_graph_input, 3),
+                             prepared_pooled,
+                             cross_shape,
+                             cross_shape),
+                "Prepared shared-prefix graph capture changed pooled outputs");
+    TORCH_CHECK(prepared_graphs.size() == 1 && prepared_graphs.stats().captures == 1,
+                "Prepared shared-prefix graph did not capture the compact batch");
+    prepared_graph_input.ids.index_put_({4}, 42);
+    const auto prepared_suffix_full = block->forward(prepared_graph_input);
+    TORCH_CHECK(at::allclose(prepared_full.narrow(0, 0, 3),
+                             prepared_suffix_full.narrow(0, 0, 3),
+                             cross_shape,
+                             cross_shape) &&
+                    at::allclose(prepared_full.narrow(0, 5, 5),
+                                 prepared_suffix_full.narrow(0, 5, 5),
+                                 cross_shape,
+                                 cross_shape),
+                "Prepared shared-prefix graph leaked a question-suffix mutation");
+    TORCH_CHECK(!at::allclose(prepared_full.narrow(0, 3, 2),
+                              prepared_suffix_full.narrow(0, 3, 2),
+                              cross_shape,
+                              cross_shape),
+                "Prepared shared-prefix graph ignored a question-suffix mutation");
+    const auto prepared_suffix_pooled = block->forward_pooled(prepared_graph_input, true);
+    TORCH_CHECK(at::allclose(prepared_suffix_pooled,
+                             prepared_suffix_full.index_select(0, shared_ends),
+                             cross_shape,
+                             cross_shape),
+                "Prepared shared-prefix mutation lost final logical pooled rows");
+    TORCH_CHECK(at::allclose(prepared_graphs.forward(*block, prepared_graph_input, 3),
+                             prepared_suffix_pooled,
+                             cross_shape,
+                             cross_shape),
+                "Prepared shared-prefix graph replay missed an in-place suffix mutation");
+    TORCH_CHECK(prepared_graph_input.compact_ids.const_data_ptr() == prepared_compact_pointer &&
+                    prepared_graph_input.fold_gather.const_data_ptr() == prepared_gather_pointer &&
+                    prepared_graph_input.block_layout == prepared_layout,
+                "Prepared shared-prefix graph replay replaced compact storage");
+    TORCH_CHECK(prepared_graphs.size() == 1 && prepared_graphs.stats().captures == 1,
+                "Prepared shared-prefix graph recaptured unchanged geometry");
   }
   std::cout << "gemma4: block prefix isolation, suffix bidirectionality, causal sliding and mixed "
                "lengths passed on "
@@ -1730,6 +1842,209 @@ void gemma4_image_visibility_test() {
   std::cout << "gemma4: use_bidirectional_attention vision overlay gate passed\n";
 }
 
+void gemma4_block_prefix_compaction_test() {
+  at::manual_seed(418);
+  Fixture f("gemma4", 8, 4, 2);
+  auto cfg = f.cfg;
+  cfg.values["_decision.kind"] = "option_tokens";
+  cfg.values["_decision_attention_mode"] = "block_bidirectional";
+  auto model = create_gemma(cfg, f.weights, c10::Device("cpu"), at::kFloat);
+  model->ready();
+  TORCH_CHECK(!model->supports_radix() && !model->supports_prefix_cache(0),
+              "Block prefix compaction enabled external radix or prefix cache");
+
+  // Rows 0 and 1 share a validated three-token prefix with different question
+  // suffixes. Row 2 keeps an independent two-token prefix.
+  const std::vector<int64_t> ids{1, 2, 3, 4, 5, 6, 1, 2, 3, 7, 8, 9, 10, 11};
+  const std::vector<int32_t> offsets{0, 6, 11, 14};
+  auto packed = input(ids, offsets);
+  packed.block_prefix_lengths = {3, 3, 2};
+  packed.block_prefix_sources = {0, 0, 2};
+  auto prepared = packed;
+  model->prepare_input(prepared);
+  TORCH_CHECK(prepared.block_layout && prepared.compact_ids.defined(),
+              "Shared block prefix did not activate internal compaction");
+  auto external_radix = packed;
+  external_radix.compact_ids = at::zeros({4}, at::kLong);
+  bool rejected_external = false;
+  try {
+    model->forward(external_radix);
+  } catch (...) {
+    rejected_external = true;
+  }
+  TORCH_CHECK(rejected_external, "Block compaction accepted externally supplied radix metadata");
+
+  const auto compacted = model->forward(prepared);
+  TORCH_CHECK(compacted.size(0) == int64_t(ids.size()),
+              "Compacted forward did not restore full logical output rows");
+  TORCH_CHECK(at::equal(compacted.narrow(0, 0, 3), compacted.narrow(0, 6, 3)),
+              "Shared block prefix aliases did not reuse one exact attention result");
+  const auto pooled_ends = at::tensor(std::vector<int64_t>{5, 10, 13}, at::kLong);
+  TORCH_CHECK(at::allclose(model->forward_pooled(prepared, true),
+                           compacted.index_select(0, pooled_ends),
+                           1e-5,
+                           1e-5),
+              "Compacted pooled readout selected the wrong logical rows");
+  for (int64_t row = 0; row < 3; ++row) {
+    const auto start = offsets[row], length = offsets[row + 1] - start;
+    std::vector<int64_t> row_ids(ids.begin() + start, ids.begin() + start + length);
+    std::vector<int32_t> row_offsets{0, length};
+    auto single = input(row_ids, row_offsets);
+    single.block_prefix_lengths = {packed.block_prefix_lengths[row]};
+    single.block_prefix_sources = {0};
+    TORCH_CHECK(
+        at::allclose(compacted.narrow(0, start, length), model->forward(single), 1e-5, 1e-5),
+        "Compacted block row diverged from isolated execution: row=",
+        row);
+  }
+  auto uncompacted = packed;
+  uncompacted.block_prefix_sources = {0, 1, 2};
+  TORCH_CHECK(at::allclose(compacted, model->forward(uncompacted), 1e-5, 1e-5),
+              "Internal block prefix compaction changed logical block outputs");
+
+  // A suffix mutation must not leak into the shared prefix or any other row.
+  auto suffix_mutation = packed;
+  suffix_mutation.ids = packed.ids.clone();
+  suffix_mutation.ids.index_put_({4}, 42);
+  const auto suffix_output = model->forward(suffix_mutation);
+  TORCH_CHECK(at::equal(compacted.narrow(0, 0, 3), suffix_output.narrow(0, 0, 3)),
+              "A question suffix mutation changed its row's prefix");
+  TORCH_CHECK(at::equal(compacted.narrow(0, 6, 8), suffix_output.narrow(0, 6, 8)),
+              "A question suffix mutation crossed into another block row");
+  TORCH_CHECK(
+      (compacted.narrow(0, 3, 3) - suffix_output.narrow(0, 3, 3)).abs().max().item<float>() > 1e-5,
+      "A question suffix mutation did not change its own suffix");
+
+  // An independent prefix mutation must stay inside its own block.
+  auto prefix_mutation = packed;
+  prefix_mutation.ids = packed.ids.clone();
+  prefix_mutation.ids.index_put_({12}, 42);
+  const auto prefix_output = model->forward(prefix_mutation);
+  TORCH_CHECK(at::equal(compacted.narrow(0, 0, 11), prefix_output.narrow(0, 0, 11)),
+              "An independent prefix mutation crossed into a shared block group");
+  TORCH_CHECK(
+      (compacted.narrow(0, 11, 3) - prefix_output.narrow(0, 11, 3)).abs().max().item<float>() >
+          1e-5,
+      "An independent prefix mutation did not affect its own block");
+
+  // Coherent shared metadata: both aliases carry the same updated prefix, so
+  // the compact representative and its alias observe it while the independent
+  // block stays unchanged.
+  auto shared_update = packed;
+  shared_update.ids = packed.ids.clone();
+  shared_update.ids.index_put_({0}, 42);
+  shared_update.ids.index_put_({6}, 42);
+  const auto shared_output = model->forward(shared_update);
+  TORCH_CHECK(
+      (compacted.narrow(0, 0, 3) - shared_output.narrow(0, 0, 3)).abs().max().item<float>() > 1e-5,
+      "Compacted shared prefix ignored its representative change");
+  TORCH_CHECK(
+      (compacted.narrow(0, 6, 3) - shared_output.narrow(0, 6, 3)).abs().max().item<float>() > 1e-5,
+      "Compacted shared prefix was not reused by its aliased row");
+  TORCH_CHECK(at::equal(compacted.narrow(0, 11, 3), shared_output.narrow(0, 11, 3)),
+              "Shared-prefix reuse crossed into an independent block");
+
+  // Valid independent metadata: row 1 now names itself as its prefix source,
+  // so a row-1 prefix mutation must not reach either independent block.
+  auto independent_prefix = packed;
+  independent_prefix.ids = packed.ids.clone();
+  independent_prefix.ids.index_put_({6}, 42);
+  independent_prefix.block_prefix_sources = {0, 1, 2};
+  const auto independent_output = model->forward(independent_prefix);
+  TORCH_CHECK(
+      at::allclose(compacted.narrow(0, 0, 6), independent_output.narrow(0, 0, 6), 1e-5, 1e-5),
+      "An independent row prefix mutation crossed into another block");
+  TORCH_CHECK(
+      at::allclose(compacted.narrow(0, 11, 3), independent_output.narrow(0, 11, 3), 1e-5, 1e-5),
+      "An independent row prefix mutation crossed into the other block");
+  TORCH_CHECK(
+      (compacted.narrow(0, 6, 5) - independent_output.narrow(0, 6, 5)).abs().max().item<float>() >
+          1e-5,
+      "An independent row prefix mutation did not affect its own block");
+
+  // Reusing a prepared input must refresh compact rows from mutated logical
+  // tokens while retaining the maps and buffers used by graph replay.
+  std::vector<int64_t> reused_ids = ids;
+  reused_ids[4] = 42;
+  auto reused = prepared;
+  reused.ids = reused.ids.clone();
+  reused.ids.index_put_({4}, 42);
+  const auto compact_ids_pointer = reused.compact_ids.const_data_ptr();
+  const auto compact_positions_pointer = reused.compact_positions.const_data_ptr();
+  const auto compact_types_pointer = reused.compact_types.const_data_ptr();
+  const auto scatter_pointer = reused.scatter_unfold.const_data_ptr();
+  const auto gather_pointer = reused.fold_gather.const_data_ptr();
+  const auto layout_pointer = reused.block_layout.get();
+  auto fresh_reused = input(reused_ids, offsets);
+  fresh_reused.block_prefix_lengths = packed.block_prefix_lengths;
+  fresh_reused.block_prefix_sources = packed.block_prefix_sources;
+  const auto fresh_output = model->forward(fresh_reused);
+  auto fresh_prepared = fresh_reused;
+  model->prepare_input(fresh_prepared);
+  const auto direct_output = model->forward(reused);
+  TORCH_CHECK(reused.compact_ids.const_data_ptr() == compact_ids_pointer &&
+                  reused.compact_positions.const_data_ptr() == compact_positions_pointer &&
+                  reused.compact_types.const_data_ptr() == compact_types_pointer &&
+                  reused.scatter_unfold.const_data_ptr() == scatter_pointer &&
+                  reused.fold_gather.const_data_ptr() == gather_pointer &&
+                  reused.block_layout.get() == layout_pointer,
+              "Prepared block reuse replaced compact map storage");
+  TORCH_CHECK(at::allclose(direct_output, fresh_output, 1e-5, 1e-5),
+              "Prepared block forward kept stale compact rows after an in-place suffix mutation");
+  TORCH_CHECK(at::equal(reused.compact_ids, fresh_prepared.compact_ids) &&
+                  at::equal(reused.compact_positions, fresh_prepared.compact_positions) &&
+                  at::equal(reused.compact_types, fresh_prepared.compact_types),
+              "Prepared block forward did not refresh compact rows from mutated logical tokens");
+  TORCH_CHECK(at::equal(compacted.narrow(0, 0, 3), direct_output.narrow(0, 0, 3)) &&
+                  at::equal(compacted.narrow(0, 6, 8), direct_output.narrow(0, 6, 8)),
+              "Prepared block suffix mutation crossed into a prefix or another block");
+  TORCH_CHECK(
+      (compacted.narrow(0, 3, 3) - direct_output.narrow(0, 3, 3)).abs().max().item<float>() > 1e-5,
+      "Prepared block suffix mutation did not change its own suffix");
+  model->prepare_input(reused);
+  TORCH_CHECK(reused.compact_ids.const_data_ptr() == compact_ids_pointer &&
+                  reused.compact_positions.const_data_ptr() == compact_positions_pointer &&
+                  reused.compact_types.const_data_ptr() == compact_types_pointer &&
+                  reused.scatter_unfold.const_data_ptr() == scatter_pointer &&
+                  reused.fold_gather.const_data_ptr() == gather_pointer &&
+                  reused.block_layout.get() == layout_pointer,
+              "Prepared block reprepare replaced compact map storage");
+  TORCH_CHECK(at::allclose(model->forward(reused), fresh_output, 1e-5, 1e-5),
+              "Prepared block reprepare kept stale compact rows after an in-place suffix mutation");
+
+  // Media-bearing blocks stay on the existing logical path without compaction.
+  Fixture vision_fixture("gemma4", 8, 4, 2);
+  add_tiny_vision(vision_fixture.cfg, vision_fixture.weights);
+  auto vision_cfg = vision_fixture.cfg;
+  vision_cfg.values["_decision.kind"] = "option_tokens";
+  vision_cfg.values["_decision_attention_mode"] = "block_bidirectional";
+  auto vision_model =
+      create_gemma(vision_cfg, vision_fixture.weights, c10::Device("cpu"), at::kFloat);
+  vision_model->ready();
+  const std::vector<int32_t> media_offsets{0, 4, 8};
+  auto media = input({1, 63, 2, 3, 1, 63, 2, 7}, media_offsets);
+  ImageInput image;
+  image.pixels = at::zeros({9, 768});
+  image.grid_thw = {1, 3, 3};
+  image.merge_size = 3;
+  image.token_start = 1;
+  image.token_count = 1;
+  image.sequence_start = 0;
+  media.images.push_back(image);
+  // Coherent media-aware prefix: both rows carry the same image marker and
+  // identical pixels, but media-bearing blocks still stay uncompacted.
+  image.token_start = 5;
+  image.sequence_start = 4;
+  media.images.push_back(image);
+  media.block_prefix_lengths = {2, 2};
+  media.block_prefix_sources = {0, 0};
+  vision_model->prepare_input(media);
+  TORCH_CHECK(media.block_layout && !media.compact_ids.defined(),
+              "Media-bearing block input entered text-only prefix compaction");
+
+  std::cout << "gemma4: internal text-only block prefix compaction passed\n";
+}
+
 int main(int argc, char** argv) {
   embedding_layer_key_aliases();
   gemma4_image_ple_test();
@@ -1737,6 +2052,7 @@ int main(int argc, char** argv) {
   gemma4_vision_clipping_test();
   gemma4_layer_head_dim_geometry();
   feature_cache_bounds();
+  gemma4_block_prefix_compaction_test();
   gemma_block_attention_test(c10::Device("cpu"), at::kFloat);
 #ifdef INFINITY_TORCH_CUDA_KERNELS
   if (argc > 1) {
@@ -1826,10 +2142,12 @@ int main(int argc, char** argv) {
           at::cat({decision->forward(input(a, ao)), decision->forward(input(b, bo))}, 0);
       TORCH_CHECK(at::allclose(decision_output, decision_separate, 1e-5, 1e-6),
                   "Gemma4 causal decision leaked across packed sequences");
-      TORCH_CHECK(
-          at::allclose(
-              decision_output.narrow(0, 0, 1), decision->forward(input({1}, {0, 1})), 1e-5, 1e-6),
-          "Gemma4 causal decision prefix differs from independent one-token reference");
+      const std::vector<int32_t> single_offsets{0, 1};
+      TORCH_CHECK(at::allclose(decision_output.narrow(0, 0, 1),
+                               decision->forward(input({1}, single_offsets)),
+                               1e-5,
+                               1e-6),
+                  "Gemma4 causal decision prefix differs from independent one-token reference");
       TORCH_CHECK(decision->supports_radix() && !model->supports_radix(),
                   "Gemma folding capability must be causal");
       const std::vector<int32_t> fold_offsets = {0, 3, 7};

@@ -391,6 +391,7 @@ at::Tensor CudaGraphCache::forward(const Model& model,
     key.tensor(value.compact_types);
     key.tensor(value.scatter_unfold);
     key.tensor(value.fold_gather);
+    key.add(value.block_layout && value.block_layout->unique_prefix_rows.defined());
   };
   describe_extras(input);
   key.add(bool(input.prefix));
@@ -541,8 +542,9 @@ at::Tensor CudaGraphCache::forward(const Model& model,
                  fits(layout.kv_cumulative) && fits(layout.history_cumulative) &&
                  fits(layout.cache_sources) && fits(layout.prefix_rows) &&
                  fits(layout.suffix_rows) && fits(layout.suffix_kv_rows) &&
-                 fits(layout.pages.gather) && fits(layout.pages.table) &&
-                 fits(layout.pages.subpage_table);
+                 fits(layout.unique_prefix_rows) && fits(layout.unique_prefix_cumulative) &&
+                 fits(layout.prefix_unfold) && fits(layout.pages.gather) &&
+                 fits(layout.pages.table) && fits(layout.pages.subpage_table);
   }
   if (!inputs_fit)
     return run(input);
@@ -772,6 +774,9 @@ at::Tensor CudaGraphCache::forward(const Model& model,
     charge(layout.prefix_rows);
     charge(layout.suffix_rows);
     charge(layout.suffix_kv_rows);
+    charge(layout.unique_prefix_rows);
+    charge(layout.unique_prefix_cumulative);
+    charge(layout.prefix_unfold);
     charge(layout.pages.gather);
     charge(layout.pages.table);
     charge(layout.pages.subpage_table);

@@ -22,6 +22,7 @@
 #include "kernels/fast_kernels.h"
 #include "kernels/torch_flash_fma.h"
 #include <ATen/ops/im2col.h>
+#include <ATen/ops/index_select.h>
 #include <ATen/ops/_flash_attention_forward.h>
 #include <ATen/ops/_efficient_attention_forward.h>
 #include <ATen/ops/_cudnn_attention_forward.h>
@@ -1003,11 +1004,17 @@ class Gemma final : public Model {
                     layout.suffix_kv_rows.defined(),
                 "Missing Gemma block row gathers");
     auto output = at::empty_like(q);
-    auto prefix = packed_cuda_attention(q.index_select(0, layout.prefix_rows),
-                                        k.index_select(0, layout.prefix_rows),
-                                        v.index_select(0, layout.prefix_rows),
-                                        layout.prefix_cumulative,
-                                        layout.prefix_cumulative,
+    const bool shared = layout.unique_prefix_rows.defined();
+    TORCH_CHECK(!shared ||
+                    (layout.unique_prefix_cumulative.defined() && layout.prefix_unfold.defined()),
+                "Missing unique Gemma block prefix gathers");
+    const auto& prefix_rows = shared ? layout.unique_prefix_rows : layout.prefix_rows;
+    const auto& cumulative = shared ? layout.unique_prefix_cumulative : layout.prefix_cumulative;
+    auto prefix = packed_cuda_attention(q.index_select(0, prefix_rows),
+                                        k.index_select(0, prefix_rows),
+                                        v.index_select(0, prefix_rows),
+                                        cumulative,
+                                        cumulative,
                                         layout.max_prefix,
                                         layout.max_prefix,
                                         scale,
@@ -1015,7 +1022,8 @@ class Gemma final : public Model {
                                         -1,
                                         -1,
                                         true);
-    output.index_copy_(0, layout.prefix_rows, prefix);
+    output.index_copy_(
+        0, layout.prefix_rows, shared ? prefix.index_select(0, layout.prefix_unfold) : prefix);
     if (layout.suffix_rows.numel() > 0) {
       auto suffix = packed_cuda_attention(q.index_select(0, layout.suffix_rows),
                                           k.index_select(0, layout.suffix_kv_rows),
@@ -1308,11 +1316,74 @@ class Gemma final : public Model {
     return fallback;
   }
 
-  /// Validate the request's block boundaries and publish request-local row gathers. Each row keeps
-  /// its own prefix; representative-prefix reuse is a later optimization.
-  void prepare_block_layout(PackedInput& input) const {
-    if (!block_bidirectional || input.block_layout)
-      return;
+  /// Publish request-local compact projection rows for text-only blocks whose validated sources
+  /// share a prefix. Sources select representatives, suffixes always stay independent, and the
+  /// attention row gathers prepared by the caller remain in full logical order.
+  bool compact_block_prefixes(PackedInput& input) const {
+    if (!input.images.empty() || !input.audios.empty() || input.multimodal_positions.defined() ||
+        input.block_prefix_sources.size() != size_t(input.batch))
+      return false;
+    // prepare_block_layout derives unique prefix gathers only for shared validated sources; that
+    // layout replaces the second source scan as the compaction eligibility signal.
+    if (!input.block_layout || !input.block_layout->unique_prefix_rows.defined())
+      return false;
+    const auto tokens = input.ids.numel();
+    std::vector<int64_t> scatter(tokens, -1), fold;
+    fold.reserve(tokens);
+    for (int64_t row = 0; row < input.batch; ++row) {
+      const int64_t start = input.offsets[row], length = input.offsets[row + 1] - start,
+                    prefix = input.block_prefix_lengths[row],
+                    source = input.block_prefix_sources[row];
+      const auto source_start = input.offsets[source];
+      for (int64_t token = 0; token < prefix; ++token) {
+        int64_t compact;
+        if (source == row) {
+          compact = static_cast<int64_t>(fold.size());
+          fold.push_back(start + token);
+        } else {
+          compact = scatter[source_start + token];
+          TORCH_CHECK(compact >= 0, "OneJev shared prefix source was not compacted first");
+        }
+        scatter[start + token] = compact;
+      }
+      // A suffix never aliases another row, even when its tokens happen to match.
+      for (int64_t token = prefix; token < length; ++token) {
+        scatter[start + token] = static_cast<int64_t>(fold.size());
+        fold.push_back(start + token);
+      }
+    }
+    TORCH_CHECK(
+        std::none_of(scatter.begin(), scatter.end(), [](int64_t value) { return value < 0; }),
+        "OneJev compact rows are incomplete");
+    const auto index_options = input.ids.options().dtype(at::kLong);
+    auto gather = at::tensor(fold, index_options);
+    input.compact_ids = input.ids.index_select(0, gather);
+    input.compact_positions = input.positions.index_select(0, gather);
+    input.compact_types = input.types.index_select(0, gather);
+    input.scatter_unfold = at::tensor(scatter, index_options);
+    input.fold_gather = std::move(gather);
+    return true;
+  }
+
+  /// Validate the request's block boundaries and publish request-local row gathers. Text-only
+  /// blocks may also derive compact projection rows from validated prefix sources; the row
+  /// gathers consumed by block attention stay in full logical order.
+  bool prepare_block_layout(PackedInput& input) const {
+    if (!block_bidirectional)
+      return false;
+    if (input.block_layout) {
+      if (!radix_enabled(input))
+        return false;
+      // Keep prepared maps and storage stable for graph replay while refreshing compact token
+      // values that may change when the original logical input is mutated in place.
+      TORCH_CHECK(input.compact_ids.defined() && input.compact_positions.defined() &&
+                      input.compact_types.defined() && input.fold_gather.defined(),
+                  "Incomplete Gemma block compact metadata");
+      at::index_select_out(input.compact_ids, input.ids, 0, input.fold_gather);
+      at::index_select_out(input.compact_positions, input.positions, 0, input.fold_gather);
+      at::index_select_out(input.compact_types, input.types, 0, input.fold_gather);
+      return true;
+    }
     TORCH_CHECK(!radix_enabled(input) && !input.prefix && !input.capture_prefix,
                 "Block-bidirectional Gemma cannot reuse radix or prefix state");
     TORCH_CHECK(input.block_prefix_lengths.size() == size_t(input.batch),
@@ -1363,7 +1434,45 @@ class Gemma final : public Model {
     layout->prefix_rows = at::tensor(prefix_rows, input.ids.options().dtype(at::kLong));
     layout->suffix_rows = at::tensor(suffix_rows, input.ids.options().dtype(at::kLong));
     layout->suffix_kv_rows = at::tensor(suffix_kv_rows, input.ids.options().dtype(at::kLong));
+    // Text-only shared prefixes can run full-attention prefix queries once per
+    // validated source group. The CPU path keeps its exact per-row fallback.
+    bool shared_prefix = false;
+    if (!input.block_prefix_sources.empty())
+      for (int64_t row = 0; row < input.batch; ++row)
+        if (input.block_prefix_sources[row] != row) {
+          shared_prefix = true;
+          break;
+        }
+    if (shared_prefix && input.images.empty() && input.audios.empty() &&
+        !input.multimodal_positions.defined()) {
+      std::vector<int64_t> unique_rows, unfold;
+      std::vector<int32_t> unique_cumulative{0};
+      std::vector<int64_t> unique_start(input.batch, -1);
+      for (int64_t row = 0; row < input.batch; ++row) {
+        const auto source = input.block_prefix_sources[row];
+        if (source != row)
+          continue;
+        unique_start[row] = static_cast<int64_t>(unique_rows.size());
+        const int64_t start = input.offsets[row], prefix = input.block_prefix_lengths[row];
+        for (int64_t token = 0; token < prefix; ++token)
+          unique_rows.push_back(start + token);
+        unique_cumulative.push_back(unique_cumulative.back() + prefix);
+      }
+      unfold.reserve(prefix_rows.size());
+      for (int64_t row = 0; row < input.batch; ++row) {
+        const auto source = input.block_prefix_sources[row];
+        TORCH_CHECK(unique_start[source] >= 0, "Invalid OneJev unique prefix source order");
+        const auto prefix = input.block_prefix_lengths[row];
+        for (int64_t token = 0; token < prefix; ++token)
+          unfold.push_back(unique_start[source] + token);
+      }
+      TORCH_CHECK(unfold.size() == prefix_rows.size(), "Invalid OneJev unique prefix boundary");
+      layout->unique_prefix_rows = at::tensor(unique_rows, input.ids.options().dtype(at::kLong));
+      layout->unique_prefix_cumulative = at::tensor(unique_cumulative, input.cumulative.options());
+      layout->prefix_unfold = at::tensor(unfold, input.ids.options().dtype(at::kLong));
+    }
     input.block_layout = std::move(layout);
+    return compact_block_prefixes(input);
   }
 
 public:
@@ -1878,7 +1987,11 @@ public:
   }
 
   at::Tensor forward_pooled(const PackedInput& input, bool last) const override {
-    if (radix_enabled(input) || input.prefix || input.capture_prefix)
+    // Block models may carry request-local compaction derived from validated block sources;
+    // external radix maps and retained prefix state are still rejected.
+    const bool internal_block_radix =
+        block_bidirectional && input.block_layout && radix_enabled(input);
+    if ((radix_enabled(input) && !internal_block_radix) || input.prefix || input.capture_prefix)
       return {};
     // Publisher sequence heads require their original full-token BF16 geometry.
     if (!device.is_cuda() || publisher_sequence)
@@ -1936,9 +2049,10 @@ public:
                           const at::Tensor& output_rows = {}) const {
     PackedInput prepared;
     const PackedInput* input_ptr = &source;
+    bool internal_compaction = false;
     if (block_bidirectional) {
       prepared = source;
-      prepare_block_layout(prepared);
+      internal_compaction = prepare_block_layout(prepared);
       input_ptr = &prepared;
     }
     const PackedInput& input = *input_ptr;
@@ -1951,10 +2065,10 @@ public:
     // Reuse this call's stream/context/policy snapshot for all Wi/Wo pairs.
     auto ordinary_session = ordinary_ffn ? ordinary_ffn->prepare(w("embed_tokens.weight"))
                                          : OrdinaryLinearExecutor::Session{};
-    TORCH_CHECK(
-        !block_bidirectional ||
-            (is_causal && !radix_enabled(input) && !input.prefix && !input.capture_prefix),
-        "Block-bidirectional Gemma requires causal non-full layers without radix or prefix state");
+    TORCH_CHECK(!block_bidirectional ||
+                    (is_causal && (!radix_enabled(input) || internal_compaction) && !input.prefix &&
+                     !input.capture_prefix),
+                "Block-bidirectional Gemma cannot reuse external radix or prefix state");
     TORCH_CHECK(!radix_enabled(input) || (is_causal && !legacy && !embedding2),
                 "Gemma radix folding requires causal Gemma4 hidden states");
     const auto& ids = radix_ids(input);
@@ -2043,6 +2157,7 @@ public:
     std::array<int64_t, 2> producers{-1, -1};
     // Request-local gathers reuse identical shared RoPE tables across layers.
     std::array<std::pair<at::Tensor, at::Tensor>, 2> legacy_rotary;
+    bool pooled_rows_selected = false;
     for (int64_t i = 0; i < layers; ++i) {
       const auto& layer = stack[i];
       auto p = layer.p;
@@ -2187,11 +2302,12 @@ public:
               input)
               .reshape({tokens, heads * layer.dim});
 
-      if (output_rows.defined() && i + 1 == layers) {
+      if (output_rows.defined() && i + 1 == layers && !radix_enabled(input)) {
         output = output.index_select(0, output_rows);
         states = states.index_select(0, output_rows);
         if (ple.defined())
           ple = ple.index_select(0, output_rows);
+        pooled_rows_selected = true;
       }
       output = layer.o_proj ? attention_projection(output, p + "self_attn.o_proj", *layer.o_proj)
                             : (radix_enabled(input)
@@ -2307,7 +2423,12 @@ public:
     // rows only after both transforms so raw token outputs use the advertised embedding width.
     auto output = norm(states, "norm");
     output = embedding2 ? linear(output, "embedding_projection") : output;
-    return prefix_restore(input, radix_unfold(output, input));
+    // Compact execution preserves the full compact last layer before unfolding. Logical pooled
+    // rows are selected only after every compact row has completed the layer.
+    output = prefix_restore(input, radix_unfold(output, input));
+    if (output_rows.defined() && !pooled_rows_selected)
+      output = output.index_select(0, output_rows);
+    return output;
   }
 };
 }
