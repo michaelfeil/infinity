@@ -363,9 +363,11 @@ class Gemma final : public Model {
   at::Tensor moe(const at::Tensor& residual,
                  const at::Tensor& dense,
                  const std::string& p,
-                 const PackedInput& packed
+                 const PackedInput& packed,
+                 const at::Tensor& routed_input = at::Tensor(),
+                 const at::Tensor& router_input = at::Tensor()
 #ifdef INFINITY_TORCH_MOE_FP8
-                 ,
+                     ,
                  const GemmaMoeFp8* fp8_moe = nullptr
 #endif
 #ifdef INFINITY_TORCH_MOE_MXFP8
@@ -373,10 +375,16 @@ class Gemma final : public Model {
                  const GemmaMoeMxfp8* mx_moe = nullptr
 #endif
   ) const {
-    auto input = norm(residual, p + "pre_feedforward_layernorm_2");
+    // Precomputed inputs reuse the shared pre-feedforward RMS statistic; the
+    // fallback keeps the original separate norm calls for unsupported layouts.
+    auto input =
+        routed_input.defined() ? routed_input : norm(residual, p + "pre_feedforward_layernorm_2");
     // Preserve the router's BF16 rounding before both root-size and learned scales.
-    auto root = at::scalar_tensor(1. / std::sqrt(double(hidden)), residual.options());
-    auto routing = ((norm(residual, "", true) * root) * w(p + "router.scale")).to(at::kFloat);
+    auto routing = router_input;
+    if (!routing.defined()) {
+      auto root = at::scalar_tensor(1. / std::sqrt(double(hidden)), residual.options());
+      routing = ((norm(residual, "", true) * root) * w(p + "router.scale")).to(at::kFloat);
+    }
     // Preserve original FP32 accumulation with the logical-shape plan while
     // computing only actual compact router rows. Unsupported plans retain
     // the original logical-row ATen projection through the helper fallback.
@@ -1717,6 +1725,15 @@ public:
             return activate(gu.narrow(-1, 0, width)) * gu.narrow(-1, width, width);
           },
           true);
+      // Preserve Gemma's BF16 GeGLU stages while combining its gate and FP8 row quantizer.
+      // Other formats keep the model-dtype activation callback above.
+#ifdef INFINITY_TORCH_CUDA_KERNELS
+      const auto activation_name = string("hidden_activation", "gelu_pytorch_tanh");
+      if (quantization == Quantization::Fp8 && device.is_cuda() && dtype == at::kBFloat16 &&
+          activation_name != "relu" && activation_name != "gelu" && activation_name != "silu" &&
+          activation_name != "swish")
+        activation.fp8_gated_activation = Fp8GatedActivation::PreciseGelu;
+#endif
       layer.dense_mlp = DenseMlp(
           {layer.gate_up},
           {w(layer.p + "mlp.down_proj.weight"),
@@ -1988,6 +2005,7 @@ public:
         }
       }
       bool fused_qk_rotary = false;
+      bool fused_qkv_norm = false;
 #ifdef INFINITY_TORCH_CUDA_KERNELS
       if (legacy && device.is_cuda() && dtype == at::kBFloat16 && !layer.shared && layer.dim > 0 &&
           layer.dim <= 8192 && layer.dim % 2 == 0) {
@@ -2003,6 +2021,29 @@ public:
         q = std::move(result.first);
         k = std::move(result.second);
         fused_qk_rotary = true;
+      } else if (!legacy && !embedding2 && device.is_cuda() &&
+                 (dtype == at::kBFloat16 || dtype == at::kHalf)) {
+        const auto q_scale = weight(norm_scales, prefix + p + "self_attn.q_norm.weight");
+        if (layer.shared) {
+          q = gemma4_q_norm_rotary_cuda(q, q_scale, layer.cos, layer.sin, positions, epsilon);
+        } else {
+          auto fused = gemma4_qkv_norm_rotary_cuda(
+              q,
+              k,
+              v,
+              q_scale,
+              weight(norm_scales, prefix + p + "self_attn.k_norm.weight"),
+              norm_ones.at(layer.dim),
+              layer.cos,
+              layer.sin,
+              positions,
+              epsilon);
+          q = std::move(fused[0]);
+          k = std::move(fused[1]);
+          v = std::move(fused[2]);
+          fused_qkv_norm = true;
+        }
+        fused_qk_rotary = true;
       }
 #endif
       if (!fused_qk_rotary)
@@ -2011,7 +2052,7 @@ public:
       // K/V for the same sliding/global category. Preserve that producer
       // layer index for prefix lookup.
       if (layer.shared) {
-        q = radix_unfold(rotate(q, layer, positions), input);
+        q = radix_unfold(fused_qk_rotary ? q : rotate(q, layer, positions), input);
         k = shared[layer.sliding].first;
         v = shared[layer.sliding].second;
         TORCH_CHECK(k.defined(), "Missing shared Gemma KV states at layer ", i);
@@ -2045,7 +2086,7 @@ public:
             k = rotate(k, layer, positions);
           }
         }
-        if (!legacy)
+        if (!legacy && !fused_qkv_norm)
           v = norm(v, "", true);
         auto full = radix_unfold_qkv(q, k, v, input);
         q = full[0];
@@ -2090,9 +2131,29 @@ public:
         }
       }
 #endif
+      at::Tensor routed_pre_ff, router_pre_ff;
       if (!fused_residual_prenorm) {
         states = residual_norm(states, output, p + "post_attention_layernorm");
-        normalized = norm(states, p + "pre_feedforward_layernorm");
+        normalized = at::Tensor();
+#ifdef INFINITY_TORCH_CUDA_KERNELS
+        if (boolean("enable_moe_block", false) && device.is_cuda() && dtype == at::kBFloat16) {
+          auto root = at::scalar_tensor(1. / std::sqrt(double(hidden)), states.options());
+          auto pre = gemma4_bf16_pre_feedforward_norm(
+              states,
+              weight(norm_scales, prefix + p + "pre_feedforward_layernorm.weight"),
+              weight(norm_scales, prefix + p + "pre_feedforward_layernorm_2.weight"),
+              w(p + "router.scale"),
+              root,
+              epsilon);
+          if (pre.dense.defined()) {
+            normalized = pre.dense;
+            routed_pre_ff = pre.routed;
+            router_pre_ff = pre.router;
+          }
+        }
+#endif
+        if (!normalized.defined())
+          normalized = norm(states, p + "pre_feedforward_layernorm");
       }
 
       MlpContext mlp_context;
@@ -2112,7 +2173,9 @@ public:
         mlp = moe(states,
                   mlp,
                   p,
-                  input
+                  input,
+                  routed_pre_ff,
+                  router_pre_ff
 #ifdef INFINITY_TORCH_MOE_FP8
                   ,
                   layer.fp8_moe.get()

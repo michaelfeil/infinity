@@ -763,7 +763,11 @@ Fp8Linear::forward_gated_quantized_impl(const at::Tensor& input,
     rows = std::move(quantized.first);
     scales = std::move(quantized.second);
   }
-  if (fast_accum_ || output_width() / 2 > fp8_scaled_swiglu_max_width)
+  // PreciseGelu keeps the exact Gemma BF16 projection result and its scalar model-dtype staging.
+  // It must never take the portable FP32 unscaled-product route, whose extra FP32 scale products
+  // and rounding can drift by a BF16 ULP relative to the current gemma_gated_cuda path.
+  if (kind == Fp8GatedActivation::PreciseGelu || fast_accum_ ||
+      output_width() / 2 > fp8_scaled_swiglu_max_width)
     return detail::fp8_gated_quantize_impl(
         forward_quantized(rows, scales), kind, gate_first, preserve_legacy_scalar);
   // Preserve the portable recipe: full FP32 accumulation, then the two separate FP32 scale
