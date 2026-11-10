@@ -759,39 +759,25 @@ void launch_gated_vector_math(const T* input,
                               cudaStream_t stream,
                               bool pair_math,
                               bool gate_first) {
+  auto launch = [&](auto pair_tag) {
+    constexpr bool PairMath = decltype(pair_tag)::value;
+    launch_gated_vector<T, Scaled, Kind, PairMath>(input,
+                                                   scaled_input,
+                                                   row_scales,
+                                                   column_scales,
+                                                   output,
+                                                   scales,
+                                                   rows,
+                                                   width,
+                                                   stream,
+                                                   gate_first);
+  };
   if constexpr (Kind == Fp8GatedActivation::PreciseGelu)
-    launch_gated_vector<T, Scaled, Kind, false>(input,
-                                                scaled_input,
-                                                row_scales,
-                                                column_scales,
-                                                output,
-                                                scales,
-                                                rows,
-                                                width,
-                                                stream,
-                                                gate_first);
+    launch(std::false_type{});
   else if (pair_math)
-    launch_gated_vector<T, Scaled, Kind, true>(input,
-                                               scaled_input,
-                                               row_scales,
-                                               column_scales,
-                                               output,
-                                               scales,
-                                               rows,
-                                               width,
-                                               stream,
-                                               gate_first);
+    launch(std::true_type{});
   else
-    launch_gated_vector<T, Scaled, Kind, false>(input,
-                                                scaled_input,
-                                                row_scales,
-                                                column_scales,
-                                                output,
-                                                scales,
-                                                rows,
-                                                width,
-                                                stream,
-                                                gate_first);
+    launch(std::false_type{});
 }
 
 template <class T, Fp8GatedActivation Kind>

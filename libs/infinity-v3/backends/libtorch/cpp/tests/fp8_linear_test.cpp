@@ -228,35 +228,6 @@ void check_precise_gated_quantize(const at::Tensor& gate_up, const char* label) 
   auto expected = infinity::fp8_quantize_rows(infinity::gemma_gated_cuda(gate_up, true));
   auto actual =
       infinity::fp8_gated_quantize(gate_up, infinity::Fp8GatedActivation::PreciseGelu, true);
-  // Bounded first-mismatch diagnostic: report one element, never dump tensors.
-  auto expected_bytes = expected.first.view(at::kByte).to(at::kCPU).contiguous().flatten();
-  auto actual_bytes = actual.first.view(at::kByte).to(at::kCPU).contiguous().flatten();
-  auto expected_nan = at::isnan(expected.first.to(at::kFloat)).to(at::kCPU).contiguous().flatten();
-  auto mismatch =
-      at::logical_and(at::ne(expected_bytes, actual_bytes), at::logical_not(expected_nan))
-          .nonzero()
-          .flatten();
-  if (mismatch.numel()) {
-    const auto width = expected.first.size(1);
-    const auto index = mismatch[0].item<int64_t>();
-    TORCH_CHECK(false,
-                label,
-                " first FP8 byte mismatch index=",
-                index,
-                " row=",
-                index / width,
-                " col=",
-                index % width,
-                " expected=",
-                int(expected_bytes[index].item<uint8_t>()),
-                " actual=",
-                int(actual_bytes[index].item<uint8_t>()));
-  }
-  auto expected_scales = expected.second.view(at::kInt).to(at::kCPU).contiguous().flatten();
-  auto actual_scales = actual.second.view(at::kInt).to(at::kCPU).contiguous().flatten();
-  auto scale_mismatch = at::ne(expected_scales, actual_scales).nonzero().flatten();
-  if (scale_mismatch.numel())
-    TORCH_CHECK(false, label, " first scale mismatch row=", scale_mismatch[0].item<int64_t>());
   check_same_or_nan(expected.first, actual.first, label);
   check_same_or_nan(expected.second, actual.second, label);
 }
