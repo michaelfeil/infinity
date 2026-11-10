@@ -487,13 +487,27 @@ void DenseMlp::prepare(const MlpMethodFactory& factory) {
 }
 
 bool DenseMlp::supports_mxfp8() const {
-  if (up_ || !activation_.packed || !activation_.gate_first ||
-      activation_.fusion != MlpFusion::RoundedSwiGlu || input_.recipe_.input_clip ||
-      input_.recipe_.cast_input || input_.recipe_.output_clip || output_.recipe_.input_clip ||
-      output_.recipe_.cast_input || output_.recipe_.output_clip || input_.bias_.defined() ||
-      !input_.weight().defined() || !output_.weight().defined())
+  // Structural contract: one packed gate/up projection feeding one down
+  // projection. mxfp8_mlp_supported() below also validates that packed geometry.
+  if (up_ || !activation_.packed || !activation_.gate_first)
     return false;
-  if (input_.output_width() % 2 != 0 || input_.output_width() / 2 > fp8_scaled_swiglu_max_width)
+  // The native MXFP8 gated kernel implements rounded SwiGLU only. Every other
+  // recipe this class can evaluate on model-dtype rows, including the exact
+  // custom packed GeGLU, uses the generic activation fallback in forward(),
+  // which applies the recipe's own arithmetic unchanged. RoundedBiasGelu is a
+  // unary-bias contract and a packed projection does not honor it.
+  const bool native_swiglu = activation_.fusion == MlpFusion::RoundedSwiGlu;
+  if (activation_.fusion != MlpFusion::None && !native_swiglu)
+    return false;
+  if (input_.recipe_.input_clip || input_.recipe_.cast_input || input_.recipe_.output_clip ||
+      output_.recipe_.input_clip || output_.recipe_.cast_input || output_.recipe_.output_clip ||
+      input_.bias_.defined() || !input_.weight().defined() || !output_.weight().defined())
+    return false;
+  if (input_.output_width() % 2 != 0)
+    return false;
+  // The fused MXFP8 SwiGLU hook is width-bounded; wider SwiGLU would leave
+  // MXFP8 through the rowwise-FP8 quantizer in forward(), so keep it rowwise.
+  if (native_swiglu && input_.output_width() / 2 > fp8_scaled_swiglu_max_width)
     return false;
   return mxfp8_mlp_supported(input_.weight(), output_.weight());
 }
@@ -605,13 +619,17 @@ at::Tensor DenseMlp::forward(const at::Tensor& x,
 #endif
   auto middle = input_.execute(x, context, input_scales, epilogue);
 #ifdef INFINITY_TORCH_CUDA_KERNELS
-  if (rounded_swiglu && middle.is_cuda() && middle.dim() == 2 && middle.is_contiguous() &&
-      middle.size(1) / 2 <= 32768) {
+  // Rowwise FP8 quantized activation rows feed only the rowwise FP8 method.
+  // MXFP8 consumes its own UE8M0 block-scale rows or model-dtype rows, so this
+  // fallback must not replace the recipe's model-dtype activation for MXFP8.
+  const bool fp8_row_output = output_.method().format() == Quantization::Fp8;
+  if (fp8_row_output && rounded_swiglu && middle.is_cuda() && middle.dim() == 2 &&
+      middle.is_contiguous() && middle.size(1) / 2 <= 32768) {
     auto quantized = fp8_swiglu_quantize(middle);
     return output_.execute(quantized.first, context, quantized.second);
   }
-  if (explicit_gated && !explicit_gated_hook_declined && middle.is_cuda() && middle.dim() == 2 &&
-      middle.is_contiguous() && middle.size(1) / 2 <= 32768) {
+  if (fp8_row_output && explicit_gated && !explicit_gated_hook_declined && middle.is_cuda() &&
+      middle.dim() == 2 && middle.is_contiguous() && middle.size(1) / 2 <= 32768) {
     auto quantized =
         fp8_gated_quantize(middle, *activation_.fp8_gated_activation, activation_.gate_first);
     return output_.execute(quantized.first, context, quantized.second);

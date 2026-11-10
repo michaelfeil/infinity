@@ -1,7 +1,9 @@
 // Copyright Infinity Core Contributors. Licensed under the repository LICENSE.
 #include "helpers/dense_mlp.h"
 #ifdef INFINITY_TORCH_CUDA_KERNELS
+#include "helpers/mxfp8_linear.h"
 #include "kernels/fast_kernels.h"
+#include "kernels/qwen35_kernels.h"
 #endif
 #include <c10/core/InferenceMode.h>
 #include <iostream>
@@ -602,6 +604,53 @@ void check(const c10::Device& device, at::ScalarType dtype) {
 }
 }
 
+#ifdef INFINITY_TORCH_CUDA_KERNELS
+// The Gemma31B MLP is a packed custom GeGLU wider than the native SwiGLU bound.
+// It must qualify for MXFP8 through the generic model-dtype activation
+// fallback, while the same width stays rowwise for the bounded SwiGLU form.
+void check_mxfp8_custom_gated(const c10::Device& device) {
+  const int64_t hidden = 256, intermediate = 21504;
+  if (!infinity::mxfp8_provider_supported(device) ||
+      !infinity::mxfp8_geometry_supported(device, 1, 2 * intermediate, hidden) ||
+      !infinity::mxfp8_geometry_supported(device, 1, hidden, intermediate)) {
+    std::cout << "MXFP8 provider/geometry unavailable; custom GeGLU eligibility skipped\n";
+    return;
+  }
+  const auto opts = at::TensorOptions().device(device).dtype(at::kBFloat16);
+  auto gate_up = at::randn({2 * intermediate, hidden}, opts) * .02;
+  auto down = at::randn({hidden, intermediate}, opts) * .02;
+  auto geglu = infinity::MlpActivationRecipe::numerical(
+      [](const at::Tensor& both) { return infinity::gemma_gated_cuda(both, true); }, true);
+  infinity::DenseMlp mlp({gate_up}, {down}, geglu);
+  TORCH_CHECK(mlp.supports_mxfp8(), "wide custom packed GeGLU did not qualify for MXFP8");
+
+  auto swiglu = geglu;
+  swiglu.fusion = infinity::MlpFusion::RoundedSwiGlu;
+  infinity::DenseMlp swiglu_mlp({gate_up}, {down}, swiglu);
+  TORCH_CHECK(!swiglu_mlp.supports_mxfp8(),
+              "wide SwiGLU escaped the bounded MXFP8 fused width");
+
+  mlp.prepare(infinity::Quantization::Mxfp8);
+  TORCH_CHECK(mlp.is_quantized(), "custom GeGLU MXFP8 preparation failed");
+  auto x = at::randn({3, hidden}, opts) * .5;
+  auto output = mlp.forward(x);
+  TORCH_CHECK(output.sizes() == at::IntArrayRef({3, hidden}) &&
+                  output.scalar_type() == at::kBFloat16 && at::isfinite(output).all().item<bool>(),
+              "custom GeGLU MXFP8 output contract");
+  auto projected = at::matmul(x.to(at::kFloat), gate_up.to(at::kFloat).t()).to(at::kBFloat16);
+  auto activated = infinity::gemma_gated_cuda(projected, true);
+  auto reference =
+      at::matmul(activated.to(at::kFloat), down.to(at::kFloat).t()).to(at::kBFloat16);
+  auto diff = (output.to(at::kFloat) - reference.to(at::kFloat)).abs();
+  const double l2 = std::sqrt(at::sum(diff * diff).item<double>());
+  const double ref_l2 =
+      std::sqrt(at::sum(reference.to(at::kFloat) * reference.to(at::kFloat)).item<double>());
+  const double rel_l2 = ref_l2 > 0 ? l2 / ref_l2 : 0.0;
+  TORCH_CHECK(rel_l2 < 0.2, "custom GeGLU MXFP8 path diverged: rel_l2=", rel_l2);
+  std::cout << "Wide custom GeGLU MXFP8 fallback: rel_l2=" << rel_l2 << "\n";
+}
+#endif
+
 int main(int argc, char**) {
   try {
     c10::InferenceMode inference;
@@ -612,6 +661,10 @@ int main(int argc, char**) {
       check(device, dtype);
     if (!device.is_cuda())
       check(device, at::kFloat);
+#ifdef INFINITY_TORCH_CUDA_KERNELS
+    if (device.is_cuda())
+      check_mxfp8_custom_gated(device);
+#endif
     std::cout << "Persistent MLP bias, clipping, layout and quantization checks passed\n";
   } catch (const std::exception& error) {
     std::cerr << error.what() << '\n';

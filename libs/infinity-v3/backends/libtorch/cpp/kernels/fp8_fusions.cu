@@ -63,6 +63,21 @@ __device__ __forceinline__ T gated_rounded(T gate, T up) {
     T exponential = hexp(T(-gate));
     T denominator = T(T(1) + exponential);
     activated = T(gate / denominator);
+  } else if constexpr (Kind == Fp8GatedActivation::PreciseGelu) {
+    // Match gemma_precise_activation<true>(c10::BFloat16) exactly. c10::BFloat16 operators use
+    // float opmath plus cvt.rn.bf16.f32, while the native __hmul/__hadd helpers may select
+    // mul.bf16/add.bf16, which can round or flush differently. Keep every stage as a separate
+    // c10::BFloat16 value and bitcast the final BF16 result back to T.
+    static_assert(std::is_same_v<T, __nv_bfloat16>, "PreciseGelu requires BF16 rows");
+    const c10::BFloat16 x(static_cast<float>(gate));
+    const c10::BFloat16 square = x * x;
+    const c10::BFloat16 cube = square * x;
+    const c10::BFloat16 alpha = x + c10::BFloat16(.044715) * cube;
+    const c10::BFloat16 argument = c10::BFloat16(M_2_SQRTPI * M_SQRT1_2) * alpha;
+    const c10::BFloat16 tangent = c10::BFloat16(tanhf(static_cast<float>(argument)));
+    const c10::BFloat16 gated = c10::BFloat16(.5) * x * (c10::BFloat16(1.) + tangent);
+    const c10::BFloat16 result = gated * c10::BFloat16(static_cast<float>(up));
+    return static_cast<T>(result);
   } else {
     // Match fast_kernels gated_value activation 4: each GELU intermediate is a separate
     // model-dtype operation, including the tanh input/value.
@@ -141,6 +156,8 @@ template <Fp8GatedActivation Kind, class T>
 __device__ __forceinline__ typename GatedPair<T>::Type
 gated_pair_rounded(typename GatedPair<T>::Type gate, typename GatedPair<T>::Type up) {
   using Pair = typename GatedPair<T>::Type;
+  static_assert(Kind != Fp8GatedActivation::PreciseGelu,
+                "PreciseGelu requires the scalar model-dtype staging");
   if constexpr (Kind == Fp8GatedActivation::RoundedGelu) {
     const auto square = __hmul2(gate, gate);
     const auto cube = __hmul2(square, gate);
@@ -742,7 +759,18 @@ void launch_gated_vector_math(const T* input,
                               cudaStream_t stream,
                               bool pair_math,
                               bool gate_first) {
-  if (pair_math)
+  if constexpr (Kind == Fp8GatedActivation::PreciseGelu)
+    launch_gated_vector<T, Scaled, Kind, false>(input,
+                                                scaled_input,
+                                                row_scales,
+                                                column_scales,
+                                                output,
+                                                scales,
+                                                rows,
+                                                width,
+                                                stream,
+                                                gate_first);
+  else if (pair_math)
     launch_gated_vector<T, Scaled, Kind, true>(input,
                                                scaled_input,
                                                row_scales,
@@ -818,7 +846,14 @@ void dispatch_gated(const at::Tensor& input,
                     bool gate_first) {
   if (kind == Fp8GatedActivation::RoundedSilu)
     launch_gated<T, Fp8GatedActivation::RoundedSilu>(input, output, scales, pair_math, gate_first);
-  else
+  else if constexpr (std::is_same_v<T, __nv_bfloat16>) {
+    if (kind == Fp8GatedActivation::PreciseGelu)
+      launch_gated<T, Fp8GatedActivation::PreciseGelu>(
+          input, output, scales, pair_math, gate_first);
+    else
+      launch_gated<T, Fp8GatedActivation::RoundedGelu>(
+          input, output, scales, pair_math, gate_first);
+  } else
     launch_gated<T, Fp8GatedActivation::RoundedGelu>(input, output, scales, pair_math, gate_first);
 }
 
@@ -846,7 +881,32 @@ void dispatch_scaled_gated(const float* input,
                                                                        stream,
                                                                        pair_math,
                                                                        gate_first);
-  else
+  else if constexpr (std::is_same_v<T, __nv_bfloat16>) {
+    if (kind == Fp8GatedActivation::PreciseGelu)
+      launch_gated_vector_math<T, true, Fp8GatedActivation::PreciseGelu>(nullptr,
+                                                                         input,
+                                                                         row_scales,
+                                                                         columns,
+                                                                         output,
+                                                                         scales,
+                                                                         rows,
+                                                                         width,
+                                                                         stream,
+                                                                         pair_math,
+                                                                         gate_first);
+    else
+      launch_gated_vector_math<T, true, Fp8GatedActivation::RoundedGelu>(nullptr,
+                                                                         input,
+                                                                         row_scales,
+                                                                         columns,
+                                                                         output,
+                                                                         scales,
+                                                                         rows,
+                                                                         width,
+                                                                         stream,
+                                                                         pair_math,
+                                                                         gate_first);
+  } else
     launch_gated_vector_math<T, true, Fp8GatedActivation::RoundedGelu>(nullptr,
                                                                        input,
                                                                        row_scales,
@@ -864,6 +924,7 @@ void validate_gated_activation(Fp8GatedActivation kind) {
   switch (kind) {
   case Fp8GatedActivation::RoundedSilu:
   case Fp8GatedActivation::RoundedGelu:
+  case Fp8GatedActivation::PreciseGelu:
     return;
   }
   TORCH_CHECK(false, "Unsupported FP8 gated activation");
@@ -1009,6 +1070,8 @@ std::pair<at::Tensor, at::Tensor> fp8_gated_quantize_impl(const at::Tensor& inpu
   TORCH_CHECK(input.size(1) % 2 == 0 &&
                   (input.scalar_type() == at::kHalf || input.scalar_type() == at::kBFloat16),
               "Gated FP8 quantization requires even gate/up width and FP16/BF16 input");
+  TORCH_CHECK(kind != Fp8GatedActivation::PreciseGelu || input.scalar_type() == at::kBFloat16,
+              "PreciseGelu requires BF16 gate/up rows");
   c10::cuda::CUDAGuard guard(input.device());
   auto output =
       at::empty({input.size(0), input.size(1) / 2}, input.options().dtype(at::kFloat8_e4m3fn));
@@ -1018,9 +1081,10 @@ std::pair<at::Tensor, at::Tensor> fp8_gated_quantize_impl(const at::Tensor& inpu
     const auto width = input.size(1) / 2;
     // The native aligned pair recipe requires a 16-byte aligned input pointer and an activation
     // width divisible by eight. Scalar and unaligned rows retain the separate scalar staging;
-    // callers that pin the frozen staging pass preserve_legacy_scalar.
+    // callers that pin the frozen staging pass preserve_legacy_scalar. PreciseGelu always keeps
+    // the Gemma scalar staging so the separate model-dtype multiply/add rounding is preserved.
     const bool pair_math =
-        !preserve_legacy_scalar && width % 8 == 0 &&
+        !preserve_legacy_scalar && kind != Fp8GatedActivation::PreciseGelu && width % 8 == 0 &&
         reinterpret_cast<uintptr_t>(input.const_data_ptr()) % alignof(Packed<__half, 8>) == 0 &&
         (kind == Fp8GatedActivation::RoundedGelu || (dtype == at::kBFloat16 && gate_first));
     if (dtype == at::kHalf)
@@ -1043,6 +1107,8 @@ std::pair<at::Tensor, at::Tensor> fp8_scaled_gated_quantize_impl(const at::Tenso
   validate_gated_activation(kind);
   TORCH_CHECK(values.scalar_type() == at::kFloat && values.size(1) % 2 == 0,
               "Scaled gated FP8 quantization requires contiguous FP32 gate/up rows");
+  TORCH_CHECK(kind != Fp8GatedActivation::PreciseGelu || dtype == at::kBFloat16,
+              "PreciseGelu requires BF16 output rows");
   const auto rows = values.size(0), width = values.size(1) / 2;
   TORCH_CHECK(row_scales.is_cuda() && row_scales.dim() == 2 && row_scales.size(0) == rows &&
                   row_scales.size(1) == 1 && row_scales.is_contiguous() &&
@@ -1074,8 +1140,9 @@ std::pair<at::Tensor, at::Tensor> fp8_scaled_gated_quantize_impl(const at::Tenso
     return {output, scales};
   auto stream = at::cuda::getCurrentCUDAStream(values.get_device());
   auto* quantized = reinterpret_cast<__nv_fp8_e4m3*>(output.mutable_data_ptr());
-  const bool pair_math = !preserve_legacy_scalar && (kind == Fp8GatedActivation::RoundedGelu ||
-                                                     (dtype == at::kBFloat16 && gate_first));
+  const bool pair_math =
+      !preserve_legacy_scalar && kind != Fp8GatedActivation::PreciseGelu &&
+      (kind == Fp8GatedActivation::RoundedGelu || (dtype == at::kBFloat16 && gate_first));
   if (dtype == at::kHalf)
     dispatch_scaled_gated<__half>(input,
                                   row_scales.const_data_ptr<float>(),
