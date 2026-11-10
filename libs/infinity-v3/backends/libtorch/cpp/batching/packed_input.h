@@ -187,6 +187,10 @@ struct BlockLayout {
   // Gemma full-attention row gathers: prefix queries and K/V, suffix queries, and the
   // full rows each suffix attends. Qwen leaves these empty.
   at::Tensor prefix_rows, suffix_rows, suffix_kv_rows;
+  // Text-only block requests with validated shared prefix sources publish unique
+  // representative prefix rows, their independent cumulative boundaries, and a
+  // full-prefix-to-unique gather. Other families leave these empty.
+  at::Tensor unique_prefix_rows, unique_prefix_cumulative, prefix_unfold;
   int64_t max_prefix = 0, max_suffix = 0, max_kv = 0;
   std::vector<int32_t> history_offsets;
   BlockPages pages;

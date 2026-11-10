@@ -918,11 +918,17 @@ class Gemma final : public Model {
                     layout.suffix_kv_rows.defined(),
                 "Missing Gemma block row gathers");
     auto output = at::empty_like(q);
-    auto prefix = packed_cuda_attention(q.index_select(0, layout.prefix_rows),
-                                        k.index_select(0, layout.prefix_rows),
-                                        v.index_select(0, layout.prefix_rows),
-                                        layout.prefix_cumulative,
-                                        layout.prefix_cumulative,
+    const bool shared = layout.unique_prefix_rows.defined();
+    TORCH_CHECK(!shared ||
+                    (layout.unique_prefix_cumulative.defined() && layout.prefix_unfold.defined()),
+                "Missing unique Gemma block prefix gathers");
+    const auto& prefix_rows = shared ? layout.unique_prefix_rows : layout.prefix_rows;
+    const auto& cumulative = shared ? layout.unique_prefix_cumulative : layout.prefix_cumulative;
+    auto prefix = packed_cuda_attention(q.index_select(0, prefix_rows),
+                                        k.index_select(0, prefix_rows),
+                                        v.index_select(0, prefix_rows),
+                                        cumulative,
+                                        cumulative,
                                         layout.max_prefix,
                                         layout.max_prefix,
                                         scale,
@@ -930,7 +936,8 @@ class Gemma final : public Model {
                                         -1,
                                         -1,
                                         true);
-    output.index_copy_(0, layout.prefix_rows, prefix);
+    output.index_copy_(
+        0, layout.prefix_rows, shared ? prefix.index_select(0, layout.prefix_unfold) : prefix);
     if (layout.suffix_rows.numel() > 0) {
       auto suffix = packed_cuda_attention(q.index_select(0, layout.suffix_rows),
                                           k.index_select(0, layout.suffix_kv_rows),
@@ -1334,6 +1341,43 @@ class Gemma final : public Model {
     layout->prefix_rows = at::tensor(prefix_rows, input.ids.options().dtype(at::kLong));
     layout->suffix_rows = at::tensor(suffix_rows, input.ids.options().dtype(at::kLong));
     layout->suffix_kv_rows = at::tensor(suffix_kv_rows, input.ids.options().dtype(at::kLong));
+    // Text-only shared prefixes can run full-attention prefix queries once per
+    // validated source group. The CPU path keeps its exact per-row fallback.
+    bool shared_prefix = false;
+    if (!input.block_prefix_sources.empty())
+      for (int64_t row = 0; row < input.batch; ++row)
+        if (input.block_prefix_sources[row] != row) {
+          shared_prefix = true;
+          break;
+        }
+    if (shared_prefix && input.images.empty() && input.audios.empty() &&
+        !input.multimodal_positions.defined()) {
+      std::vector<int64_t> unique_rows, unfold;
+      std::vector<int32_t> unique_cumulative{0};
+      std::vector<int64_t> unique_start(input.batch, -1);
+      for (int64_t row = 0; row < input.batch; ++row) {
+        const auto source = input.block_prefix_sources[row];
+        if (source != row)
+          continue;
+        unique_start[row] = static_cast<int64_t>(unique_rows.size());
+        const int64_t start = input.offsets[row], prefix = input.block_prefix_lengths[row];
+        for (int64_t token = 0; token < prefix; ++token)
+          unique_rows.push_back(start + token);
+        unique_cumulative.push_back(unique_cumulative.back() + prefix);
+      }
+      unfold.reserve(prefix_rows.size());
+      for (int64_t row = 0; row < input.batch; ++row) {
+        const auto source = input.block_prefix_sources[row];
+        TORCH_CHECK(unique_start[source] >= 0, "Invalid OneJev unique prefix source order");
+        const auto prefix = input.block_prefix_lengths[row];
+        for (int64_t token = 0; token < prefix; ++token)
+          unfold.push_back(unique_start[source] + token);
+      }
+      TORCH_CHECK(unfold.size() == prefix_rows.size(), "Invalid OneJev unique prefix boundary");
+      layout->unique_prefix_rows = at::tensor(unique_rows, input.ids.options().dtype(at::kLong));
+      layout->unique_prefix_cumulative = at::tensor(unique_cumulative, input.cumulative.options());
+      layout->prefix_unfold = at::tensor(unfold, input.ids.options().dtype(at::kLong));
+    }
     input.block_layout = std::move(layout);
     return compact_block_prefixes(input);
   }

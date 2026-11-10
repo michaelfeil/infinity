@@ -1431,6 +1431,17 @@ void gemma4_block_prefix_compaction_test() {
   logical_rows(layout.prefix_rows);
   logical_rows(layout.suffix_rows);
   logical_rows(layout.suffix_kv_rows);
+  TORCH_CHECK(layout.unique_prefix_rows.defined() && layout.unique_prefix_cumulative.defined() &&
+                  layout.prefix_unfold.defined(),
+              "Shared block prefix did not derive unique attention rows");
+  TORCH_CHECK(layout.unique_prefix_rows.numel() == 5 &&
+                  layout.unique_prefix_cumulative.numel() == 3 &&
+                  layout.prefix_unfold.numel() == layout.prefix_rows.numel(),
+              "Unique block prefix metadata shape mismatch");
+  for (int64_t token = 0; token < 3; ++token)
+    TORCH_CHECK(layout.prefix_unfold[token].item<int64_t>() ==
+                    layout.prefix_unfold[token + 3].item<int64_t>(),
+                "Shared block prefix rows did not share one unique attention result");
   auto external_radix = packed;
   external_radix.compact_ids = at::zeros({4}, at::kLong);
   bool rejected_external = false;
