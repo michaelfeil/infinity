@@ -32,4 +32,16 @@ Mxfp8Quantized mxfp8_quantize_rows(const at::Tensor& input);
 /// `gate_up` is contiguous model-dtype [rows, 2*width] and uses the same
 /// rounded pair staging as fp8_gated_quantize.
 Mxfp8Quantized mxfp8_gated_silu_quantize(const at::Tensor& gate_up);
+
+/// Fused Gemma4 MoE GeGLU followed by MXFP8 block quantization for routed rows.
+/// `gate_up` is the contiguous BF16 physical expert workspace [capacity, 2*I]
+/// and `row_map` is the contiguous int32 device map from logical slots to those
+/// physical rows. Returns E4M3 values [capacity, I] plus UE8M0 scales in the
+/// 128x4x4 swizzle. One CTA quantizes each logical slot directly from its mapped
+/// physical row; padding activation rows are never read and the complete scale
+/// tensor (including physical padding) is zeroed. The activation recipe matches
+/// gemma4_moe_gelu_mul exactly: FP32 tanh GELU with the contracted cubic FMA,
+/// rounded to BF16, multiplied by the BF16 up row, then rounded to BF16 before
+/// the same block-32 E4M3/UE8M0 quantization as mxfp8_quantize_rows.
+Mxfp8Quantized mxfp8_moe_gelu_quantize(const at::Tensor& gate_up, const at::Tensor& row_map);
 }
