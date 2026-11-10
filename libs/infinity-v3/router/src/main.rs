@@ -566,13 +566,44 @@ fn args_from_matches(matches: &clap::ArgMatches) -> Result<Args> {
     Ok(args)
 }
 
-#[tokio::main]
-async fn main() -> Result<()> {
+fn main() -> Result<()> {
     // Pattern match configuration
     let args = args_from_matches(&command_with_environment().get_matches())?;
     infinity_v3_config::validate_retired_dynamic_quantization_env(|name| std::env::var_os(name))
         .map_err(anyhow::Error::msg)?;
 
+    let configs = args.models()?;
+    let kernel_cache = if configs.iter().any(|model| {
+        model.backend_kind == infinity_v3_backend::BackendKind::Libtorch
+            && model.torch_device != infinity_v3_backend::TorchDevice::Cpu
+    }) {
+        infinity_v3_config::kernel_cache::prepare().map_err(anyhow::Error::msg)?
+    } else {
+        None
+    };
+    if let Some(cache) = &kernel_cache {
+        // Set library defaults while startup is single-threaded, before CUDA or Tokio.
+        for (name, path) in &cache.variables {
+            std::env::set_var(name, path);
+        }
+    }
+
+    tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .context("Could not initialize Tokio runtime")?
+        .block_on(run(
+            args,
+            configs,
+            kernel_cache.map(|cache| cache.directory),
+        ))
+}
+
+async fn run(
+    args: Args,
+    configs: Vec<infinity_v3_router::ModelSettings>,
+    kernel_cache: Option<std::path::PathBuf>,
+) -> Result<()> {
     // Initialize logging and telemetry
     let global_tracer = infinity_v3_router::init_logging(
         args.otlp_endpoint.as_ref(),
@@ -582,6 +613,9 @@ async fn main() -> Result<()> {
     );
 
     tracing::info!("{args:?}");
+    if let Some(directory) = kernel_cache {
+        tracing::info!(directory = %directory.display(), "GPU kernel cache configured");
+    }
 
     // Hack to trim pages regularly
     // see: https://www.algolia.com/blog/engineering/when-allocators-are-hoarding-your-precious-memory/
@@ -602,7 +636,6 @@ async fn main() -> Result<()> {
     if args.hf_api_token.is_some() {
         tracing::warn!("The `--hf-api-token` argument (and the `HF_API_TOKEN` env var) is deprecated and will be removed in a future version. Please use `--hf-token` (or the `HF_TOKEN` env var) instead.");
     }
-    let configs = args.models()?;
     infinity_v3_router::run_models(
         configs,
         args.hf_token.or(args.hf_api_token),

@@ -23,9 +23,15 @@ Setting it when starting a compiled binary has no effect.
 
 CLI flags keep their names. CLI values take precedence over prefixed variables,
 which take precedence over existing unprefixed CLI aliases such as `MODEL_ID`
-and `PORT`. A custom-base binary does not also read `INFINITY_*` settings.
+and `PORT`. A custom-base binary does not also read `INFINITY_*` settings,
+except for the kernel-cache prefix described below.
 Third-party variables such as `HF_TOKEN`, `RUST_LOG`, and CUDA settings retain
 their existing names. Model fixture and benchmark-only variables are unchanged.
+
+The kernel-cache prefix also accepts `INFINITY_KERNEL_CACHE_PREFIX` and
+`KERNEL_CACHE_PREFIX` in custom-base builds, after the compiled-base setting
+(for example, `BEI_KERNEL_CACHE_PREFIX`). The derived CUDA and PyTorch cache
+variables keep their standard, unprefixed names.
 
 ## Docker builds
 

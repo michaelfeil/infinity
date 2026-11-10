@@ -3,6 +3,8 @@ use std::fmt;
 
 include!(concat!(env!("OUT_DIR"), "/env_base.rs"));
 
+pub mod kernel_cache;
+
 /// Projection quantization requested for a LibTorch model.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 #[cfg_attr(feature = "clap", derive(clap::ValueEnum))]
