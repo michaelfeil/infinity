@@ -1916,16 +1916,11 @@ public:
         q = std::move(result.first);
         k = std::move(result.second);
         fused_qk_rotary = true;
-      } else if (!legacy && !embedding2 && device.is_cuda() && dtype == at::kBFloat16 &&
-                 layer.dim >= 32 && layer.dim <= 1024 && layer.dim % 2 == 0) {
+      } else if (!legacy && !embedding2 && device.is_cuda() &&
+                 (dtype == at::kBFloat16 || dtype == at::kHalf)) {
         const auto q_scale = weight(norm_scales, prefix + p + "self_attn.q_norm.weight");
         if (layer.shared) {
-          auto fused =
-              gemma4_q_norm_rotary_cuda(q, q_scale, layer.cos, layer.sin, positions, epsilon);
-          if (fused.defined()) {
-            q = std::move(fused);
-            fused_qk_rotary = true;
-          }
+          q = gemma4_q_norm_rotary_cuda(q, q_scale, layer.cos, layer.sin, positions, epsilon);
         } else {
           auto fused = gemma4_qkv_norm_rotary_cuda(
               q,
@@ -1938,14 +1933,12 @@ public:
               layer.sin,
               positions,
               epsilon);
-          if (fused[0].defined()) {
-            q = std::move(fused[0]);
-            k = std::move(fused[1]);
-            v = std::move(fused[2]);
-            fused_qk_rotary = true;
-            fused_qkv_norm = true;
-          }
+          q = std::move(fused[0]);
+          k = std::move(fused[1]);
+          v = std::move(fused[2]);
+          fused_qkv_norm = true;
         }
+        fused_qk_rotary = true;
       }
 #endif
       if (!fused_qk_rotary)

@@ -749,18 +749,19 @@ void gemma4_qkv_norm_rotary_test(c10::Device device) {
     auto source = x.stride(1) == x.size(2) ? x : x.contiguous();
     return gemma_norm_cuda(source, scale, 1e-6, true);
   };
-  auto tables = [&](int64_t rows, int64_t width, bool partial) {
-    auto angles = at::randn({rows, width / 2}, float_options);
-    auto cos = angles.cos().to(at::kBFloat16), sin = angles.sin().to(at::kBFloat16);
-    if (partial) {
-      const auto keep = width / 4;
-      if (keep < width / 2) {
-        cos.narrow(1, keep, width / 2 - keep).fill_(1.f);
-        sin.narrow(1, keep, width / 2 - keep).zero_();
-      }
-    }
-    return std::make_pair(cos, sin);
-  };
+  auto tables =
+      [&](int64_t rows, int64_t width, bool partial, at::ScalarType type = at::kBFloat16) {
+        auto angles = at::randn({rows, width / 2}, float_options);
+        auto cos = angles.cos().to(type), sin = angles.sin().to(type);
+        if (partial) {
+          const auto keep = width / 4;
+          if (keep < width / 2) {
+            cos.narrow(1, keep, width / 2 - keep).fill_(1.f);
+            sin.narrow(1, keep, width / 2 - keep).zero_();
+          }
+        }
+        return std::make_pair(cos, sin);
+      };
   auto make_positions = [&](std::vector<int64_t> values) {
     return at::tensor(std::move(values), long_options);
   };
@@ -808,27 +809,83 @@ void gemma4_qkv_norm_rotary_test(c10::Device device) {
     TORCH_CHECK(exact(k, k_before), "Gemma4 tied-KV fusion overwrote the shared projection");
   }
 
+  // Expanded head strides are valid packed inputs. Both the fused warp path and
+  // the composed fallback must match the donor norm-plus-rotary operators.
+  for (int64_t width : {64, 2048}) {
+    const int64_t tokens = 5, qheads = 4, kheads = 2, vheads = 2;
+    auto [cos, sin] = tables(9, width, true);
+    auto positions = make_positions({8, 0, 3, 6, 1});
+    auto q_scale = at::randn({width}, float_options);
+    auto k_scale = at::randn({width}, float_options);
+    auto ones = at::ones({width}, float_options);
+    auto q = at::randn({tokens, 1, width}, options).expand({tokens, qheads, width});
+    auto k = at::randn({tokens, 1, width}, options).expand({tokens, kheads, width});
+    auto v = at::randn({tokens, 1, width}, options).expand({tokens, vheads, width});
+    TORCH_CHECK(q.stride(1) == 0 && k.stride(1) == 0 && v.stride(1) == 0,
+                "Gemma4 expanded fixture lost its zero head stride");
+    auto q_expected = gemma_rotary_cuda(donor_norm(q, q_scale), cos, sin, positions);
+    auto k_expected = gemma_rotary_cuda(donor_norm(k, k_scale), cos, sin, positions);
+    auto v_expected = donor_norm(v, ones);
+    auto fused =
+        gemma4_qkv_norm_rotary_cuda(q, k, v, q_scale, k_scale, ones, cos, sin, positions, 1e-6);
+    TORCH_CHECK(fused[0].defined() && exact(fused[0], q_expected) && exact(fused[1], k_expected) &&
+                    exact(fused[2], v_expected),
+                "Gemma4 expanded Q/K/V norm/rotary diverged from donor operators");
+    auto q_only = gemma4_q_norm_rotary_cuda(q, q_scale, cos, sin, positions, 1e-6);
+    TORCH_CHECK(q_only.defined() && exact(q_only, q_expected),
+                "Gemma4 expanded query-only norm/rotary diverged from donor operators");
+  }
+
   {
     const int64_t width = 8192;
     auto [cos, sin] = tables(1, width, false);
     auto positions = make_positions({0});
     auto scale = at::ones({width}, float_options);
     auto q = at::randn({1, 1, width}, options);
+    auto q_expected = gemma_rotary_cuda(donor_norm(q, scale), cos, sin, positions);
+    auto v_expected = donor_norm(q, scale);
     auto q_only = gemma4_q_norm_rotary_cuda(q, scale, cos, sin, positions, 1e-6);
     auto qkv = gemma4_qkv_norm_rotary_cuda(q, q, q, scale, scale, scale, cos, sin, positions, 1e-6);
-    TORCH_CHECK(!q_only.defined() && !qkv[0].defined(),
-                "Gemma4 fused norm/rotary did not decline width 8192");
+    TORCH_CHECK(q_only.defined() && exact(q_only, q_expected) && qkv[0].defined() &&
+                    exact(qkv[0], q_expected) && exact(qkv[1], q_expected) &&
+                    exact(qkv[2], v_expected),
+                "Gemma4 composed norm/rotary fallback changed width 8192 BF16 bits");
   }
   {
-    const int64_t width = 64;
+    const int64_t width = 8194;
     auto [cos, sin] = tables(1, width, false);
     auto positions = make_positions({0});
     auto scale = at::ones({width}, float_options);
-    auto q = at::randn({1, 1, width}, options).to(at::kHalf);
+    auto q = at::randn({1, 1, width}, options);
+    auto reference_norm = [&](const at::Tensor& x) {
+      auto f = x.to(at::kFloat);
+      const auto variance = f.square().mean(-1, true) + 1e-6;
+      f = f / at::sqrt(variance);
+      return (f * scale).to(x.scalar_type());
+    };
+    auto q_expected = gemma_rotary_cuda(reference_norm(q), cos, sin, positions);
+    auto v_expected = reference_norm(q);
     auto q_only = gemma4_q_norm_rotary_cuda(q, scale, cos, sin, positions, 1e-6);
     auto qkv = gemma4_qkv_norm_rotary_cuda(q, q, q, scale, scale, scale, cos, sin, positions, 1e-6);
-    TORCH_CHECK(!q_only.defined() && !qkv[0].defined(),
-                "Gemma4 fused norm/rotary did not decline unsupported dtype");
+    TORCH_CHECK(q_only.defined() && exact(q_only, q_expected) && qkv[0].defined() &&
+                    exact(qkv[0], q_expected) && exact(qkv[1], q_expected) &&
+                    exact(qkv[2], v_expected),
+                "Gemma4 composed norm/rotary fallback changed width above 8192 BF16 bits");
+  }
+  {
+    const int64_t width = 64;
+    auto [cos, sin] = tables(1, width, false, at::kHalf);
+    auto positions = make_positions({0});
+    auto scale = at::ones({width}, float_options);
+    auto q = at::randn({1, 1, width}, options).to(at::kHalf);
+    auto q_expected = gemma_rotary_cuda(donor_norm(q, scale), cos, sin, positions);
+    auto v_expected = donor_norm(q, scale);
+    auto q_only = gemma4_q_norm_rotary_cuda(q, scale, cos, sin, positions, 1e-6);
+    auto qkv = gemma4_qkv_norm_rotary_cuda(q, q, q, scale, scale, scale, cos, sin, positions, 1e-6);
+    TORCH_CHECK(q_only.defined() && exact(q_only, q_expected) && qkv[0].defined() &&
+                    exact(qkv[0], q_expected) && exact(qkv[1], q_expected) &&
+                    exact(qkv[2], v_expected),
+                "Gemma4 composed norm/rotary fallback changed FP16 bits");
   }
 
   const int64_t width = 256, tokens = 5, qheads = 4, kheads = 2, vheads = 2;
@@ -876,7 +933,7 @@ void gemma4_qkv_norm_rotary_test(c10::Device device) {
   positions.copy_(make_positions({1, 7, 2, 0, 4}));
   graph.replay();
   check(captured);
-  std::cout << "Gemma4 fused reference norm/staged rotary and V unit norm parity passed\n";
+  std::cout << "Gemma4 common attention-transform norm/rotary and V unit norm parity passed\n";
 }
 #endif
 

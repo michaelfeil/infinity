@@ -1047,9 +1047,10 @@ __device__ __forceinline__ void gemma4_warp_norm_rotary_row(const __nv_bfloat16*
                                                             const __nv_bfloat16* sine,
                                                             const int64_t* positions,
                                                             int64_t table_rows) {
-  const auto stride = head_stride ? head_stride : static_cast<unsigned long long>(width);
-  const auto base =
-      static_cast<size_t>(row / heads) * token_stride + static_cast<size_t>(row % heads) * stride;
+  // Preserve the caller's actual packed strides. Expanded tensors have a valid
+  // zero head stride and must keep reading the same head storage per token.
+  const auto base = static_cast<size_t>(row / heads) * token_stride +
+                    static_cast<size_t>(row % heads) * head_stride;
   const auto denominator = gemma4_warp_norm_denominator(x + base, width, eps);
   gemma4_warp_norm_write(x + base, scale, staged, width, denominator);
   __syncwarp();
@@ -1077,9 +1078,8 @@ __device__ __forceinline__ void gemma4_warp_norm_row(const __nv_bfloat16* x,
                                                      unsigned long long head_stride,
                                                      unsigned long long row,
                                                      float eps) {
-  const auto stride = head_stride ? head_stride : static_cast<unsigned long long>(width);
-  const auto base =
-      static_cast<size_t>(row / heads) * token_stride + static_cast<size_t>(row % heads) * stride;
+  const auto base = static_cast<size_t>(row / heads) * token_stride +
+                    static_cast<size_t>(row % heads) * head_stride;
   const auto denominator = gemma4_warp_norm_denominator(x + base, width, eps);
   gemma4_warp_norm_write(
       x + base, scale, out + static_cast<size_t>(row) * width, width, denominator);
@@ -1240,6 +1240,80 @@ std::array<at::Tensor, 3> gemma4_norm_rotary_launch(const at::Tensor& q,
   C10_CUDA_KERNEL_LAUNCH_CHECK();
   return {qo, ko, vo};
 }
+
+// Validate the common Gemma4 attention-transform contract. The warp kernel only
+// handles packed BF16 widths up to 1024; every other valid dtype/layout falls
+// back to the established norm and rotary operators below.
+bool gemma4_transform_supported(const at::Tensor& q,
+                                const at::Tensor& k,
+                                const at::Tensor& v,
+                                const at::Tensor& q_scale,
+                                const at::Tensor& k_scale,
+                                const at::Tensor& v_scale,
+                                const at::Tensor& cosine,
+                                const at::Tensor& sine,
+                                const at::Tensor& positions) {
+  if (!q.defined() || !q.is_cuda() ||
+      (q.scalar_type() != at::kBFloat16 && q.scalar_type() != at::kHalf) || q.dim() != 3 ||
+      q.stride(2) != 1 || q.size(0) <= 0 || q.size(1) <= 0 || q.size(2) <= 0 ||
+      q.size(2) % 2 != 0 || k.defined() != v.defined())
+    return false;
+  const auto width = q.size(2);
+  const bool has_kv = k.defined();
+  if (!gemma4_scale_supported(q, q_scale) || !cosine.defined() || !sine.defined() ||
+      !positions.defined())
+    return false;
+  if (has_kv &&
+      (!k.is_cuda() || !v.is_cuda() || k.device() != q.device() || v.device() != q.device() ||
+       k.scalar_type() != q.scalar_type() || v.scalar_type() != q.scalar_type() || k.dim() != 3 ||
+       v.dim() != 3 || k.size(0) != q.size(0) || v.size(0) != q.size(0) || k.size(1) <= 0 ||
+       v.size(1) <= 0 || k.size(2) != width || v.size(2) != width || k.stride(2) != 1 ||
+       v.stride(2) != 1 || !gemma4_scale_supported(k, k_scale) ||
+       !gemma4_scale_supported(v, v_scale)))
+    return false;
+  return cosine.dim() == 2 && sine.dim() == 2 && cosine.size(1) == width / 2 &&
+         cosine.sizes() == sine.sizes() && cosine.device() == q.device() &&
+         sine.device() == q.device() && cosine.scalar_type() == q.scalar_type() &&
+         sine.scalar_type() == q.scalar_type() && cosine.is_contiguous() && sine.is_contiguous() &&
+         positions.dim() == 1 && positions.device() == q.device() &&
+         positions.scalar_type() == at::kLong && positions.is_contiguous() &&
+         positions.numel() == q.size(0) && cosine.size(0) > 0;
+}
+
+// Reproduce the established Gemma4 reference norm. Widths above 8192 use the
+// original Model.norm ATen Float32 square/mean, sqrt/divide and learned-scale
+// stages before rounding back to the activation dtype. Head strides other than
+// the natural width are materialized for the norm kernel's row layout.
+at::Tensor gemma4_composed_norm(const at::Tensor& x, const at::Tensor& scale, double eps) {
+  if (x.size(-1) <= 8192) {
+    const auto source = x.stride(1) == x.size(-1) ? x : x.contiguous();
+    return gemma_norm_cuda(source, scale, eps, true);
+  }
+  auto f = x.to(at::kFloat);
+  const auto variance = f.square().mean(-1, true) + eps;
+  f = f / at::sqrt(variance);
+  return (f * scale).to(x.scalar_type());
+}
+
+std::array<at::Tensor, 3> gemma4_composed_norm_rotary(const at::Tensor& q,
+                                                      const at::Tensor& k,
+                                                      const at::Tensor& v,
+                                                      const at::Tensor& q_scale,
+                                                      const at::Tensor& k_scale,
+                                                      const at::Tensor& v_scale,
+                                                      const at::Tensor& cosine,
+                                                      const at::Tensor& sine,
+                                                      const at::Tensor& positions,
+                                                      double eps) {
+  auto qo = gemma_rotary_cuda(gemma4_composed_norm(q, q_scale, eps), cosine, sine, positions);
+  if (!k.defined())
+    return {std::move(qo), at::Tensor(), at::Tensor()};
+  // Normalize both branches before any consumer can observe a shared K/V input.
+  auto kn = gemma4_composed_norm(k, k_scale, eps);
+  auto vn = gemma4_composed_norm(v, v_scale, eps);
+  auto ko = gemma_rotary_cuda(kn, cosine, sine, positions);
+  return {std::move(qo), std::move(ko), std::move(vn)};
+}
 }
 
 std::array<at::Tensor, 3> gemma4_qkv_norm_rotary_cuda(const at::Tensor& q,
@@ -1252,7 +1326,13 @@ std::array<at::Tensor, 3> gemma4_qkv_norm_rotary_cuda(const at::Tensor& q,
                                                       const at::Tensor& sine,
                                                       const at::Tensor& positions,
                                                       double eps) {
-  return gemma4_norm_rotary_launch(
+  auto fused =
+      gemma4_norm_rotary_launch(q, k, v, q_scale, k_scale, v_scale, cosine, sine, positions, eps);
+  if (fused[0].defined())
+    return fused;
+  if (!gemma4_transform_supported(q, k, v, q_scale, k_scale, v_scale, cosine, sine, positions))
+    return {};
+  return gemma4_composed_norm_rotary(
       q, k, v, q_scale, k_scale, v_scale, cosine, sine, positions, eps);
 }
 
@@ -1263,7 +1343,7 @@ at::Tensor gemma4_q_norm_rotary_cuda(const at::Tensor& q,
                                      const at::Tensor& positions,
                                      double eps) {
   const at::Tensor none;
-  return gemma4_norm_rotary_launch(
+  return gemma4_qkv_norm_rotary_cuda(
       q, none, none, q_scale, none, none, cosine, sine, positions, eps)[0];
 }
 

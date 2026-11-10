@@ -26,10 +26,11 @@ std::pair<at::Tensor, at::Tensor> gemma3_qk_norm_rotary_cuda(const at::Tensor&,
                                                              const at::Tensor&,
                                                              const at::Tensor&,
                                                              double);
-/// Normalize Q/K with the BF16 reference RMS tree, apply composed staged-BF16 rotary
-/// products, and unit-normalize V in one launch for packed BF16 rows of width 32 through 1024.
-/// K/V may share input storage; both are read before any output is written. Unsupported
-/// layouts and widths return an empty result for the caller's original path.
+/// Apply the common Gemma4 attention transform: reference RMS normalization, composed
+/// staged rotary products, and unit-normalized V. Packed BF16 rows use the fused warp
+/// kernel when their dtype/layout/width are supported; other valid FP16/BF16 inputs
+/// compose the established norm and rotary operators. K/V may share input storage.
+/// Invalid operands leave the result undefined.
 std::array<at::Tensor, 3> gemma4_qkv_norm_rotary_cuda(const at::Tensor&,
                                                       const at::Tensor&,
                                                       const at::Tensor&,
@@ -40,8 +41,7 @@ std::array<at::Tensor, 3> gemma4_qkv_norm_rotary_cuda(const at::Tensor&,
                                                       const at::Tensor&,
                                                       const at::Tensor&,
                                                       double);
-/// Query-only shared-KV variant using the same reference norm, staged rotary and width limits.
-/// Unsupported layouts or widths leave the result undefined.
+/// Query-only shared-KV variant of the same common attention transform.
 at::Tensor gemma4_q_norm_rotary_cuda(const at::Tensor&,
                                      const at::Tensor&,
                                      const at::Tensor&,
