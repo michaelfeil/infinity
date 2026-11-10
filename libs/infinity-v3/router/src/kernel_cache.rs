@@ -10,14 +10,9 @@ pub(super) fn configure(models: &[ModelSettings]) -> Result<Option<PathBuf>> {
     }) {
         return Ok(None);
     }
-    let Some(prefix) = [
-        infinity_v3_config::infinity_env!("KERNEL_CACHE_PREFIX"),
-        "INFINITY_KERNEL_CACHE_PREFIX",
-        "KERNEL_CACHE_PREFIX",
-    ]
-    .into_iter()
-    .find_map(std::env::var_os)
-    .filter(|value| !value.is_empty()) else {
+    let Some(prefix) = std::env::var_os(infinity_v3_config::infinity_env!("KERNEL_CACHE_PREFIX"))
+        .filter(|value| !value.is_empty())
+    else {
         return Ok(None);
     };
     let variables = ["CUDA_CACHE_PATH", "PYTORCH_KERNEL_CACHE_PATH"]

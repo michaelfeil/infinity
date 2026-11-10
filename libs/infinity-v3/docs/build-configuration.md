@@ -23,8 +23,7 @@ Setting it when starting a compiled binary has no effect.
 
 CLI flags keep their names. CLI values take precedence over prefixed variables,
 which take precedence over existing unprefixed CLI aliases such as `MODEL_ID`
-and `PORT`. A custom-base binary does not also read `INFINITY_*` settings,
-except for the portable `INFINITY_KERNEL_CACHE_PREFIX` fallback.
+and `PORT`. A custom-base binary does not also read `INFINITY_*` settings.
 Third-party variables such as `HF_TOKEN`, `RUST_LOG`, and CUDA settings retain
 their existing names. Model fixture and benchmark-only variables are unchanged.
 

@@ -117,7 +117,8 @@ for the effect of local storage and cache state.
 
 Set `INFINITY_KERNEL_CACHE_PREFIX=/mnt/distributed` to default both
 `CUDA_CACHE_PATH` and `PYTORCH_KERNEL_CACHE_PATH` to that existing, writable
-directory. Explicit cache paths take precedence.
+directory. Explicit cache paths take precedence. The prefix variable follows
+the compile-time `ENV_VAR_BASE` setting.
 
 Setup only sets the environment once per process, before CUDA and Tokio start;
 it performs no GPU discovery or cache-directory access. Explicit CPU and Python
