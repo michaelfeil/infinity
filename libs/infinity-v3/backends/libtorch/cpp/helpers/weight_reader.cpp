@@ -217,7 +217,11 @@ void read_safetensors(
 #ifdef O_DIRECT
   if (direct && direct_filesystem(owned.value)) {
     // Failure leaves the descriptor buffered; no special permissions needed.
-    fcntl(owned.value, F_SETFL, owned.original_flags | O_DIRECT);
+    if (!(owned.original_flags & O_DIRECT) &&
+        fcntl(owned.value, F_SETFL, owned.original_flags | O_DIRECT) != 0) {
+      const int error = errno;
+      fastsafetensors::detail::warn_buffered_fallback(error);
+    }
   } else if (owned.original_flags & O_DIRECT) {
     TORCH_CHECK(fcntl(owned.value, F_SETFL, owned.original_flags & ~O_DIRECT) == 0,
                 "Could not select buffered safetensors reads");

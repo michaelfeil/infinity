@@ -14,12 +14,13 @@
       "sha256": "16bac6624a5ba9860fa634a692ba7997d95046f57f1ce30a63a106fe7a7ba4b1"
     }
   },
-  "usage": "Adapted nogds_file_reader state, constructor, submit/wait methods and destructor. Standard pread workers and two pinned buffers/streams per worker. Framework operations injected; no Python, GDS, io_uring, libaio, dlopen or NUMA dependency. Buffered fallback additionally accepts EPERM/EOPNOTSUPP. ABI wrapper and bounded tensor staging are local.",
+  "usage": "Adapted nogds_file_reader state, constructor, submit/wait methods and destructor. Standard pread workers and two pinned buffers/streams per worker. Framework operations injected; no Python, GDS, io_uring, libaio, dlopen or NUMA dependency. Buffered fallback additionally accepts EPERM/EOPNOTSUPP/EACCES. A shared once-per-process warning reports O_DIRECT enable failure or direct-read fallback with strerror text; policy skips and opt-out remain quiet. ABI wrapper and bounded tensor staging are local.",
   "modifications": [
     "Extract the non-GDS worker reader into a private C++ namespace and minimal header.",
     "Inject CPU/CUDA runtime operations from LibTorch; remove Python, dynamic loading, NUMA and global memory counters.",
     "Retain the two-buffer per-worker read/upload pipeline and drain semantics.",
-    "Also fall back to buffered reads on EPERM/EOPNOTSUPP and remove ignored const return qualifiers.",
+    "Also fall back to buffered reads on EPERM/EOPNOTSUPP/EACCES and remove ignored const return qualifiers.",
+    "Share one process-wide O_DIRECT fallback warning for enable failures and direct-read retries, including strerror(errno), without warning on policy skips or opt-out.",
     "The local wrapper validates Rust-provided ranges, reads bounded chunks, owns each tensor allocation, converts large tensors in bounded pieces, and drains CUDA copies before returning.",
     "Retry successful short pread results and EINTR until the tensor range is complete, preserving true EOF/error failures and the direct-I/O buffered fallback."
   ]
