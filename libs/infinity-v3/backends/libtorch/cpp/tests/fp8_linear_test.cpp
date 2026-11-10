@@ -3,6 +3,7 @@
 #include "kernels/encoder_activation.h"
 #include "kernels/fp8_fusions.h"
 #include "kernels/fast_kernels.h"
+#include "kernels/qwen35_kernels.h"
 #include "helpers/workspace_admission.h"
 #include <ATen/cuda/CUDAContext.h>
 #include <ATen/Parallel.h>
@@ -218,6 +219,17 @@ void check_linear_gated_quantize(const at::Tensor& input,
       linear.forward_gated_quantized(quantized.first, quantized.second, kind, gate_first);
   check_same_or_nan(expected.first, prequantized.first, label);
   check_same_or_nan(expected.second, prequantized.second, label);
+}
+
+// Gemma's precise GeGLU keeps separate model-dtype multiply/add staging, unlike the aligned
+// half-pair RoundedGelu reference above. Compare the fused recipe against the actual Gemma kernel
+// followed by the production row quantizer.
+void check_precise_gated_quantize(const at::Tensor& gate_up, const char* label) {
+  auto expected = infinity::fp8_quantize_rows(infinity::gemma_gated_cuda(gate_up, true));
+  auto actual =
+      infinity::fp8_gated_quantize(gate_up, infinity::Fp8GatedActivation::PreciseGelu, true);
+  check_same_or_nan(expected.first, actual.first, label);
+  check_same_or_nan(expected.second, actual.second, label);
 }
 }
 
@@ -1335,6 +1347,65 @@ int main() {
           rejected = true;
         }
         TORCH_CHECK(rejected, "Blackwell unaligned FP8 activation was not rejected");
+      }
+    }
+    if (dtype == at::kBFloat16) {
+      // Gemma's precise GeGLU fused with row FP8 quantization must stay byte-exact against
+      // gemma_gated_cuda followed by the production quantizer. Width 21504 is the 31B activation
+      // width beyond fp8_scaled_swiglu_max_width; 2817 is ragged and 1024 exercises the grouped
+      // vector staging. Misaligned storage forces the scalar staging.
+      for (int64_t width : {21504, 2817, 1024})
+        for (bool aligned : {false, true}) {
+          constexpr int64_t rows = 2;
+          auto storage = at::randn({rows * 2 * width + (aligned ? 0 : 1)}, options) * 2;
+          auto gate_up =
+              storage.narrow(0, aligned ? 0 : 1, rows * 2 * width).view({rows, 2 * width});
+          gate_up.select(0, 0).zero_();
+          gate_up.select(0, 1).narrow(0, 0, 8).fill_(std::ldexp(1.f, -10));
+          check_precise_gated_quantize(gate_up, "Precise Gemma gated activation differs");
+        }
+      // Every finite model-dtype gate pattern at an aligned vector width must keep the scalar
+      // staging; selecting the half-pair HFMA recipe changes individual FP8 bytes here.
+      {
+        constexpr int64_t width = 1024;
+        auto gates = at::arange(65536, at::TensorOptions().dtype(at::kInt))
+                         .to(at::kShort)
+                         .view(dtype)
+                         .to(at::kFloat);
+        gates = gates.masked_select(at::isfinite(gates));
+        auto padded = at::zeros({(gates.numel() + width - 1) / width * width}, gates.options());
+        padded.narrow(0, 0, gates.numel()).copy_(gates);
+        auto gate_values = padded.view({-1, width});
+        auto up = at::arange(width, gate_values.options())
+                      .remainder(11)
+                      .sub(5)
+                      .mul(.5)
+                      .unsqueeze(0)
+                      .expand(gate_values.sizes());
+        auto gate_up = at::empty({gate_values.size(0), 2 * width}, options);
+        gate_up.narrow(1, 0, width).copy_(gate_values);
+        gate_up.narrow(1, width, width).copy_(up);
+        check_precise_gated_quantize(gate_up, "Exhaustive precise Gemma gated activation differs");
+      }
+      // The wide projection boundary must consume the exact BF16 forward_quantized result and
+      // never the portable FP32 unscaled product. 31B's gate/up width is 2 * 21504.
+      {
+        constexpr int64_t rows = 2, input_width = 16, gate_width = 21504;
+        auto weight = at::randn({2 * gate_width, input_width}, options) * .05;
+        infinity::Fp8Linear projection(weight);
+        auto input = at::randn({rows, input_width}, options) * .3;
+        auto quantized = infinity::fp8_quantize_rows(input);
+        auto middle = projection.forward_quantized(quantized.first, quantized.second);
+        auto expected = infinity::fp8_quantize_rows(infinity::gemma_gated_cuda(middle, true));
+        auto actual = projection.forward_gated_quantized(
+            input, {}, infinity::Fp8GatedActivation::PreciseGelu, true);
+        check_same_or_nan(expected.first, actual.first, "Precise wide projection differs");
+        check_same_or_nan(expected.second, actual.second, "Precise wide projection scales differ");
+        auto prequantized = projection.forward_gated_quantized(
+            quantized.first, quantized.second, infinity::Fp8GatedActivation::PreciseGelu, true);
+        check_same_or_nan(expected.first, prequantized.first, "Precise wide prequantized differs");
+        check_same_or_nan(
+            expected.second, prequantized.second, "Precise wide prequantized scales differ");
       }
     }
     std::cout << "FP8 row-scale/bytes, odd real rows, model-dtype GEMM and bias: " << dtype
