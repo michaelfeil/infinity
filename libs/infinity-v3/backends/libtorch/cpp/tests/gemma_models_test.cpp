@@ -1075,6 +1075,58 @@ void gemma_block_attention_test(const c10::Device& device, at::ScalarType dtype)
                 "Shared-prefix graph replay missed a coherent prefix mutation");
     TORCH_CHECK(shared_graphs.size() == 1 && shared_graphs.stats().captures == 1,
                 "Shared-prefix graph recaptured unchanged geometry");
+    // Graph replay must refresh compact values when the caller already prepared
+    // the input and then mutates its logical suffix in place.
+    CudaGraphCache prepared_graphs(1, 4096, 1);
+    auto prepared_graph_input = on_device(input(shared_ids, shared_offsets));
+    prepared_graph_input.block_prefix_lengths = {3, 3};
+    prepared_graph_input.block_prefix_sources = {0, 0};
+    block->prepare_input(prepared_graph_input);
+    const auto prepared_full = block->forward(prepared_graph_input);
+    const auto prepared_pooled = block->forward_pooled(prepared_graph_input, true);
+    const auto prepared_compact_pointer = prepared_graph_input.compact_ids.const_data_ptr();
+    const auto prepared_gather_pointer = prepared_graph_input.fold_gather.const_data_ptr();
+    const auto prepared_layout = prepared_graph_input.block_layout;
+    TORCH_CHECK(at::allclose(prepared_graphs.forward(*block, prepared_graph_input, 3),
+                             prepared_pooled,
+                             cross_shape,
+                             cross_shape),
+                "Prepared shared-prefix graph capture changed pooled outputs");
+    TORCH_CHECK(prepared_graphs.size() == 1 && prepared_graphs.stats().captures == 1,
+                "Prepared shared-prefix graph did not capture the compact batch");
+    prepared_graph_input.ids.index_put_({4}, 42);
+    const auto prepared_suffix_full = block->forward(prepared_graph_input);
+    TORCH_CHECK(at::allclose(prepared_full.narrow(0, 0, 3),
+                             prepared_suffix_full.narrow(0, 0, 3),
+                             cross_shape,
+                             cross_shape) &&
+                    at::allclose(prepared_full.narrow(0, 5, 5),
+                                 prepared_suffix_full.narrow(0, 5, 5),
+                                 cross_shape,
+                                 cross_shape),
+                "Prepared shared-prefix graph leaked a question-suffix mutation");
+    TORCH_CHECK(!at::allclose(prepared_full.narrow(0, 3, 2),
+                              prepared_suffix_full.narrow(0, 3, 2),
+                              cross_shape,
+                              cross_shape),
+                "Prepared shared-prefix graph ignored a question-suffix mutation");
+    const auto prepared_suffix_pooled = block->forward_pooled(prepared_graph_input, true);
+    TORCH_CHECK(at::allclose(prepared_suffix_pooled,
+                             prepared_suffix_full.index_select(0, shared_ends),
+                             cross_shape,
+                             cross_shape),
+                "Prepared shared-prefix mutation lost final logical pooled rows");
+    TORCH_CHECK(at::allclose(prepared_graphs.forward(*block, prepared_graph_input, 3),
+                             prepared_suffix_pooled,
+                             cross_shape,
+                             cross_shape),
+                "Prepared shared-prefix graph replay missed an in-place suffix mutation");
+    TORCH_CHECK(prepared_graph_input.compact_ids.const_data_ptr() == prepared_compact_pointer &&
+                    prepared_graph_input.fold_gather.const_data_ptr() == prepared_gather_pointer &&
+                    prepared_graph_input.block_layout == prepared_layout,
+                "Prepared shared-prefix graph replay replaced compact storage");
+    TORCH_CHECK(prepared_graphs.size() == 1 && prepared_graphs.stats().captures == 1,
+                "Prepared shared-prefix graph recaptured unchanged geometry");
   }
   std::cout << "gemma4: block prefix isolation, suffix bidirectionality, causal sliding and mixed "
                "lengths passed on "
@@ -1537,6 +1589,56 @@ void gemma4_block_prefix_compaction_test() {
       (compacted.narrow(0, 6, 5) - independent_output.narrow(0, 6, 5)).abs().max().item<float>() >
           1e-5,
       "An independent row prefix mutation did not affect its own block");
+
+  // Reusing a prepared input must refresh compact rows from mutated logical
+  // tokens while retaining the maps and buffers used by graph replay.
+  std::vector<int64_t> reused_ids = ids;
+  reused_ids[4] = 42;
+  auto reused = prepared;
+  reused.ids = reused.ids.clone();
+  reused.ids.index_put_({4}, 42);
+  const auto compact_ids_pointer = reused.compact_ids.const_data_ptr();
+  const auto compact_positions_pointer = reused.compact_positions.const_data_ptr();
+  const auto compact_types_pointer = reused.compact_types.const_data_ptr();
+  const auto scatter_pointer = reused.scatter_unfold.const_data_ptr();
+  const auto gather_pointer = reused.fold_gather.const_data_ptr();
+  const auto layout_pointer = reused.block_layout.get();
+  auto fresh_reused = input(reused_ids, offsets);
+  fresh_reused.block_prefix_lengths = packed.block_prefix_lengths;
+  fresh_reused.block_prefix_sources = packed.block_prefix_sources;
+  const auto fresh_output = model->forward(fresh_reused);
+  auto fresh_prepared = fresh_reused;
+  model->prepare_input(fresh_prepared);
+  const auto direct_output = model->forward(reused);
+  TORCH_CHECK(reused.compact_ids.const_data_ptr() == compact_ids_pointer &&
+                  reused.compact_positions.const_data_ptr() == compact_positions_pointer &&
+                  reused.compact_types.const_data_ptr() == compact_types_pointer &&
+                  reused.scatter_unfold.const_data_ptr() == scatter_pointer &&
+                  reused.fold_gather.const_data_ptr() == gather_pointer &&
+                  reused.block_layout.get() == layout_pointer,
+              "Prepared block reuse replaced compact map storage");
+  TORCH_CHECK(at::allclose(direct_output, fresh_output, 1e-5, 1e-5),
+              "Prepared block forward kept stale compact rows after an in-place suffix mutation");
+  TORCH_CHECK(at::equal(reused.compact_ids, fresh_prepared.compact_ids) &&
+                  at::equal(reused.compact_positions, fresh_prepared.compact_positions) &&
+                  at::equal(reused.compact_types, fresh_prepared.compact_types),
+              "Prepared block forward did not refresh compact rows from mutated logical tokens");
+  TORCH_CHECK(at::equal(compacted.narrow(0, 0, 3), direct_output.narrow(0, 0, 3)) &&
+                  at::equal(compacted.narrow(0, 6, 8), direct_output.narrow(0, 6, 8)),
+              "Prepared block suffix mutation crossed into a prefix or another block");
+  TORCH_CHECK(
+      (compacted.narrow(0, 3, 3) - direct_output.narrow(0, 3, 3)).abs().max().item<float>() > 1e-5,
+      "Prepared block suffix mutation did not change its own suffix");
+  model->prepare_input(reused);
+  TORCH_CHECK(reused.compact_ids.const_data_ptr() == compact_ids_pointer &&
+                  reused.compact_positions.const_data_ptr() == compact_positions_pointer &&
+                  reused.compact_types.const_data_ptr() == compact_types_pointer &&
+                  reused.scatter_unfold.const_data_ptr() == scatter_pointer &&
+                  reused.fold_gather.const_data_ptr() == gather_pointer &&
+                  reused.block_layout.get() == layout_pointer,
+              "Prepared block reprepare replaced compact map storage");
+  TORCH_CHECK(at::allclose(model->forward(reused), fresh_output, 1e-5, 1e-5),
+              "Prepared block reprepare kept stale compact rows after an in-place suffix mutation");
 
   // Media-bearing blocks stay on the existing logical path without compaction.
   Fixture vision_fixture("gemma4", 8, 4, 2);

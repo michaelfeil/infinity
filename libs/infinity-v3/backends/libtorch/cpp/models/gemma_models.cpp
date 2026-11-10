@@ -21,6 +21,7 @@
 #include "kernels/fast_kernels.h"
 #include "kernels/torch_flash_fma.h"
 #include <ATen/ops/im2col.h>
+#include <ATen/ops/index_select.h>
 #include <ATen/ops/_flash_attention_forward.h>
 #include <ATen/ops/_efficient_attention_forward.h>
 #include <ATen/ops/_cudnn_attention_forward.h>
@@ -1289,8 +1290,19 @@ class Gemma final : public Model {
   bool prepare_block_layout(PackedInput& input) const {
     if (!block_bidirectional)
       return false;
-    if (input.block_layout)
-      return radix_enabled(input);
+    if (input.block_layout) {
+      if (!radix_enabled(input))
+        return false;
+      // Keep prepared maps and storage stable for graph replay while refreshing compact token
+      // values that may change when the original logical input is mutated in place.
+      TORCH_CHECK(input.compact_ids.defined() && input.compact_positions.defined() &&
+                      input.compact_types.defined() && input.fold_gather.defined(),
+                  "Incomplete Gemma block compact metadata");
+      at::index_select_out(input.compact_ids, input.ids, 0, input.fold_gather);
+      at::index_select_out(input.compact_positions, input.positions, 0, input.fold_gather);
+      at::index_select_out(input.compact_types, input.types, 0, input.fold_gather);
+      return true;
+    }
     TORCH_CHECK(!radix_enabled(input) && !input.prefix && !input.capture_prefix,
                 "Block-bidirectional Gemma cannot reuse radix or prefix state");
     TORCH_CHECK(input.block_prefix_lengths.size() == size_t(input.batch),
