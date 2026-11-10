@@ -149,6 +149,17 @@ at::Tensor routed_moe_cuda(const at::Tensor& x,
                              : (e == 128 ? hopper_qwen3_moe_workspace_bytes(t, h, i)
                                          : hopper_qwen35_moe_workspace_bytes(t, h, i));
 #endif
+  // Use ATen where its device-only grouped provider is supported. Its generic
+  // fallback reads offsets on the CPU, which is incompatible with capture.
+  // ATen cannot return FP32 for BF16 inputs, so down retains the weighted
+  // FP32 recipe through CUTLASS rather than rounding each route early.
+  const bool grouped = scales.defined() && !hopper && (props->major == 9 || props->major == 10);
+  if (grouped)
+    bytes = infinity_moe::gemma4_moe_grouped_workspace_bytes(t, h, i);
+#ifdef INFINITY_TORCH_MOE_SM100
+  if (grouped && bytes && infinity_moe::sm100_down_available(props->major, props->minor))
+    bytes += infinity_moe::sm100_down_workspace_bytes();
+#endif
   TORCH_CHECK(bytes, "Unsupported routed MoE workspace dimensions");
   auto scratch = at::empty({static_cast<int64_t>(bytes)}, x.options().dtype(at::kByte));
   auto out = at::empty_like(x);
@@ -186,7 +197,10 @@ at::Tensor routed_moe_cuda(const at::Tensor& x,
     }
   } else
 #endif
-  {
+      if (grouped) {
+    status = infinity_moe::gemma4_moe_forward_grouped_bf16(
+        x, logits, gu, down, scales, out, scratch.data_ptr(), bytes);
+  } else {
     if (scales.defined())
       status = gemma4_moe_forward_bf16(logits.data_ptr<float>(),
                                        scales.data_ptr<float>(),
