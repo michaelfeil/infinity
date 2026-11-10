@@ -13,6 +13,7 @@
 #ifdef INFINITY_TEST_PREAD_WRAPPER
 namespace {
 std::atomic<int> read_mode{0}; // 1 buffered shorts, 2 partial+EIO, 3 direct shorts, 4 fallback
+std::atomic<int> fallback_errno{EINVAL};
 std::atomic<size_t> read_calls{0}, short_reads{0};
 }
 
@@ -32,7 +33,7 @@ extern "C" ssize_t __wrap_pread(int fd, void* buffer, size_t count, off_t offset
   }
 #ifdef O_DIRECT
   if (mode == 4 && (fcntl(fd, F_GETFL) & O_DIRECT)) {
-    errno = EINVAL;
+    errno = fallback_errno.load();
     return -1;
   }
 #endif
@@ -173,11 +174,15 @@ int main() {
         int direct = reader.submit_read(source.fd, a, 0, bytes.size(), 0);
         require(reader.wait_read(direct) == a.get_base_address());
         require(std::equal(bytes.begin(), bytes.end(), first.begin()));
-        read_mode = 4; // Unsupported direct I/O followed by buffered shorts.
-        require(fcntl(source.fd, F_SETFL, flags | O_DIRECT) == 0);
-        int fallback = reader.submit_read(source.fd, a, 0, bytes.size(), 0);
-        require(reader.wait_read(fallback) == a.get_base_address());
-        require(std::equal(bytes.begin(), bytes.end(), first.begin()));
+        read_mode = 4; // Eligible direct-I/O failures followed by buffered retries.
+        for (int failure : {EINVAL, EOPNOTSUPP, EPERM, EACCES}) {
+          fallback_errno = failure;
+          std::fill(first.begin(), first.begin() + bytes.size(), 0xcc);
+          require(fcntl(source.fd, F_SETFL, flags | O_DIRECT) == 0);
+          int fallback = reader.submit_read(source.fd, a, 0, bytes.size(), 0);
+          require(reader.wait_read(fallback) == a.get_base_address());
+          require(std::equal(bytes.begin(), bytes.end(), first.begin()));
+        }
         require(fcntl(source.fd, F_SETFL, flags) == 0);
       }
 #endif

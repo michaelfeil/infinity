@@ -25,6 +25,14 @@
 #endif
 namespace fastsafetensors {
 static constexpr int64_t ALIGN = 4096;
+namespace detail {
+void warn_buffered_fallback(int error) {
+    static std::atomic<bool> warned{false};
+    if (!warned.exchange(true))
+        std::fprintf(stderr, "[WARN] O_DIRECT unavailable: %s; falling back to buffered reads\n",
+                     std::strerror(error));
+}
+} // namespace detail
 struct nogds_file_reader::state {
     struct request {
         int fd;
@@ -106,15 +114,15 @@ struct nogds_file_reader::state {
             };
             int64_t got = read_range(read_offset, read_length, length + source_skip);
 #ifndef _MSC_VER
-            if (got < 0 && (read_errno == EINVAL || read_errno == EOPNOTSUPP || read_errno == EPERM) && direct
-                    && fcntl(req.fd, F_SETFL, flags & ~O_DIRECT) == 0) {
+            if (got < 0 && direct &&
+                    (read_errno == EINVAL || read_errno == EOPNOTSUPP ||
+                     read_errno == EPERM || read_errno == EACCES) &&
+                    fcntl(req.fd, F_SETFL, flags & ~O_DIRECT) == 0) {
                 // The filesystem accepted O_DIRECT at open but refuses direct
                 // reads. Clear the flag on the shared descriptor (every worker
                 // sees the change) and retry buffered with
                 // the exact range, as a buffered load would have issued.
-                static std::atomic<bool> warned{false};
-                if (!warned.exchange(true))
-                    std::fprintf(stderr, "[WARN] filesystem rejected O_DIRECT reads: falling back to buffered reads\n");
+                detail::warn_buffered_fallback(read_errno);
                 direct = false;
                 source_skip = 0;
                 read_errno = 0;

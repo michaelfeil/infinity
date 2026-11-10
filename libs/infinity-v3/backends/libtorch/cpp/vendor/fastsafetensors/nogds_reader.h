@@ -11,6 +11,11 @@ using cudaStream_t = void*;
 inline constexpr int cudaSuccess = 0;
 inline constexpr int cudaMemcpyHostToDevice = 1;
 
+namespace detail {
+// Emits at most one O_DIRECT buffered-fallback warning per process.
+void warn_buffered_fallback(int error);
+} // namespace detail
+
 // The original runtime operation table is supplied by the embedding framework.
 // CPU builds need neither CUDA headers nor a CUDA runtime.
 struct ext_funcs_t {
