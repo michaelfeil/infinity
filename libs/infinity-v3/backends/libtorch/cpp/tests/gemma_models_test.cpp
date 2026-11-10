@@ -223,8 +223,9 @@ void publisher_bf16_score_readout(const c10::Device& device) {
       return gemma4_bf16_pre_feedforward_norm(
           x, dense_scale, routed_scale, router_scale, root, 1e-6);
     };
-    for (int i = 0; i < 3; ++i)
-      check(execute());
+    check(execute());
+    execute();
+    execute();
     norm_stream.synchronize();
     at::cuda::CUDAGraph graph;
     graph.capture_begin();
