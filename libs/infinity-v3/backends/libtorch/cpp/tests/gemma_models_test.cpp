@@ -732,6 +732,72 @@ void gemma_low_precision_pointwise(c10::Device device) {
   }
   std::cout << "Gemma FP16/BF16 packed norm, rotary and activation parity passed\n";
 }
+
+void gemma_bf16_gated_vector_test(c10::Device device) {
+  c10::cuda::CUDAGuard device_guard(device);
+  const auto options = at::TensorOptions().device(device).dtype(at::kBFloat16);
+  auto exact = [](const at::Tensor& a, const at::Tensor& b) {
+    auto x = a.contiguous().cpu(), y = b.contiguous().cpu();
+    return x.sizes() == y.sizes() && x.scalar_type() == y.scalar_type() &&
+           std::memcmp(x.const_data_ptr(), y.const_data_ptr(), x.numel() * x.element_size()) == 0;
+  };
+  // Any non-vector-aligned view keeps the frozen scalar recipe as the exact oracle.
+  auto scalar_oracle = [&](const at::Tensor& source) {
+    auto padded = at::empty({source.numel() + 1}, options);
+    auto misaligned = padded.narrow(0, 1, source.numel()).view(source.sizes());
+    misaligned.copy_(source);
+    return gemma_gated_cuda(misaligned, true);
+  };
+  std::vector<c10::BFloat16> patterns;
+  for (uint32_t bits = 0; bits <= 0xffff; ++bits)
+    if (((bits >> 7) & 0xff) != 0xff)
+      patterns.emplace_back(uint16_t(bits), c10::BFloat16::from_bits());
+  auto stream = at::cuda::getStreamFromPool(false, device.index());
+  c10::cuda::CUDAStreamGuard stream_guard(stream);
+  for (int64_t width : {21504, 2112}) {
+    const int64_t rows = (int64_t(patterns.size()) + width - 1) / width;
+    auto host = at::empty({rows, 2 * width}, at::TensorOptions().dtype(at::kBFloat16));
+    auto* data = reinterpret_cast<c10::BFloat16*>(host.mutable_data_ptr());
+    for (int64_t row = 0; row < rows; ++row)
+      for (int64_t column = 0; column < width; ++column) {
+        const int64_t index = row * width + column;
+        data[row * 2 * width + column] = patterns[index % int64_t(patterns.size())];
+        data[row * 2 * width + width + column] =
+            c10::BFloat16(float(int64_t((index * 37) % 2001) - 1000) / 333.f);
+      }
+    auto source = host.to(device);
+    auto expected = scalar_oracle(source);
+    for (int64_t offset : {0, 4}) {
+      auto padded = at::empty({source.numel() + offset + 1}, options);
+      auto shifted = padded.narrow(0, offset, source.numel()).view(source.sizes());
+      shifted.copy_(source);
+      TORCH_CHECK(reinterpret_cast<uintptr_t>(shifted.const_data_ptr()) % 8 == 0 &&
+                      exact(gemma_gated_cuda(shifted, true), expected),
+                  "Vectorized Gemma BF16 gate changed the staged scalar recipe at width ",
+                  width,
+                  " offset ",
+                  offset);
+    }
+    if (width == 2112) {
+      auto graph_input = source.clone();
+      for (int i = 0; i < 3; ++i)
+        gemma_gated_cuda(graph_input, true);
+      stream.synchronize();
+      at::cuda::CUDAGraph graph;
+      graph.capture_begin();
+      auto captured = gemma_gated_cuda(graph_input, true);
+      graph.capture_end();
+      graph.replay();
+      TORCH_CHECK(exact(captured, scalar_oracle(graph_input)),
+                  "Gemma BF16 gated vector graph changed the staged scalar recipe");
+      graph_input.copy_(at::flip(graph_input, {1}).contiguous());
+      graph.replay();
+      TORCH_CHECK(exact(captured, scalar_oracle(graph_input)),
+                  "Gemma BF16 gated vector graph reused stale operands");
+    }
+  }
+  std::cout << "Gemma BF16 finite gate patterns, vector GeGLU and graph parity passed\n";
+}
 #endif
 
 void gemma_block_attention_test(const c10::Device& device, at::ScalarType dtype) {
@@ -1325,6 +1391,7 @@ int main(int argc, char** argv) {
   if (argc > 1) {
     gemma_block_attention_test(c10::Device(argv[1]), at::kBFloat16);
     gemma_low_precision_pointwise(c10::Device(argv[1]));
+    gemma_bf16_gated_vector_test(c10::Device(argv[1]));
     for (const auto* family : {"gemma3", "gemma3_text", "gemma4", "embedding_gemma2"})
       dynamic_fp8(c10::Device(argv[1]), family);
     feature_cache_stream_lifetime(c10::Device(argv[1]));

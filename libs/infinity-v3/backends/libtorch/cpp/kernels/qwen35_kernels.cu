@@ -594,6 +594,30 @@ __global__ void gemma_precise_unary(const T* x, T* out, int64_t count) {
     out[i] = gemma_precise_activation<Gelu, T>(x[i]);
 }
 
+struct alignas(8) Bf16x4 {
+  c10::BFloat16 values[4];
+};
+
+// Four adjacent BF16 columns per thread keep the scalar staged c10 arithmetic
+// while replacing per-column global transactions with aligned 8-byte accesses.
+__global__ void gemma_bf16x4_gelu_gate(const c10::BFloat16* x,
+                                       c10::BFloat16* out,
+                                       int64_t width,
+                                       unsigned int tiles) {
+  const int64_t row = blockIdx.x / tiles;
+  const int64_t column = int64_t(blockIdx.x % tiles) * 1024 + threadIdx.x * 4;
+  if (column >= width)
+    return;
+  const int64_t base = row * 2 * width;
+  const auto gate = *reinterpret_cast<const Bf16x4*>(x + base + column);
+  const auto up = *reinterpret_cast<const Bf16x4*>(x + base + width + column);
+  Bf16x4 result;
+#pragma unroll
+  for (int i = 0; i < 4; ++i)
+    result.values[i] = gemma_precise_activation<true, c10::BFloat16>(gate.values[i]) * up.values[i];
+  *reinterpret_cast<Bf16x4*>(out + row * width + column) = result;
+}
+
 at::Tensor gemma_activation_cuda(const at::Tensor& value, bool gelu) {
   c10::cuda::CUDAGuard guard(value.device());
   TORCH_CHECK((value.scalar_type() == at::kBFloat16 || value.scalar_type() == at::kHalf),
@@ -643,6 +667,17 @@ at::Tensor gemma_gated_cuda(const at::Tensor& x, bool gelu) {
   if (out.numel() == 0)
     return out;
   auto stream = at::cuda::getCurrentCUDAStream(x.device().index());
+  if (gelu && x.scalar_type() == at::kBFloat16 && width % 4 == 0 &&
+      reinterpret_cast<uintptr_t>(x.const_data_ptr()) % alignof(Bf16x4) == 0 &&
+      reinterpret_cast<uintptr_t>(out.mutable_data_ptr()) % alignof(Bf16x4) == 0) {
+    const auto* input = reinterpret_cast<const c10::BFloat16*>(x.const_data_ptr());
+    auto* output = reinterpret_cast<c10::BFloat16*>(out.mutable_data_ptr());
+    const auto tiles = static_cast<unsigned int>((width + 1023) / 1024);
+    const auto blocks = static_cast<unsigned int>(out.size(0)) * tiles;
+    gemma_bf16x4_gelu_gate<<<blocks, 256, 0, stream>>>(input, output, width, tiles);
+    C10_CUDA_KERNEL_LAUNCH_CHECK();
+    return out;
+  }
   if (gelu && x.scalar_type() == at::kHalf && width % 2 == 0 &&
       reinterpret_cast<uintptr_t>(x.const_data_ptr()) % alignof(__half2) == 0) {
     const auto* input = reinterpret_cast<const __half2*>(x.const_data_ptr());
