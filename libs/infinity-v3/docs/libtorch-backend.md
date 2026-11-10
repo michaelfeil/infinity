@@ -117,21 +117,15 @@ for the effect of local storage and cache state.
 
 Set `INFINITY_KERNEL_CACHE_PREFIX=/mnt/distributed` to default both
 `CUDA_CACHE_PATH` and `PYTORCH_KERNEL_CACHE_PATH` to
-`/mnt/distributed/<NVIDIA-driver-version>/sm<compute-capability>`; for example,
-`/mnt/distributed/580.126.09/sm100`. The directory is created before CUDA and the
-async runtime initialize. Explicit values of either cache variable take precedence.
+`<prefix>/<NVIDIA-driver-version>/sm<compute-capability>`, for example
+`/mnt/distributed/580.126.09/sm100`. Explicit cache paths take precedence.
+The directory and environment are initialized before CUDA and Tokio start.
+BEIv3 also accepts `BEI_KERNEL_CACHE_PREFIX`.
 
-This is opt-in and requires `nvidia-smi` for GPU metadata. Explicit CPU and Python
-backend configurations leave these settings untouched. All models and GPU
-replicas in one process share the directory. On mixed-GPU hosts, the SM component
-lists all architectures reported by `nvidia-smi`, sorted and deduplicated
-(for example, `sm90-sm100`); execution device selection is unchanged.
-`BEI_KERNEL_CACHE_PREFIX` is also supported in BEIv3 builds.
-
-Use a writable mount with atomic file rename support. GPU discovery or directory
-creation failures produce a startup error.
-This setting controls cache placement; it does not persist cuBLASLt plans,
-CUDA graphs, or KV/prefix tensors.
+Setup requires `nvidia-smi` and a writable mount with atomic rename support.
+Explicit CPU and Python backends skip it. Models and replicas share one directory;
+mixed-GPU hosts use all architectures reported by `nvidia-smi`, sorted and
+deduplicated (for example, `sm90-sm100`).
 
 ## Build from source
 

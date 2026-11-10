@@ -5,6 +5,8 @@ use infinity_v3_config::{DynamicQuantization, DynamicQuantizationScope};
 use opentelemetry::global;
 use veil::Redact;
 
+mod kernel_cache;
+
 #[cfg(not(target_os = "linux"))]
 #[global_allocator]
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
@@ -573,30 +575,13 @@ fn main() -> Result<()> {
         .map_err(anyhow::Error::msg)?;
 
     let configs = args.models()?;
-    let kernel_cache = if configs.iter().any(|model| {
-        model.backend_kind == infinity_v3_backend::BackendKind::Libtorch
-            && model.torch_device != infinity_v3_backend::TorchDevice::Cpu
-    }) {
-        infinity_v3_config::kernel_cache::prepare().map_err(anyhow::Error::msg)?
-    } else {
-        None
-    };
-    if let Some(cache) = &kernel_cache {
-        // Set library defaults while startup is single-threaded, before CUDA or Tokio.
-        for (name, path) in &cache.variables {
-            std::env::set_var(name, path);
-        }
-    }
+    let kernel_cache = kernel_cache::configure(&configs)?;
 
     tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()
         .context("Could not initialize Tokio runtime")?
-        .block_on(run(
-            args,
-            configs,
-            kernel_cache.map(|cache| cache.directory),
-        ))
+        .block_on(run(args, configs, kernel_cache))
 }
 
 async fn run(
