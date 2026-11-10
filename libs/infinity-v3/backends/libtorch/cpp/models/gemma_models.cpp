@@ -1238,13 +1238,9 @@ class Gemma final : public Model {
     if (!input.images.empty() || !input.audios.empty() || input.multimodal_positions.defined() ||
         input.block_prefix_sources.size() != size_t(input.batch))
       return false;
-    bool shared = false;
-    for (int64_t row = 0; row < input.batch; ++row)
-      if (input.block_prefix_sources[row] != row) {
-        shared = true;
-        break;
-      }
-    if (!shared)
+    // prepare_block_layout derives unique prefix gathers only for shared validated sources; that
+    // layout replaces the second source scan as the compaction eligibility signal.
+    if (!input.block_layout || !input.block_layout->unique_prefix_rows.defined())
       return false;
     const auto tokens = input.ids.numel();
     std::vector<int64_t> scatter(tokens, -1), fold;
