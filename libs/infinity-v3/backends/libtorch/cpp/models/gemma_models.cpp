@@ -49,12 +49,14 @@ class Gemma final : public Model {
   c10::Device device;
   at::ScalarType dtype;
   std::string prefix, family;
-  int64_t hidden, heads, layers, ple_width;
+  int64_t hidden, heads, layers, ple_width, pad_token;
   double epsilon;
   bool legacy, embedding2, causal, block_bidirectional;
   bool publisher_sequence = false;
   bool embedding2_reference_cuda = false;
   bool fused_legacy_residual = false;
+  bool vision_bidirectional = false;
+  bool vision_clipped = false;
 
   /// Prepared attention/MLP projections, rotary tables, and Gemma layer policy.
   struct Layer {
@@ -608,8 +610,6 @@ class Gemma final : public Model {
     }
     TORCH_CHECK(vh > 0 && nh > 0 && nk > 0 && nh % nk == 0 && dim > 0 && dim % 4 == 0 && nlayer > 0,
                 "Invalid Gemma vision geometry");
-    TORCH_CHECK(!cfg.boolean("vision_config.use_clipped_linears", false),
-                "Clipped Gemma vision linears unsupported");
     auto root = weights.count("model.vision_tower.patch_embedder.input_proj.weight")
                     ? std::string("model.")
                     : std::string();
@@ -620,7 +620,11 @@ class Gemma final : public Model {
       auto key = root + name + ".weight";
       if (!weights.count(key))
         key = root + name + ".linear.weight";
-      return at::linear(x, weight(weights, key));
+      const auto bounds = vision_clipped ? audio_bounds.find(root + name) : audio_bounds.end();
+      auto input = bounds == audio_bounds.end() ? x : x.clamp(bounds->second[0], bounds->second[1]);
+      auto output = at::linear(input, weight(weights, key));
+      return bounds == audio_bounds.end() ? output
+                                          : output.clamp(bounds->second[2], bounds->second[3]);
     };
     auto vn = [&](const at::Tensor& x, const std::string& name) {
 #ifdef INFINITY_TORCH_CUDA_KERNELS
@@ -976,7 +980,7 @@ class Gemma final : public Model {
       // Image queries use bidirectional visibility within their own image span, bounded on the left
       // by the sliding window. Correct those rows using full prefix-plus-suffix K/V after
       // ordinary suffix attention.
-      if (causal && layer.sliding && !input.images.empty()) {
+      if (vision_bidirectional && causal && layer.sliding && !input.images.empty()) {
         auto kv = input.prefix->attention(cache_layer, k, v, false);
         for (const auto& image : input.images) {
           auto it =
@@ -1057,7 +1061,7 @@ class Gemma final : public Model {
                                           left,
                                           right,
                                           true);
-      if (causal && layer.sliding) {
+      if (vision_bidirectional && causal && layer.sliding) {
         for (const auto& image : input.images) {
           // Recompute only this image's query rows against its allowed context. The replacement
           // keeps text queries causal and avoids constructing a dense multimodal attention mask.
@@ -1116,15 +1120,16 @@ class Gemma final : public Model {
           mask = *mask & (delta <= right);
         if (causal) {
           auto allowed = delta <= 0;
-          for (const auto& image : input.images) {
-            auto image_start = image.token_start - start,
-                 image_end = image_start + image.token_count;
-            if (image_start >= 0 && image_end <= len)
-              allowed =
-                  allowed | ((ix >= image_start) & (ix < image_end))
-                                .unsqueeze(1)
-                                .logical_and(((ix >= image_start) & (ix < image_end)).unsqueeze(0));
-          }
+          if (vision_bidirectional)
+            for (const auto& image : input.images) {
+              auto image_start = image.token_start - start,
+                   image_end = image_start + image.token_count;
+              if (image_start >= 0 && image_end <= len)
+                allowed = allowed |
+                          ((ix >= image_start) & (ix < image_end))
+                              .unsqueeze(1)
+                              .logical_and(((ix >= image_start) & (ix < image_end)).unsqueeze(0));
+            }
           mask = *mask & allowed;
         }
       }
@@ -1380,8 +1385,14 @@ public:
     layers = integer("num_hidden_layers", 0);
     epsilon = real("rms_norm_eps", 1e-6);
     ple_width = integer("hidden_size_per_layer_input", 0);
+    pad_token = integer("pad_token_id", 0);
     if (embedding2)
       normalize_layer_overrides();
+    // Only Gemma4's "vision" mode adds bidirectional visibility inside image spans.
+    // E4B leaves the field unset and uses the causal text mask; embedding_gemma2
+    // keeps its legacy bidirectional embedding path.
+    vision_bidirectional = !embedding2 && string("use_bidirectional_attention", "") == "vision";
+    vision_clipped = cfg.boolean("vision_config.use_clipped_linears", false);
     // The fork's Gemma4 option-token decision path always requests causal
     // hidden states; embedding requests retain their bidirectional contract.
     causal = legacy ? !boolean("use_bidirectional_attention", false)
@@ -1491,16 +1502,16 @@ public:
       const auto key = weights.count(base + ".weight") ? base + ".weight" : base + ".linear.weight";
       ProjectionRecipe recipe;
       at::Tensor bias;
+      const auto bounds = (audio || vision_clipped) ? audio_bounds.find(base) : audio_bounds.end();
+      if (bounds != audio_bounds.end()) {
+        recipe.input_clip = std::array<double, 2>{bounds->second[0], bounds->second[1]};
+        recipe.output_clip = std::array<double, 2>{bounds->second[2], bounds->second[3]};
+      }
       if (audio) {
         recipe.cast_input = true;
         recipe.separate_bias = true;
         if (weights.count(base + ".bias"))
           bias = weight(weights, base + ".bias");
-        const auto bounds = audio_bounds.find(base);
-        if (bounds != audio_bounds.end()) {
-          recipe.input_clip = std::array<double, 2>{bounds->second[0], bounds->second[1]};
-          recipe.output_clip = std::array<double, 2>{bounds->second[2], bounds->second[3]};
-        }
       }
       return MlpProjection{weight(weights, key), bias, recipe, base};
     };
@@ -1809,8 +1820,16 @@ public:
       states.narrow(0, media.token_start, media.token_count).copy_(features);
     }
 
+    if (!embedding2 && !input.images.empty()) {
+      states = radix_unfold(states, input);
+      inject_images();
+      states = radix_fold(states, input);
+    }
     if (ple_width > 0) {
       auto stem = embedding2 ? "ple." : "";
+      // The context component projects the post-image states, while the
+      // token-identity component uses the pad id on image slots. This matches
+      // Gemma4's multimodal path before the text model combines both parts.
       auto projected =
           linear(states, std::string(stem) + "per_layer_model_projection") *
           at::scalar_tensor(1. / std::sqrt(static_cast<double>(hidden)), states.options());
@@ -1818,17 +1837,27 @@ public:
       ple = norm(projected.view({tokens, layers, ple_width}),
                  std::string(stem) + "per_layer_projection_norm");
       if (!embedding2) {
+        auto ple_ids = ids;
+        if (!input.images.empty()) {
+          ple_ids = ids.clone();
+          for (const auto& image : input.images) {
+            TORCH_CHECK(image.token_start >= 0 &&
+                            image.token_start + image.token_count <= input.ids.numel(),
+                        "Gemma image PLE span mismatch");
+            if (radix_enabled(input)) {
+              auto rows = input.scatter_unfold.narrow(0, image.token_start, image.token_count);
+              ple_ids.index_fill_(0, rows, at::Scalar(pad_token));
+            } else {
+              ple_ids.narrow(0, image.token_start, image.token_count).fill_(at::Scalar(pad_token));
+            }
+          }
+        }
         auto token_inputs =
-            at::embedding(w("embed_tokens_per_layer.weight"), ids) *
+            at::embedding(w("embed_tokens_per_layer.weight"), ple_ids) *
             at::scalar_tensor(std::sqrt(static_cast<double>(ple_width)), states.options());
         ple = (token_inputs.view_as(ple) + ple) *
               at::scalar_tensor(1. / std::sqrt(2.), states.options());
       }
-    }
-    if (!embedding2 && !input.images.empty()) {
-      states = radix_unfold(states, input);
-      inject_images();
-      states = radix_fold(states, input);
     }
 
     // Index zero holds global-attention K/V and index one holds sliding-attention K/V. Both tensors

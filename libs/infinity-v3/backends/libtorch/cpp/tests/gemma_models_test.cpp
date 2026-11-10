@@ -976,7 +976,7 @@ void gemma_block_attention_test(const c10::Device& device, at::ScalarType dtype)
     // Decision op3 pools last rows. The graph must replay mutated ids from the
     // same storage and keep distinct entries for distinct block boundaries.
     CudaGraphCache graphs(2, 4096, 1);
-    auto graph_input = packed;
+    const auto& graph_input = packed;
     const auto fresh = block->forward_pooled(graph_input, true);
     auto captured = graphs.forward(*block, graph_input, 3);
     TORCH_CHECK(at::allclose(captured, fresh, cross_shape, cross_shape),
@@ -1021,8 +1021,303 @@ void gemma_block_attention_test(const c10::Device& device, at::ScalarType dtype)
             << device << " " << at::toString(dtype) << "\n";
 }
 
+void add_tiny_vision(Options& cfg, Weights& weights) {
+  cfg.values["vision_config.hidden_size"] = "8";
+  cfg.values["vision_config.num_attention_heads"] = "2";
+  cfg.values["vision_config.num_key_value_heads"] = "1";
+  cfg.values["vision_config.head_dim"] = "4";
+  cfg.values["vision_config.num_hidden_layers"] = "1";
+  cfg.values["vision_config.intermediate_size"] = "12";
+  auto put = [&](const std::string& name, std::initializer_list<int64_t> shape, bool norm = false) {
+    weights[name] = norm ? at::ones(shape) : at::randn(shape) * .03;
+  };
+  put("vision_tower.patch_embedder.input_proj.weight", {8, 768});
+  put("vision_tower.patch_embedder.position_embedding_table", {2, 16, 8});
+  auto p = std::string("vision_tower.encoder.layers.0.");
+  for (const auto& name : {"input_layernorm",
+                           "post_attention_layernorm",
+                           "pre_feedforward_layernorm",
+                           "post_feedforward_layernorm"})
+    put(p + name + ".weight", {8}, true);
+  put(p + "self_attn.q_proj.linear.weight", {8, 8});
+  put(p + "self_attn.k_proj.linear.weight", {4, 8});
+  put(p + "self_attn.v_proj.linear.weight", {4, 8});
+  put(p + "self_attn.o_proj.linear.weight", {8, 8});
+  put(p + "self_attn.q_norm.weight", {4}, true);
+  put(p + "self_attn.k_norm.weight", {4}, true);
+  put(p + "mlp.gate_proj.linear.weight", {12, 8});
+  put(p + "mlp.up_proj.linear.weight", {12, 8});
+  put(p + "mlp.down_proj.linear.weight", {8, 12});
+  put("embed_vision.embedding_projection.weight", {16, 8});
+}
+
+void add_vision_bounds(Weights& weights,
+                       const std::string& base,
+                       double input_min,
+                       double input_max,
+                       double output_min,
+                       double output_max) {
+  const auto options = at::TensorOptions().dtype(at::kFloat);
+  weights[base + ".input_min"] = at::scalar_tensor(input_min, options);
+  weights[base + ".input_max"] = at::scalar_tensor(input_max, options);
+  weights[base + ".output_min"] = at::scalar_tensor(output_min, options);
+  weights[base + ".output_max"] = at::scalar_tensor(output_max, options);
+}
+
+Weights clone_weights(const Weights& weights) {
+  Weights copy;
+  for (const auto& [name, value] : weights)
+    copy[name] = value.clone();
+  return copy;
+}
+
+at::Tensor prepare_vision_features(const Options& cfg,
+                                   const Weights& weights,
+                                   const at::Tensor& pixels,
+                                   at::ScalarType dtype) {
+  Weights typed;
+  for (const auto& [name, value] : weights)
+    typed[name] = value.to(dtype);
+  auto model = create_gemma(cfg, typed, c10::Device("cpu"), dtype);
+  model->ready();
+  const std::vector<int32_t> offsets{0, 3};
+  auto batch = input({1, 2, 3}, offsets);
+  ImageInput image;
+  image.pixels = pixels;
+  image.grid_thw = {1, 3, 3};
+  image.merge_size = 3;
+  image.token_start = 0;
+  image.token_count = 1;
+  batch.images.push_back(image);
+  model->prepare_input(batch);
+  return batch.images[0].prepared_features.to(at::kFloat).clone();
+}
+
+void gemma4_vision_clipping_test() {
+  at::manual_seed(418);
+  Fixture f("gemma4", 8, 1, 0);
+  add_tiny_vision(f.cfg, f.weights);
+  f.cfg.values["vision_config.use_clipped_linears"] = "false";
+  const auto pixels = at::arange(9 * 768, at::kFloat).reshape({9, 768}) / 1000.;
+  const auto baseline = prepare_vision_features(f.cfg, f.weights, pixels, at::kFloat);
+  const auto mlp = std::string("vision_tower.encoder.layers.0.mlp.");
+  const std::vector<std::string> bases = {
+      "vision_tower.encoder.layers.0.self_attn.q_proj",
+      "vision_tower.encoder.layers.0.self_attn.k_proj",
+      "vision_tower.encoder.layers.0.self_attn.v_proj",
+      "vision_tower.encoder.layers.0.self_attn.o_proj",
+      mlp + "gate_proj",
+      mlp + "up_proj",
+      mlp + "down_proj",
+  };
+  for (const auto& base : bases) {
+    for (int mode = 0; mode < 2; ++mode) {
+      auto cfg = f.cfg;
+      cfg.values["vision_config.use_clipped_linears"] = "true";
+      auto weights = clone_weights(f.weights);
+      const double wide = 1e30;
+      // Exercise both checkpoint clipping stages independently: zero the input
+      // clamp with a wide output clamp, then the reverse.
+      if (mode == 0)
+        add_vision_bounds(weights, base, 0., 0., -wide, wide);
+      else
+        add_vision_bounds(weights, base, -wide, wide, 0., 0.);
+      const auto clipped = prepare_vision_features(cfg, weights, pixels, at::kFloat);
+      TORCH_CHECK(!at::allclose(baseline, clipped, 1e-6, 1e-6),
+                  "Gemma4 ",
+                  base,
+                  mode == 0 ? " input" : " output",
+                  " clamp was not applied");
+    }
+  }
+  // Bounds present on an unclipped checkpoint must remain inert.
+  auto inert_cfg = f.cfg;
+  auto inert_weights = clone_weights(f.weights);
+  add_vision_bounds(
+      inert_weights, "vision_tower.encoder.layers.0.self_attn.q_proj", 0., 0., 0., 0.);
+  TORCH_CHECK(at::allclose(baseline,
+                           prepare_vision_features(inert_cfg, inert_weights, pixels, at::kFloat),
+                           1e-6,
+                           1e-6),
+              "Gemma4 applied clip bounds while use_clipped_linears was false");
+  // The BF16 path must also honor bounds. V and down give an observable
+  // effect without relying on tiny softmax changes in a low-precision Q/K.
+  auto bf16_cfg = f.cfg;
+  bf16_cfg.values["vision_config.use_clipped_linears"] = "false";
+  const auto bf16_baseline = prepare_vision_features(bf16_cfg, f.weights, pixels, at::kBFloat16);
+  auto bf16_weights = clone_weights(f.weights);
+  add_vision_bounds(
+      bf16_weights, "vision_tower.encoder.layers.0.self_attn.v_proj", 0., 0., -1e30, 1e30);
+  bf16_cfg.values["vision_config.use_clipped_linears"] = "true";
+  TORCH_CHECK(!at::equal(bf16_baseline,
+                         prepare_vision_features(bf16_cfg, bf16_weights, pixels, at::kBFloat16)),
+              "Gemma4 BF16 vision input clamp was not applied");
+  auto bf16_output_weights = clone_weights(f.weights);
+  add_vision_bounds(
+      bf16_output_weights, "vision_tower.encoder.layers.0.mlp.down_proj", -1e30, 1e30, 0., 0.);
+  TORCH_CHECK(
+      !at::equal(bf16_baseline,
+                 prepare_vision_features(bf16_cfg, bf16_output_weights, pixels, at::kBFloat16)),
+      "Gemma4 BF16 vision output clamp was not applied");
+  std::cout << "gemma4: vision q/k/v/o and MLP input/output clips passed\n";
+}
+
+PackedInput image_input(const at::Tensor& features) {
+  static const std::vector<int32_t> offsets{0, 4};
+  auto batch = input({1, 63, 2, 3}, offsets);
+  ImageInput image;
+  image.pixels = at::zeros({9, 768});
+  image.grid_thw = {1, 3, 3};
+  image.merge_size = 3;
+  image.token_start = 1;
+  image.token_count = features.size(0);
+  image.sequence_start = 0;
+  image.prepared_features = features;
+  batch.images.push_back(image);
+  return batch;
+}
+
+void gemma4_image_ple_test() {
+  at::manual_seed(418);
+  // Four layers with two shared-KV layers keeps the E4B-like shared path active.
+  Fixture f("gemma4", 8, 4, 2);
+  add_tiny_vision(f.cfg, f.weights);
+  f.cfg.values["rms_norm_eps"] = "1e6";
+  f.cfg.values["pad_token_id"] = "0";
+  for (int64_t layer = 0; layer < 4; ++layer) {
+    const auto p = "layers." + std::to_string(layer) + ".";
+    for (const auto* name : {"self_attn.q_proj.weight",
+                             "self_attn.k_proj.weight",
+                             "self_attn.v_proj.weight",
+                             "self_attn.o_proj.weight",
+                             "mlp.gate_proj.weight",
+                             "mlp.up_proj.weight",
+                             "mlp.down_proj.weight"}) {
+      if (f.weights.count(p + name))
+        f.weights[p + name].zero_();
+    }
+    f.weights[p + "per_layer_input_gate.weight"].zero_();
+    f.weights[p + "per_layer_projection.weight"].zero_();
+  }
+  f.weights["per_layer_model_projection.weight"].zero_();
+  f.weights["embed_tokens_per_layer.weight"].zero_();
+  // A constant image-token gate and a visible layer-0 PLE path keep the
+  // comparison linear enough to attribute differences to PLE alone.
+  f.weights["layers.0.per_layer_input_gate.weight"].select(0, 0).select(0, 0).fill_(1000.);
+  f.weights["layers.0.per_layer_projection.weight"].select(0, 0).select(0, 0).fill_(1000.);
+
+  auto run = [&](Weights weights, const at::Tensor& pixels) {
+    auto model = create_gemma(f.cfg, weights, c10::Device("cpu"), at::kFloat);
+    model->ready();
+    return model->forward(image_input(pixels));
+  };
+  auto constant_image = [](float value) {
+    auto features = at::zeros({1, 16});
+    features.select(0, 0).select(0, 0).fill_(1.);
+    features.select(0, 0).select(0, 1).fill_(value);
+    return features;
+  };
+
+  // Token identity must use the pad row on image slots, not the image token row.
+  Weights pad = clone_weights(f.weights);
+  pad["embed_tokens_per_layer.weight"].select(0, 0).select(0, 0).fill_(1.);
+  auto image_row = clone_weights(pad);
+  image_row["embed_tokens_per_layer.weight"].select(0, 63).select(0, 0).fill_(2.);
+  const auto image = constant_image(.1);
+  TORCH_CHECK(at::allclose(run(pad, image), run(image_row, image), 1e-6, 1e-6),
+              "Gemma4 image PLE token identity used the image id instead of the pad id");
+
+  // Context projection must use the injected image state, not the pre-image
+  // token embedding. Both models share the same image injection, so A-B
+  // isolates the PLE context contribution.
+  auto context_weights = clone_weights(f.weights);
+  context_weights["per_layer_model_projection.weight"].select(0, 0).select(0, 1).fill_(1.);
+  auto no_context = clone_weights(f.weights);
+  const auto first = constant_image(.1), second = constant_image(.3);
+  const auto first_delta = run(context_weights, first) - run(no_context, first);
+  const auto second_delta = run(context_weights, second) - run(no_context, second);
+  TORCH_CHECK(!at::allclose(first_delta.narrow(0, 1, 1), second_delta.narrow(0, 1, 1), 1e-6, 1e-6),
+              "Gemma4 image PLE context used pre-image token embeddings");
+
+  // Radix compact rows must pad every aliased image row, not just the first
+  // logical occurrence. Both sequences share the same image prefix.
+  const std::vector<int32_t> offsets{0, 3, 6};
+  auto logical = input({1, 63, 2, 1, 63, 3}, offsets);
+  ImageInput first_image, second_image;
+  first_image.pixels = at::zeros({9, 768});
+  second_image.pixels = at::zeros({9, 768});
+  first_image.grid_thw = {1, 3, 3};
+  second_image.grid_thw = {1, 3, 3};
+  first_image.merge_size = 3;
+  second_image.merge_size = 3;
+  first_image.token_start = 1;
+  first_image.sequence_start = 0;
+  second_image.token_start = 4;
+  second_image.sequence_start = 3;
+  first_image.token_count = second_image.token_count = 1;
+  first_image.prepared_features = second_image.prepared_features = image;
+  logical.images = {first_image, second_image};
+  auto compact = logical;
+  compact.compact_ids = at::tensor({1, 63, 2, 3}, at::kLong);
+  compact.compact_positions = at::tensor({0, 1, 2, 2}, at::kLong);
+  compact.compact_types = at::zeros({4}, at::kLong);
+  compact.scatter_unfold = at::tensor({0, 1, 2, 0, 1, 3}, at::kLong);
+  compact.fold_gather = at::tensor({0, 1, 2, 5}, at::kLong);
+  validate_radix(compact, true);
+  auto causal_cfg = f.cfg;
+  causal_cfg.values["_decision.kind"] = "option_tokens";
+  auto radix_model = create_gemma(causal_cfg, pad, c10::Device("cpu"), at::kFloat);
+  radix_model->ready();
+  TORCH_CHECK(
+      at::allclose(radix_model->forward(logical), radix_model->forward(compact), 1e-6, 1e-6),
+      "Gemma4 image PLE radix fold did not pad aliased image rows");
+  std::cout << "gemma4: image PLE pad identity, post-image context and shared KV passed\n";
+}
+
+void gemma4_image_visibility_test() {
+  at::manual_seed(418);
+  Fixture f("gemma4", 8, 2, 0);
+  add_tiny_vision(f.cfg, f.weights);
+  for (int64_t layer = 0; layer < 2; ++layer) {
+    const auto p = "layers." + std::to_string(layer) + ".";
+    f.cfg.values["layer_types." + std::to_string(layer)] = "sliding_attention";
+    // Uniform attention isolates visibility; identity V/O preserve direction,
+    // unlike rank-one projections whose magnitude disappears in RMSNorm.
+    for (const auto* name : {"self_attn.q_proj.weight", "self_attn.k_proj.weight"})
+      f.weights[p + name].zero_();
+    for (const auto* name : {"self_attn.v_proj.weight", "self_attn.o_proj.weight"}) {
+      const auto& matrix = f.weights.at(p + name);
+      f.weights[p + name] = at::eye(matrix.size(0), matrix.size(1), matrix.options());
+    }
+    for (const auto* name : {"mlp.gate_proj.weight", "mlp.up_proj.weight", "mlp.down_proj.weight"})
+      f.weights[p + name].zero_();
+  }
+  f.cfg.values["_decision.kind"] = "option_tokens";
+  auto features = at::randn({2, 16}) * .1;
+  auto changed = features.clone();
+  changed.select(0, 1).add_(1.);
+  auto run = [&](bool vision, const at::Tensor& pixels) {
+    auto cfg = f.cfg;
+    if (vision)
+      cfg.values["use_bidirectional_attention"] = "vision";
+    auto model = create_gemma(cfg, f.weights, c10::Device("cpu"), at::kFloat);
+    model->ready();
+    return model->forward(image_input(pixels));
+  };
+  const auto causal = run(false, features), causal_changed = run(false, changed);
+  TORCH_CHECK(at::allclose(causal.narrow(0, 1, 1), causal_changed.narrow(0, 1, 1), 1e-7, 1e-7),
+              "Gemma4 use_bidirectional_attention=None applied the vision overlay");
+  const auto vision = run(true, features), vision_changed = run(true, changed);
+  TORCH_CHECK(!at::allclose(vision.narrow(0, 1, 1), vision_changed.narrow(0, 1, 1), 1e-6, 1e-6),
+              "Gemma4 use_bidirectional_attention=vision did not make image tokens bidirectional");
+  std::cout << "gemma4: use_bidirectional_attention vision overlay gate passed\n";
+}
+
 int main(int argc, char** argv) {
   embedding_layer_key_aliases();
+  gemma4_image_ple_test();
+  gemma4_image_visibility_test();
+  gemma4_vision_clipping_test();
   gemma4_layer_head_dim_geometry();
   feature_cache_bounds();
   gemma_block_attention_test(c10::Device("cpu"), at::kFloat);
