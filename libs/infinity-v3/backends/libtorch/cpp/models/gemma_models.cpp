@@ -1900,6 +1900,7 @@ public:
         }
       }
       bool fused_qk_rotary = false;
+      bool fused_qkv_norm = false;
 #ifdef INFINITY_TORCH_CUDA_KERNELS
       if (legacy && device.is_cuda() && dtype == at::kBFloat16 && !layer.shared && layer.dim > 0 &&
           layer.dim <= 8192 && layer.dim % 2 == 0) {
@@ -1915,6 +1916,36 @@ public:
         q = std::move(result.first);
         k = std::move(result.second);
         fused_qk_rotary = true;
+      } else if (!legacy && !embedding2 && device.is_cuda() && dtype == at::kBFloat16 &&
+                 layer.dim >= 32 && layer.dim <= 1024 && layer.dim % 2 == 0) {
+        const auto q_scale = weight(norm_scales, prefix + p + "self_attn.q_norm.weight");
+        if (layer.shared) {
+          auto fused =
+              gemma4_q_norm_rotary_cuda(q, q_scale, layer.cos, layer.sin, positions, epsilon);
+          if (fused.defined()) {
+            q = std::move(fused);
+            fused_qk_rotary = true;
+          }
+        } else {
+          auto fused = gemma4_qkv_norm_rotary_cuda(
+              q,
+              k,
+              v,
+              q_scale,
+              weight(norm_scales, prefix + p + "self_attn.k_norm.weight"),
+              norm_ones.at(layer.dim),
+              layer.cos,
+              layer.sin,
+              positions,
+              epsilon);
+          if (fused[0].defined()) {
+            q = std::move(fused[0]);
+            k = std::move(fused[1]);
+            v = std::move(fused[2]);
+            fused_qk_rotary = true;
+            fused_qkv_norm = true;
+          }
+        }
       }
 #endif
       if (!fused_qk_rotary)
@@ -1923,7 +1954,7 @@ public:
       // K/V for the same sliding/global category. Preserve that producer
       // layer index for prefix lookup.
       if (layer.shared) {
-        q = radix_unfold(rotate(q, layer, positions), input);
+        q = radix_unfold(fused_qk_rotary ? q : rotate(q, layer, positions), input);
         k = shared[layer.sliding].first;
         v = shared[layer.sliding].second;
         TORCH_CHECK(k.defined(), "Missing shared Gemma KV states at layer ", i);
@@ -1957,7 +1988,7 @@ public:
             k = rotate(k, layer, positions);
           }
         }
-        if (!legacy)
+        if (!legacy && !fused_qkv_norm)
           v = norm(v, "", true);
         auto full = radix_unfold_qkv(q, k, v, input);
         q = full[0];
