@@ -113,6 +113,20 @@ loads from a managed model-cache mount, `INFINITY_TORCH_WEIGHT_READER_DIRECT_IO=
 allows filesystem page-cache reads. See [startup measurements](modernbert-startup.md)
 for the effect of local storage and cache state.
 
+### GPU kernel cache
+
+Set `INFINITY_KERNEL_CACHE_PREFIX=/mnt/distributed` to default both
+`CUDA_CACHE_PATH` and `PYTORCH_KERNEL_CACHE_PATH` to that existing, writable
+directory. Explicit cache paths take precedence. The prefix variable follows
+the compile-time `ENV_VAR_BASE` setting.
+
+Setup only sets the environment once per process, before CUDA and Tokio start;
+it performs no GPU discovery or cache-directory access. Explicit CPU and Python
+backends skip it. CUDA manages driver compatibility, and PyTorch's kernel cache
+keys include the compilation architecture and NVRTC version. Use a filesystem
+with atomic rename support. This redirects native JIT caches; startup savings
+depend on whether the workload compiles kernels at runtime.
+
 ## Build from source
 
 Run from `libs/infinity-v3` with LibTorch 2.14.1, CMake 3.25+, a C++20 compiler
