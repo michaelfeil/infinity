@@ -739,6 +739,23 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="Checkpoint loading">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#gpu-kernel-cache" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        GPU kernel cache
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
         <li class="md-nav__item">
@@ -1323,6 +1340,23 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="Checkpoint loading">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#gpu-kernel-cache" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        GPU kernel cache
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
         <li class="md-nav__item">
@@ -1451,6 +1485,17 @@ checkpoint loading, warmup and readiness for each replica.</p>
 loads from a managed model-cache mount, <code>INFINITY_TORCH_WEIGHT_READER_DIRECT_IO=0</code>
 allows filesystem page-cache reads. See <a href="../modernbert-startup/">startup measurements</a>
 for the effect of local storage and cache state.</p>
+<h3 id="gpu-kernel-cache">GPU kernel cache</h3>
+<p>Set <code>INFINITY_KERNEL_CACHE_PREFIX=/mnt/distributed</code> to default both
+<code>CUDA_CACHE_PATH</code> and <code>PYTORCH_KERNEL_CACHE_PATH</code> to that existing, writable
+directory. Explicit cache paths take precedence. The prefix variable follows
+the compile-time <code>ENV_VAR_BASE</code> setting.</p>
+<p>Setup only sets the environment once per process, before CUDA and Tokio start;
+it performs no GPU discovery or cache-directory access. Explicit CPU and Python
+backends skip it. CUDA manages driver compatibility, and PyTorch's kernel cache
+keys include the compilation architecture and NVRTC version. Use a filesystem
+with atomic rename support. This redirects native JIT caches; startup savings
+depend on whether the workload compiles kernels at runtime.</p>
 <h2 id="build-from-source">Build from source</h2>
 <p>Run from <code>libs/infinity-v3</code> with LibTorch 2.14.1, CMake 3.25+, a C++20 compiler
 and, for CUDA builds, a compatible CUDA toolkit:</p>
