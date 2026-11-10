@@ -1650,8 +1650,8 @@ public:
 #ifdef INFINITY_TORCH_CUDA_KERNELS
       const auto activation_name = string("hidden_activation", "gelu_pytorch_tanh");
       if (quantization == Quantization::Fp8 && device.is_cuda() && dtype == at::kBFloat16 &&
-          activation_name != "relu" && activation_name != "gelu" &&
-          activation_name != "silu" && activation_name != "swish")
+          activation_name != "relu" && activation_name != "gelu" && activation_name != "silu" &&
+          activation_name != "swish")
         activation.fp8_gated_activation = Fp8GatedActivation::PreciseGelu;
 #endif
       layer.dense_mlp = DenseMlp(

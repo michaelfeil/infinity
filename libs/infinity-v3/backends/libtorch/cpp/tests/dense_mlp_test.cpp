@@ -627,8 +627,7 @@ void check_mxfp8_custom_gated(const c10::Device& device) {
   auto swiglu = geglu;
   swiglu.fusion = infinity::MlpFusion::RoundedSwiGlu;
   infinity::DenseMlp swiglu_mlp({gate_up}, {down}, swiglu);
-  TORCH_CHECK(!swiglu_mlp.supports_mxfp8(),
-              "wide SwiGLU escaped the bounded MXFP8 fused width");
+  TORCH_CHECK(!swiglu_mlp.supports_mxfp8(), "wide SwiGLU escaped the bounded MXFP8 fused width");
 
   mlp.prepare(infinity::Quantization::Mxfp8);
   TORCH_CHECK(mlp.is_quantized(), "custom GeGLU MXFP8 preparation failed");
@@ -639,8 +638,7 @@ void check_mxfp8_custom_gated(const c10::Device& device) {
               "custom GeGLU MXFP8 output contract");
   auto projected = at::matmul(x.to(at::kFloat), gate_up.to(at::kFloat).t()).to(at::kBFloat16);
   auto activated = infinity::gemma_gated_cuda(projected, true);
-  auto reference =
-      at::matmul(activated.to(at::kFloat), down.to(at::kFloat).t()).to(at::kBFloat16);
+  auto reference = at::matmul(activated.to(at::kFloat), down.to(at::kFloat).t()).to(at::kBFloat16);
   auto diff = (output.to(at::kFloat) - reference.to(at::kFloat)).abs();
   const double l2 = std::sqrt(at::sum(diff * diff).item<double>());
   const double ref_l2 =
