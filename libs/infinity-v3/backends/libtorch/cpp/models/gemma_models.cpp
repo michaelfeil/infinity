@@ -190,21 +190,22 @@ class Gemma final : public Model {
         const auto m = x.size(0), full_m = prefix_logical_input(packed).ids.numel(), k = x.size(1),
                    n = matrix.size(0);
         const auto limit = at::cuda::getCUDABlasLtWorkspaceSize();
-        const RadixLinearKey key{{device.index(),
-                                  full_m,
-                                  m,
-                                  k,
-                                  n,
-                                  x.stride(0),
-                                  x.stride(1),
-                                  matrix.stride(0),
-                                  matrix.stride(1),
-                                  n,
-                                  1,
-                                  static_cast<int64_t>(x.scalar_type()),
-                                  static_cast<int64_t>(matrix.scalar_type()),
-                                  static_cast<int64_t>(x.scalar_type()),
-                                  static_cast<int64_t>(limit)}};
+        const RadixLinearKey key{
+            { device.index(),
+              full_m,
+              m,
+              k,
+              n,
+              x.stride(0),
+              x.stride(1),
+              matrix.stride(0),
+              matrix.stride(1),
+              n,
+              1,
+              static_cast<int64_t>(x.scalar_type()),
+              static_cast<int64_t>(matrix.scalar_type()),
+              static_cast<int64_t>(x.scalar_type()),
+              static_cast<int64_t>(limit) }};
         auto found = radix_linear_plans.find(key);
         if (found == radix_linear_plans.end() && radix_linear_plans.size() < 64) {
           auto plan = std::make_unique<RadixLinearPlan>();
