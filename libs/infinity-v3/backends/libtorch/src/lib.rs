@@ -337,6 +337,15 @@ fn resolve_dynamic_quantization_scope(
             | "ultrabert"
             | "ultravbert"
     );
+    // Gemma supports explicit all-linear attention quantization for the validated formats, but
+    // its auto default remains MLP-only.
+    let gemma_attention = matches!(
+        family,
+        "gemma3" | "gemma3_text" | "gemma4" | "gemma4_text" | "embedding_gemma2"
+    ) && matches!(
+        dynamic_quantization,
+        DynamicQuantization::Fp8 | DynamicQuantization::Mxfp8
+    );
     let scope = match requested {
         DynamicQuantizationScope::Auto if dynamic_quantization.is_enabled() && dense_decoder => {
             DynamicQuantizationScope::All
@@ -349,9 +358,9 @@ fn resolve_dynamic_quantization_scope(
             "All-linear dynamic quantization requires a format other than none",
         ));
     }
-    if scope == DynamicQuantizationScope::All && !dense_decoder {
+    if scope == DynamicQuantizationScope::All && !dense_decoder && !gemma_attention {
         return Err(start(
-            "All-linear dynamic quantization requires a supported dense decoder",
+            "All-linear dynamic quantization requires a supported dense decoder or Gemma FP8/MXFP8",
         ));
     }
     Ok(if scope == DynamicQuantizationScope::All {
@@ -2800,15 +2809,7 @@ mod tests {
                 );
             }
         }
-        for family in [
-            "bert",
-            "roberta",
-            "xlm-roberta",
-            "camembert",
-            "modernbert",
-            "gemma4",
-            "gemma4_text",
-        ] {
+        for family in ["bert", "roberta", "xlm-roberta", "camembert", "modernbert"] {
             for dynamic_quantization in formats {
                 assert_eq!(
                     resolve_dynamic_quantization_scope(
@@ -2825,6 +2826,47 @@ mod tests {
                     family
                 )
                 .is_err());
+            }
+        }
+        for family in [
+            "gemma3",
+            "gemma3_text",
+            "gemma4",
+            "gemma4_text",
+            "embedding_gemma2",
+        ] {
+            for (dynamic_quantization, attention_supported) in [
+                (DynamicQuantization::Fp8, true),
+                (DynamicQuantization::Mxfp8, true),
+                (DynamicQuantization::Nvfp4, false),
+            ] {
+                assert_eq!(
+                    resolve_dynamic_quantization_scope(
+                        DynamicQuantizationScope::Auto,
+                        dynamic_quantization,
+                        family
+                    )
+                    .unwrap(),
+                    "mlp"
+                );
+                assert_eq!(
+                    resolve_dynamic_quantization_scope(
+                        DynamicQuantizationScope::All,
+                        dynamic_quantization,
+                        family
+                    )
+                    .is_ok(),
+                    attention_supported
+                );
+                assert_eq!(
+                    resolve_dynamic_quantization_scope(
+                        DynamicQuantizationScope::Mlp,
+                        dynamic_quantization,
+                        family
+                    )
+                    .unwrap(),
+                    "mlp"
+                );
             }
         }
         for family in [
