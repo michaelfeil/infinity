@@ -286,12 +286,6 @@ size_t row_scale_elements(int64_t rows, int64_t cols) {
   return rows > 0 && inner ? static_cast<size_t>(round_up(rows, kSFBlkMN)) * inner : 0;
 }
 
-size_t row_scale_expert_offset(int64_t physical_row_start, int64_t cols) {
-  if (physical_row_start < 0 || (physical_row_start % kSFBlkMN) != 0)
-    return 0;
-  return static_cast<size_t>(physical_row_start / kSFBlkMN) * row_scale_tile_bytes(cols);
-}
-
 size_t weight_scale_expert_bytes(int64_t width, int64_t hidden) {
   if (width <= 0 || width % kSFBlkMN != 0)
     return 0;

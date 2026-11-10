@@ -7,7 +7,6 @@
 #ifdef INFINITY_TORCH_MOE_FP8
 #include "gemma_moe_model_test.h"
 #include "helpers/fp8_linear.h"
-#include "kernels/moe_kernels.h"
 
 #include <ATen/cuda/CUDAContext.h>
 #include <ATen/cuda/CUDAGraph.h>
@@ -202,15 +201,6 @@ int main(int argc, char** argv) {
                   fp8_stats.cosine,
                   " rmse=",
                   fp8_stats.rmse);
-
-      auto reference = infinity::routed_moe_cuda(input, logits, gate_up, down, true, scales);
-      if (reference.defined()) {
-        const auto bf16_stats = diff_stats(actual, reference);
-        std::cout << "FP8 vs BF16 (intended quantization loss, not a bitwise ABI): max_abs="
-                  << bf16_stats.max_abs << " cosine=" << bf16_stats.cosine
-                  << " rmse=" << bf16_stats.rmse << "\n";
-      } else
-        std::cout << "BF16 routed reference unavailable; skipped model-quality comparison\n";
 
       // Cached expert weights/scales must produce identical replay output.
       auto replay = routed.forward(input, logits, scales);

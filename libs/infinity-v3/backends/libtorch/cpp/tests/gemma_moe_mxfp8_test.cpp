@@ -7,7 +7,6 @@
 #ifdef INFINITY_TORCH_MOE_MXFP8
 #include "gemma_moe_model_test.h"
 #include "kernels/gemma_moe_mxfp8_grouped_sm100.h"
-#include "kernels/moe_kernels.h"
 #include "kernels/mxfp8_fusions.h"
 
 #include <ATen/cuda/CUDAContext.h>
@@ -38,6 +37,22 @@ int64_t token_count_argument(int argc, char** argv) {
       tokens > kMaxTokens)
     throw std::invalid_argument("usage: gemma_moe_mxfp8_test [tokens 1..129]");
   return tokens;
+}
+
+/// Exact gemma4_moe_gelu_mul staging. The native kernel contracts the last
+/// cubic multiply and the add into one FMA, while separate ATen elementwise
+/// ops round twice; emulate the fused operation in double, matching the FP8
+/// oracle, so this reference compares quantization rather than staging.
+at::Tensor gelu_mul(const at::Tensor& gate_up_bf16, int64_t width) {
+  const auto gate = gate_up_bf16.narrow(1, 0, width).to(at::kFloat);
+  const auto up = gate_up_bf16.narrow(1, width, width).to(at::kFloat);
+  const auto square = (0.044715f * gate) * gate;
+  const auto alpha =
+      (square.to(at::kDouble) * gate.to(at::kDouble) + gate.to(at::kDouble)).to(at::kFloat);
+  const auto tangent = at::tanh(0.7978845608028654f * alpha);
+  const auto gelu = (0.5f * gate) * (1.f + tangent);
+  const auto rounded_gelu = gelu.to(at::kBFloat16).to(at::kFloat);
+  return (rounded_gelu * up).to(at::kBFloat16);
 }
 } // namespace
 #endif
@@ -144,16 +159,21 @@ int main(int argc, char** argv) {
         auto gate_up_bf16 =
             at::matmul(input_dequant, gate_dequant.transpose(0, 1)).to(at::kBFloat16);
 
-        // Existing gemma4_moe_gelu_mul stages.
-        auto gate = gate_up_bf16.narrow(1, 0, intermediate).to(at::kFloat);
-        auto up = gate_up_bf16.narrow(1, intermediate, intermediate).to(at::kFloat);
-        auto alpha = gate + ((0.044715f * gate) * gate) * gate;
-        auto tangent = at::tanh(0.7978845608028654f * alpha);
-        auto gelu = (0.5f * gate) * (1.f + tangent);
-        auto rounded_gelu = gelu.to(at::kBFloat16).to(at::kFloat);
-        auto activated = (rounded_gelu * up).to(at::kBFloat16);
+        auto activated = gelu_mul(gate_up_bf16, intermediate);
 
         auto activated_fp8 = infinity::mxfp8_quantize_rows(activated);
+        if (tokens == 129 && expert == 0) {
+          // The fused helper must reproduce the activation and block-quantization
+          // bytes exactly. An identity row map keeps logical and physical rows aligned.
+          auto row_map = at::arange(tokens, at::TensorOptions().dtype(at::kInt).device(device));
+          auto fused = infinity::mxfp8_moe_gelu_quantize(gate_up_bf16, row_map);
+          TORCH_CHECK(
+              fused.values.sizes() == activated_fp8.values.sizes() &&
+                  fused.scales.sizes() == activated_fp8.scales.sizes() &&
+                  at::equal(fused.values.view(at::kByte), activated_fp8.values.view(at::kByte)) &&
+                  at::equal(fused.scales, activated_fp8.scales),
+              "Fused MXFP8 MoE GELU quantization diverged from activation + row quantizer");
+        }
         auto activated_dequant =
             dequantize(activated_fp8.values, activated_fp8.scales, tokens, intermediate);
         auto down_weight = down.select(0, expert);
@@ -178,14 +198,6 @@ int main(int argc, char** argv) {
                   mx_stats.cosine,
                   " rmse=",
                   mx_stats.rmse);
-
-      auto reference = infinity::routed_moe_cuda(input, logits, gate_up, down, true, scales);
-      if (reference.defined()) {
-        const auto bf16_stats = stats(actual, reference);
-        std::cout << "MXFP8 vs BF16 (intended quantization loss): max_abs=" << bf16_stats.max_abs
-                  << " cosine=" << bf16_stats.cosine << " rmse=" << bf16_stats.rmse << "\n";
-      } else
-        std::cout << "BF16 routed reference unavailable; skipped model-quality comparison\n";
 
       auto replay = routed.forward(input, logits, scales);
       TORCH_CHECK(at::equal(actual, replay), "MXFP8 routed helper reused stale cached weights");

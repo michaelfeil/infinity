@@ -27,8 +27,6 @@ size_t row_scale_inner_blocks(int64_t cols);
 size_t row_scale_tile_bytes(int64_t cols);
 /// Scale bytes required for a [rows, cols] row-wise quantized matrix.
 size_t row_scale_elements(int64_t rows, int64_t cols);
-/// Scale pointer offset for one expert whose physical row start is 128-aligned.
-size_t row_scale_expert_offset(int64_t physical_row_start, int64_t cols);
 /// Scale bytes for one [width, hidden] expert weight matrix. Requires
 /// width % 128 == 0 so a global [experts*width, hidden] quantizer produces
 /// contiguous per-expert scale slices.
