@@ -9,6 +9,7 @@
 #include "helpers/dense_mlp.h"
 #include "helpers/image_feature_cache.h"
 #include "helpers/fp8_linear.h"
+#include "helpers/mxfp8_linear.h"
 #include "helpers/workspace_admission.h"
 #include "helpers/vendor_error.h"
 #include "batching/radix.h"
@@ -48,6 +49,34 @@
 
 namespace infinity {
 namespace {
+/// Cached attention projection in the requested dynamic-quantization format.
+struct AttentionProjection {
+  std::unique_ptr<Fp8Linear> fp8;
+  std::unique_ptr<Mxfp8Linear> mxfp8;
+
+  at::Tensor forward(const at::Tensor& input, const at::Tensor& bias) const {
+    return fp8 ? fp8->forward(input, bias) : mxfp8->forward(input, bias);
+  }
+};
+
+std::unique_ptr<AttentionProjection> make_attention_projection(Quantization format,
+                                                               const at::Tensor& weight) {
+  auto projection = std::make_unique<AttentionProjection>();
+  if (format == Quantization::Fp8)
+    projection->fp8 = std::make_unique<Fp8Linear>(weight);
+  else if (format == Quantization::Mxfp8) {
+    TORCH_CHECK(mxfp8_geometry_supported(weight.device(), 1, weight.size(0), weight.size(1)) &&
+                    mxfp8_geometry_supported(weight.device(), 128, weight.size(0), weight.size(1)),
+                "MXFP8 attention projection geometry is unsupported: N=",
+                weight.size(0),
+                " K=",
+                weight.size(1));
+    projection->mxfp8 = std::make_unique<Mxfp8Linear>(weight);
+  } else
+    TORCH_CHECK(false, "Gemma attention quantization supports FP8 or MXFP8 only");
+  return projection;
+}
+
 /// Gemma-family text backbone and supported multimodal tower composition.
 class Gemma final : public Model {
   Options cfg;
@@ -68,6 +97,7 @@ class Gemma final : public Model {
   struct Layer {
     std::string p;
     at::Tensor qkv, gate_up;
+    std::unique_ptr<AttentionProjection> qkv_proj, q_proj, k_proj, v_proj, o_proj;
     DenseMlp dense_mlp;
 #ifdef INFINITY_TORCH_MOE_FP8
     /// Cached E4M3 routed-expert weights/scales when MoE runs the native FP8 provider.
@@ -838,6 +868,13 @@ class Gemma final : public Model {
                                           : std::nullopt);
   }
 
+  /// Keep cache row mappings and checkpoint bias. Quantized GEMMs use the actual input row count.
+  at::Tensor attention_projection(const at::Tensor& x,
+                                  const std::string& name,
+                                  const AttentionProjection& projection) const {
+    return projection.forward(x, has(name + ".bias") ? w(name + ".bias") : at::Tensor());
+  }
+
   /// Normalize the final dimension with prepared affine scales, or a unit scale when requested.
   /// Legacy and newer families retain their rsqrt versus sqrt/divide arithmetic before
   /// converting to the input dtype.
@@ -1458,8 +1495,14 @@ public:
   /// norms, towers, and optional score heads.
   void ready() override {
     const auto quantization = cfg.dynamic_quantization();
-    TORCH_CHECK(cfg.dynamic_quantization_scope() == QuantizationScope::Mlp,
-                "Gemma quantization supports MLP scope only");
+    const auto scope = cfg.dynamic_quantization_scope();
+    TORCH_CHECK(scope != QuantizationScope::All || quantization != Quantization::None,
+                "Gemma all-linear quantization requires a quantization format");
+    TORCH_CHECK(scope != QuantizationScope::All || quantization == Quantization::Fp8 ||
+                    quantization == Quantization::Mxfp8,
+                "Gemma attention quantization supports FP8 or MXFP8 only");
+    const bool quantize_attention =
+        quantization != Quantization::None && scope == QuantizationScope::All;
     if (quantization != Quantization::None) {
       TORCH_CHECK(device.is_cuda() && (dtype == at::kHalf || dtype == at::kBFloat16),
                   quantization_name(quantization),
@@ -1744,6 +1787,35 @@ public:
         layer.gate_up = at::Tensor();
         for (const auto* projection : {"gate_proj", "up_proj", "down_proj"})
           weights.erase(prefix + layer.p + "mlp." + projection + ".weight");
+        if (quantize_attention) {
+          if (legacy) {
+            layer.qkv_proj = make_attention_projection(quantization, layer.qkv);
+            layer.qkv = at::Tensor();
+            for (const auto* projection : {"q_proj", "k_proj", "v_proj"})
+              weights.erase(prefix + layer.p + "self_attn." + projection + ".weight");
+          } else {
+            layer.q_proj =
+                make_attention_projection(quantization, w(layer.p + "self_attn.q_proj.weight"));
+            weights.erase(prefix + layer.p + "self_attn.q_proj.weight");
+            if (!layer.shared) {
+              layer.k_proj =
+                  make_attention_projection(quantization, w(layer.p + "self_attn.k_proj.weight"));
+              weights.erase(prefix + layer.p + "self_attn.k_proj.weight");
+              if (!layer.k_equals_v) {
+                layer.v_proj =
+                    make_attention_projection(quantization, w(layer.p + "self_attn.v_proj.weight"));
+                weights.erase(prefix + layer.p + "self_attn.v_proj.weight");
+              }
+            }
+          }
+          layer.o_proj =
+              make_attention_projection(quantization, w(layer.p + "self_attn.o_proj.weight"));
+          weights.erase(prefix + layer.p + "self_attn.o_proj.weight");
+          if (layer.shared)
+            weights.erase(prefix + layer.p + "self_attn.k_proj.weight");
+          if (layer.shared || layer.k_equals_v)
+            weights.erase(prefix + layer.p + "self_attn.v_proj.weight");
+        }
       } else
         w(layer.p + "mlp.down_proj.weight");
 #ifdef INFINITY_TORCH_MOE_FP8
@@ -1984,24 +2056,32 @@ public:
                           w(p + "self_attn.k_proj.bias"),
                           w(p + "self_attn.v_proj.bias")},
                          0);
-        auto qkv =
-            at::linear(normalized, layer.qkv, bias).view({tokens, heads + 2 * layer.kv, layer.dim});
+        auto packed = layer.qkv_proj
+                          ? layer.qkv_proj->forward(normalized, bias.value_or(at::Tensor()))
+                          : at::linear(normalized, layer.qkv, bias);
+        auto qkv = packed.view({tokens, heads + 2 * layer.kv, layer.dim});
         q = qkv.narrow(1, 0, heads);
         k = qkv.narrow(1, heads, layer.kv);
         v = qkv.narrow(1, heads + layer.kv, layer.kv);
       } else {
-        q = prefix_projection(normalized, p + "self_attn.q_proj", input)
+        q = (layer.q_proj ? attention_projection(normalized, p + "self_attn.q_proj", *layer.q_proj)
+                          : prefix_projection(normalized, p + "self_attn.q_proj", input))
                 .view({tokens, heads, layer.dim});
         if (!layer.shared) {
-          k = (radix_enabled(input) && layer.dim == 512 && layer.kv == 2
-                   ? linear_radix_projection(normalized, p + "self_attn.k_proj", input)
-                   : prefix_projection(normalized, p + "self_attn.k_proj", input))
+          k = (layer.k_proj
+                   ? attention_projection(normalized, p + "self_attn.k_proj", *layer.k_proj)
+                   : (radix_enabled(input) && layer.dim == 512 && layer.kv == 2
+                          ? linear_radix_projection(normalized, p + "self_attn.k_proj", input)
+                          : prefix_projection(normalized, p + "self_attn.k_proj", input)))
                   .view({tokens, layer.kv, layer.dim});
           // When the checkpoint ties K and V, take the shared projection before K
           // normalization/rotation. Later reassignments of K must not retroactively transform V.
-          v = layer.k_equals_v ? k
-                               : prefix_projection(normalized, p + "self_attn.v_proj", input)
-                                     .view({tokens, layer.kv, layer.dim});
+          v = layer.k_equals_v
+                  ? k
+                  : (layer.v_proj
+                         ? attention_projection(normalized, p + "self_attn.v_proj", *layer.v_proj)
+                         : prefix_projection(normalized, p + "self_attn.v_proj", input))
+                        .view({tokens, layer.kv, layer.dim});
         }
       }
       bool fused_qk_rotary = false;
@@ -2113,8 +2193,10 @@ public:
         if (ple.defined())
           ple = ple.index_select(0, output_rows);
       }
-      output = radix_enabled(input) ? linear_radix_projection(output, p + "self_attn.o_proj", input)
-                                    : prefix_projection(output, p + "self_attn.o_proj", input);
+      output = layer.o_proj ? attention_projection(output, p + "self_attn.o_proj", *layer.o_proj)
+                            : (radix_enabled(input)
+                                   ? linear_radix_projection(output, p + "self_attn.o_proj", input)
+                                   : prefix_projection(output, p + "self_attn.o_proj", input));
       bool fused_residual_prenorm = false;
 #ifdef INFINITY_TORCH_CUDA_KERNELS
       if (fused_legacy_residual) {

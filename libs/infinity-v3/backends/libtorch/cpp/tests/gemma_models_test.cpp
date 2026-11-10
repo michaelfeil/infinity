@@ -1,5 +1,6 @@
 #include "prefix_cache_test.h"
 #include "helpers/fp8_linear.h"
+#include "helpers/mxfp8_linear.h"
 // Packed sequence isolation and geometry tests for native Gemma implementations.
 #include "models/gemma_models.h"
 #include "batching/radix.h"
@@ -382,11 +383,13 @@ struct Fixture {
   Fixture(const std::string& family,
           int64_t head_dim = 8,
           int64_t layer_count = 4,
-          int64_t shared_count = 2)
+          int64_t shared_count = 2,
+          int64_t hidden_size = 16,
+          int64_t mlp_width = 24)
       : legacy(family == "gemma3" || family == "gemma3_text"),
         embedding2(family == "embedding_gemma2") {
     cfg.values = {{"model_type", family},
-                  {"hidden_size", "16"},
+                  {"hidden_size", std::to_string(hidden_size)},
                   {"num_attention_heads", "2"},
                   {"num_key_value_heads", "1"},
                   {"head_dim", std::to_string(head_dim)},
@@ -405,16 +408,16 @@ struct Fixture {
           weights.emplace(
               name, norm ? (legacy ? at::zeros(shape) : at::ones(shape)) : at::randn(shape) * .1);
         };
-    put("embed_tokens.weight", {64, 16});
-    put("norm.weight", {16}, true);
+    put("embed_tokens.weight", {64, hidden_size});
+    put("norm.weight", {hidden_size}, true);
     if (!legacy) {
       auto stem = embedding2 ? std::string("ple.") : std::string();
-      put(stem + "per_layer_model_projection.weight", {4 * layer_count, 16});
+      put(stem + "per_layer_model_projection.weight", {4 * layer_count, hidden_size});
       put(stem + "per_layer_projection_norm.weight", {4}, true);
       if (!embedding2)
         put("embed_tokens_per_layer.weight", {64, 4 * layer_count});
       if (embedding2)
-        put("embedding_projection.weight", {12, 16});
+        put("embedding_projection.weight", {12, hidden_size});
     }
     for (int64_t i = 0; i < layer_count; ++i) {
       cfg.values["layer_types." + std::to_string(i)] =
@@ -424,24 +427,24 @@ struct Fixture {
                                "post_attention_layernorm",
                                "pre_feedforward_layernorm",
                                "post_feedforward_layernorm"})
-        put(p + name + ".weight", {16}, true);
-      put(p + "self_attn.q_proj.weight", {2 * head_dim, 16});
+        put(p + name + ".weight", {hidden_size}, true);
+      put(p + "self_attn.q_proj.weight", {2 * head_dim, hidden_size});
       put(p + "self_attn.q_norm.weight", {head_dim}, true);
       if (legacy || i < layer_count - shared_count) {
-        put(p + "self_attn.k_proj.weight", {head_dim, 16});
-        put(p + "self_attn.v_proj.weight", {head_dim, 16});
+        put(p + "self_attn.k_proj.weight", {head_dim, hidden_size});
+        put(p + "self_attn.v_proj.weight", {head_dim, hidden_size});
         put(p + "self_attn.k_norm.weight", {head_dim}, true);
       }
-      put(p + "self_attn.o_proj.weight", {16, 2 * head_dim});
-      put(p + "mlp.gate_proj.weight", {24, 16});
-      put(p + "mlp.up_proj.weight", {24, 16});
-      put(p + "mlp.down_proj.weight", {16, 24});
+      put(p + "self_attn.o_proj.weight", {hidden_size, 2 * head_dim});
+      put(p + "mlp.gate_proj.weight", {mlp_width, hidden_size});
+      put(p + "mlp.up_proj.weight", {mlp_width, hidden_size});
+      put(p + "mlp.down_proj.weight", {hidden_size, mlp_width});
       if (!legacy) {
         weights[p + "layer_scalar"] = at::ones({1});
         auto stem = p + (embedding2 ? "ple_block." : "");
-        put(stem + "per_layer_input_gate.weight", {4, 16});
-        put(stem + "per_layer_projection.weight", {16, 4});
-        put(stem + "post_per_layer_input_norm.weight", {16}, true);
+        put(stem + "per_layer_input_gate.weight", {4, hidden_size});
+        put(stem + "per_layer_projection.weight", {hidden_size, 4});
+        put(stem + "post_per_layer_input_norm.weight", {hidden_size}, true);
       }
     }
   }
@@ -578,6 +581,69 @@ void dynamic_fp8(const c10::Device& device, const std::string& family) {
               relative_error);
   check_prefix_cache(*quantized, packed, 0, .01, .02);
   std::cout << "Gemma dense FP8 numerical and prefix-cache checks passed\n";
+}
+
+void dynamic_quant_all(const c10::Device& device,
+                       const std::string& family,
+                       const std::string& format) {
+  const bool mxfp8 = format == "mxfp8";
+  if (!(mxfp8 ? mxfp8_provider_supported(device) : fp8_device_supported(device)))
+    return;
+  at::manual_seed(419);
+  // Realistic projection geometry: every quantized N is 128-aligned and K is 32-aligned.
+  Fixture f(family, 128, 4, 2, 256, 512);
+  f.cfg.values["_decision.kind"] = "option_tokens";
+  if (!f.legacy) {
+    f.cfg.values["attention_k_eq_v"] = "true";
+    f.cfg.values["num_global_key_value_heads"] = "1";
+  }
+  Weights quantized_weights;
+  for (const auto& [name, value] : f.weights)
+    quantized_weights[name] = value.to(device, at::kBFloat16);
+  f.cfg.values["_dynamic_quantization"] = format;
+  f.cfg.values["_dynamic_quantization_scope"] = "all";
+  auto quantized = create_gemma(f.cfg, quantized_weights, device, at::kBFloat16);
+  quantized->ready();
+  for (int64_t i = 0; i < 4; ++i) {
+    const auto p = "layers." + std::to_string(i) + ".self_attn.";
+    TORCH_CHECK(!quantized_weights.count(p + "q_proj.weight") &&
+                    !quantized_weights.count(p + "o_proj.weight"),
+                "All-linear scope retained redundant attention weights");
+    if (f.legacy || i < 2)
+      TORCH_CHECK(!quantized_weights.count(p + "k_proj.weight") &&
+                      !quantized_weights.count(p + "v_proj.weight"),
+                  "All-linear scope retained redundant KV weights");
+  }
+  const std::vector<int32_t> offsets = {0, 5, 7};
+  auto packed = input({1, 2, 3, 4, 5, 6, 7}, offsets);
+  packed.ids = packed.ids.to(device);
+  packed.types = packed.types.to(device);
+  packed.positions = packed.positions.to(device);
+  packed.cumulative = packed.cumulative.to(device);
+  const auto actual = quantized->forward(packed).to(at::kFloat);
+  // Task accuracy is measured on trained checkpoints. This untrained fixture checks that the
+  // quantized attention weights work through eager, graph and prefix-cache execution consistently.
+  TORCH_CHECK(actual.dim() == 2 && actual.size(0) == 7 && actual.size(1) == 256 &&
+                  at::isfinite(actual).all().item<bool>(),
+              "Gemma all-linear quantization returned invalid hidden rows");
+  CudaGraphCache graphs(1, 4096, 1);
+  for (int repeat = 0; repeat < 3; ++repeat)
+    TORCH_CHECK(at::allclose(actual, graphs.forward(*quantized, packed).to(at::kFloat), .01, .01),
+                "Gemma all-linear graph replay changed outputs");
+  TORCH_CHECK(graphs.stats().captures == 1 && graphs.stats().hits >= 2,
+              "Gemma all-linear graphs did not capture and replay");
+  auto changed = packed;
+  changed.ids = packed.ids.clone();
+  changed.ids[0].fill_(8);
+  const auto changed_expected = quantized->forward(changed).to(at::kFloat);
+  const auto changed_replayed = graphs.forward(*quantized, changed).to(at::kFloat);
+  TORCH_CHECK(!at::equal(actual, changed_expected) &&
+                  at::allclose(changed_expected, changed_replayed, .01, .01) &&
+                  graphs.stats().captures == 1,
+              "Gemma all-linear graph replay ignored mutated inputs or recaptured");
+  check_prefix_cache(*quantized, packed, 0, .01, .02);
+  std::cout << "Gemma " << family << " all-linear " << format
+            << " graph and prefix-cache checks passed\n";
 }
 #endif
 void audio_operations(const c10::Device& device) {
@@ -1680,6 +1746,9 @@ int main(int argc, char** argv) {
     gemma_bf16_gated_vector_test(c10::Device(argv[1]));
     for (const auto* family : {"gemma3", "gemma3_text", "gemma4", "embedding_gemma2"})
       dynamic_fp8(c10::Device(argv[1]), family);
+    for (const auto* family : {"gemma3", "gemma4"})
+      for (const auto* format : {"fp8", "mxfp8"})
+        dynamic_quant_all(c10::Device(argv[1]), family, format);
     feature_cache_stream_lifetime(c10::Device(argv[1]));
     publisher_bf16_score_readout(c10::Device(argv[1]));
     gemma4_moe_forward_parity(c10::Device(argv[1]));
