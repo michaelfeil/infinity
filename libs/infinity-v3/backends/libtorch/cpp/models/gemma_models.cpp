@@ -1877,13 +1877,13 @@ public:
             return activate(gu.narrow(-1, 0, width)) * gu.narrow(-1, width, width);
           },
           true);
-      // Preserve Gemma's BF16 GeGLU stages while combining its gate and FP8 row quantizer.
-      // Other formats keep the model-dtype activation callback above.
+      // Preserve Gemma's BF16 GeGLU stages while combining its gate and FP8/MXFP8
+      // quantizer. Other formats keep the model-dtype activation callback above.
 #ifdef INFINITY_TORCH_CUDA_KERNELS
       const auto activation_name = string("hidden_activation", "gelu_pytorch_tanh");
-      if (quantization == Quantization::Fp8 && device.is_cuda() && dtype == at::kBFloat16 &&
-          activation_name != "relu" && activation_name != "gelu" && activation_name != "silu" &&
-          activation_name != "swish")
+      if ((quantization == Quantization::Fp8 || quantization == Quantization::Mxfp8) &&
+          device.is_cuda() && dtype == at::kBFloat16 && activation_name != "relu" &&
+          activation_name != "gelu" && activation_name != "silu" && activation_name != "swish")
         activation.fp8_gated_activation = Fp8GatedActivation::PreciseGelu;
 #endif
       layer.dense_mlp = DenseMlp(

@@ -3,6 +3,7 @@
 #include "helpers/mxfp8_linear.h"
 #include "kernels/fp8_fusions.h"
 #include "kernels/mxfp8_fusions.h"
+#include "kernels/qwen35_kernels.h"
 
 #include <ATen/ATen.h>
 #include <ATen/Context.h>
@@ -73,6 +74,20 @@ at::Tensor gated_activation_reference(const at::Tensor& gate_up) {
   return infinity::mlp_activation(gate_up.narrow(1, 0, width),
                                   infinity::MlpActivation::RoundedSilu) *
          gate_up.narrow(1, width, width);
+}
+
+void check_precise_gated_quantize(const at::Tensor& gate_up, int64_t width) {
+  auto expected = infinity::mxfp8_quantize_rows(infinity::gemma_gated_cuda(gate_up, true));
+  auto actual = infinity::mxfp8_gated_quantize(gate_up, infinity::Fp8GatedActivation::PreciseGelu);
+  TORCH_CHECK(expected.values.sizes() == actual.values.sizes() &&
+                  expected.scales.sizes() == actual.scales.sizes(),
+              "Precise MXFP8 gated quantization changed geometry at width ",
+              width);
+  TORCH_CHECK(at::equal(expected.values.view(at::kByte), actual.values.view(at::kByte)) &&
+                  at::equal(expected.scales, actual.scales),
+              "Precise MXFP8 gated quantization differs from gemma_gated_cuda + mxfp8_quantize "
+              "at width ",
+              width);
 }
 
 void check_scale_layout(const at::Tensor& x, const infinity::Mxfp8Quantized& q) {
@@ -524,6 +539,46 @@ int main(int argc, char** argv) {
               gated_rel,
               gated_diff.max().item<double>());
   TORCH_CHECK(gated_rel < 0.05, "MXFP8 fused gated quantization error too large: ", gated_rel);
+
+  for (const int64_t width : {2112, 21504}) {
+    constexpr int64_t rows = 129;
+    auto storage = at::randn({rows * 2 * width + 1}, options) * 2;
+    auto gate_up = storage.narrow(0, 1, rows * 2 * width).view({rows, 2 * width});
+    gate_up.select(0, 0).zero_();
+    gate_up.select(0, 1).narrow(0, 0, kBlock).fill_(std::numeric_limits<float>::infinity());
+    gate_up.select(0, 2).narrow(0, 0, kBlock).fill_(std::numeric_limits<float>::quiet_NaN());
+    check_precise_gated_quantize(gate_up, width);
+  }
+  {
+    constexpr int64_t width = 65536, rows = 6;
+    auto gates =
+        at::arange(width, at::TensorOptions().dtype(at::kInt)).to(at::kShort).view(at::kBFloat16);
+    auto exhaustive = at::empty({rows, 2 * width}, at::TensorOptions().dtype(at::kBFloat16));
+    for (int64_t row = 0; row < rows; ++row)
+      exhaustive.select(0, row).narrow(0, 0, width).copy_(gates);
+    exhaustive.select(0, 0).narrow(0, width, width).fill_(1.f);
+    exhaustive.select(0, 1).narrow(0, width, width).fill_(-1.5f);
+    exhaustive.select(0, 2).narrow(0, width, width).fill_(std::ldexp(1.f, -133));
+    exhaustive.select(0, 3).narrow(0, width, width).fill_(std::ldexp(1.f, 100));
+    exhaustive.select(0, 4).narrow(0, width, width).zero_();
+    exhaustive.select(0, 5).narrow(0, width, width).fill_(-0.f);
+    check_precise_gated_quantize(exhaustive.to(options.device()), width);
+    // Homogeneous packs force zero and each guard endpoint through BF16x2.
+    auto bounds = at::tensor({0.f,
+                              -0.f,
+                              std::ldexp(1.f, -32),
+                              -std::ldexp(1.f, -32),
+                              std::ldexp(1.f, 32),
+                              -std::ldexp(1.f, 32),
+                              std::ldexp(1.f, -133),
+                              INFINITY})
+                      .to(options)
+                      .unsqueeze(1)
+                      .expand({8, 32});
+    check_precise_gated_quantize(at::cat({bounds, at::full_like(bounds, 1.5)}, 1), 32);
+  }
+  std::printf("MXFP8 precise GeGLU: fused bytes match gemma_gated_cuda for I=2112/21504 and all "
+              "65536 BF16 gates\n");
 
   check_special_values();
   check_alignment_views();

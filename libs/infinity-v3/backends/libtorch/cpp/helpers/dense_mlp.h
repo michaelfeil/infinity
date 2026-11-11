@@ -17,7 +17,7 @@ at::Tensor mlp_activation(const at::Tensor&, MlpActivation);
 
 /// Native block-scaled activation rows, including block and tensor scales.
 struct MlpNativeQuantized {
-  enum class Format { None, Nvfp4 };
+  enum class Format { None, Mxfp8, Nvfp4 };
   Format format = Format::None;
   at::Tensor values;
   at::Tensor block_scales;
@@ -119,8 +119,11 @@ public:
     return false;
   }
 
-  virtual MlpNativeQuantized
-  apply_native_swiglu_quantized(const MlpProjection&, const at::Tensor&, const MlpContext&) const {
+  /// `kind` selects the exact gated arithmetic the format method must own.
+  virtual MlpNativeQuantized apply_native_swiglu_quantized(const MlpProjection&,
+                                                           const at::Tensor&,
+                                                           const MlpContext&,
+                                                           Fp8GatedActivation) const {
     return {};
   }
 

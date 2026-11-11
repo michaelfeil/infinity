@@ -1,5 +1,6 @@
 // Copyright Infinity Core Contributors. Licensed under the repository LICENSE.
 #pragma once
+#include "helpers/fp8_activation.h"
 #include <ATen/ATen.h>
 #include <cstdint>
 #include <utility>
@@ -32,6 +33,12 @@ Mxfp8Quantized mxfp8_quantize_rows(const at::Tensor& input);
 /// `gate_up` is contiguous model-dtype [rows, 2*width] and uses the same
 /// rounded pair staging as fp8_gated_quantize.
 Mxfp8Quantized mxfp8_gated_silu_quantize(const at::Tensor& gate_up);
+
+/// Fused gate-first gated activation followed by MXFP8 block quantization.
+/// RoundedSilu keeps the same rounded pair staging as mxfp8_gated_silu_quantize.
+/// PreciseGelu keeps the fully BF16-staged gemma_precise_activation arithmetic
+/// and therefore matches gemma_gated_cuda followed by mxfp8_quantize_rows.
+Mxfp8Quantized mxfp8_gated_quantize(const at::Tensor& gate_up, Fp8GatedActivation kind);
 
 /// Fused Gemma4 MoE GeGLU followed by MXFP8 block quantization for routed rows.
 /// `gate_up` is the contiguous BF16 physical expert workspace [capacity, 2*I]

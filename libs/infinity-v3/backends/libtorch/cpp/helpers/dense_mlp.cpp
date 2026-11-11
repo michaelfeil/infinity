@@ -176,6 +176,44 @@ public:
     return false;
   }
 
+  bool supports_native_swiglu_quantized() const override {
+    return true;
+  }
+
+  MlpNativeQuantized apply_native_swiglu_quantized(const MlpProjection& projection,
+                                                   const at::Tensor& x,
+                                                   const MlpContext&,
+                                                   Fp8GatedActivation kind) const override {
+    TORCH_CHECK(x.dim() == 2 && x.size(1) == projection.input_width(),
+                "Fused native MXFP8 gated activation requires 2D projection rows");
+    if ((kind != Fp8GatedActivation::RoundedSilu && kind != Fp8GatedActivation::PreciseGelu) ||
+        projection.output_width() % 64 != 0)
+      return {};
+    const auto quantized = linear_.forward_gated_quantize(x, kind);
+    return {MlpNativeQuantized::Format::Mxfp8,
+            quantized.values,
+            quantized.scales,
+            {},
+            quantized.rows,
+            quantized.cols,
+            {}};
+  }
+
+  bool accepts_native_quantized_rows() const override {
+    return true;
+  }
+
+  at::Tensor apply_native_quantized(const MlpProjection& projection,
+                                    const MlpNativeQuantized& rows,
+                                    const at::Tensor& bias,
+                                    const MlpContext&) const override {
+    TORCH_CHECK(rows.format == MlpNativeQuantized::Format::Mxfp8,
+                "MXFP8 method received unsupported native rows");
+    TORCH_CHECK(rows.cols == projection.input_width(),
+                "MXFP8 native rows width does not match projection");
+    return linear_.forward_quantized(rows.values, rows.block_scales, bias);
+  }
+
   std::pair<at::Tensor, at::Tensor> apply_swiglu_quantized(const MlpProjection& projection,
                                                            const at::Tensor& x,
                                                            const at::Tensor& scales,
@@ -274,9 +312,12 @@ public:
 
   MlpNativeQuantized apply_native_swiglu_quantized(const MlpProjection& projection,
                                                    const at::Tensor& x,
-                                                   const MlpContext&) const override {
+                                                   const MlpContext&,
+                                                   Fp8GatedActivation kind) const override {
     TORCH_CHECK(x.dim() == 2 && x.size(1) == projection.input_width(),
                 "Fused native SwiGLU requires 2D projection rows");
+    if (kind != Fp8GatedActivation::RoundedSilu)
+      return {};
     const auto quantized = linear_.forward_swiglu_quantized(x);
     return {MlpNativeQuantized::Format::Nvfp4,
             quantized.values,
@@ -491,11 +532,12 @@ bool DenseMlp::supports_mxfp8() const {
   // projection. mxfp8_mlp_supported() below also validates that packed geometry.
   if (up_ || !activation_.packed || !activation_.gate_first || activation_.quantized_custom)
     return false;
-  // The native MXFP8 gated kernel implements rounded SwiGLU only. Every other
-  // recipe this class can evaluate on model-dtype rows, including the exact
-  // custom packed GeGLU, uses the generic activation fallback in forward(),
-  // which applies the recipe's own arithmetic unchanged. RoundedBiasGelu is a
-  // unary-bias contract and a packed projection does not honor it.
+  // The native MXFP8 gated kernel implements rounded SwiGLU and the explicitly
+  // marked PreciseGelu recipe. Unmarked custom recipes this class can evaluate
+  // on model-dtype rows, including exact custom packed GeGLU, use the generic
+  // activation fallback in forward(), which applies the recipe's own arithmetic
+  // unchanged. RoundedBiasGelu is a unary-bias contract and a packed projection
+  // does not honor it.
   const bool native_swiglu = activation_.fusion == MlpFusion::RoundedSwiGlu;
   if (activation_.fusion != MlpFusion::None && !native_swiglu)
     return false;
@@ -505,8 +547,8 @@ bool DenseMlp::supports_mxfp8() const {
     return false;
   if (input_.output_width() % 2 != 0)
     return false;
-  // Keep the bounded native SwiGLU contract. Custom recipes use the generic
-  // model-dtype activation path and do not share that fused-kernel width bound.
+  // Keep the bounded native SwiGLU contract. Unmarked custom recipes and the
+  // explicitly marked PreciseGelu do not share its legacy fused-kernel bound.
   if (native_swiglu && input_.output_width() / 2 > fp8_scaled_swiglu_max_width)
     return false;
   return mxfp8_mlp_supported(input_.weight(), output_.weight());
@@ -598,21 +640,27 @@ at::Tensor DenseMlp::forward(const at::Tensor& x,
 #endif
 #ifdef INFINITY_TORCH_CUDA_KERNELS
   // Native block-scaled hook: the format method owns the whole input
-  // projection, activation arithmetic and scale metadata, so this does not
-  // reuse the FP8-row contract. The fusion is limited to the shared
-  // rounded-SwiGLU geometry and projections whose numerical transforms the
-  // fused boundary can express exactly.
-  const bool native_swiglu =
-      activation_.fusion == MlpFusion::RoundedSwiGlu && activation_.packed &&
-      activation_.gate_first && !up_ && !activation_.quantized_custom &&
-      input_.method().supports_native_swiglu_quantized() &&
+  // projection, exact gated activation arithmetic and scale metadata, so this
+  // does not reuse the FP8-row contract. The fusion is limited to gate-first
+  // geometry and projections whose numerical transforms the fused boundary can
+  // express exactly.
+  std::optional<Fp8GatedActivation> native_activation;
+  if (activation_.fusion == MlpFusion::RoundedSwiGlu)
+    native_activation = Fp8GatedActivation::RoundedSilu;
+  else if (activation_.fusion == MlpFusion::None &&
+           activation_.fp8_gated_activation == Fp8GatedActivation::PreciseGelu)
+    native_activation = Fp8GatedActivation::PreciseGelu;
+  const bool native_gated =
+      native_activation && activation_.packed && activation_.gate_first && !up_ &&
+      !activation_.quantized_custom && input_.method().supports_native_swiglu_quantized() &&
       output_.method().accepts_native_quantized_rows() && !input_.bias_.defined() &&
       !input_scales.defined() && !input_.recipe_.input_clip && !input_.recipe_.cast_input &&
       !input_.recipe_.output_clip && !output_.recipe_.input_clip && !output_.recipe_.cast_input &&
       x.is_cuda() && x.dim() == 2 && x.size(1) == input_.input_width() &&
       input_.output_width() % 2 == 0 && (input_.output_width() / 2) % 16 == 0;
-  if (native_swiglu) {
-    auto quantized = input_.method().apply_native_swiglu_quantized(input_, x, context);
+  if (native_gated) {
+    auto quantized =
+        input_.method().apply_native_swiglu_quantized(input_, x, context, *native_activation);
     if (quantized.defined())
       return output_.execute_native(quantized, context);
   }
