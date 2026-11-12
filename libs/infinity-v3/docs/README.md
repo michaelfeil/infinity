@@ -7,6 +7,8 @@ and client are separate projects in the parent `libs` directory.
 - [Running the server](cli.md)
 - [Supported models and configuration by task](supported-models.md)
 - [Performance and Radix MLP](performance.md)
+- [B200 comparison: Infinity, vLLM and SGLang](benchmarks/b200-20261108/results.md)
+- [Benchmark method and reproduction](benchmark-method.md)
 - [Native LibTorch backend](libtorch-backend.md)
 - [Python backend plugins](python-backend.md)
 - [Native model coverage](libtorch-model-coverage.md)

@@ -1,22 +1,28 @@
-# H100 performance
+# H100 performance (historical Infinity V3.0.1)
 
-Infinity V3 on **one H100 80 GB**, with eight CPU threads and 64 GiB RAM.
+Infinity V3.0.1 on **one H100 80 GB**, with eight CPU threads and 64 GiB RAM.
 End-to-end HTTP throughput, request latency and startup time for text embeddings,
-reranking, image embeddings and decision requests. Updated as models are
-rebenchmarked; last updated October 30, 2026. Production latency depends on the
-traffic mix.
+reranking, image embeddings and decision requests. These are the original
+October 2026 measurements, last updated October 30. See the
+[performance overview](performance.md) for the newer B200 comparison. Production
+latency depends on the traffic mix.
 
 ## Text embeddings
 
-FP16 unless marked BF16, with the same server CPU allocation. Throughput is
-**input tokens/s** at concurrency 32. Latency is the fastest observed 8-token request;
-startup is the median of three fresh starts with local weights (six for Qwen3-8B
+Infinity uses FP16 unless marked BF16; the runtime-comparison data records FP16
+for vLLM and TEI, with the same server CPU allocation. Throughput is
+**input tokens/s** at concurrency 32 with one input per request. Latency is the
+minimum observed 8-token request at concurrency 1; startup is the median of
+three fresh starts with local weights (six for Qwen3-Embedding-8B
 FP16), excluding downloads.
 Infinity uses the published 3.0.1 image. Comparisons retain the October 25–26
-measurements of vLLM 0.32.0 and TEI 1.9.4. Small differences should not be
-treated as decisive; build revisions are recorded in the measurement data.
+measurements of vLLM 0.32.0 and Text Embeddings Inference (TEI) image
+`ghcr.io/huggingface/text-embeddings-inference:hopper-latest` (recorded image ID
+`sha256:9add295ed634121a944ceaad3bd94c973dfac84becfa31eb40e08dbeeb0a3a21`).
+The checked-in data does not establish a TEI release version. Small differences
+should not be treated as decisive; build revisions are recorded in the data.
 
-| Model | Runtime | 128 tokens | 512 tokens | Min. latency (ms) | Startup (s) |
+| Model | Runtime | 128-token input | 512-token input | Min. latency (ms) | Startup to health (s) |
 |---|---|---:|---:|---:|---:|
 | BGE-small | Infinity | 910,550 | 2,124,043 | 0.73 | 1.59 |
 | BGE-small | vLLM | 108,689 | 362,949 | 3.87 | 32.48 |
@@ -41,7 +47,7 @@ treated as decisive; build revisions are recorded in the measurement data.
 | pplx-embed-v1-4B | vLLM | 57,574 | 70,348 | 7.40 | 68.65 |
 | UltraBERT-Embed-150M | Infinity | 424,551 | 1,003,116 | 1.24 | 1.67 |
 
-Only comparable measurements are shown. TEI’s Perplexity run used FP32 and
+Historical measurements are retained as recorded. TEI’s Perplexity run used FP32 and
 quantized output; EmbeddingGemma2 and UltraBERT could not load in the tested TEI
 image. UltraBERT’s vLLM run failed its numerical check.
 
@@ -49,17 +55,20 @@ image. UltraBERT’s vLLM run failed its numerical check.
 
 Input tokens/s, counting the query, document and special tokens together.
 
-| Model | Precision | 128-token pair | 512-token pair |
-|---|---|---:|---:|
-| DeBERTa-v3-base | FP16 | 735,960 | 593,844 |
-| Nemotron 3.5 Rerank 8B | BF16 | 40,912 | 41,851 |
-| Nemotron 3.5 Rerank 8B | BF16 + FP8 linears | 70,290 | 71,965 |
+| Model | Precision | Concurrency | Documents/request | 128-token pair | 512-token pair |
+|---|---|---:|---:|---:|---:|
+| DeBERTa-v3-base | FP16 | 128 | 1 | 735,960 | 593,844 |
+| Nemotron 3.5 Rerank 8B | BF16 | 8 | 8 | 40,912 | 41,851 |
+| Nemotron 3.5 Rerank 8B | BF16 + FP8 linears | 128 | 1 | 70,290 | 71,965 |
 
 These measurements used the 3.0.1 flag `--enable-fp8-dynamic`. On current
 releases, use `--dynamic-quantization fp8`; see the
 [migration table](cli.md#migrating-existing-deployments). The numerical check is
 a two-document smoke test, not a ranking-quality evaluation. Recorded commands
 in the measurement JSON retain the original flags.
+
+The BF16 and FP8 rows use different concurrency and documents per request, so
+their difference is not a controlled precision-only comparison.
 
 ## Image embeddings
 
@@ -98,7 +107,8 @@ other GPU4 runs used local CPUs. Exact placement is recorded in the measurement 
 [Measurement data](h100-alpha19.json) contains mixed-length workloads, individual
 runs, checkpoint names, commit SHAs and numerical checks.
 
-**Accuracy:** these are timing benchmarks, not task-accuracy evaluations.
+**Numerical checks:** these are timing benchmarks, not task-accuracy evaluations.
 † Qwen3-VL BF16's minimum cosine against the original numerical reference was
-0.998545 (screen threshold 0.999). Elephant’s sampled choices and probabilities
+0.998545, below the 0.999 screen threshold. Those BF16 image rows are diagnostic.
+Elephant’s sampled choices and probabilities
 matched the previous benchmark. Numerical checks are included in the data file.

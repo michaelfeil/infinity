@@ -1,0 +1,459 @@
+{
+  "schema_version": 1,
+  "campaign": "b200-20261108-upstream-common",
+  "models": [
+    {
+      "id": "Qwen/Qwen3-Embedding-8B",
+      "revision": "1d8ad4ca9b3dd8059ad90a75d4983776a23d44af",
+      "task": "embeddings",
+      "parameters": 7567295488,
+      "selection": "comparison_candidate",
+      "new_checkpoint": false,
+      "lengths": [
+        128,
+        512,
+        2048
+      ],
+      "pooling": "last",
+      "pooling_source": "1_Pooling/config.json",
+      "normalize": true
+    },
+    {
+      "id": "Qwen/Qwen3-Embedding-4B",
+      "revision": "5cf2132abc99cad020ac570b19d031efec650f2b",
+      "task": "embeddings",
+      "parameters": 4021774336,
+      "selection": "comparison_candidate",
+      "new_checkpoint": false,
+      "lengths": [
+        128,
+        512,
+        2048
+      ],
+      "pooling": "last",
+      "pooling_source": "1_Pooling/config.json",
+      "normalize": true
+    },
+    {
+      "id": "Qwen/Qwen3-Embedding-0.6B",
+      "revision": "97b0c614be4d77ee51c0cef4e5f07c00f9eb65b3",
+      "task": "embeddings",
+      "parameters": 595776512,
+      "selection": "comparison_candidate",
+      "new_checkpoint": false,
+      "lengths": [
+        128,
+        512
+      ],
+      "pooling": "last",
+      "pooling_source": "1_Pooling/config.json",
+      "normalize": true
+    },
+    {
+      "id": "intfloat/e5-mistral-7b-instruct",
+      "revision": "d62cc4417be0e3289c03dd459d1ef2d137e2554e",
+      "task": "embeddings",
+      "parameters": 7110660096,
+      "selection": "comparison_candidate",
+      "new_checkpoint": false,
+      "lengths": [
+        128,
+        512,
+        2048
+      ],
+      "pooling": "last",
+      "pooling_source": "1_Pooling/config.json",
+      "normalize": true
+    },
+    {
+      "id": "tencent/KaLM-Embedding-Gemma3-12B-2511",
+      "revision": "98c19ba34197906fbc93f6f1ef79402ca3a33956",
+      "task": "embeddings",
+      "parameters": 11766034176,
+      "selection": "comparison_candidate",
+      "new_checkpoint": false,
+      "lengths": [
+        128,
+        512,
+        2048
+      ],
+      "pooling": "last",
+      "pooling_source": "1_Pooling/config.json",
+      "normalize": true
+    },
+    {
+      "id": "microsoft/harrier-oss-v1-0.6b",
+      "revision": "f9b9dc8d367d443f2479d27aa5d8d2850c0774ee",
+      "task": "embeddings",
+      "parameters": 596049920,
+      "selection": "comparison_candidate",
+      "new_checkpoint": false,
+      "lengths": [
+        128,
+        512
+      ],
+      "pooling": "last",
+      "pooling_source": "1_Pooling/config.json",
+      "normalize": true
+    },
+    {
+      "id": "BAAI/bge-large-en-v1.5",
+      "revision": "d4aa6901d3a41ba39fb536a557fa166f842b0e09",
+      "task": "embeddings",
+      "parameters": 335142400,
+      "selection": "comparison_candidate",
+      "new_checkpoint": false,
+      "lengths": [
+        128,
+        512
+      ],
+      "pooling": "cls",
+      "pooling_source": "1_Pooling/config.json",
+      "normalize": true
+    },
+    {
+      "id": "BAAI/bge-large-zh-v1.5",
+      "revision": "79e7739b6ab944e86d6171e44d24c997fc1e0116",
+      "task": "embeddings",
+      "parameters": null,
+      "selection": "comparison_candidate",
+      "new_checkpoint": false,
+      "lengths": [
+        128,
+        512
+      ],
+      "pooling": "cls",
+      "pooling_source": "1_Pooling/config.json",
+      "normalize": true
+    },
+    {
+      "id": "BAAI/bge-m3",
+      "revision": "5617a9f61b028005a4858fdac845db406aefb181",
+      "task": "embeddings",
+      "parameters": null,
+      "selection": "comparison_candidate",
+      "new_checkpoint": false,
+      "lengths": [
+        128,
+        512
+      ],
+      "pooling": "cls",
+      "pooling_source": "1_Pooling/config.json",
+      "normalize": true
+    },
+    {
+      "id": "Snowflake/snowflake-arctic-embed-l",
+      "revision": "d8fb21ca8d905d2832ee8b96c894d3298964346b",
+      "task": "embeddings",
+      "parameters": 334092288,
+      "selection": "comparison_candidate",
+      "new_checkpoint": false,
+      "lengths": [
+        128,
+        512
+      ],
+      "pooling": "cls",
+      "pooling_source": "1_Pooling/config.json",
+      "normalize": true
+    },
+    {
+      "id": "Snowflake/snowflake-arctic-embed-l-v2.0",
+      "revision": "ac6544c8a46e00af67e330e85a9028c66b8cfd9a",
+      "task": "embeddings",
+      "parameters": 567754752,
+      "selection": "comparison_candidate",
+      "new_checkpoint": false,
+      "lengths": [
+        128,
+        512
+      ],
+      "pooling": "cls",
+      "pooling_source": "1_Pooling/config.json",
+      "normalize": true
+    },
+    {
+      "id": "BAAI/bge-base-en-v1.5",
+      "revision": "a5beb1e3e68b9ab74eb54cfd186867f64f240e1a",
+      "task": "embeddings",
+      "parameters": 109482752,
+      "selection": "comparison_candidate",
+      "new_checkpoint": false,
+      "lengths": [
+        128,
+        512
+      ],
+      "pooling": "cls",
+      "pooling_source": "1_Pooling/config.json",
+      "normalize": true
+    },
+    {
+      "id": "BAAI/bge-base-zh-v1.5",
+      "revision": "f03589ceff5aac7111bd60cfc7d497ca17ecac65",
+      "task": "embeddings",
+      "parameters": null,
+      "selection": "comparison_candidate",
+      "new_checkpoint": false,
+      "lengths": [
+        128,
+        512
+      ],
+      "pooling": "cls",
+      "pooling_source": "1_Pooling/config.json",
+      "normalize": true
+    },
+    {
+      "id": "Snowflake/snowflake-arctic-embed-m",
+      "revision": "fc74610d18462d218e312aa986ec5c8a75a98152",
+      "task": "embeddings",
+      "parameters": 108891648,
+      "selection": "comparison_candidate",
+      "new_checkpoint": false,
+      "lengths": [
+        128,
+        512
+      ],
+      "pooling": "cls",
+      "pooling_source": "1_Pooling/config.json",
+      "normalize": true
+    },
+    {
+      "id": "Snowflake/snowflake-arctic-embed-s",
+      "revision": "e596f507467533e48a2e17c007f0e1dacc837b33",
+      "task": "embeddings",
+      "parameters": 33212160,
+      "selection": "comparison_candidate",
+      "new_checkpoint": false,
+      "lengths": [
+        128,
+        512
+      ],
+      "pooling": "cls",
+      "pooling_source": "1_Pooling/config.json",
+      "normalize": true
+    },
+    {
+      "id": "Snowflake/snowflake-arctic-embed-xs",
+      "revision": "d8c86521100d3556476a063fc2342036d45c106f",
+      "task": "embeddings",
+      "parameters": 22565376,
+      "selection": "comparison_candidate",
+      "new_checkpoint": false,
+      "lengths": [
+        128,
+        512
+      ],
+      "pooling": "cls",
+      "pooling_source": "1_Pooling/config.json",
+      "normalize": true
+    },
+    {
+      "id": "BAAI/bge-small-en-v1.5",
+      "revision": "5c38ec7c405ec4b44b94cc5a9bb96e735b38267a",
+      "task": "embeddings",
+      "parameters": 33360512,
+      "selection": "comparison_candidate",
+      "new_checkpoint": false,
+      "lengths": [
+        128,
+        512
+      ],
+      "pooling": "cls",
+      "pooling_source": "1_Pooling/config.json",
+      "normalize": true
+    },
+    {
+      "id": "BAAI/bge-small-zh-v1.5",
+      "revision": "7999e1d3359715c523056ef9478215996d62a620",
+      "task": "embeddings",
+      "parameters": 23954432,
+      "selection": "comparison_candidate",
+      "new_checkpoint": false,
+      "lengths": [
+        128,
+        512
+      ],
+      "pooling": "cls",
+      "pooling_source": "1_Pooling/config.json",
+      "normalize": true
+    },
+    {
+      "id": "mixedbread-ai/mxbai-embed-large-v1",
+      "revision": "b33106f585b9ce46904ad7443a3b52b7a63e231c",
+      "task": "embeddings",
+      "parameters": 335141888,
+      "selection": "comparison_candidate",
+      "new_checkpoint": false,
+      "lengths": [
+        128,
+        512
+      ],
+      "pooling": "cls",
+      "pooling_source": "1_Pooling/config.json",
+      "normalize": true
+    },
+    {
+      "id": "BAAI/bge-reranker-v2-m3",
+      "revision": "953dc6f6f85a1b2dbfca4c34a2796e7dde08d41e",
+      "task": "rerank",
+      "parameters": 567755777,
+      "selection": "comparison_candidate",
+      "new_checkpoint": false,
+      "lengths": [
+        128,
+        512
+      ],
+      "score_format": "raw_logit"
+    },
+    {
+      "id": "cross-encoder/ms-marco-MiniLM-L-6-v2",
+      "revision": "233902d25c440f23af6f7d6e94d2946bac0bee0a",
+      "task": "rerank",
+      "parameters": 22714113,
+      "selection": "comparison_candidate",
+      "new_checkpoint": false,
+      "lengths": [
+        128,
+        512
+      ],
+      "score_format": "raw_logit"
+    },
+    {
+      "id": "cross-encoder/ms-marco-MiniLM-L-12-v2",
+      "revision": "7b0235231ca2674cb8ca8f022859a6eba2b1c968",
+      "task": "rerank",
+      "parameters": 33360897,
+      "selection": "comparison_candidate",
+      "new_checkpoint": false,
+      "lengths": [
+        128,
+        512
+      ],
+      "score_format": "raw_logit"
+    },
+    {
+      "id": "jinaai/jina-code-embeddings-1.5b",
+      "revision": "39aeb4fb9b60f930934c78ae5d749a46287c248a",
+      "task": "embeddings",
+      "parameters": 1543714304,
+      "selection": "diagnostic",
+      "new_checkpoint": false,
+      "lengths": [
+        128,
+        512
+      ],
+      "pooling": "last",
+      "pooling_source": "1_Pooling/config.json",
+      "normalize": true
+    },
+    {
+      "id": "Alibaba-NLP/gte-Qwen2-1.5B-instruct",
+      "revision": "a9af15a6372d7d6b25e9fb07c2ccb9e1fe645644",
+      "task": "embeddings",
+      "parameters": 1776197120,
+      "selection": "diagnostic",
+      "new_checkpoint": false,
+      "lengths": [
+        128,
+        512
+      ],
+      "pooling": "last",
+      "pooling_source": "1_Pooling/config.json",
+      "normalize": true
+    },
+    {
+      "id": "Alibaba-NLP/gte-Qwen2-7B-instruct",
+      "revision": "a8d08b36ada9cacfe34c4d6f80957772a025daf2",
+      "task": "embeddings",
+      "parameters": 7612620288,
+      "selection": "diagnostic",
+      "new_checkpoint": false,
+      "lengths": [
+        128,
+        512,
+        2048
+      ],
+      "pooling": "last",
+      "pooling_source": "1_Pooling/config.json",
+      "normalize": true
+    },
+    {
+      "id": "perplexity-ai/pplx-embed-v1-4b",
+      "revision": "06456497a00540a582918fe8dcd3a5eabb207772",
+      "task": "embeddings",
+      "parameters": 4022468096,
+      "selection": "diagnostic",
+      "new_checkpoint": false,
+      "lengths": [
+        128,
+        512,
+        2048
+      ],
+      "pooling": "mean",
+      "pooling_source": "1_Pooling/config.json",
+      "normalize": true
+    },
+    {
+      "id": "microsoft/harrier-oss-v1-27b",
+      "revision": "0c0fc62f6d8af9e8604cb818c412301b103a0093",
+      "task": "embeddings",
+      "parameters": 27009346304,
+      "selection": "diagnostic",
+      "new_checkpoint": false,
+      "lengths": [
+        128,
+        512,
+        2048
+      ],
+      "pooling": "last",
+      "pooling_source": "1_Pooling/config.json",
+      "normalize": true
+    },
+    {
+      "id": "Salesforce/SFR-Embedding-Mistral",
+      "revision": "33a60fe7b5e00b9414981280c571e8a4f9f42f1b",
+      "task": "embeddings",
+      "parameters": 7110660096,
+      "selection": "comparison_candidate",
+      "new_checkpoint": true,
+      "lengths": [
+        128,
+        512,
+        2048
+      ],
+      "pooling": "last",
+      "pooling_source": "1_Pooling/config.json",
+      "normalize": true
+    },
+    {
+      "id": "Salesforce/SFR-Embedding-2_R",
+      "revision": "f62d15f411ca97b66acc0f34da2a65f3420b55b0",
+      "task": "embeddings",
+      "parameters": 7110660096,
+      "selection": "comparison_candidate",
+      "new_checkpoint": true,
+      "lengths": [
+        128,
+        512,
+        2048
+      ],
+      "pooling": "last",
+      "pooling_source": "1_Pooling/config.json",
+      "normalize": true
+    },
+    {
+      "id": "Snowflake/snowflake-arctic-embed-m-v1.5",
+      "revision": "e58a8f756156a1293d763f17e3aae643474e9b8a",
+      "task": "embeddings",
+      "parameters": 108891648,
+      "selection": "comparison_candidate",
+      "new_checkpoint": true,
+      "lengths": [
+        128,
+        512
+      ],
+      "pooling": "cls",
+      "pooling_source": "1_Pooling/config.json",
+      "normalize": true
+    }
+  ]
+}

@@ -68,6 +68,7 @@ must fit the full model, including all experts for MoE checkpoints.
 
 - [Quickstart](https://michaelfeil.eu/infinity/main/v3/quickstart/)
 - [Native v3 overview, performance and configuration](libs/infinity-v3/README.md)
+- [Performance measurements and reproducible benchmarks](libs/infinity-v3/docs/performance.md)
 - [Supported models and configuration](libs/infinity-v3/docs/supported-models.md)
 - [CLI and request options](libs/infinity-v3/docs/cli.md)
 - [API reference](https://michaelfeil.eu/infinity/main/v3/api/)

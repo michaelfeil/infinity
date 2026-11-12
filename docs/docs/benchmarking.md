@@ -1,15 +1,26 @@
 # Benchmarking details
 
-Benchmarks are always opinionated. The goal of this benchmark is to find the best possible self-hosted backend for $/token:
+This page is a historical benchmark of the legacy `infinity_emb` 0.0.25 release.
+Results and commands below are preserved as originally published; they are not
+measurements of current Infinity V3, do not evaluate task quality and did not
+measure cost.
 
-1. end-to-end, including the RestAPI server
-2. multi-tenant: multiple clients will try to query your server
-3. fair batch size: You want to limit request size (sentences per requests) to something low, such that you can load balance requests, scale
-4. measured over throughput per token: Idle servers are bad for business. This benchmark is NOT about the latency for a single request against an IDLE server. It partially evaluates the latency under a typical load scenario
-5. Bert small / large - the most typical semantic search tasks require a small model (< 1B params)
-6. accuracy: each backend must have a ~1e-4 prevision over the torch fp32 embeddings.
+For the Rust/LibTorch server, see the
+[Infinity V3 performance measurements](https://michaelfeil.eu/infinity/main/v3/docs/performance/)
+against vLLM and SGLang. Its results use different hardware, software and
+workloads from this legacy experiment.
 
-## Benchmarking machines:
+This historical benchmark compared self-hosted embedding backends under a shared
+multi-client load:
+
+1. end-to-end, including the REST API server
+2. multi-tenant: multiple clients query the server
+3. fair input-batch size: limit the number of inputs per HTTP request (sentences per request) so requests can be load-balanced and scaled
+4. throughput is reported as HTTP requests/s for the fixed input batch (256 input sentences per request); input tokens/s can be derived by multiplying requests/s by input tokens/request. Idle servers waste capacity, so this benchmark is not single-request latency against an idle server; it partially evaluates latency under typical load
+5. checkpoint scope: BERT-small / BERT-large embedding models below 1B parameters in this historical experiment
+6. numerical agreement: each backend must agree with Torch FP32 embeddings to approximately 1e-4; this is numerical precision, not task accuracy.
+
+## Benchmark hardware (historical):
 CPU and NVIDIA:
 
 *  GCP g2-standard-16
@@ -43,7 +54,7 @@ python ./docs/benchmarks/simple_app.py
 
 ### huggingface/text-embeddings-inference
 
-using the _cpu_ and _cuda-89_ container (note that cc-89 matches to Nvidia L4)
+using the _cpu_ and _cuda-89_ container (note that cc-89 matches the NVIDIA L4)
 ```bash
 docker run -it -p 7997:80 --pull always ghcr.io/huggingface/text-embeddings-inference:cpu-0.6 
 --model-id BAAI/bge-small-en-v1.5 --max-client-batch-size 256
@@ -68,12 +79,12 @@ make benchmark_embed
 ```
 
 Below are the following metrics:
-*  Requests # / sec (1 request = 256 sentences / 115_000 tokens)
-*  time to run benchmark (10 requests = 1_150_000 tokens)
+*  HTTP requests/s (mean); one request = 256 input sentences / 115,000 input tokens
+*  benchmark duration; 10 requests = 1,150,000 input tokens
 
-### Results: CPU-only (_BAAI/bge-small-en-v1.5_ | _bert-small_)
+### Results: CPU-only (_BAAI/bge-small-en-v1.5_ | _BERT-small_)
 
-| Model                             | Time (seconds) | Requests # / sec (mean) |
+| Runtime / engine                  | Time (seconds) | HTTP requests/s (mean) |
 |-----------------------------------|----------------|-------------------------|
 | infinity-optimum-int8             | 100.490        | 0.10                    |
 | infinity-optimum (onnx)           | 125.342        | 0.08                    |
@@ -84,9 +95,9 @@ Below are the following metrics:
 
 
 
-### Results: NVIDIA L4 (_BAAI/bge-large-en-v1.5_ | _bert-large_)
+### Results: NVIDIA L4 (_BAAI/bge-large-en-v1.5_ | _BERT-large_)
 
-| Model                                        | Requests # / sec (mean) | Time (seconds) |
+| Runtime / engine                             | HTTP requests/s (mean) | Time (seconds) |
 |---------------------------------------------|-------------------------|----------------|
 | huggingface/TEI (candle, flashbert)         | 0.54                    | 18.491         |
 | infinity (torch + compile + fa2)            | 0.51                    | 19.562         |
@@ -95,14 +106,14 @@ Below are the following metrics:
 | sentence-transformers (fp16)                | 0.17                    | 59.107         |
 
 
-### Results: AMD MI210 (_BAAI/bge-large-en-v1.5_ | _bert-large_)
+### Results: AMD MI210 (_BAAI/bge-large-en-v1.5_ | _BERT-large_)
 
-| Model                                       | Requests # / sec (mean) | Time (seconds) |
+| Runtime / engine                            | HTTP requests/s (mean) | Time (seconds) |
 |---------------------------------------------|-------------------------|----------------|
 | infinity (torch + no compile + fa2 disabled)| 0.75                    | 13.400         |
 
-### Results: AWS INF2 xlarge (_BAAI/bge-large-en-v1.5_ | _bert-large_)
+### Results: AWS INF2 xlarge (_BAAI/bge-large-en-v1.5_ | _BERT-large_)
 
-| Model                                       | Requests # / sec (mean) | Time (seconds) |
+| Runtime / engine                            | HTTP requests/s (mean) | Time (seconds) |
 |---------------------------------------------|-------------------------|----------------|
 | infinity (neuron, fp16, constant batch_size 4 / 512 seq)      | 0.11                    | 90.564        |
