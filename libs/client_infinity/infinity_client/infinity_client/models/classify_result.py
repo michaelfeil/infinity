@@ -1,41 +1,57 @@
-from typing import TYPE_CHECKING, Any, Dict, List, Type, TypeVar, Union
+from __future__ import annotations
+
+from collections.abc import Mapping
+from typing import Any, TypeVar, BinaryIO, TextIO, TYPE_CHECKING, Generator
 
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 
-from ..models.classify_result_object import ClassifyResultObject
 from ..types import UNSET, Unset
 
+from ..types import UNSET, Unset
+from typing import cast
+from typing import Literal, cast
+
 if TYPE_CHECKING:
-    from ..models.classify_object import ClassifyObject
-    from ..models.usage import Usage
+  from ..models.classify_object import ClassifyObject
+  from ..models.usage import Usage
+
+
+
 
 
 T = TypeVar("T", bound="ClassifyResult")
 
 
+
 @_attrs_define
 class ClassifyResult:
-    """Result of classification.
+    """ Result of classification.
 
-    Attributes:
-        data (List[List['ClassifyObject']]):
-        model (str):
-        usage (Usage):
-        object_ (Union[Unset, ClassifyResultObject]):  Default: ClassifyResultObject.CLASSIFY.
-        id (Union[Unset, str]):
-        created (Union[Unset, int]):
-    """
+        Attributes:
+            data (list[list[ClassifyObject]]):
+            model (str):
+            usage (Usage):
+            object_ (Literal['classify'] | Unset):  Default: 'classify'.
+            id (str | Unset):
+            created (int | Unset):
+     """
 
-    data: List[List["ClassifyObject"]]
+    data: list[list[ClassifyObject]]
     model: str
-    usage: "Usage"
-    object_: Union[Unset, ClassifyResultObject] = ClassifyResultObject.CLASSIFY
-    id: Union[Unset, str] = UNSET
-    created: Union[Unset, int] = UNSET
-    additional_properties: Dict[str, Any] = _attrs_field(init=False, factory=dict)
+    usage: Usage
+    object_: Literal['classify'] | Unset = 'classify'
+    id: str | Unset = UNSET
+    created: int | Unset = UNSET
+    additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
-    def to_dict(self) -> Dict[str, Any]:
+
+
+
+
+    def to_dict(self) -> dict[str, Any]:
+        from ..models.classify_object import ClassifyObject
+        from ..models.usage import Usage
         data = []
         for data_item_data in self.data:
             data_item = []
@@ -43,29 +59,29 @@ class ClassifyResult:
                 data_item_item = data_item_item_data.to_dict()
                 data_item.append(data_item_item)
 
+
             data.append(data_item)
+
+
 
         model = self.model
 
         usage = self.usage.to_dict()
 
-        object_: Union[Unset, str] = UNSET
-        if not isinstance(self.object_, Unset):
-            object_ = self.object_.value
+        object_ = self.object_
 
         id = self.id
 
         created = self.created
 
-        field_dict: Dict[str, Any] = {}
+
+        field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
-        field_dict.update(
-            {
-                "data": data,
-                "model": model,
-                "usage": usage,
-            }
-        )
+        field_dict.update({
+            "data": data,
+            "model": model,
+            "usage": usage,
+        })
         if object_ is not UNSET:
             field_dict["object"] = object_
         if id is not UNSET:
@@ -75,34 +91,38 @@ class ClassifyResult:
 
         return field_dict
 
+
+
     @classmethod
-    def from_dict(cls: Type[T], src_dict: Dict[str, Any]) -> T:
+    def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         from ..models.classify_object import ClassifyObject
         from ..models.usage import Usage
-
-        d = src_dict.copy()
+        d = dict(src_dict)
         data = []
         _data = d.pop("data")
-        for data_item_data in _data:
+        for data_item_data in (_data):
             data_item = []
             _data_item = data_item_data
-            for data_item_item_data in _data_item:
+            for data_item_item_data in (_data_item):
                 data_item_item = ClassifyObject.from_dict(data_item_item_data)
+
+
 
                 data_item.append(data_item_item)
 
             data.append(data_item)
 
+
         model = d.pop("model")
 
         usage = Usage.from_dict(d.pop("usage"))
 
-        _object_ = d.pop("object", UNSET)
-        object_: Union[Unset, ClassifyResultObject]
-        if isinstance(_object_, Unset):
-            object_ = UNSET
-        else:
-            object_ = ClassifyResultObject(_object_)
+
+
+
+        object_ = cast(Literal['classify'] | Unset , d.pop("object", UNSET))
+        if object_ != 'classify'and not isinstance(object_, Unset):
+            raise ValueError(f"object must match const 'classify', got '{object_}'")
 
         id = d.pop("id", UNSET)
 
@@ -117,11 +137,12 @@ class ClassifyResult:
             created=created,
         )
 
+
         classify_result.additional_properties = d
         return classify_result
 
     @property
-    def additional_keys(self) -> List[str]:
+    def additional_keys(self) -> list[str]:
         return list(self.additional_properties.keys())
 
     def __getitem__(self, key: str) -> Any:

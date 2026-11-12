@@ -1,6 +1,5 @@
 from enum import Enum
 
-
 class EmbeddingEncodingFormat(str, Enum):
     BASE64 = "base64"
     FLOAT = "float"

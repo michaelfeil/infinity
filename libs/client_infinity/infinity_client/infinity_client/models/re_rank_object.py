@@ -1,66 +1,84 @@
-from typing import Any, Dict, List, Type, TypeVar, Union, cast
+from __future__ import annotations
+
+from collections.abc import Mapping
+from typing import Any, TypeVar, BinaryIO, TextIO, TYPE_CHECKING, Generator
 
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 
 from ..types import UNSET, Unset
 
+from ..types import UNSET, Unset
+from typing import cast
+
+
+
+
+
+
 T = TypeVar("T", bound="ReRankObject")
+
 
 
 @_attrs_define
 class ReRankObject:
-    """
-    Attributes:
-        relevance_score (float):
-        index (int):
-        document (Union[None, Unset, str]):
-    """
+    """ 
+        Attributes:
+            relevance_score (float):
+            index (int):
+            document (None | str | Unset):
+     """
 
     relevance_score: float
     index: int
-    document: Union[None, Unset, str] = UNSET
-    additional_properties: Dict[str, Any] = _attrs_field(init=False, factory=dict)
+    document: None | str | Unset = UNSET
+    additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
-    def to_dict(self) -> Dict[str, Any]:
+
+
+
+
+    def to_dict(self) -> dict[str, Any]:
         relevance_score = self.relevance_score
 
         index = self.index
 
-        document: Union[None, Unset, str]
+        document: None | str | Unset
         if isinstance(self.document, Unset):
             document = UNSET
         else:
             document = self.document
 
-        field_dict: Dict[str, Any] = {}
+
+        field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
-        field_dict.update(
-            {
-                "relevance_score": relevance_score,
-                "index": index,
-            }
-        )
+        field_dict.update({
+            "relevance_score": relevance_score,
+            "index": index,
+        })
         if document is not UNSET:
             field_dict["document"] = document
 
         return field_dict
 
+
+
     @classmethod
-    def from_dict(cls: Type[T], src_dict: Dict[str, Any]) -> T:
-        d = src_dict.copy()
+    def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
+        d = dict(src_dict)
         relevance_score = d.pop("relevance_score")
 
         index = d.pop("index")
 
-        def _parse_document(data: object) -> Union[None, Unset, str]:
+        def _parse_document(data: object) -> None | str | Unset:
             if data is None:
                 return data
             if isinstance(data, Unset):
                 return data
-            return cast(Union[None, Unset, str], data)
+            return cast(None | str | Unset, data)
 
         document = _parse_document(d.pop("document", UNSET))
+
 
         re_rank_object = cls(
             relevance_score=relevance_score,
@@ -68,11 +86,12 @@ class ReRankObject:
             document=document,
         )
 
+
         re_rank_object.additional_properties = d
         return re_rank_object
 
     @property
-    def additional_keys(self) -> List[str]:
+    def additional_keys(self) -> list[str]:
         return list(self.additional_properties.keys())
 
     def __getitem__(self, key: str) -> Any:
