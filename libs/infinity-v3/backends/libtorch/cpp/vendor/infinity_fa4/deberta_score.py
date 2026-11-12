@@ -10,6 +10,10 @@ def deberta_score(score, b_idx, h_idx, q_idx, kv_idx, seqlen_info, aux_tensors):
     qi = cute.make_rmem_tensor(1, cutlass.Int32); qi.store(q_idx)
     ki = cute.make_rmem_tensor(1, cutlass.Int32); ki.store(kv_idx)
     hi = cute.make_rmem_tensor(1, cutlass.Int32); hi.store(h_idx)
+    # SM8x calls the hook before masking padded tile lanes. Keep auxiliary
+    # loads within this packed sequence; valid token positions are unchanged.
+    qi[0] = cutlass.min(qi[0], seqlen_info.seqlen_q - 1)
+    ki[0] = cutlass.min(ki[0], seqlen_info.seqlen_k - 1)
     idx = buckets[qi[0] - ki[0] + (buckets.shape[0] // 2)]
     val = cute.make_rmem_tensor(1, c2p.element_type)
     # HF disentangled_attention_bias first adds c2p + p2c in model dtype.
