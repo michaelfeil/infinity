@@ -1,38 +1,56 @@
-from typing import Any, Dict, List, Type, TypeVar, Union, cast
+from __future__ import annotations
+
+from collections.abc import Mapping
+from typing import Any, TypeVar, BinaryIO, TextIO, TYPE_CHECKING, Generator
 
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 
 from ..types import UNSET, Unset
 
+from ..types import UNSET, Unset
+from typing import cast
+
+
+
+
+
+
 T = TypeVar("T", bound="RerankInput")
+
 
 
 @_attrs_define
 class RerankInput:
-    """Input for reranking
+    """ Input for reranking
 
-    Attributes:
-        query (str):
-        documents (List[str]):
-        return_documents (Union[Unset, bool]):  Default: False.
-        raw_scores (Union[Unset, bool]):  Default: False.
-        model (Union[Unset, str]):  Default: 'default/not-specified'.
-        top_n (Union[None, Unset, int]):
-    """
+        Attributes:
+            query (str):
+            documents (list[str]):
+            return_documents (bool | Unset):  Default: False.
+            raw_scores (bool | Unset):  Default: False.
+            model (str | Unset):  Default: 'default/not-specified'.
+            top_n (int | None | Unset):
+     """
 
     query: str
-    documents: List[str]
-    return_documents: Union[Unset, bool] = False
-    raw_scores: Union[Unset, bool] = False
-    model: Union[Unset, str] = "default/not-specified"
-    top_n: Union[None, Unset, int] = UNSET
-    additional_properties: Dict[str, Any] = _attrs_field(init=False, factory=dict)
+    documents: list[str]
+    return_documents: bool | Unset = False
+    raw_scores: bool | Unset = False
+    model: str | Unset = 'default/not-specified'
+    top_n: int | None | Unset = UNSET
+    additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
-    def to_dict(self) -> Dict[str, Any]:
+
+
+
+
+    def to_dict(self) -> dict[str, Any]:
         query = self.query
 
         documents = self.documents
+
+
 
         return_documents = self.return_documents
 
@@ -40,20 +58,19 @@ class RerankInput:
 
         model = self.model
 
-        top_n: Union[None, Unset, int]
+        top_n: int | None | Unset
         if isinstance(self.top_n, Unset):
             top_n = UNSET
         else:
             top_n = self.top_n
 
-        field_dict: Dict[str, Any] = {}
+
+        field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
-        field_dict.update(
-            {
-                "query": query,
-                "documents": documents,
-            }
-        )
+        field_dict.update({
+            "query": query,
+            "documents": documents,
+        })
         if return_documents is not UNSET:
             field_dict["return_documents"] = return_documents
         if raw_scores is not UNSET:
@@ -65,12 +82,15 @@ class RerankInput:
 
         return field_dict
 
+
+
     @classmethod
-    def from_dict(cls: Type[T], src_dict: Dict[str, Any]) -> T:
-        d = src_dict.copy()
+    def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
+        d = dict(src_dict)
         query = d.pop("query")
 
-        documents = cast(List[str], d.pop("documents"))
+        documents = cast(list[str], d.pop("documents"))
+
 
         return_documents = d.pop("return_documents", UNSET)
 
@@ -78,14 +98,15 @@ class RerankInput:
 
         model = d.pop("model", UNSET)
 
-        def _parse_top_n(data: object) -> Union[None, Unset, int]:
+        def _parse_top_n(data: object) -> int | None | Unset:
             if data is None:
                 return data
             if isinstance(data, Unset):
                 return data
-            return cast(Union[None, Unset, int], data)
+            return cast(int | None | Unset, data)
 
         top_n = _parse_top_n(d.pop("top_n", UNSET))
+
 
         rerank_input = cls(
             query=query,
@@ -96,11 +117,12 @@ class RerankInput:
             top_n=top_n,
         )
 
+
         rerank_input.additional_properties = d
         return rerank_input
 
     @property
-    def additional_keys(self) -> List[str]:
+    def additional_keys(self) -> list[str]:
         return list(self.additional_properties.keys())
 
     def __getitem__(self, key: str) -> Any:

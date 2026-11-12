@@ -1,105 +1,115 @@
-from io import BytesIO
-from typing import Any, Dict, List, Type, TypeVar, Union, cast
+from __future__ import annotations
+
+from collections.abc import Mapping
+from typing import Any, TypeVar, BinaryIO, TextIO, TYPE_CHECKING, Generator
 
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 
-from ..models.embedding_object_object import EmbeddingObjectObject
-from ..types import UNSET, File, FileJsonType, Unset
+from ..types import UNSET, Unset
+
+from ..types import UNSET, Unset
+from typing import cast
+from typing import Literal, cast
+
+
+
+
+
 
 T = TypeVar("T", bound="EmbeddingObject")
 
 
+
 @_attrs_define
 class EmbeddingObject:
-    """
-    Attributes:
-        embedding (Union[File, List[List[float]], List[float]]):
-        index (int):
-        object_ (Union[Unset, EmbeddingObjectObject]):  Default: EmbeddingObjectObject.EMBEDDING.
-    """
+    """ 
+        Attributes:
+            embedding (list[float] | list[list[float]] | str):
+            index (int):
+            object_ (Literal['embedding'] | Unset):  Default: 'embedding'.
+     """
 
-    embedding: Union[File, List[List[float]], List[float]]
+    embedding: list[float] | list[list[float]] | str
     index: int
-    object_: Union[Unset, EmbeddingObjectObject] = EmbeddingObjectObject.EMBEDDING
-    additional_properties: Dict[str, Any] = _attrs_field(init=False, factory=dict)
+    object_: Literal['embedding'] | Unset = 'embedding'
+    additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
-    def to_dict(self) -> Dict[str, Any]:
-        embedding: Union[FileJsonType, List[List[float]], List[float]]
+
+
+
+
+    def to_dict(self) -> dict[str, Any]:
+        embedding: list[float] | list[list[float]] | str
         if isinstance(self.embedding, list):
             embedding = self.embedding
 
-        elif isinstance(self.embedding, File):
-            embedding = self.embedding.to_tuple()
 
-        else:
+        elif isinstance(self.embedding, list):
             embedding = []
             for embedding_type_2_item_data in self.embedding:
                 embedding_type_2_item = embedding_type_2_item_data
 
+
                 embedding.append(embedding_type_2_item)
+
+
+        else:
+            embedding = self.embedding
 
         index = self.index
 
-        object_: Union[Unset, str] = UNSET
-        if not isinstance(self.object_, Unset):
-            object_ = self.object_.value
+        object_ = self.object_
 
-        field_dict: Dict[str, Any] = {}
+
+        field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
-        field_dict.update(
-            {
-                "embedding": embedding,
-                "index": index,
-            }
-        )
+        field_dict.update({
+            "embedding": embedding,
+            "index": index,
+        })
         if object_ is not UNSET:
             field_dict["object"] = object_
 
         return field_dict
 
-    @classmethod
-    def from_dict(cls: Type[T], src_dict: Dict[str, Any]) -> T:
-        d = src_dict.copy()
 
-        def _parse_embedding(data: object) -> Union[File, List[List[float]], List[float]]:
+
+    @classmethod
+    def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
+        d = dict(src_dict)
+        def _parse_embedding(data: object) -> list[float] | list[list[float]] | str:
             try:
                 if not isinstance(data, list):
                     raise TypeError()
-                embedding_type_0 = cast(List[float], data)
+                embedding_type_0 = cast(list[float], data)
 
                 return embedding_type_0
-            except:  # noqa: E722
+            except (TypeError, ValueError, AttributeError, KeyError):
                 pass
             try:
-                if not isinstance(data, bytes):
+                if not isinstance(data, list):
                     raise TypeError()
-                embedding_type_1 = File(payload=BytesIO(data))
+                embedding_type_2 = []
+                _embedding_type_2 = data
+                for embedding_type_2_item_data in (_embedding_type_2):
+                    embedding_type_2_item = cast(list[float], embedding_type_2_item_data)
 
-                return embedding_type_1
-            except:  # noqa: E722
+                    embedding_type_2.append(embedding_type_2_item)
+
+                return embedding_type_2
+            except (TypeError, ValueError, AttributeError, KeyError):
                 pass
-            if not isinstance(data, list):
-                raise TypeError()
-            embedding_type_2 = []
-            _embedding_type_2 = data
-            for embedding_type_2_item_data in _embedding_type_2:
-                embedding_type_2_item = cast(List[float], embedding_type_2_item_data)
-
-                embedding_type_2.append(embedding_type_2_item)
-
-            return embedding_type_2
+            return cast(list[float] | list[list[float]] | str, data)
 
         embedding = _parse_embedding(d.pop("embedding"))
 
+
         index = d.pop("index")
 
-        _object_ = d.pop("object", UNSET)
-        object_: Union[Unset, EmbeddingObjectObject]
-        if isinstance(_object_, Unset):
-            object_ = UNSET
-        else:
-            object_ = EmbeddingObjectObject(_object_)
+        object_ = cast(Literal['embedding'] | Unset , d.pop("object", UNSET))
+        if object_ != 'embedding'and not isinstance(object_, Unset):
+            raise ValueError(f"object must match const 'embedding', got '{object_}'")
 
         embedding_object = cls(
             embedding=embedding,
@@ -107,11 +117,12 @@ class EmbeddingObject:
             object_=object_,
         )
 
+
         embedding_object.additional_properties = d
         return embedding_object
 
     @property
-    def additional_keys(self) -> List[str]:
+    def additional_keys(self) -> list[str]:
         return list(self.additional_properties.keys())
 
     def __getitem__(self, key: str) -> Any:

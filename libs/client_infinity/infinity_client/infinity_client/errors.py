@@ -1,5 +1,4 @@
-"""Contains shared errors types that can be raised from API functions"""
-
+""" Contains shared errors types that can be raised from API functions """
 
 class UnexpectedStatus(Exception):
     """Raised by api functions when the response status an undocumented status and Client.raise_on_unexpected_status is True"""
@@ -11,6 +10,5 @@ class UnexpectedStatus(Exception):
         super().__init__(
             f"Unexpected status code: {status_code}\n\nResponse content:\n{content.decode(errors='ignore')}"
         )
-
 
 __all__ = ["UnexpectedStatus"]

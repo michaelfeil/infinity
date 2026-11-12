@@ -1,56 +1,69 @@
 from http import HTTPStatus
-from typing import Any, Dict, Optional, Union
+from typing import Any, cast
+from urllib.parse import quote
 
 import httpx
 
-from ... import errors
 from ...client import AuthenticatedClient, Client
+from ...types import Response, UNSET
+from ... import errors
+
 from ...models.audio_embedding_input import AudioEmbeddingInput
 from ...models.http_validation_error import HTTPValidationError
 from ...models.open_ai_embedding_result import OpenAIEmbeddingResult
-from ...types import Response
+from typing import cast
+
 
 
 def _get_kwargs(
     *,
     body: AudioEmbeddingInput,
-) -> Dict[str, Any]:
-    headers: Dict[str, Any] = {}
 
-    _kwargs: Dict[str, Any] = {
+) -> dict[str, Any]:
+    headers: dict[str, Any] = {}
+
+
+    
+
+    
+
+    _kwargs: dict[str, Any] = {
         "method": "post",
         "url": "/embeddings_audio",
     }
 
-    _body = body.to_dict()
+    _kwargs["json"] = body.to_dict()
 
-    _kwargs["json"] = _body
+
     headers["Content-Type"] = "application/json"
 
     _kwargs["headers"] = headers
     return _kwargs
 
 
-def _parse_response(
-    *, client: Union[AuthenticatedClient, Client], response: httpx.Response
-) -> Optional[Union[HTTPValidationError, OpenAIEmbeddingResult]]:
-    if response.status_code == HTTPStatus.OK:
+
+def _parse_response(*, client: AuthenticatedClient | Client, response: httpx.Response) -> HTTPValidationError | OpenAIEmbeddingResult | None:
+    if response.status_code == 200:
         response_200 = OpenAIEmbeddingResult.from_dict(response.json())
 
+
+
         return response_200
-    if response.status_code == HTTPStatus.UNPROCESSABLE_ENTITY:
+
+    if response.status_code == 422:
         response_422 = HTTPValidationError.from_dict(response.json())
 
+
+
         return response_422
+
     if client.raise_on_unexpected_status:
         raise errors.UnexpectedStatus(response.status_code, response.content)
     else:
         return None
 
 
-def _build_response(
-    *, client: Union[AuthenticatedClient, Client], response: httpx.Response
-) -> Response[Union[HTTPValidationError, OpenAIEmbeddingResult]]:
+def _build_response(*, client: AuthenticatedClient | Client, response: httpx.Response) -> Response[HTTPValidationError | OpenAIEmbeddingResult]:
     return Response(
         status_code=HTTPStatus(response.status_code),
         content=response.content,
@@ -61,10 +74,11 @@ def _build_response(
 
 def sync_detailed(
     *,
-    client: Union[AuthenticatedClient, Client],
+    client: AuthenticatedClient | Client,
     body: AudioEmbeddingInput,
-) -> Response[Union[HTTPValidationError, OpenAIEmbeddingResult]]:
-    r"""Deprecated: Use `embeddings` with `modality` set to `audio`
+
+) -> Response[HTTPValidationError | OpenAIEmbeddingResult]:
+    r""" Deprecated: Use `embeddings` with `modality` set to `audio`
 
      Encode Embeddings from Audio files
 
@@ -91,11 +105,13 @@ def sync_detailed(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[Union[HTTPValidationError, OpenAIEmbeddingResult]]
-    """
+        Response[HTTPValidationError | OpenAIEmbeddingResult]
+     """
+
 
     kwargs = _get_kwargs(
         body=body,
+
     )
 
     response = client.get_httpx_client().request(
@@ -104,13 +120,13 @@ def sync_detailed(
 
     return _build_response(client=client, response=response)
 
-
 def sync(
     *,
-    client: Union[AuthenticatedClient, Client],
+    client: AuthenticatedClient | Client,
     body: AudioEmbeddingInput,
-) -> Optional[Union[HTTPValidationError, OpenAIEmbeddingResult]]:
-    r"""Deprecated: Use `embeddings` with `modality` set to `audio`
+
+) -> HTTPValidationError | OpenAIEmbeddingResult | None:
+    r""" Deprecated: Use `embeddings` with `modality` set to `audio`
 
      Encode Embeddings from Audio files
 
@@ -137,21 +153,23 @@ def sync(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Union[HTTPValidationError, OpenAIEmbeddingResult]
-    """
+        HTTPValidationError | OpenAIEmbeddingResult
+     """
+
 
     return sync_detailed(
         client=client,
-        body=body,
-    ).parsed
+body=body,
 
+    ).parsed
 
 async def asyncio_detailed(
     *,
-    client: Union[AuthenticatedClient, Client],
+    client: AuthenticatedClient | Client,
     body: AudioEmbeddingInput,
-) -> Response[Union[HTTPValidationError, OpenAIEmbeddingResult]]:
-    r"""Deprecated: Use `embeddings` with `modality` set to `audio`
+
+) -> Response[HTTPValidationError | OpenAIEmbeddingResult]:
+    r""" Deprecated: Use `embeddings` with `modality` set to `audio`
 
      Encode Embeddings from Audio files
 
@@ -178,24 +196,28 @@ async def asyncio_detailed(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[Union[HTTPValidationError, OpenAIEmbeddingResult]]
-    """
+        Response[HTTPValidationError | OpenAIEmbeddingResult]
+     """
+
 
     kwargs = _get_kwargs(
         body=body,
+
     )
 
-    response = await client.get_async_httpx_client().request(**kwargs)
+    response = await client.get_async_httpx_client().request(
+        **kwargs
+    )
 
     return _build_response(client=client, response=response)
 
-
 async def asyncio(
     *,
-    client: Union[AuthenticatedClient, Client],
+    client: AuthenticatedClient | Client,
     body: AudioEmbeddingInput,
-) -> Optional[Union[HTTPValidationError, OpenAIEmbeddingResult]]:
-    r"""Deprecated: Use `embeddings` with `modality` set to `audio`
+
+) -> HTTPValidationError | OpenAIEmbeddingResult | None:
+    r""" Deprecated: Use `embeddings` with `modality` set to `audio`
 
      Encode Embeddings from Audio files
 
@@ -222,12 +244,12 @@ async def asyncio(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Union[HTTPValidationError, OpenAIEmbeddingResult]
-    """
+        HTTPValidationError | OpenAIEmbeddingResult
+     """
 
-    return (
-        await asyncio_detailed(
-            client=client,
-            body=body,
-        )
-    ).parsed
+
+    return (await asyncio_detailed(
+        client=client,
+body=body,
+
+    )).parsed
