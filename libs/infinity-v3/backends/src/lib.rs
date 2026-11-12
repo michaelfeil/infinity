@@ -21,6 +21,8 @@ pub use infinity_v3_backend_core::{
     Embeddings, ImagePatches, ModelType, MultimodalEncoding, Pool, Predictions, ServingLimits,
     SharedF32, TokenPredictions,
 };
+#[cfg(feature = "test-utils")]
+pub use infinity_v3_backend_core::{Backend as TestBackend, Inference as TestInference};
 
 #[cfg(feature = "python-backend")]
 pub use infinity_v3_backend_python::PythonBackendConfig;
@@ -412,6 +414,25 @@ impl Backend {
             max_batch_size,
             model_type,
         })
+    }
+
+    /// Construct an in-process backend for scheduler regression tests.
+    #[cfg(feature = "test-utils")]
+    pub fn for_test(backend: Box<dyn CoreBackend + Send>, model_type: ModelType) -> Self {
+        let (backend_sender, backend_receiver) = mpsc::channel(8);
+        let (health_sender, health_receiver) = watch::channel(true);
+        let radix_mlp_supported = backend.supports_radix_mlp();
+        let max_batch_size = backend.max_batch_size();
+        let _backend_thread =
+            Arc::new(BackendThread::new(backend, backend_receiver, health_sender));
+        Self {
+            backend_sender,
+            health_receiver,
+            _backend_thread,
+            radix_mlp_supported,
+            max_batch_size,
+            model_type,
+        }
     }
 
     #[instrument(skip(self))]
