@@ -88,7 +88,10 @@ pub fn init_logging(
         true => fmt_layer
             .json()
             .flatten_event(true)
-            .with_target(matches!(customization::LOG_PREFIX, None | Some("infinity")))
+            // Always emit the target in its standard position; the custom
+            // formatter rewrites only its value, so the JSON shape is stable
+            // across default and prefixed builds.
+            .with_target(true)
             .with_current_span(!disable_spans)
             .with_span_list(!disable_spans)
             .map_event_format(customization::LogFormat::json)

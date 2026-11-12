@@ -34,6 +34,29 @@ fn customized_target(target: &str, prefix: &str) -> Option<String> {
     }
 }
 
+/// Rewrite the metadata `target` value in an already-rendered JSON line.
+///
+/// The standard formatter emits the field in its usual position, so replacing
+/// just the value keeps field order and every other byte identical across
+/// builds. If the field is absent (a formatter built without targets), fall
+/// back to appending it so callers still see the customized value.
+fn rewrite_json_target(rendered: &str, original: &str, target: &str) -> Result<String, fmt::Error> {
+    let original = serde_json::to_string(original).map_err(|_| fmt::Error)?;
+    let encoded = serde_json::to_string(target).map_err(|_| fmt::Error)?;
+    let needle = format!("\"target\":{original}");
+    if let Some(pos) = rendered.find(&needle) {
+        let mut out = String::with_capacity(rendered.len() + encoded.len());
+        out.push_str(&rendered[..pos]);
+        out.push_str("\"target\":");
+        out.push_str(&encoded);
+        out.push_str(&rendered[pos + needle.len()..]);
+        Ok(out)
+    } else {
+        let body = rendered.strip_suffix("}\n").ok_or(fmt::Error)?;
+        Ok(format!("{body},\"target\":{encoded}}}\n"))
+    }
+}
+
 impl<S, N, F> FormatEvent<S, N> for LogFormat<F>
 where
     S: Subscriber + for<'a> LookupSpan<'a>,
@@ -55,12 +78,11 @@ where
             let mut rendered = String::new();
             self.inner
                 .format_event(ctx, Writer::new(&mut rendered), event)?;
-            // The standard formatter emits the event once without its target.
-            // Append only that metadata field, preserving every other JSON byte.
-            let body = rendered.strip_suffix("}\n").ok_or(fmt::Error)?;
-            let target = target.as_deref().unwrap_or(event.metadata().target());
-            let encoded = serde_json::to_string(target).map_err(|_| fmt::Error)?;
-            return writeln!(writer, "{body},\"target\":{encoded}}}");
+            let Some(target) = target else {
+                return write!(writer, "{rendered}");
+            };
+            let rewritten = rewrite_json_target(&rendered, event.metadata().target(), &target)?;
+            return write!(writer, "{rewritten}");
         }
         let Some(target) = target else {
             return self.inner.format_event(ctx, writer, event);
@@ -148,7 +170,7 @@ mod tests {
                 layer
                     .json()
                     .flatten_event(true)
-                    .with_target(matches!(LOG_PREFIX, None | Some("infinity")))
+                    .with_target(true)
                     .map_event_format(LogFormat::json)
                     .boxed()
             } else {
@@ -193,5 +215,46 @@ mod tests {
             }
             assert!(!output.contains("filtered event"));
         }
+    }
+
+    #[test]
+    fn json_target_rewrite_preserves_position_and_other_fields() {
+        let rendered = concat!(
+            "{\"timestamp\":\"t\",\"level\":\"INFO\",",
+            "\"target\":\"infinity_v3_core::backend_pool\",",
+            "\"span\":{\"request\":\"infinity_v3_core::backend_pool\"},",
+            "\"message\":\"infinity_v3_core::backend_pool\"}\n"
+        );
+        let rewritten = rewrite_json_target(
+            rendered,
+            "infinity_v3_core::backend_pool",
+            "custom_v3_core::backend_pool",
+        )
+        .unwrap();
+        let expected = concat!(
+            "{\"timestamp\":\"t\",\"level\":\"INFO\",",
+            "\"target\":\"custom_v3_core::backend_pool\",",
+            "\"span\":{\"request\":\"infinity_v3_core::backend_pool\"},",
+            "\"message\":\"infinity_v3_core::backend_pool\"}\n"
+        );
+        assert_eq!(rewritten, expected);
+        // Field order is unchanged: target stays before span.
+        assert!(rewritten.find("\"target\":").unwrap() < rewritten.find("\"span\":").unwrap());
+        // Span fields and messages are never rewritten.
+        assert_eq!(
+            rewritten.matches("infinity_v3_core::backend_pool").count(),
+            2
+        );
+    }
+
+    #[test]
+    fn json_target_rewrite_appends_when_formatter_omits_target() {
+        let rendered = "{\"timestamp\":\"t\",\"level\":\"INFO\",\"message\":\"m\"}\n";
+        let rewritten =
+            rewrite_json_target(rendered, "infinity_v3_core", "custom_v3_core").unwrap();
+        assert_eq!(
+            rewritten,
+            "{\"timestamp\":\"t\",\"level\":\"INFO\",\"message\":\"m\",\"target\":\"custom_v3_core\"}\n"
+        );
     }
 }
