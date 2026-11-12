@@ -34,6 +34,10 @@ public:
                                                             Fp8GatedActivation kind,
                                                             bool gate_first) const;
 
+  /// Fused model-dtype projection, gate-first gated activation and MXFP8 block
+  /// quantization. Returns E4M3 values with swizzled UE8M0 block scales.
+  Mxfp8Quantized forward_gated_quantize(const at::Tensor& input, Fp8GatedActivation kind) const;
+
   int64_t input_width() const {
     return matrix_.cols;
   }

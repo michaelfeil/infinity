@@ -241,22 +241,34 @@ Mxfp8Linear::forward_gated_quantized(const at::Tensor& input,
               "MXFP8 cannot consume per-row FP8 RMS scales; provide model-dtype rows");
   TORCH_CHECK(kind == Fp8GatedActivation::RoundedSilu && gate_first,
               "MXFP8 fused gated path supports rounded SwiGLU gate-first only");
+  auto activated = forward_gated_quantize(input, kind);
+  return {activated.values, activated.scales};
+#else
+  TORCH_CHECK(false, "MXFP8 MLP requires a CUDA LibTorch build");
+#endif
+}
+
+Mxfp8Quantized Mxfp8Linear::forward_gated_quantize(const at::Tensor& input,
+                                                   Fp8GatedActivation kind) const {
+#ifdef INFINITY_TORCH_CUDA_KERNELS
+  TORCH_CHECK(kind == Fp8GatedActivation::RoundedSilu || kind == Fp8GatedActivation::PreciseGelu,
+              "MXFP8 fused gated path supports rounded SwiGLU or precise GELU");
   TORCH_CHECK(input.is_cuda() && input.dim() == 2 && input.size(1) == input_width() &&
                   input.scalar_type() == dtype_,
               "Invalid MXFP8 gated MLP input");
   TORCH_CHECK(input.device() == matrix_.values.device(),
               "MXFP8 gated input and weights must be on the same device");
   c10::cuda::CUDAGuard guard(input.device());
-  if (input.size(0) == 0) {
-    const int64_t width = output_width() / 2;
-    TORCH_CHECK(output_width() % 2 == 0 && width % 32 == 0, "Invalid MXFP8 gated output width");
+  const int64_t width = output_width() / 2;
+  TORCH_CHECK(output_width() % 2 == 0 && width % 32 == 0, "Invalid MXFP8 gated output width");
+  if (input.size(0) == 0)
     return {at::empty({0, width}, input.options().dtype(at::kFloat8_e4m3fn)),
-            at::zeros({0}, input.options().dtype(at::kByte))};
-  }
+            at::zeros({0}, input.options().dtype(at::kByte)),
+            0,
+            width};
   auto quantized = mxfp8_quantize_rows(input);
   auto gate_up = mxfp8_gemm_torch(quantized, matrix_);
-  auto activated = mxfp8_gated_silu_quantize(gate_up);
-  return {activated.values, activated.scales};
+  return mxfp8_gated_quantize(gate_up, kind);
 #else
   TORCH_CHECK(false, "MXFP8 MLP requires a CUDA LibTorch build");
 #endif

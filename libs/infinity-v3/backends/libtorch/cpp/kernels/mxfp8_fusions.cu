@@ -113,6 +113,90 @@ __device__ __forceinline__ __nv_bfloat162 gated_silu_pair(__nv_bfloat162 gate, _
   return __hmul2(__h2div(gate, denominator), up);
 }
 
+// Match gemma_precise_activation<true>(c10::BFloat16) exactly: every stage is a
+// separately rounded BF16 value, including the final gate/up multiply.
+__device__ __forceinline__ float gemma_precise_gelu(__nv_bfloat16 gate, __nv_bfloat16 up) {
+  const c10::BFloat16 x(static_cast<float>(gate));
+  const c10::BFloat16 square = x * x;
+  const c10::BFloat16 cube = square * x;
+  const c10::BFloat16 alpha = x + c10::BFloat16(.044715) * cube;
+  const c10::BFloat16 argument = c10::BFloat16(M_2_SQRTPI * M_SQRT1_2) * alpha;
+  const c10::BFloat16 tangent = c10::BFloat16(tanhf(static_cast<float>(argument)));
+  const c10::BFloat16 gated = c10::BFloat16(.5) * x * (c10::BFloat16(1.) + tangent);
+  const c10::BFloat16 result = gated * c10::BFloat16(static_cast<float>(up));
+  return static_cast<float>(result);
+}
+
+// Zero or |value| in [2^-32,2^32] keeps every staged BF16 operation normal (or
+// exact zero), so native BF16x2 arithmetic has no subnormal/FTZ divergence from
+// the scalar float-opmath recipe.
+__device__ __forceinline__ bool gemma_precise_fast_lane(__nv_bfloat16 value) {
+  const auto magnitude = static_cast<uint16_t>(__bfloat16_as_ushort(value) & 0x7fffu);
+  return magnitude == 0u || (magnitude >= 0x2f80u && magnitude <= 0x4f80u);
+}
+
+__device__ __forceinline__ __nv_bfloat162 gemma_precise_gelu_pair(__nv_bfloat162 gate,
+                                                                  __nv_bfloat162 up) {
+  const auto alpha_scale = __float2bfloat162_rn(static_cast<float>(c10::BFloat16(.044715)));
+  const auto argument_scale =
+      __float2bfloat162_rn(static_cast<float>(c10::BFloat16(M_2_SQRTPI * M_SQRT1_2)));
+  const auto half = __float2bfloat162_rn(.5f), one = __float2bfloat162_rn(1.f);
+  const auto square = __hmul2_rn(gate, gate);
+  const auto cube = __hmul2_rn(square, gate);
+  const auto alpha = __hadd2_rn(gate, __hmul2_rn(alpha_scale, cube));
+  const auto argument = __hmul2_rn(argument_scale, alpha);
+  const auto tangent =
+      __floats2bfloat162_rn(tanhf(__low2float(argument)), tanhf(__high2float(argument)));
+  const auto gated = __hmul2_rn(__hmul2_rn(half, gate), __hadd2_rn(one, tangent));
+  return __hmul2_rn(gated, up);
+}
+
+template <Fp8GatedActivation Kind>
+__device__ __forceinline__ void gated_mxfp8_values(const __nv_bfloat16* gate,
+                                                   const __nv_bfloat16* up,
+                                                   float* local,
+                                                   float& local_max,
+                                                   int& nonfinite) {
+  if constexpr (Kind == Fp8GatedActivation::RoundedSilu) {
+    const auto* gate_pairs = reinterpret_cast<const __nv_bfloat162*>(gate);
+    const auto* up_pairs = reinterpret_cast<const __nv_bfloat162*>(up);
+#pragma unroll
+    for (int pair = 0; pair < 4; ++pair) {
+      const auto activated = gated_silu_pair(gate_pairs[pair], up_pairs[pair]);
+      local[2 * pair] = __bfloat162float(__low2bfloat16(activated));
+      local[2 * pair + 1] = __bfloat162float(__high2bfloat16(activated));
+      local_max = fmaxf(local_max, fmaxf(fabsf(local[2 * pair]), fabsf(local[2 * pair + 1])));
+      nonfinite |= !isfinite(local[2 * pair]) || !isfinite(local[2 * pair + 1]);
+    }
+  } else {
+    static_assert(Kind == Fp8GatedActivation::PreciseGelu,
+                  "MXFP8 gated staging supports RoundedSilu or PreciseGelu");
+    bool fast = true;
+#pragma unroll
+    for (int i = 0; i < 8; ++i)
+      fast &= gemma_precise_fast_lane(gate[i]) && gemma_precise_fast_lane(up[i]);
+    if (fast) {
+      const auto* gate_pairs = reinterpret_cast<const __nv_bfloat162*>(gate);
+      const auto* up_pairs = reinterpret_cast<const __nv_bfloat162*>(up);
+#pragma unroll
+      for (int pair = 0; pair < 4; ++pair) {
+        const auto activated = gemma_precise_gelu_pair(gate_pairs[pair], up_pairs[pair]);
+        local[2 * pair] = __bfloat162float(__low2bfloat16(activated));
+        local[2 * pair + 1] = __bfloat162float(__high2bfloat16(activated));
+        local_max = fmaxf(local_max, fmaxf(fabsf(local[2 * pair]), fabsf(local[2 * pair + 1])));
+        nonfinite |= !isfinite(local[2 * pair]) || !isfinite(local[2 * pair + 1]);
+      }
+    } else {
+#pragma unroll
+      for (int i = 0; i < 8; ++i) {
+        local[i] = gemma_precise_gelu(gate[i], up[i]);
+        local_max = fmaxf(local_max, fabsf(local[i]));
+        nonfinite |= !isfinite(local[i]);
+      }
+    }
+  }
+}
+
 // gemma4_moe_gelu_mul evaluates `gate + 0.044715f * gate * gate * gate` in FP32,
 // which nvcc contracts into fmaf((0.044715f * gate) * gate, gate, gate). Spell
 // that contraction out so this fused copy is independent of contraction
@@ -179,11 +263,12 @@ __global__ void moe_gelu_mxfp8_quantize_pack_kernel(const __nv_bfloat16* __restr
   }
 }
 
-__global__ void gated_silu_mxfp8_quantize_pack_kernel(const __nv_bfloat16* __restrict__ gate_up,
-                                                      uint8_t* __restrict__ q,
-                                                      uint8_t* __restrict__ scales,
-                                                      int64_t width,
-                                                      int64_t inner_dim) {
+template <Fp8GatedActivation Kind>
+__global__ void gated_mxfp8_quantize_pack_kernel(const __nv_bfloat16* __restrict__ gate_up,
+                                                 uint8_t* __restrict__ q,
+                                                 uint8_t* __restrict__ scales,
+                                                 int64_t width,
+                                                 int64_t inner_dim) {
   const int64_t row = blockIdx.x;
   const int lane = threadIdx.x & 31;
   const int64_t packs = width / 8;
@@ -192,19 +277,10 @@ __global__ void gated_silu_mxfp8_quantize_pack_kernel(const __nv_bfloat16* __res
     const int64_t base = row * 2 * width + pack * 8;
     const auto gate = *reinterpret_cast<const Packed<__nv_bfloat16, 8>*>(gate_up + base);
     const auto up = *reinterpret_cast<const Packed<__nv_bfloat16, 8>*>(gate_up + base + width);
-    const auto* gate_pairs = reinterpret_cast<const __nv_bfloat162*>(gate.value);
-    const auto* up_pairs = reinterpret_cast<const __nv_bfloat162*>(up.value);
     float local[8];
     float local_max = 0.0f;
     int nonfinite = 0;
-#pragma unroll
-    for (int pair = 0; pair < 4; ++pair) {
-      const auto activated = gated_silu_pair(gate_pairs[pair], up_pairs[pair]);
-      local[2 * pair] = __bfloat162float(__low2bfloat16(activated));
-      local[2 * pair + 1] = __bfloat162float(__high2bfloat16(activated));
-      local_max = fmaxf(local_max, fmaxf(fabsf(local[2 * pair]), fabsf(local[2 * pair + 1])));
-      nonfinite |= !isfinite(local[2 * pair]) || !isfinite(local[2 * pair + 1]);
-    }
+    gated_mxfp8_values<Kind>(gate.value, up.value, local, local_max, nonfinite);
     const unsigned mask = __activemask();
     local_max = fmaxf(local_max, __shfl_xor_sync(mask, local_max, 1));
     local_max = fmaxf(local_max, __shfl_xor_sync(mask, local_max, 2));
@@ -283,7 +359,9 @@ Mxfp8Quantized mxfp8_quantize_rows(const at::Tensor& input) {
   return out;
 }
 
-Mxfp8Quantized mxfp8_gated_silu_quantize(const at::Tensor& gate_up) {
+Mxfp8Quantized mxfp8_gated_quantize(const at::Tensor& gate_up, Fp8GatedActivation kind) {
+  TORCH_CHECK(kind == Fp8GatedActivation::RoundedSilu || kind == Fp8GatedActivation::PreciseGelu,
+              "MXFP8 gated quantization supports rounded SwiGLU or precise GELU");
   TORCH_CHECK(gate_up.is_cuda() && gate_up.dim() == 2 && gate_up.scalar_type() == at::kBFloat16 &&
                   gate_up.size(1) % 64 == 0,
               "MXFP8 gated quantization requires 2D BF16 [M,2I]");
@@ -302,14 +380,22 @@ Mxfp8Quantized mxfp8_gated_silu_quantize(const at::Tensor& gate_up) {
   out.values = at::empty({rows, width}, gate_up.options().dtype(at::kFloat8_e4m3fn));
   const int64_t inner = scale_inner_dim(width);
   out.scales = at::zeros({mxfp8_scale_elements(rows, width)}, gate_up.options().dtype(at::kByte));
-  gated_silu_mxfp8_quantize_pack_kernel<<<rows, kThreads, 0, at::cuda::getCurrentCUDAStream()>>>(
-      reinterpret_cast<const __nv_bfloat16*>(gate.const_data_ptr()),
-      reinterpret_cast<uint8_t*>(out.values.mutable_data_ptr()),
-      reinterpret_cast<uint8_t*>(out.scales.mutable_data_ptr()),
-      width,
-      inner);
+  auto stream = at::cuda::getCurrentCUDAStream();
+  auto input = reinterpret_cast<const __nv_bfloat16*>(gate.const_data_ptr());
+  auto values = reinterpret_cast<uint8_t*>(out.values.mutable_data_ptr());
+  auto scales = reinterpret_cast<uint8_t*>(out.scales.mutable_data_ptr());
+  if (kind == Fp8GatedActivation::RoundedSilu)
+    gated_mxfp8_quantize_pack_kernel<Fp8GatedActivation::RoundedSilu>
+        <<<rows, kThreads, 0, stream>>>(input, values, scales, width, inner);
+  else
+    gated_mxfp8_quantize_pack_kernel<Fp8GatedActivation::PreciseGelu>
+        <<<rows, kThreads, 0, stream>>>(input, values, scales, width, inner);
   C10_CUDA_KERNEL_LAUNCH_CHECK();
   return out;
+}
+
+Mxfp8Quantized mxfp8_gated_silu_quantize(const at::Tensor& gate_up) {
+  return mxfp8_gated_quantize(gate_up, Fp8GatedActivation::RoundedSilu);
 }
 
 Mxfp8Quantized mxfp8_moe_gelu_quantize(const at::Tensor& gate_up, const at::Tensor& row_map) {
