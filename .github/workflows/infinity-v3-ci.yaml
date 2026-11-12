@@ -31,8 +31,10 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v6
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v6.1.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5.6.0
         with:
           python-version: '3.12'
       - name: Install native analysis dependencies
@@ -54,8 +56,10 @@ jobs:
   native-format:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v6.1.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5.6.0
         with:
           python-version: '3.12'
       - name: Install clang-format
@@ -71,7 +75,9 @@ jobs:
       # Bundled Oniguruma uses pre-C23 function declarations.
       CFLAGS: -std=gnu17
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v6.1.0
+        with:
+          persist-credentials: false
       - name: Read Rust toolchain
         id: toolchain
         run: |
@@ -80,7 +86,7 @@ jobs:
           with open('rust-toolchain.toml', 'rb') as file:
               print('version=' + tomllib.load(file)['toolchain']['channel'])
           PYTHON
-      - uses: actions-rust-lang/setup-rust-toolchain@v1
+      - uses: actions-rust-lang/setup-rust-toolchain@v1.17.0
         with:
           toolchain: ${{ steps.toolchain.outputs.version }}
           components: rustfmt, clippy
@@ -89,7 +95,7 @@ jobs:
           # Cached proc-macros run on different GitHub runner CPUs. Override
           # the project's native CPU flags so cached artifacts remain portable.
           rustflags: '-C target-cpu=x86-64'
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v5.6.0
         with:
           python-version: '3.12'
       - name: Install build dependencies
@@ -127,7 +133,9 @@ jobs:
     env:
       CFLAGS: -std=gnu17
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v6.1.0
+        with:
+          persist-credentials: false
       - name: Read Rust toolchain
         id: toolchain
         run: |
@@ -136,14 +144,14 @@ jobs:
           with open('rust-toolchain.toml', 'rb') as file:
               print('version=' + tomllib.load(file)['toolchain']['channel'])
           PYTHON
-      - uses: actions-rust-lang/setup-rust-toolchain@v1
+      - uses: actions-rust-lang/setup-rust-toolchain@v1.17.0
         with:
           toolchain: ${{ steps.toolchain.outputs.version }}
           components: rustfmt, clippy
           rust-src-dir: libs/infinity-v3
           cache-workspaces: libs/infinity-v3
           rustflags: '-C target-cpu=x86-64'
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v5.6.0
         with:
           python-version: '3.12'
       - name: Install Python backend build dependencies

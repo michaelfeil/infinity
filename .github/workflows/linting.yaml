@@ -13,6 +13,9 @@ on:
         type: string
         default: "--extras all --with test,lint,codespell"
 
+permissions:
+  contents: read
+
 env:
   POETRY_VERSION: "2.5.1"
   WORKDIR: ${{ inputs.working-directory == '' && '.' || inputs.working-directory }}
@@ -36,10 +39,12 @@ jobs:
         python-version: ${{ fromJSON(inputs.working-directory == 'libs/embed_package' && '["3.11", "3.12"]' || '["3.11", "3.13"]') }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
 
       - name: Free Disk Space
-        uses: "./.github/actions/disk_cleanup"
+        uses: "$/.github/actions/disk_cleanup"
         if: runner.os == 'Linux'
         with:
           tool-cache: false
@@ -51,7 +56,7 @@ jobs:
           swap-storage: false
 
       - name: Set up Python ${{ matrix.python-version }} + Poetry ${{ env.POETRY_VERSION }}
-        uses: "./.github/actions/poetry_setup"
+        uses: "$/.github/actions/poetry_setup"
         with:
           python-version: ${{ matrix.python-version }}
           poetry-version: ${{ env.POETRY_VERSION }}
@@ -84,7 +89,7 @@ jobs:
           poetry install ${{ inputs.extra_poetry }}
 
       - name: Get .mypy_cache to speed up mypy
-        uses: actions/cache@v6
+        uses: actions/cache@v6.1.0
         env:
           SEGMENT_DOWNLOAD_TIMEOUT_MIN: "2"
         with:
