@@ -191,10 +191,14 @@ void standard(at::ScalarType dtype, int mode, bool cross, int64_t span = 0) {
               "InfinityFA4 mixed independent sequences");
 }
 
-void deberta(at::ScalarType dtype) {
+void deberta(at::ScalarType dtype, bool short_batch = false) {
   auto opts = at::TensorOptions().device(at::kCUDA).dtype(dtype);
-  constexpr int64_t h = 3, n = 649, span = 16, length = 513;
-  std::vector<int64_t> ends = {0, 7, 136, n};
+  const int64_t h = short_batch ? 16 : 3, n = short_batch ? 27 : 649, span = short_batch ? 256 : 16,
+                length = short_batch ? 20 : 513;
+  // Reranker-sized heads/buckets with short uneven sequences expose padded
+  // score-hook lanes on SM8x under compute-sanitizer.
+  std::vector<int64_t> ends =
+      short_batch ? std::vector<int64_t>{0, 7, n} : std::vector<int64_t>{0, 7, 136, n};
   auto q = at::randn({n, h, 64}, opts) * .2, k = at::randn_like(q) * .2, v = at::randn_like(q);
   auto a = at::randn({h, n, 2 * span}, opts) * .05, b = at::randn_like(a) * .05;
   auto cu = offsets(ends, opts);
@@ -431,6 +435,7 @@ int main(int argc, char** argv) {
       for (bool cross : {false, true})
         standard(dtype, mode, cross);
     deberta(dtype);
+    deberta(dtype, true);
     deberta_p2c_direction(dtype);
     for (bool shared : {false, true})
       for (const auto& terms : {"c2p", "p2c", "c2p|p2c"})
