@@ -60,7 +60,7 @@ colpali-engine = {version=">=0.3.8,<0.3.9", optional=true}
 # TorchVision is resolved together with Torch.
 torchvision = {version = "*", optional=true}
 # cache
-diskcache = {version = "*", optional=true}
+diskcache-community = {version = ">=5.8.4", optional=true}
 # gpu
 # https://onnxruntime.ai/docs/execution-providers/TensorRT-ExecutionProvider.html:
 # Most combinations of onnxruntime and tensorrt are not compatible, and some are broken.
@@ -117,7 +117,7 @@ optimum=["optimum","onnx","datasets"]
 torch=["sentence-transformers","torch","sentencepiece","protobuf"]
 einops=["einops"]
 logging=["rich"]
-cache=["diskcache"]
+cache=["diskcache-community"]
 vision=["colpali-engine","pillow","timm","torchvision","sentencepiece","protobuf"]
 # openvino=["onnxruntime-openvino","openvino","openvino-tokenizers"]
 audio=["soundfile"]
@@ -135,7 +135,7 @@ server=[
 all=[
     "colpali-engine",
     "ctranslate2",
-    "diskcache",
+    "diskcache-community",
     "einops",
     "fastapi",
     "optimum",

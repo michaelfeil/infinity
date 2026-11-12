@@ -1171,16 +1171,16 @@ graph = ["objgraph (>=1.7.2)"]
 profile = ["gprof2dot (>=2022.7.29)"]
 
 [[package]]
-name = "diskcache"
-version = "5.6.3"
-description = "Disk Cache -- Disk and file backed persistent cache."
+name = "diskcache-community"
+version = "5.8.4"
+description = "Disk Cache - Disk and file backed persistent cache."
 optional = true
-python-versions = ">=3"
+python-versions = ">=3.8"
 groups = ["main"]
 markers = "extra == \"cache\" or extra == \"all\""
 files = [
-    {file = "diskcache-5.6.3-py3-none-any.whl", hash = "sha256:5e31b2d5fbad117cc363ebaf6b689474db18a1f6438bc82358b024abd4c2ca19"},
-    {file = "diskcache-5.6.3.tar.gz", hash = "sha256:2c3a3fa2743d8535d832ec61c2054a1641f41775aa7c556758a109941e33e4fc"},
+    {file = "diskcache_community-5.8.4-py3-none-any.whl", hash = "sha256:5c60a23a3f245616f9425144c936181709ccf69e5885ef25325b29cd7c4e3744"},
+    {file = "diskcache_community-5.8.4.tar.gz", hash = "sha256:ed359124af93879978b2851a81f437c4e708f946e4ee5db7256b95f562ee0eeb"},
 ]
 
 [[package]]
@@ -6858,9 +6858,9 @@ multidict = ">=4.0"
 propcache = ">=0.2.1"
 
 [extras]
-all = ["click", "colpali-engine", "ctranslate2", "datasets", "diskcache", "einops", "fastapi", "onnx", "optimum", "orjson", "pillow", "posthog", "prometheus-fastapi-instrumentator", "protobuf", "pydantic", "rich", "sentence-transformers", "sentencepiece", "soundfile", "timm", "torch", "torchvision", "typer", "uvicorn"]
+all = ["click", "colpali-engine", "ctranslate2", "datasets", "diskcache-community", "einops", "fastapi", "onnx", "optimum", "orjson", "pillow", "posthog", "prometheus-fastapi-instrumentator", "protobuf", "pydantic", "rich", "sentence-transformers", "sentencepiece", "soundfile", "timm", "torch", "torchvision", "typer", "uvicorn"]
 audio = ["soundfile"]
-cache = ["diskcache"]
+cache = ["diskcache-community"]
 ct2 = ["ctranslate2", "protobuf", "sentence-transformers", "sentencepiece", "torch", "transformers"]
 einops = ["einops"]
 logging = ["rich"]
@@ -6874,4 +6874,4 @@ vision = ["colpali-engine", "pillow", "protobuf", "sentencepiece", "timm", "torc
 [metadata]
 lock-version = "2.1"
 python-versions = ">=3.11,<3.14"
-content-hash = "64684b9f531f3d1f7e54b0ae004acbdf1964d291c0490b2c6185fa724527c1be"
+content-hash = "fc81ac957f06073877b2e99f82db06c008862479ee265f22e4657df382b3cf81"

@@ -1,6 +1,7 @@
 import asyncio
 import threading
 
+import diskcache_community
 import numpy as np
 import pytest
 
@@ -41,4 +42,31 @@ async def test_cache():
         np.testing.assert_array_equal(sample.embedding, embedding)
     finally:
         INFINITY_CACHE_VECTORS = False
+        shutdown.set()
+
+
+planted_calls = []
+
+
+def planted():
+    planted_calls.append(True)
+    return np.zeros(5)
+
+
+class Planted:
+    def __reduce__(self):
+        return (planted, ())
+
+
+def test_cache_planted_pickle_is_a_miss(tmp_path, monkeypatch):
+    monkeypatch.setitem(vars(caching_layer.MANAGER), "cache_dir", tmp_path)
+    planted_calls.clear()
+    shutdown = threading.Event()
+    try:
+        c = caching_layer.Cache(cache_name="planted", shutdown=shutdown)
+        with diskcache_community.Cache(c._cache.directory, disk=diskcache_community.Disk) as writer:
+            writer.set("dummy", Planted())
+        assert c._get("dummy") is None
+        assert planted_calls == []
+    finally:
         shutdown.set()

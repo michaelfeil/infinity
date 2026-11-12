@@ -60,7 +60,7 @@ class OptionalImports:
 CHECK_AIOHTTP = OptionalImports("aiohttp", "server")
 CHECK_COLPALI_ENGINE = OptionalImports("colpali_engine", "vision")
 CHECK_CTRANSLATE2 = OptionalImports("ctranslate2", "ctranslate2")
-CHECK_DISKCACHE = OptionalImports("diskcache", "cache")
+CHECK_DISKCACHE = OptionalImports("diskcache_community", "cache")
 CHECK_FASTAPI = OptionalImports("fastapi", "server")
 CHECK_ONNXRUNTIME = OptionalImports("optimum.onnxruntime", "optimum")
 CHECK_OPTIMUM = OptionalImports("optimum", "optimum")
