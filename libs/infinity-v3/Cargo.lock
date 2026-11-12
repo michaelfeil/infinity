@@ -1874,6 +1874,7 @@ dependencies = [
  "tokenizers",
  "tokio",
  "tracing",
+ "tracing-subscriber",
  "utoipa",
 ]
 

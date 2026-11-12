@@ -36,6 +36,7 @@ bytemuck = "1"
 [dev-dependencies]
 bytes = "1"
 hf-hub = { workspace = true, features = ["ureq"] }
+tracing-subscriber = { version = "0.3.16", features = ["json"] }
 
 [features]
 openapi = ["dep:utoipa"]

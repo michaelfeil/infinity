@@ -407,7 +407,7 @@ impl Execution {
                 .increment(tokens as u64);
             if !duration.is_zero() {
                 r.batches += 1;
-                if r.batches.is_multiple_of(100) {
+                if r.batches == 1 || r.batches.is_multiple_of(100) {
                     // Sample the latest batch, using native inference time only.
                     let inference_seconds = duration.as_secs_f64();
                     tracing::info!(
@@ -504,6 +504,117 @@ mod completion_tests {
             block_prefix_tokens: 0,
         }
     }
+    #[derive(Clone, Default)]
+    struct Capture(Arc<Mutex<Vec<u8>>>);
+
+    impl std::io::Write for Capture {
+        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+            self.0.lock().unwrap().extend_from_slice(bytes);
+            Ok(bytes.len())
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    impl Capture {
+        fn output(&self) -> String {
+            String::from_utf8(self.0.lock().unwrap().clone()).unwrap()
+        }
+    }
+
+    fn execution_for(pool: &BackendPool) -> Execution {
+        let mut execution = execution();
+        execution.pool = pool.clone();
+        execution
+    }
+
+    #[test]
+    fn logs_first_and_every_hundredth_successful_batch_throughput() {
+        use tracing_subscriber::layer::SubscriberExt;
+
+        const TOKENS: usize = 7;
+        const SEQUENCES: usize = 2;
+        const MAX_SEQUENCE_TOKENS: u32 = 4;
+        const DURATION: Duration = Duration::from_millis(250);
+
+        let capture = Capture::default();
+        let sink = capture.clone();
+        let layer = tracing_subscriber::fmt::layer()
+            .with_ansi(false)
+            .json()
+            .flatten_event(true)
+            .with_writer(move || sink.clone());
+        let _guard = tracing::subscriber::set_default(tracing_subscriber::registry().with(layer));
+        let events = || -> Vec<serde_json::Value> {
+            capture
+                .output()
+                .lines()
+                .map(|line| serde_json::from_str(line).unwrap())
+                .collect()
+        };
+
+        let mut first = execution();
+        first.max_sequence_tokens = MAX_SEQUENCE_TOKENS;
+        let pool = first.pool.clone();
+        first.finish::<()>(TOKENS, SEQUENCES, &Ok(((), DURATION)));
+
+        let health = execution_for(&pool);
+        health.finish::<()>(0, 0, &Ok(((), Duration::ZERO)));
+        let overloaded = execution_for(&pool);
+        overloaded.finish::<()>(
+            TOKENS,
+            SEQUENCES,
+            &Err(BackendError::Overloaded("memory admission".into())),
+        );
+
+        for _ in 2..=199 {
+            let mut execution = execution_for(&pool);
+            execution.max_sequence_tokens = MAX_SEQUENCE_TOKENS;
+            execution.finish::<()>(TOKENS, SEQUENCES, &Ok(((), DURATION)));
+        }
+        let batches = |events: &[serde_json::Value]| {
+            events
+                .iter()
+                .map(|event| event["batches"].as_u64().unwrap())
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(batches(&events()), vec![1, 100]);
+
+        let mut final_batch = execution_for(&pool);
+        final_batch.max_sequence_tokens = MAX_SEQUENCE_TOKENS;
+        final_batch.finish::<()>(TOKENS, SEQUENCES, &Ok(((), DURATION)));
+
+        let events = events();
+        assert_eq!(batches(&events), vec![1, 100, 200]);
+        for (event, expected_batches) in events.iter().zip([1, 100, 200]) {
+            assert_eq!(event["target"], "infinity_v3_core::backend_pool");
+            assert_eq!(
+                event["message"],
+                "Replica inference throughput (latest batch)"
+            );
+            assert_eq!(event["replica"].as_u64(), Some(0));
+            assert_eq!(event["batches"].as_u64(), Some(expected_batches));
+            assert_eq!(event["sequences"].as_u64(), Some(SEQUENCES as u64));
+            assert_eq!(event["tokens"].as_u64(), Some(TOKENS as u64));
+            assert_eq!(
+                event["mean_sequence_tokens"].as_f64(),
+                Some(TOKENS as f64 / SEQUENCES as f64)
+            );
+            assert_eq!(
+                event["max_sequence_tokens"].as_u64(),
+                Some(MAX_SEQUENCE_TOKENS as u64)
+            );
+            assert_eq!(event["block_prefix_token_fraction"].as_f64(), Some(0.0));
+            assert_eq!(event["inference_ms"].as_f64(), Some(250.0));
+            assert_eq!(
+                event["tokens_per_second"].as_f64(),
+                Some(TOKENS as f64 / DURATION.as_secs_f64())
+            );
+        }
+    }
+
     #[tokio::test]
     async fn overload_keeps_replica_available_for_the_next_request() {
         let rejected = execution();
