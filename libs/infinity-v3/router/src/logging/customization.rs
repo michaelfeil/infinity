@@ -34,26 +34,29 @@ fn customized_target(target: &str, prefix: &str) -> Option<String> {
     }
 }
 
-/// Rewrite the metadata `target` value in an already-rendered JSON line.
+/// Write a rendered JSON line with the metadata `target` value rewritten in place.
 ///
-/// The standard formatter emits the field in its usual position, so replacing
-/// just the value keeps field order and every other byte identical across
-/// builds. If the field is absent (a formatter built without targets), fall
-/// back to appending it so callers still see the customized value.
-fn rewrite_json_target(rendered: &str, original: &str, target: &str) -> Result<String, fmt::Error> {
-    let original = serde_json::to_string(original).map_err(|_| fmt::Error)?;
-    let encoded = serde_json::to_string(target).map_err(|_| fmt::Error)?;
-    let needle = format!("\"target\":{original}");
-    if let Some(pos) = rendered.find(&needle) {
-        let mut out = String::with_capacity(rendered.len() + encoded.len());
-        out.push_str(&rendered[..pos]);
-        out.push_str("\"target\":");
-        out.push_str(&encoded);
-        out.push_str(&rendered[pos + needle.len()..]);
-        Ok(out)
+/// A custom prefix only replaces the leading `infinity` in the target, so the
+/// raw JSON string is spliced directly. This avoids serializing and
+/// re-escaping strings on every event in the logging hot path. `serde_json` is
+/// used only for the fallback where the formatter omitted the field entirely.
+fn write_json_with_target<W: fmt::Write>(
+    writer: &mut W,
+    rendered: &str,
+    prefix: &str,
+    target: &str,
+) -> fmt::Result {
+    const NEEDLE: &str = "\"target\":\"infinity";
+    if let Some(pos) = rendered.find(NEEDLE) {
+        let start = pos + "\"target\":\"".len();
+        let end = start + "infinity".len();
+        writer.write_str(&rendered[..start])?;
+        writer.write_str(prefix)?;
+        writer.write_str(&rendered[end..])
     } else {
+        let encoded = serde_json::to_string(target).map_err(|_| fmt::Error)?;
         let body = rendered.strip_suffix("}\n").ok_or(fmt::Error)?;
-        Ok(format!("{body},\"target\":{encoded}}}\n"))
+        write!(writer, "{body},\"target\":{encoded}}}\n")
     }
 }
 
@@ -81,8 +84,7 @@ where
             let Some(target) = target else {
                 return write!(writer, "{rendered}");
             };
-            let rewritten = rewrite_json_target(&rendered, event.metadata().target(), &target)?;
-            return write!(writer, "{rewritten}");
+            return write_json_with_target(&mut writer, &rendered, prefix, &target);
         }
         let Some(target) = target else {
             return self.inner.format_event(ctx, writer, event);
@@ -218,16 +220,18 @@ mod tests {
     }
 
     #[test]
-    fn json_target_rewrite_preserves_position_and_other_fields() {
+    fn json_target_rewrite_replaces_prefix_in_place() {
         let rendered = concat!(
             "{\"timestamp\":\"t\",\"level\":\"INFO\",",
             "\"target\":\"infinity_v3_core::backend_pool\",",
             "\"span\":{\"request\":\"infinity_v3_core::backend_pool\"},",
             "\"message\":\"infinity_v3_core::backend_pool\"}\n"
         );
-        let rewritten = rewrite_json_target(
+        let mut rewritten = String::new();
+        write_json_with_target(
+            &mut rewritten,
             rendered,
-            "infinity_v3_core::backend_pool",
+            "custom",
             "custom_v3_core::backend_pool",
         )
         .unwrap();
@@ -250,8 +254,8 @@ mod tests {
     #[test]
     fn json_target_rewrite_appends_when_formatter_omits_target() {
         let rendered = "{\"timestamp\":\"t\",\"level\":\"INFO\",\"message\":\"m\"}\n";
-        let rewritten =
-            rewrite_json_target(rendered, "infinity_v3_core", "custom_v3_core").unwrap();
+        let mut rewritten = String::new();
+        write_json_with_target(&mut rewritten, rendered, "custom", "custom_v3_core").unwrap();
         assert_eq!(
             rewritten,
             "{\"timestamp\":\"t\",\"level\":\"INFO\",\"message\":\"m\",\"target\":\"custom_v3_core\"}\n"
