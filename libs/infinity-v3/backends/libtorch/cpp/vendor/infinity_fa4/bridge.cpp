@@ -116,7 +116,10 @@ extern "C" int infinity_fa4_forward_v1(int mode,int dtype,int device,void* strea
   StreamScope scope(device,stream);
   invoke_export(dtype * attention_modes + mode, [&] {
 #if FA4_COMPUTE_CAPABILITY == 100
-  if (profile.width == 256)
+  // Only non-local d256 uses the dedicated two-CTA 18-argument kernel.
+  // Local d256 is compiled through the generic one-CTA path (tile 128x64,
+  // q_stage 1) and therefore requires the 25-argument SM100 call shape.
+  if (profile.width == 256 && !profile.local)
     fn(&qt,&kt,&vt,&ot,nullptr,scale,&ct,&ckt,nullptr,nullptr,nullptr,lb,rb,nullptr,
        nullptr,nullptr,aux,int64_t(max_q));
   else
