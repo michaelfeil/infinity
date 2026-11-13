@@ -1,0 +1,22 @@
+# Plumber overlay: inherits every control from the CLI's built-in
+# baseline, only the differences for this repository are written here.
+# Run 'plumber config resolve' to see the full effective config.
+extends: plumber:default
+version: '2.0'
+
+github:
+  controls:
+    githubActionMustComeFromAuthorizedSources:
+      # Keep the curated default list and trust the Rust toolchain action
+      # the v3 CI uses on top of it, with the cache action it calls, both
+      # recorded in actions.lock.
+      includePlumberDefaults: true
+      trustedGithubActions:
+        - actions-rust-lang/setup-rust-toolchain
+        - Swatinem/rust-cache
+
+    # setup-rust-toolchain installs rustup from sh.rustup.rs, the way the
+    # Rust project distributes it. There is no pinned alternative today,
+    # so this check is off for this repository.
+    actionsMustNotExecuteMutableRemoteCode:
+      enabled: false
