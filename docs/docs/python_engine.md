@@ -51,7 +51,7 @@ query = "What is the python package infinity_emb?"
 docs = ["This is a document not related to the python package infinity_emb, hence...", 
     "Paris is in France!",
     "infinity_emb is a package for sentence embeddings and rerankings using transformer models in Python!"]
-array = AsyncEmbeddingEngine.from_args(
+array = AsyncEngineArray.from_args(
   [EngineArgs(model_name_or_path = "mixedbread-ai/mxbai-rerank-xsmall-v1", engine="torch")]
 )
 
