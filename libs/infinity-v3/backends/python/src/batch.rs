@@ -2,10 +2,26 @@ use crate::envelope::OutputSnapshot;
 use infinity_v3_backend_core::{
     result_memory, BackendError, Batch, Embedding, Embeddings, Predictions, SharedF32,
 };
-use numpy::PyArray1;
+use numpy::{PyArray1, PyArrayMethods};
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
 use std::sync::Arc;
+
+/// Builds a zero-copy numpy view over `values` and immediately clears its
+/// writable flag. The owner remains the array base, so the Rust buffer stays
+/// alive for as long as Python can reach the view.
+fn readonly_i64_array<'py>(
+    values: &[i64],
+    owner: &Bound<'py, PyAny>,
+) -> PyResult<Bound<'py, PyArray1<i64>>> {
+    // SAFETY: `owner` holds the Arc that owns `values`; nothing mutates or
+    // reallocates that buffer while the returned array references it.
+    let array = unsafe {
+        PyArray1::borrow_from_array(&numpy::ndarray::ArrayView1::from(values), owner.clone())
+    };
+    array.try_readwrite()?.make_nonwriteable();
+    Ok(array)
+}
 
 /// Rectangular input derived from the packed core batch. Accelerator plugins may
 /// compile per shape, so one padded width is preferable to ragged rows.
@@ -43,48 +59,28 @@ impl PaddedInputs {
         let payload = PyDict::new(py);
         payload.set_item("batch_size", inputs.batch_size)?;
         payload.set_item("seq_len", inputs.seq_len)?;
-        payload.set_item("input_ids", unsafe {
-            PyArray1::borrow_from_array(
-                &numpy::ndarray::ArrayView1::from(&inputs.input_ids[..]),
-                owner.clone(),
-            )
-        })?;
-        payload.set_item("attention_mask", unsafe {
-            PyArray1::borrow_from_array(
-                &numpy::ndarray::ArrayView1::from(&inputs.attention_mask[..]),
-                owner.clone(),
-            )
-        })?;
-        payload.set_item("token_type_ids", unsafe {
-            PyArray1::borrow_from_array(
-                &numpy::ndarray::ArrayView1::from(&inputs.token_type_ids[..]),
-                owner.clone(),
-            )
-        })?;
-        payload.set_item("position_ids", unsafe {
-            PyArray1::borrow_from_array(
-                &numpy::ndarray::ArrayView1::from(&inputs.position_ids[..]),
-                owner.clone(),
-            )
-        })?;
-        payload.set_item("lengths", unsafe {
-            PyArray1::borrow_from_array(
-                &numpy::ndarray::ArrayView1::from(&inputs.lengths[..]),
-                owner.clone(),
-            )
-        })?;
-        payload.set_item("pooled_indices", unsafe {
-            PyArray1::borrow_from_array(
-                &numpy::ndarray::ArrayView1::from(&inputs.pooled_indices[..]),
-                owner.clone(),
-            )
-        })?;
-        payload.set_item("raw_indices", unsafe {
-            PyArray1::borrow_from_array(
-                &numpy::ndarray::ArrayView1::from(&inputs.raw_indices[..]),
-                owner,
-            )
-        })?;
+        payload.set_item("input_ids", readonly_i64_array(&inputs.input_ids, &owner)?)?;
+        payload.set_item(
+            "attention_mask",
+            readonly_i64_array(&inputs.attention_mask, &owner)?,
+        )?;
+        payload.set_item(
+            "token_type_ids",
+            readonly_i64_array(&inputs.token_type_ids, &owner)?,
+        )?;
+        payload.set_item(
+            "position_ids",
+            readonly_i64_array(&inputs.position_ids, &owner)?,
+        )?;
+        payload.set_item("lengths", readonly_i64_array(&inputs.lengths, &owner)?)?;
+        payload.set_item(
+            "pooled_indices",
+            readonly_i64_array(&inputs.pooled_indices, &owner)?,
+        )?;
+        payload.set_item(
+            "raw_indices",
+            readonly_i64_array(&inputs.raw_indices, &owner)?,
+        )?;
         Ok(payload)
     }
 
@@ -370,7 +366,17 @@ pub(crate) fn pack_predictions(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use numpy::PyArrayMethods;
+    use numpy::PyUntypedArrayMethods;
+
+    const INPUT_ARRAY_KEYS: [&str; 7] = [
+        "input_ids",
+        "attention_mask",
+        "token_type_ids",
+        "position_ids",
+        "lengths",
+        "pooled_indices",
+        "raw_indices",
+    ];
 
     fn batch() -> Batch {
         Batch {
@@ -389,6 +395,67 @@ mod tests {
             tokens: vec![],
             offsets: vec![],
         }
+    }
+
+    fn payload_array<'py>(payload: &Bound<'py, PyDict>, key: &str) -> Bound<'py, PyArray1<i64>> {
+        payload
+            .get_item(key)
+            .unwrap()
+            .unwrap()
+            .extract::<Bound<'py, PyArray1<i64>>>()
+            .unwrap()
+    }
+
+    fn input_values<'a>(inputs: &'a PaddedInputs, key: &str) -> &'a [i64] {
+        match key {
+            "input_ids" => &inputs.input_ids,
+            "attention_mask" => &inputs.attention_mask,
+            "token_type_ids" => &inputs.token_type_ids,
+            "position_ids" => &inputs.position_ids,
+            "lengths" => &inputs.lengths,
+            "pooled_indices" => &inputs.pooled_indices,
+            "raw_indices" => &inputs.raw_indices,
+            _ => unreachable!("unknown input array key"),
+        }
+    }
+
+    fn assert_write_flags_stay_disabled(py: Python<'_>, array: &Bound<'_, PyArray1<i64>>) {
+        let locals = PyDict::new(py);
+        locals.set_item("arr", array).unwrap();
+        assert!(!array
+            .getattr("flags")
+            .unwrap()
+            .getattr("writeable")
+            .unwrap()
+            .extract::<bool>()
+            .unwrap());
+        for script in [
+            c"arr.setflags(write=True)",
+            c"arr.flags.writeable = True",
+            c"view = arr[:]\nassert not view.flags.writeable\nview.setflags(write=True)",
+            c"view = arr[:]\nassert not view.flags.writeable\nview.flags.writeable = True",
+        ] {
+            let message = py
+                .run(script, None, Some(&locals))
+                .unwrap_err()
+                .to_string()
+                .to_ascii_lowercase();
+            assert!(message.contains("writeable"), "{message}");
+        }
+    }
+
+    fn assert_item_assignment_rejected(py: Python<'_>, array: &Bound<'_, PyArray1<i64>>) {
+        let locals = PyDict::new(py);
+        locals.set_item("arr", array).unwrap();
+        let message = py
+            .run(c"arr[0] = 99", None, Some(&locals))
+            .unwrap_err()
+            .to_string()
+            .to_ascii_lowercase();
+        assert!(
+            message.contains("read-only") || message.contains("readonly"),
+            "{message}"
+        );
     }
 
     #[test]
@@ -425,6 +492,103 @@ mod tests {
                 .extract::<Bound<'_, PyArray1<i64>>>()
                 .unwrap();
             assert_eq!(array.readonly().as_slice().unwrap().as_ptr(), input_ptr);
+        });
+    }
+
+    #[test]
+    fn all_input_arrays_are_readonly_zero_copy_views() {
+        Python::initialize();
+        let inputs = Arc::new(pad_batch(&batch()).unwrap());
+        Python::attach(|py| {
+            let payload = PaddedInputs::to_python(inputs.clone(), py).unwrap();
+            for key in INPUT_ARRAY_KEYS {
+                let array = payload_array(&payload, key);
+                let expected = input_values(&inputs, key);
+                assert_eq!(array.len(), expected.len(), "{key}");
+                let actual = array.readonly();
+                assert_eq!(actual.as_slice().unwrap(), expected, "{key}");
+                assert_eq!(
+                    actual.as_slice().unwrap().as_ptr(),
+                    expected.as_ptr(),
+                    "{key}"
+                );
+                assert_write_flags_stay_disabled(py, &array);
+                assert_item_assignment_rejected(py, &array);
+            }
+        });
+    }
+
+    #[test]
+    fn owner_does_not_expose_a_writable_buffer() {
+        Python::initialize();
+        let inputs = Arc::new(pad_batch(&batch()).unwrap());
+        Python::attach(|py| {
+            let payload = PaddedInputs::to_python(inputs.clone(), py).unwrap();
+            let array = payload_array(&payload, "input_ids");
+            let owner = array.getattr("base").unwrap();
+            assert!(owner.getattr("input_ids").is_err());
+            assert!(py
+                .import("builtins")
+                .unwrap()
+                .getattr("memoryview")
+                .unwrap()
+                .call1((owner,))
+                .is_err());
+        });
+    }
+
+    #[test]
+    fn empty_output_indices_produce_readonly_zero_length_arrays() {
+        Python::initialize();
+        let mut batch = batch();
+        batch.pooled_indices.clear();
+        batch.raw_indices.clear();
+        let inputs = Arc::new(pad_batch(&batch).unwrap());
+        Python::attach(|py| {
+            let payload = PaddedInputs::to_python(inputs.clone(), py).unwrap();
+            for key in ["pooled_indices", "raw_indices"] {
+                let array = payload_array(&payload, key);
+                assert_eq!(array.len(), 0, "{key}");
+                assert!(array.readonly().as_slice().unwrap().is_empty(), "{key}");
+                assert_write_flags_stay_disabled(py, &array);
+                let locals = PyDict::new(py);
+                locals.set_item("arr", &array).unwrap();
+                let message = py
+                    .run(c"arr[:] = arr", None, Some(&locals))
+                    .unwrap_err()
+                    .to_string()
+                    .to_ascii_lowercase();
+                assert!(
+                    message.contains("read-only") || message.contains("readonly"),
+                    "{message}"
+                );
+            }
+            for key in INPUT_ARRAY_KEYS {
+                assert_write_flags_stay_disabled(py, &payload_array(&payload, key));
+            }
+        });
+    }
+
+    #[test]
+    fn payload_keeps_rust_inputs_alive_after_arc_drop() {
+        Python::initialize();
+        let inputs = Arc::new(pad_batch(&batch()).unwrap());
+        let input_ptr = inputs.input_ids.as_ptr();
+        let expected = inputs.input_ids.clone();
+        Python::attach(move |py| {
+            let payload = PaddedInputs::to_python(inputs.clone(), py).unwrap();
+            let array = payload_array(&payload, "input_ids");
+            drop(inputs);
+            py.run(c"import gc\ngc.collect()", None, None).unwrap();
+            let actual = array.readonly();
+            assert_eq!(actual.as_slice().unwrap(), expected.as_slice());
+            assert_eq!(actual.as_slice().unwrap().as_ptr(), input_ptr);
+            drop(actual);
+            drop(payload);
+            py.run(c"import gc\ngc.collect()", None, None).unwrap();
+            let actual = array.readonly();
+            assert_eq!(actual.as_slice().unwrap(), expected.as_slice());
+            assert_eq!(actual.as_slice().unwrap().as_ptr(), input_ptr);
         });
     }
 
