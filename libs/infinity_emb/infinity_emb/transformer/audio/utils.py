@@ -52,8 +52,16 @@ async def resolve_audios(
     CHECK_SOUNDFILE.mark_required()
 
     async with media_client_session() as session:
-        resolved_audios = await asyncio.gather(
-            *[resolve_audio(audio, allowed_sampling_rate, session) for audio in audio_urls]
-        )
+        tasks = [
+            asyncio.create_task(resolve_audio(audio, allowed_sampling_rate, session))
+            for audio in audio_urls
+        ]
+        try:
+            resolved_audios = await asyncio.gather(*tasks)
+        except BaseException:
+            for task in tasks:
+                task.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
+            raise
 
     return resolved_audios

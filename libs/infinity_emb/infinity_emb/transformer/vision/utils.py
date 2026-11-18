@@ -84,6 +84,13 @@ async def resolve_images(
 
     resolved_imgs = []
     async with media_client_session() as session:
-        resolved_imgs = await asyncio.gather(*[resolve_image(img, session) for img in images])
+        tasks = [asyncio.create_task(resolve_image(img, session)) for img in images]
+        try:
+            resolved_imgs = await asyncio.gather(*tasks)
+        except BaseException:
+            for task in tasks:
+                task.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
+            raise
 
     return resolved_imgs
