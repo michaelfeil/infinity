@@ -3,11 +3,11 @@
 
 import sys
 from dataclasses import asdict, dataclass, field
-from itertools import zip_longest
 from typing import Optional
 from copy import deepcopy
 
 
+from infinity_emb._config import AutoPadding
 from infinity_emb._optional_imports import CHECK_PYDANTIC
 from infinity_emb.env import MANAGER
 from infinity_emb.primitives import (
@@ -145,42 +145,31 @@ class EngineArgs:
 
     @classmethod
     def from_env(cls) -> list["EngineArgs"]:
-        """Create a list of EngineArgs from environment variables."""
-        return [
-            EngineArgs(
-                model_name_or_path=model_name_or_path,
-                batch_size=batch_size,
-                revision=revision,
-                trust_remote_code=trust_remote_code,
-                engine=engine,
-                model_warmup=model_warmup,
-                device=device,
-                compile=compile,
-                bettertransformer=bettertransformer,
-                dtype=dtype,
-                pooling_method=pooling_method,
-                lengths_via_tokenize=lengths_via_tokenize,
-                embedding_dtype=embedding_dtype,
-                served_model_name=served_model_name,
-                onnx_disable_optimize=onnx_disable_optimize,
-                onnx_do_not_prefer_quantized=onnx_do_not_prefer_quantized
-            )
-            for model_name_or_path, batch_size, revision, trust_remote_code, engine, model_warmup, device, compile, bettertransformer, dtype, pooling_method, lengths_via_tokenize, embedding_dtype, served_model_name,onnx_disable_optimize,onnx_do_not_prefer_quantized in zip_longest(
-                MANAGER.model_id,
-                MANAGER.batch_size,
-                MANAGER.revision,
-                MANAGER.trust_remote_code,
-                MANAGER.engine,
-                MANAGER.model_warmup,
-                MANAGER.device,
-                MANAGER.compile,
-                MANAGER.bettertransformer,
-                MANAGER.dtype,
-                MANAGER.pooling_method,
-                MANAGER.lengths_via_tokenize,
-                MANAGER.embedding_dtype,
-                MANAGER.served_model_name,
-                MANAGER.onnx_disable_optimize,
-                MANAGER.onnx_do_not_prefer_quantized
-            )
-        ]
+        """Create EngineArgs, broadcasting the environment fields passed below.
+
+        For these fields, singleton values are shared by all models and other
+        lists must match the model count, following the CLI's length rules.
+        device_id uses the first environment entry for every model without
+        per-model length validation; vector_disk_cache_path keeps its default.
+        Construct EngineArgs explicitly to configure either field per model.
+        """
+        options = AutoPadding(
+            length=len(MANAGER.model_id),
+            model_name_or_path=MANAGER.model_id,
+            batch_size=MANAGER.batch_size,
+            revision=MANAGER.revision,
+            trust_remote_code=MANAGER.trust_remote_code,
+            engine=MANAGER.engine,
+            model_warmup=MANAGER.model_warmup,
+            device=MANAGER.device,
+            compile=MANAGER.compile,
+            bettertransformer=MANAGER.bettertransformer,
+            dtype=MANAGER.dtype,
+            pooling_method=MANAGER.pooling_method,
+            lengths_via_tokenize=MANAGER.lengths_via_tokenize,
+            embedding_dtype=MANAGER.embedding_dtype,
+            served_model_name=MANAGER.served_model_name,
+            onnx_disable_optimize=MANAGER.onnx_disable_optimize,
+            onnx_do_not_prefer_quantized=MANAGER.onnx_do_not_prefer_quantized,
+        )
+        return [EngineArgs(**kwargs) for kwargs in options]
