@@ -38,6 +38,11 @@ asyncio.run(
 )
 ```
 
+To group existing engines, use `AsyncEngineArray(engines)`. The iterable can be a
+list, tuple, iterator, or generator; it is consumed once during construction.
+It must contain at least one engine, and each engine must have a unique
+`served_model_name`.
+
 ## Reranker
 
 Reranking gives you a score for similarity between a query and multiple documents. 
