@@ -136,7 +136,19 @@ impl<'s> ToSchema<'s> for ContentPart {
         &'s str,
         utoipa::openapi::RefOr<utoipa::openapi::schema::Schema>,
     ) {
-        ("ContentPart", ContentPartInput::schema().1)
+        use utoipa::openapi::{schema::AdditionalProperties, RefOr, Schema};
+
+        let mut schema = ContentPartInput::schema().1;
+        // Utoipa 4 does not propagate deny_unknown_fields to tagged variants.
+        if let RefOr::T(Schema::OneOf(one_of)) = &mut schema {
+            for variant in &mut one_of.items {
+                if let RefOr::T(Schema::Object(object)) = variant {
+                    object.additional_properties =
+                        Some(Box::new(AdditionalProperties::FreeForm(false)));
+                }
+            }
+        }
+        ("ContentPart", schema)
     }
 }
 
@@ -257,6 +269,12 @@ mod tests {
             serde_json::to_value(ContentPart::schema().1).unwrap(),
             checked_in["components"]["schemas"]["ContentPart"]
         );
+        let variants = checked_in["components"]["schemas"]["ContentPart"]["oneOf"]
+            .as_array()
+            .unwrap();
+        for variant in variants {
+            assert_eq!(variant["additionalProperties"], false, "{variant}");
+        }
     }
 
     #[test]

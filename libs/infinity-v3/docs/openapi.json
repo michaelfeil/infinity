@@ -2710,7 +2710,8 @@
                   "text"
                 ]
               }
-            }
+            },
+            "additionalProperties": false
           },
           {
             "type": "object",
@@ -2728,7 +2729,8 @@
                   "input_text"
                 ]
               }
-            }
+            },
+            "additionalProperties": false
           },
           {
             "type": "object",
@@ -2746,7 +2748,8 @@
                   "image_url"
                 ]
               }
-            }
+            },
+            "additionalProperties": false
           },
           {
             "type": "object",
@@ -2772,7 +2775,8 @@
                   "input_image"
                 ]
               }
-            }
+            },
+            "additionalProperties": false
           },
           {
             "type": "object",
@@ -2790,7 +2794,8 @@
                   "input_audio"
                 ]
               }
-            }
+            },
+            "additionalProperties": false
           },
           {
             "type": "object",
@@ -2808,7 +2813,8 @@
               "video_url": {
                 "$ref": "#/components/schemas/VideoSource"
               }
-            }
+            },
+            "additionalProperties": false
           }
         ],
         "description": "Accepted wire spellings normalize before model validation and rendering.\nSerialization continues to use the existing ContentPart spellings.",
