@@ -511,8 +511,6 @@ mod tests {
             tokenizer,
             64,
             MultimodalConfig::default(),
-            None,
-            None,
         )
         .unwrap();
         (root, processor)
