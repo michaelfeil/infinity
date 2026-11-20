@@ -387,24 +387,16 @@ fn validate(messages: &[Message], max_images: usize) -> Result<()> {
     if messages.is_empty() {
         return Err(invalid("Conversation must not be empty"));
     }
-    let text = |s: &str| {
-        if ["[IMG]", "[IMG_BREAK]", "[IMG_END]"]
-            .iter()
-            .any(|m| s.contains(m))
-        {
-            Err(invalid("Text must not contain reserved image markers"))
-        } else {
-            Ok(())
-        }
-    };
+    // Marker text is checked after tokenization: Nemotron's template escapes
+    // user text, so a literal "[IMG]" is ordinary text and must be accepted.
     let mut count = 0;
     for m in messages {
         match &m.content {
-            MessageContent::Text(s) => text(s)?,
+            MessageContent::Text(_) => {}
             MessageContent::Parts(parts) => {
                 for p in parts {
                     match p {
-                        ContentPart::Text { text: s } => text(s)?,
+                        ContentPart::Text { .. } => {}
                         ContentPart::ImageUrl { image_url }
                             if matches!(m.role, MessageRole::User | MessageRole::Document) =>
                         {
@@ -497,6 +489,16 @@ impl State {
             .tokenizer
             .encode(prompt, false)
             .map_err(|_| invalid("Conversation tokenization failed"))?;
+        // Only template-emitted [IMG] placeholders may reach the model; their
+        // count is checked against the images below. Break/end markers are
+        // emitted solely by expansion, so any occurrence came from text.
+        if encoding
+            .get_ids()
+            .iter()
+            .any(|id| *id == self.ids[1] || *id == self.ids[2])
+        {
+            return Err(invalid("Text must not contain reserved image markers"));
+        }
         let mut ids = Vec::new();
         let mut spans = Vec::new();
         let mut image_index = 0;
@@ -781,10 +783,89 @@ mod tests {
         assert!(dimensions(0, 10, 1540, 28).is_err());
         assert!(dimensions(16_000_000, 1, 1540, 28).is_err());
     }
+    /// Tiny Mistral3 checkpoint: [IMG]=10, [IMG_BREAK]=12, [IMG_END]=13 are special tokens.
+    fn marker_processor(template: &str) -> (tempfile::TempDir, Mistral3Processor) {
+        let root = tempfile::tempdir().unwrap();
+        let write =
+            |name: &str, value: &str| std::fs::write(root.path().join(name), value).unwrap();
+        write(
+            "config.json",
+            r#"{"model_type":"mistral3","spatial_merge_size":2,"image_token_index":10,
+                "is_causal":false,"pooling":"avg","vision_config":{"patch_size":14}}"#,
+        );
+        write(
+            "processor_config.json",
+            r#"{"patch_size":14,"spatial_merge_size":2,"image_token":"[IMG]",
+                "image_break_token":"[IMG_BREAK]","image_end_token":"[IMG_END]",
+                "image_processor":{"size":{"longest_edge":1120},"resample":3,"do_resize":true,
+                "do_rescale":true,"do_normalize":true,"do_convert_rgb":true,
+                "image_mean":[0.5,0.5,0.5],"image_std":[0.5,0.5,0.5],
+                "rescale_factor":0.00392156862745098}}"#,
+        );
+        write("chat_template.jinja", template);
+        let special = |id: u32, content: &str| {
+            serde_json::json!({"id":id,"content":content,"single_word":false,"lstrip":false,
+                "rstrip":false,"normalized":false,"special":true})
+        };
+        let tokenizer = serde_json::json!({
+            "version":"1.0","truncation":null,"padding":null,"normalizer":null,
+            "pre_tokenizer":{"type":"Whitespace"},"post_processor":null,"decoder":null,
+            "added_tokens":[special(10,"[IMG]"),special(12,"[IMG_BREAK]"),special(13,"[IMG_END]")],
+            "model":{"type":"WordLevel","unk_token":"<unk>","vocab":{"<unk>":0,"see":1,"here":2,
+                "[":3,"]":4,"IMG":5,"[IMG]":10,"[IMG_BREAK]":12,"[IMG_END]":13}}
+        });
+        let tokenizer = Tokenizer::from_bytes(tokenizer.to_string()).unwrap();
+        let processor = Mistral3Processor::load(
+            root.path(),
+            tokenizer,
+            64,
+            MultimodalConfig::default(),
+        )
+        .unwrap();
+        (root, processor)
+    }
+
+    #[tokio::test]
+    async fn marker_text_follows_the_template_not_a_substring_ban() {
+        let prepare = |processor: Mistral3Processor, text: &str| {
+            let text = text.to_owned();
+            async move {
+                processor
+                    .prepare(
+                        EncodingInput::Single(text),
+                        false,
+                        TruncationDirection::Right,
+                        None,
+                    )
+                    .await
+            }
+        };
+        // Nemotron's template escapes user brackets, so marker text embeds as ordinary tokens.
+        let (_root, escaping) = marker_processor(
+            "{%- for m in messages -%}{{ m['content'] | replace('[', '[\u{200c}') }}{%- endfor -%}",
+        );
+        let text = "see [IMG] [IMG_BREAK] [IMG_END] here";
+        let prepared = prepare(escaping, text).await.unwrap();
+        assert!(!prepared
+            .input_ids
+            .iter()
+            .any(|id| [10, 12, 13].contains(id)));
+        assert!(prepared.media.images.is_empty());
+        // A template that passes text through must still never let it become image structure.
+        let (_root, raw) =
+            marker_processor("{%- for m in messages -%}{{ m['content'] }}{%- endfor -%}");
+        for text in [
+            "see [IMG] here",
+            "see [IMG_BREAK] here",
+            "see [IMG_END] here",
+        ] {
+            assert!(prepare(raw.clone(), text).await.is_err(), "{text}");
+        }
+    }
+
     #[test]
-    fn rejects_reserved_markers_and_unsupported_parts() {
+    fn rejects_unsupported_parts() {
         for json in [
-            serde_json::json!([{"role":"user","content":"[IMG]"}]),
             serde_json::json!([{"role":"assistant","content":[{"type":"image_url","image_url":{"url":"data:image/png;base64,"}}]}]),
             serde_json::json!([{"role":"user","content":[{"type":"video_url","video_url":{"url":"https://example.com/v"}}]}]),
         ] {
